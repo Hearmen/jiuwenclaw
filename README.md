@@ -40,10 +40,13 @@
 ### 📦 安装
 
 ```bash
-# 安装JiuwenClaw
+# 安装 JiuwenClaw
 pip install jiuwenclaw
 
-# 启动服务
+# 初始化 JiuwenClaw (首次启动)
+jiuwenclaw-init
+
+# 启动 JiuwenClaw
 jiuwenclaw-start
 ```
 
