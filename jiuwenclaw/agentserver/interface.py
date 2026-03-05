@@ -46,6 +46,8 @@ from jiuwenclaw.agentserver.prompt_builder import build_system_prompt, DEFAULT_W
 from jiuwenclaw.evolution.skill_optimizer import SkillOptimizer
 from jiuwenclaw.schema.agent import AgentRequest, AgentResponse, AgentResponseChunk
 from jiuwenclaw.schema.message import ReqMethod
+from jiuwenclaw.paths import USER_WORKSPACE_DIR
+
 
 logger = logging.getLogger(__name__)
 load_dotenv(dotenv_path=get_root_dir() / ".env")
@@ -653,7 +655,7 @@ class JiuWenClaw:
         # Heartbeat 处理
         if "heartbeat" in request.params:
             # todo 修复目录
-            heartbeat_md = os.path.join("workspace", "HEARTBEAT.md")
+            heartbeat_md = USER_WORKSPACE_DIR / "workspace" / "HEARTBEAT.md"
             if not os.path.isfile(heartbeat_md):
                 # 无自定义任务，短路返回
                 logger.debug("[JiuWenClaw] heartbeat OK (no HEARTBEAT.md): request_id=%s", request.request_id)
@@ -668,11 +670,12 @@ class JiuWenClaw:
             task_list = []
             try:
                 with open(heartbeat_md, "r", encoding="utf-8") as f:
-                    md_content = f.read().strip()
-                    tasks = md_content.split("\n## 活跃的任务项\n")[-1].split("\n## 已完成的任务项\n")[0].strip().split("\n")
-                    for task in tasks:
-                        if not task.startswith("<!--"):
-                            task_list.append("-" + task)
+                    lines = f.readlines()
+                    for line in lines:
+                        line = line.strip()
+                        if line != "":
+                            if not line.startswith("<!--"):
+                                task_list.append(line)
 
             except Exception as exc:
                 logger.warning("[JiuWenClaw] 读取 HEARTBEAT.md 失败: %s", exc)
