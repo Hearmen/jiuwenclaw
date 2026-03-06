@@ -780,6 +780,7 @@ select {
     word-break: break-word;
     color: var(--chat-text);
     line-height: 1.5;
+    white-space: pre-wrap;
   }
 
   .chat-text :where(p) {
