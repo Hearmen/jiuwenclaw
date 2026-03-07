@@ -422,13 +422,15 @@ class WebClient {
 
   private scheduleReconnect(): void {
     this.clearReconnectTimer();
-    if (this.reconnectAttempts >= MAX_RECONNECT_ATTEMPTS) {
-      this.updateState('closed');
-      return;
-    }
     this.reconnectAttempts += 1;
     this.updateState('reconnecting');
-    const delay = Math.min(1000 * 2 ** (this.reconnectAttempts - 1), 30000);
+
+    // 前 N 次使用指数退避，超过后改为固定间隔持续重试，后端恢复后能自动检测并恢复连接
+    const delay =
+      this.reconnectAttempts <= MAX_RECONNECT_ATTEMPTS
+        ? Math.min(1000 * 2 ** (this.reconnectAttempts - 1), 30000)
+        : 2000; // 每 2 秒持续尝试
+
     this.reconnectTimer = window.setTimeout(() => {
       void this.connect(this.lastConnectOptions);
     }, delay);
