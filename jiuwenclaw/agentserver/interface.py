@@ -7,16 +7,13 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
-import re
-import sys
-from pathlib import Path
 from typing import Any, AsyncIterator
 
 from openjiuwen.core.context_engine import MessageOffloaderConfig, DialogueCompressorConfig
-from openjiuwen.core.foundation.llm import ModelRequestConfig, ModelClientConfig
+from openjiuwen.core.foundation.llm import ModelRequestConfig
 from dotenv import load_dotenv
 from openjiuwen.core.runner import Runner
-from openjiuwen.core.single_agent import AgentCard, ReActAgentConfig, create_agent_session
+from openjiuwen.core.single_agent import AgentCard, ReActAgentConfig
 from openjiuwen.core.sys_operation import SysOperationCard, OperationMode, LocalWorkConfig
 from jiuwenclaw.paths import _get_config_module, get_root_dir
 
@@ -26,6 +23,11 @@ set_config = _config_module.set_config
 update_heartbeat_in_config = _config_module.update_heartbeat_in_config
 update_channel_in_config = _config_module.update_channel_in_config
 update_browser_in_config = _config_module.update_browser_in_config
+
+from openjiuwen.core.session.checkpointer import CheckpointerFactory
+from openjiuwen.core.session.checkpointer.checkpointer import CheckpointerConfig
+from openjiuwen.core.session.checkpointer.persistence import PersistenceCheckpointerProvider
+
 from jiuwenclaw.agentserver.react_agent import JiuClawReActAgent
 from jiuwenclaw.agentserver.tools.browser_tools import register_browser_runtime_mcp_server
 from jiuwenclaw.agentserver.tools.mcp_toolkits import get_mcp_tools
@@ -42,7 +44,7 @@ from jiuwenclaw.agentserver.memory.compaction import ContextCompactionManager
 from jiuwenclaw.agentserver.memory.config import clear_config_cache
 from jiuwenclaw.agentserver.memory import clear_memory_manager_cache
 from jiuwenclaw.agentserver.skill_manager import SkillManager, _SKILLS_DIR
-from jiuwenclaw.agentserver.prompt_builder import build_system_prompt, DEFAULT_WORKSPACE_DIR
+from jiuwenclaw.agentserver.prompt_builder import DEFAULT_WORKSPACE_DIR
 from jiuwenclaw.evolution.skill_optimizer import SkillOptimizer
 from jiuwenclaw.schema.agent import AgentRequest, AgentResponse, AgentResponseChunk
 from jiuwenclaw.schema.message import ReqMethod
@@ -50,6 +52,7 @@ from jiuwenclaw.paths import USER_WORKSPACE_DIR
 
 logger = logging.getLogger(__name__)
 load_dotenv(dotenv_path=get_root_dir() / ".env")
+
 
 SYSTEM_PROMPT = """# 角色
 你是一个能够帮助用户执行任务的小助手。
@@ -117,6 +120,16 @@ class JiuWenClaw:
                 - workspace_dir: 工作区目录，默认 "workspace/agent"。
                 - 其余字段透传给 ReActAgentConfig。
         """
+        PersistenceCheckpointerProvider()
+        checkpoint_path = USER_WORKSPACE_DIR / "checkpoint"
+        checkpointer = await CheckpointerFactory.create(
+            CheckpointerConfig(
+                type="persistence",
+                conf={"db_type": "sqlite", "db_path": f"{checkpoint_path}/checkpoint"},
+            )
+        )
+        CheckpointerFactory.set_default_checkpointer(checkpointer)
+
         _bootstrap_env_aliases()
         config_base = get_config()
 
@@ -202,9 +215,8 @@ class JiuWenClaw:
         ]
         agent_config.configure_context_processors(processors)
 
-        agent_card = AgentCard(name=agent_name)
+        agent_card = AgentCard(name=agent_name, id='jiuwenclaw')
         self._instance = JiuClawReActAgent(card=agent_card)
-        # self._instance.set_workspace(self._workspace_dir, self._agent_name)
 
         if sysop_card_id and hasattr(self._instance, "_skill_util"):
             agent_config.sys_operation_id = sysop_card_id
