@@ -204,7 +204,7 @@ class JiuWenClaw:
         try:
             sysop_card = SysOperationCard(
                 mode=OperationMode.LOCAL,
-                work_config=LocalWorkConfig(work_dir=USER_WORKSPACE_DIR / "workspace"),
+                work_config=LocalWorkConfig(work_dir=str(USER_WORKSPACE_DIR / "workspace")),
             )
             Runner.resource_mgr.add_sys_operation(sysop_card)
             sysop_card_id = sysop_card.id
@@ -674,6 +674,8 @@ class JiuWenClaw:
             handler = getattr(self._skill_manager, handler_name)
             try:
                 payload = await handler(request.params)
+                if handler_name in ["handle_skills_install", "handle_skills_uninstall", "handle_skills_import_local"]:
+                    await self.create_instance()
             except Exception as exc:
                 logger.error("[JiuWenClaw] skills 请求处理失败: %s", exc)
                 return AgentResponse(
@@ -791,7 +793,8 @@ class JiuWenClaw:
             thinking      → chat.processing_status
             todo.updated  → todo.updated  (todo 列表变更通知)
         """
-        await self.create_instance()
+        if self._instance is None:
+            raise RuntimeError("JiuWenClaw 未初始化，请先调用 create_instance()")
 
         # 检查模型配置
         if not self._has_valid_model_config():
