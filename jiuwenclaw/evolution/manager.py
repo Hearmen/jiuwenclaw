@@ -4,7 +4,6 @@
 from __future__ import annotations
 
 import json
-import logging
 import re
 from datetime import datetime, timezone
 from pathlib import Path
@@ -18,8 +17,7 @@ from jiuwenclaw.evolution.schema import (
     VALID_SECTIONS,
 )
 from jiuwenclaw.evolution.signal_detector import SignalDetector
-
-logger = logging.getLogger(__name__)
+from jiuwenclaw.utils import logger
 
 _EVOLUTION_FILENAME = "evolutions.json"
 

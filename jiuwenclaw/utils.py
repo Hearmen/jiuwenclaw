@@ -14,12 +14,13 @@ Handles path resolution for both source and package installations:
 
 import importlib.util
 import logging
+import os
 import shutil
 import sys
 from pathlib import Path
 from typing import Any
 
-logger = logging.getLogger(__name__)
+from openjiuwen.core.common.logging.default import SafeRotatingFileHandler
 
 # User home directory
 USER_HOME = Path.home()
@@ -199,7 +200,6 @@ def _resolve_paths() -> None:
                 _config_dir = USER_WORKSPACE_DIR / "config"
                 _workspace_dir = USER_WORKSPACE_DIR / "workspace"
             else:
-                logger.warning("Could not find package root, falling back to source mode")
                 source_root = _find_source_root()
                 _root_dir = source_root
                 _config_dir = source_root / "config"
@@ -274,3 +274,37 @@ def _get_config_module() -> Any:
         spec.loader.exec_module(module)
         return module
     raise ImportError(f"Cannot load config module from {config_dir}")
+
+
+def setup_logger(log_level: str = "INFO") -> logging.Logger:
+    """Setup logger with console and file handlers."""
+    project_root = get_root_dir()
+    logs_root = project_root / "logs"
+    logs_root.mkdir(parents=True, exist_ok=True)
+
+    logger = logging.getLogger("jiuwenclaw.app")
+    logger.setLevel(getattr(logging, log_level.upper(), logging.INFO))
+    logger.propagate = False
+    logger.handlers.clear()
+
+    formatter = logging.Formatter(
+        fmt="%(asctime)s.%(msecs)03d %(levelname)s %(name)s: %(message)s",
+        datefmt="%Y-%m-%d %H:%M:%S",
+    )
+
+    stream_handler = logging.StreamHandler()
+    stream_handler.setFormatter(formatter)
+
+    file_handler = SafeRotatingFileHandler(
+        filename=logs_root / "app.log",
+        maxBytes=20 * 1024 * 1024,
+        backupCount=20,
+        encoding="utf-8"
+    )
+    file_handler.setFormatter(formatter)
+
+    logger.addHandler(stream_handler)
+    logger.addHandler(file_handler)
+    return logger
+
+logger = setup_logger(os.getenv("LOG_LEVEL", "INFO"))

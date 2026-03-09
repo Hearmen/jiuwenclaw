@@ -21,15 +21,8 @@ from dotenv import load_dotenv
 from typing import Any
 import psutil
 
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s.%(msecs)03d %(name)s %(levelname)s: %(message)s",
-    datefmt="%Y-%m-%d %H:%M:%S",
-)
-logger = logging.getLogger(__name__)
-
 # 项目根目录，用于查找 workspace、agentserver 等目录
-from jiuwenclaw.paths import get_root_dir, get_config_dir, is_package_installation
+from jiuwenclaw.utils import get_root_dir, get_config_dir, is_package_installation, logger
 
 _PROJECT_ROOT = get_root_dir()
 _ENV_FILE = _PROJECT_ROOT / ".env"

@@ -5,7 +5,6 @@
 from __future__ import annotations
 
 import asyncio
-import logging
 import os
 from typing import Any, AsyncIterator
 
@@ -15,7 +14,7 @@ from dotenv import load_dotenv
 from openjiuwen.core.runner import Runner
 from openjiuwen.core.single_agent import AgentCard, ReActAgentConfig
 from openjiuwen.core.sys_operation import SysOperationCard, OperationMode, LocalWorkConfig
-from jiuwenclaw.paths import _get_config_module, get_root_dir
+from jiuwenclaw.utils import _get_config_module, get_root_dir, logger, USER_WORKSPACE_DIR
 
 _config_module = _get_config_module()
 get_config = _config_module.get_config
@@ -48,9 +47,7 @@ from jiuwenclaw.agentserver.prompt_builder import DEFAULT_WORKSPACE_DIR
 from jiuwenclaw.evolution.skill_optimizer import SkillOptimizer
 from jiuwenclaw.schema.agent import AgentRequest, AgentResponse, AgentResponseChunk
 from jiuwenclaw.schema.message import ReqMethod
-from jiuwenclaw.paths import USER_WORKSPACE_DIR
 
-logger = logging.getLogger(__name__)
 load_dotenv(dotenv_path=get_root_dir() / ".env")
 
 

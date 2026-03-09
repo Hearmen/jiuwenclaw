@@ -16,8 +16,7 @@ from dataclasses import dataclass
 from typing import Any, Callable
 from urllib.parse import urlparse
 
-from loguru import logger
-
+from jiuwenclaw.utils import logger
 from jiuwenclaw.channel.base import BaseChannel, ChannelMetadata, RobotMessageRouter
 from jiuwenclaw.schema.message import Message, ReqMethod
 
@@ -132,7 +131,7 @@ class XiaoyiChannel(BaseChannel):
             return
         session_id = msg.session_id or ""
         task_id = self._session_task_map.get(session_id, session_id)
-        logger.info("XiaoyiChannel 发送消息: {}", msg)
+        logger.info(f"XiaoyiChannel 发送消息: {msg}")
 
         content = ""
         if isinstance(msg.payload, dict):
@@ -187,7 +186,7 @@ class XiaoyiChannel(BaseChannel):
 
         async with websockets.connect(url, additional_headers=headers, ssl=ssl_context) as ws:
             self._ws_connections[url_key] = ws
-            logger.info("XiaoyiChannel 已连接 ({}): {}", url_key, url)
+            logger.info(f"XiaoyiChannel 已连接 {url_key}: {url}")
 
             # 发送初始化消息（必须在 heartbeat 之前）
             await self._send_init_message(url_key)
@@ -205,7 +204,7 @@ class XiaoyiChannel(BaseChannel):
                     self._heartbeat_tasks[url_key].cancel()
                     self._heartbeat_tasks[url_key] = None
                 self._ws_connections[url_key] = None
-                logger.info("XiaoyiChannel 连接关闭 ({}): {}", url_key, url)
+                logger.info(f"XiaoyiChannel 连接关闭 {url_key} : {url}")
 
     async def _send_init_message(self, url_key: str) -> None:
         """发送初始化消息 (clawd_bot_init) 到指定通道."""
@@ -218,9 +217,9 @@ class XiaoyiChannel(BaseChannel):
         }
         try:
             await ws.send(json.dumps(init_message))
-            logger.info("XiaoyiChannel 已发送初始化消息 ({})", url_key)
+            logger.info(f"XiaoyiChannel 已发送初始化消息 ({url_key})")
         except Exception as e:
-            logger.warning("XiaoyiChannel 发送初始化消息失败 ({}): {}", url_key, e)
+            logger.warning(f"XiaoyiChannel 发送初始化消息失败 ({url_key}): {e}")
             raise
 
     async def _heartbeat_loop(self, url_key: str) -> None:
@@ -300,7 +299,7 @@ class XiaoyiChannel(BaseChannel):
     async def _handle_clear_context(self, message: dict[str, Any]) -> None:
         """处理清空上下文请求."""
         session_id = message.get("sessionId", "")
-        logger.info("XiaoyiChannel 清空上下文: {}", session_id)
+        logger.info("XiaoyiChannel 清空上下文: {session_id}")
 
         self._session_task_map.pop(session_id, None)
 
@@ -317,7 +316,7 @@ class XiaoyiChannel(BaseChannel):
         """处理取消任务请求."""
         session_id = message.get("sessionId", "")
         task_id = message.get("params", {}).get("id") or message.get("taskId", "")
-        logger.info("XiaoyiChannel 取消任务: {} {}", session_id, task_id)
+        logger.info("XiaoyiChannel 取消任务: {session_id} {task_id}")
 
         response = {
             "jsonrpc": "2.0",

@@ -5,17 +5,15 @@
 from __future__ import annotations
 
 import asyncio
-import logging
 import time
 from abc import ABC, abstractmethod
 from typing import TYPE_CHECKING
 
+from jiuwenclaw.utils import logger
 if TYPE_CHECKING:
     from jiuwenclaw.gateway.agent_client import AgentServerClient
     from jiuwenclaw.schema.agent import AgentRequest, AgentResponse, AgentResponseChunk
     from jiuwenclaw.schema.message import Message
-
-logger = logging.getLogger(__name__)
 
 
 # ---------- 双队列实现：入队经 AgentServerClient 发往 AgentServer ----------

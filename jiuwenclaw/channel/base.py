@@ -6,8 +6,7 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Callable, Awaitable
 
-from loguru import logger
-
+from jiuwenclaw.utils import logger
 from jiuwenclaw.schema.message import Message
 
 if TYPE_CHECKING:

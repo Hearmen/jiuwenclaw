@@ -9,7 +9,6 @@ from __future__ import annotations
 
 import asyncio
 import importlib.util
-import logging
 import sys
 import uuid
 from dataclasses import dataclass, field
@@ -35,7 +34,7 @@ from jiuwenclaw.agentserver.tools.todo_toolkits import TodoToolkit
 from jiuwenclaw.agentserver.prompt_builder import build_system_prompt
 from jiuwenclaw.evolution.skill_call_operator import SkillCallOperator
 from jiuwenclaw.evolution.skill_optimizer import SkillOptimizer
-from jiuwenclaw.paths import _get_config_module
+from jiuwenclaw.utils import _get_config_module, logger
 
 _config_module = _get_config_module()
 get_config = _config_module.get_config
@@ -45,8 +44,6 @@ _react_config = get_config().get("react", {})
 ANSWER_CHUNK_SIZE = _react_config.get("answer_chunk_size", 500)
 STREAM_CHUNK_THRESHOLD = _react_config.get("stream_chunk_threshold", 50)
 STREAM_CHARACTER_THRESHOLD = _react_config.get("stream_character_threshold", 2000)
-
-logger = logging.getLogger(__name__)
 
 _TODO_TOOL_NAMES = frozenset(
     ["todo_create", "todo_complete", "todo_insert", "todo_remove", "todo_list"]

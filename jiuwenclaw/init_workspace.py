@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import logging
 
-from jiuwenclaw.paths import init_user_workspace
+from jiuwenclaw.utils import init_user_workspace
 
 
 def main() -> None:

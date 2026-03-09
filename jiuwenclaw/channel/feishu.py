@@ -8,9 +8,9 @@ import time
 from collections import OrderedDict
 from typing import Any, Callable
 
-from loguru import logger
 from pydantic import BaseModel, Field
 
+from jiuwenclaw.utils import logger
 from jiuwenclaw.channel.base import RobotMessageRouter, BaseChannel
 from jiuwenclaw.schema.message import Message, ReqMethod
 

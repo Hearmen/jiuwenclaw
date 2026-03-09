@@ -3,7 +3,6 @@
 """Memory tools for JiuWenClaw - Using @tool decorator for openjiuwen."""
 
 import os
-import logging
 from typing import Optional, Dict, Any, List
 
 from openjiuwen.core.foundation.tool.tool import tool
@@ -14,8 +13,7 @@ from ..memory import (
     create_memory_settings,
     is_memory_enabled,
 )
-
-logger = logging.getLogger(__name__)
+from jiuwenclaw.utils import logger
 
 _global_manager: Optional[MemoryIndexManager] = None
 _global_workspace_dir: str = "."

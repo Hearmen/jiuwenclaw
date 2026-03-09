@@ -1,13 +1,11 @@
 # Copyright (c) Huawei Technologies Co., Ltd. 2025. All rights reserved.
 
 import os
-import logging
 from datetime import datetime
 from typing import Optional
 
-from jiuwenclaw.paths import get_agent_workspace_dir
+from jiuwenclaw.utils import get_agent_workspace_dir, logger
 
-logger = logging.getLogger(__name__)
 
 SILENT_REPLY_TOKEN = "[[SILENT]]"
 

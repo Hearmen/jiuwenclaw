@@ -18,7 +18,7 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import unquote, urlparse
 
-from jiuwenclaw.paths import get_root_dir, is_package_installation
+from jiuwenclaw.utils import get_root_dir, is_package_installation
 
 
 def _get_package_dir() -> Path:
