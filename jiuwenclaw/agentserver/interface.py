@@ -204,7 +204,7 @@ class JiuWenClaw:
         try:
             sysop_card = SysOperationCard(
                 mode=OperationMode.LOCAL,
-                work_config=LocalWorkConfig(work_dir=None),
+                work_config=LocalWorkConfig(work_dir=USER_WORKSPACE_DIR / "workspace"),
             )
             Runner.resource_mgr.add_sys_operation(sysop_card)
             sysop_card_id = sysop_card.id

@@ -34,7 +34,7 @@ from jiuwenclaw.agentserver.tools.todo_toolkits import TodoToolkit
 from jiuwenclaw.agentserver.prompt_builder import build_system_prompt
 from jiuwenclaw.evolution.skill_call_operator import SkillCallOperator
 from jiuwenclaw.evolution.skill_optimizer import SkillOptimizer
-from jiuwenclaw.utils import _get_config_module, logger
+from jiuwenclaw.utils import _get_config_module, logger, USER_WORKSPACE_DIR
 
 _config_module = _get_config_module()
 get_config = _config_module.get_config
@@ -126,7 +126,7 @@ class JiuClawReActAgent(ReActAgent):
         super().__init__(card)
         self._stream_tasks: set[asyncio.Task] = set()
         self._pause_events: dict[str, asyncio.Event] = {}  # task_key -> event
-        self._workspace_dir = Path(__file__).parent.parent.parent / "workspace"
+        self._workspace_dir = USER_WORKSPACE_DIR / "workspace"
         self._memory_dir = self._workspace_dir / "agent"
         self._agent_id: str = "main_agent"
 
@@ -1151,7 +1151,7 @@ class JiuClawReActAgent(ReActAgent):
         content_parts: List[str] = []
 
         # 2. workspace_prompt
-        workspace = self._workspace_dir / "session" / session_id
+        workspace = self._workspace_dir
         content_parts.append(f"# Workspace\nYour temporal working directory is: {workspace}\n"
                              "Write or save all files under this dir.")
 
