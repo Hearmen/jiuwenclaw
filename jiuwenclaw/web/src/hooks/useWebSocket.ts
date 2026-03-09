@@ -178,6 +178,7 @@ export function useWebSocket(options: UseWebSocketOptions): UseWebSocketReturn {
   const onConnectRef = useRef(onConnect);
   const onDisconnectRef = useRef(onDisconnect);
   const onErrorRef = useRef(onError);
+  const sendMessageRef = useRef<typeof sendMessage>();
   const recentEventRef = useRef<Map<string, number>>(new Map());
   const eventDedupDroppedRef = useRef<Record<string, number>>({});
 
@@ -199,6 +200,7 @@ export function useWebSocket(options: UseWebSocketOptions): UseWebSocketReturn {
     clearSubtasks,
     clearMessages,
     setPendingQuestion,
+    removeFromTaskQueue,
   } = useChatStore();
   const { setTodos, clearTodos } = useTodoStore();
   const {
@@ -345,6 +347,11 @@ export function useWebSocket(options: UseWebSocketOptions): UseWebSocketReturn {
     },
     [addMessage, request, setProcessing, setThinking]
   );
+
+  // 存储sendMessage函数到ref
+  useEffect(() => {
+    sendMessageRef.current = sendMessage;
+  }, [sendMessage]);
 
   // 统一中断接口 - pause/cancel/supplement/resume
   const interrupt = useCallback(
@@ -671,6 +678,20 @@ export function useWebSocket(options: UseWebSocketOptions): UseWebSocketReturn {
         if (!isProcessingNow) {
           setThinking(false);
           clearSubtasks();
+          
+          // 检查是否有等待的任务队列
+          const currentMode = useSessionStore.getState().mode;
+          const { taskQueue } = useChatStore.getState();
+          if (currentMode === 'agent' && taskQueue.length > 0) {
+            // 智能执行模式下，自动处理队列中的下一个任务
+            const nextTask = taskQueue[0];
+            if (nextTask && activeSessionIdRef.current && sendMessageRef.current) {
+              // 从队列中移除该任务
+              removeFromTaskQueue(nextTask.id);
+              // 发送下一个任务
+              sendMessageRef.current(nextTask.content, activeSessionIdRef.current);
+            }
+          }
         }
       }),
       webClient.on('chat.error', ({ payload }) => {

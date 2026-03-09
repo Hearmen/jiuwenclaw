@@ -27,9 +27,10 @@ export function InputArea({
   const isComposingRef = useRef(false);
   const activePointerIdRef = useRef<number | null>(null);
   const isVoicePressingRef = useRef(false);
-  const { isPaused } = useChatStore();
+  const { isPaused, taskQueue, addToTaskQueue, removeFromTaskQueue } = useChatStore();
   const { mode } = useSessionStore();
   const isInterruptible = isProcessing || isPaused;
+  const isAgentMode = mode === 'agent';
   const modes: Array<{ value: AgentMode; label: string; icon: JSX.Element }> = [
     { value: 'plan', label: '任务规划', icon: (
       <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}>
@@ -107,7 +108,13 @@ export function InputArea({
     }
 
     if (isInterruptible) {
-      onInterrupt(trimmed);
+      if (isAgentMode) {
+        // 智能执行模式下，将任务添加到队列
+        addToTaskQueue(trimmed);
+      } else {
+        // 其他模式下，中断当前任务
+        onInterrupt(trimmed);
+      }
     } else {
       onSubmit(trimmed);
     }
@@ -117,7 +124,7 @@ export function InputArea({
     if (textareaRef.current) {
       textareaRef.current.style.height = 'auto';
     }
-  }, [value, pendingVoiceText, isInterruptible, isListening, onSubmit, onInterrupt, stopListening]);
+  }, [value, pendingVoiceText, isInterruptible, isListening, onSubmit, onInterrupt, stopListening, isAgentMode, addToTaskQueue]);
 
   const handleKeyDown = useCallback(
     (e: KeyboardEvent<HTMLTextAreaElement>) => {
@@ -219,6 +226,35 @@ export function InputArea({
         </div>
       )}
 
+      {/* 智能执行模式下的等待任务盒子 */}
+      {isAgentMode && taskQueue.length > 0 && (
+        <div className="chat-input-task-queue">
+          <div className="chat-input-task-queue-header">
+            <svg className="w-4 h-4 mr-2" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-3 7h3m-3 4h3m-6-4h.01M9 16h.01" />
+            </svg>
+            等待任务 ({taskQueue.length})
+          </div>
+          <div className="chat-input-task-queue-list">
+            {taskQueue.map((task) => (
+              <div key={task.id} className="chat-input-task-item">
+                <span className="chat-input-task-content">{task.content}</span>
+                <button
+                  type="button"
+                  onClick={() => removeFromTaskQueue(task.id)}
+                  className="chat-input-task-remove"
+                  title="移除任务"
+                >
+                  <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+                  </svg>
+                </button>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
       <textarea
         ref={textareaRef}
         value={displayValue}
@@ -230,6 +266,8 @@ export function InputArea({
         placeholder={
           isListening
             ? '正在听取语音...'
+            : isAgentMode && isInterruptible
+            ? '处理中，输入新指令将加入等待队列...'
             : isInterruptible
             ? '处理中，输入新指令可中断...'
             : 'Enter 发送，Shift+Enter 换行，按住语音键开始录音'
