@@ -18,7 +18,7 @@ from urllib.parse import urlparse
 
 from jiuwenclaw.utils import logger
 from jiuwenclaw.channel.base import BaseChannel, ChannelMetadata, RobotMessageRouter
-from jiuwenclaw.schema.message import Message, ReqMethod
+from jiuwenclaw.schema.message import EventType, Message, ReqMethod
 
 
 @dataclass
@@ -69,6 +69,7 @@ class XiaoyiChannel(BaseChannel):
         self._heartbeat_tasks: dict[str, asyncio.Task] = {}  # Heartbeat tasks for each channel
         self._connect_tasks: dict[str, asyncio.Task] = {}  # Connection tasks for each channel
         self._session_task_map: dict[str, str] = {}
+        self._session_heartbeat_tasks: dict[str, asyncio.Task] = {}  # Response heartbeat tasks for each session
         self._on_message_cb: Callable[[Message], Any] | None = None
 
     @property
@@ -112,16 +113,22 @@ class XiaoyiChannel(BaseChannel):
             if self._connect_tasks[url_key]:
                 self._connect_tasks[url_key].cancel()
                 self._connect_tasks[url_key] = None
+        # Cancel all session heartbeat tasks
+        for session_id in list(self._session_heartbeat_tasks.keys()):
+            if self._session_heartbeat_tasks[session_id]:
+                self._session_heartbeat_tasks[session_id].cancel()
+                self._session_heartbeat_tasks[session_id] = None
         # Close all websocket connections
         for url_key, ws in list(self._ws_connections.items()):
             if ws:
                 try:
                     await ws.close()
                 except Exception as e:
-                    logger.warning("关闭 WebSocket 连接失败 ({}): {}", url_key, e)
+                    logger.warning(f"关闭 WebSocket 连接失败 ({url_key}): {e}")
                 self._ws_connections[url_key] = None
         self._heartbeat_tasks.clear()
         self._connect_tasks.clear()
+        self._session_heartbeat_tasks.clear()
         self._ws_connections.clear()
         logger.info("XiaoyiChannel 已停止")
 
@@ -146,9 +153,12 @@ class XiaoyiChannel(BaseChannel):
         for url_key, ws in self._ws_connections.items():
             if ws:
                 try:
-                    await self._send_text_response(session_id, task_id, content, url_key)
+                    await self._send_text_response(session_id, task_id, content, url_key, is_final=True)
                 except Exception as e:
-                    logger.warning("XiaoyiChannel 发送消息失败 ({}): {}", url_key, e)
+                    logger.warning(f"XiaoyiChannel 发送消息失败 ({url_key}): {e}")
+
+        if session_id:
+            await self._stop_session_heartbeat(session_id)
 
     def get_metadata(self) -> ChannelMetadata:
         return ChannelMetadata(
@@ -168,7 +178,7 @@ class XiaoyiChannel(BaseChannel):
             try:
                 await self._connect(url_key, url)
             except Exception as e:
-                logger.warning("XiaoyiChannel 连接失败 ({}): {}", url, e)
+                logger.warning(f"XiaoyiChannel 连接失败 ({url}): {e}")
                 await asyncio.sleep(5)
 
     async def _connect(self, url_key: str, url: str) -> None:
@@ -198,7 +208,7 @@ class XiaoyiChannel(BaseChannel):
                 async for raw in ws:
                     await self._handle_raw_message(raw)
             except Exception as e:
-                logger.warning("XiaoyiChannel 连接异常 ({}): {}", url_key, e)
+                logger.warning(f"XiaoyiChannel 连接异常 ({url_key}): {e}")
             finally:
                 if self._heartbeat_tasks.get(url_key):
                     self._heartbeat_tasks[url_key].cancel()
@@ -231,7 +241,7 @@ class XiaoyiChannel(BaseChannel):
                 if ws:
                     await ws.send(json.dumps(heartbeat))
             except Exception as e:
-                logger.warning("XiaoyiChannel 心跳发送失败 ({}): {}", url_key, e)
+                logger.warning(f"XiaoyiChannel 心跳发送失败 ({url_key}): {e}")
                 break
             await asyncio.sleep(20)
 
@@ -257,7 +267,7 @@ class XiaoyiChannel(BaseChannel):
         elif method == "tasks/cancel":
             await self._handle_tasks_cancel(message)
         else:
-            logger.warning("XiaoyiChannel 未知方法: {}", method)
+            logger.warning(f"XiaoyiChannel 未知方法: {method}")
 
     async def _handle_message_stream(self, message: dict[str, Any]) -> None:
         """处理 message/stream 消息，转换为 JiuwenClaw Message."""
@@ -296,10 +306,50 @@ class XiaoyiChannel(BaseChannel):
         if not handled:
             await self.bus.route_user_message(user_message)
 
+        # Start session heartbeat to prevent xiaoyi client timeout
+        if session_id:
+            await self._start_session_heartbeat(session_id, task_id)
+
+    async def _start_session_heartbeat(self, session_id: str, task_id: str) -> None:
+        """启动会话心跳任务，每隔5秒发送空消息直到final消息发出."""
+        await self._stop_session_heartbeat(session_id)
+
+        async def heartbeat_loop():
+            try:
+                while self._running:
+                    await asyncio.sleep(5)
+                    # Send empty heartbeat message (non-final)
+                    for url_key, ws in self._ws_connections.items():
+                        if ws:
+                            try:
+                                await self._send_text_response(session_id, task_id, "", url_key, is_final=False)
+                            except Exception as e:
+                                logger.warning(f"XiaoyiChannel 发送心跳消息面败 ({url_key}): {e}")
+            except asyncio.CancelledError:
+                logger.info(f"XiaoyiChannel 会话心跳已停止: {session_id}")
+            except Exception as e:
+                logger.warning(f"XiaoyiChannel 会话心跳异常 ({session_id}): {e}")
+
+        self._session_heartbeat_tasks[session_id] = asyncio.create_task(heartbeat_loop())
+        logger.info(f"XiaoyiChannel 会话心跳已启动: {session_id}")
+
+    async def _stop_session_heartbeat(self, session_id: str) -> None:
+        """停止会话心跳任务."""
+        if session_id in self._session_heartbeat_tasks:
+            task = self._session_heartbeat_tasks[session_id]
+            if task and not task.done():
+                task.cancel()
+                try:
+                    await task
+                except asyncio.CancelledError:
+                    pass
+            self._session_heartbeat_tasks.pop(session_id, None)
+            logger.info(f"XiaoyiChannel 会话心跳已停止: {session_id}")
+
     async def _handle_clear_context(self, message: dict[str, Any]) -> None:
         """处理清空上下文请求."""
         session_id = message.get("sessionId", "")
-        logger.info("XiaoyiChannel 清空上下文: {session_id}")
+        logger.info(f"XiaoyiChannel 清空上下文: {session_id}")
 
         self._session_task_map.pop(session_id, None)
 
@@ -316,7 +366,7 @@ class XiaoyiChannel(BaseChannel):
         """处理取消任务请求."""
         session_id = message.get("sessionId", "")
         task_id = message.get("params", {}).get("id") or message.get("taskId", "")
-        logger.info("XiaoyiChannel 取消任务: {session_id} {task_id}")
+        logger.info(f"XiaoyiChannel 取消任务: {session_id} {task_id}")
 
         response = {
             "jsonrpc": "2.0",
@@ -327,7 +377,7 @@ class XiaoyiChannel(BaseChannel):
         for url_key in list(self._ws_connections.keys()):
             await self._send_agent_response(session_id, task_id, response, url_key)
 
-    async def _send_text_response(self, session_id: str, task_id: str, text: str, url_key: str) -> None:
+    async def _send_text_response(self, session_id: str, task_id: str, text: str, url_key: str, is_final: bool = True) -> None:
         """发送文本响应（A2A 格式）到指定通道."""
         response = {
             "jsonrpc": "2.0",
@@ -336,8 +386,8 @@ class XiaoyiChannel(BaseChannel):
                 "taskId": task_id,
                 "kind": "artifact-update",
                 "append": False,
-                "lastChunk": True,
-                "final": True,
+                "lastChunk": is_final,
+                "final": is_final,
                 "artifact": {
                     "artifactId": f"artifact_{int(time.time() * 1000)}",
                     "parts": [{"kind": "text", "text": text}],
@@ -361,4 +411,4 @@ class XiaoyiChannel(BaseChannel):
         try:
             await ws.send(json.dumps(wrapper))
         except Exception as e:
-            logger.warning("XiaoyiChannel 发送响应失败 ({}): {}", url_key, e)
+            logger.warning(f"XiaoyiChannel 发送响应失败 ({url_key}): {e}")

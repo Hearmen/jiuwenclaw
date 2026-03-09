@@ -578,6 +578,16 @@ class JiuClawReActAgent(ReActAgent):
                 logger.info("stream_process cancelled")
             except Exception as e:
                 logger.exception("stream error: %s", e)
+                await session.write_stream(
+                            OutputSchema(
+                                type="answer",
+                                index=0,
+                                payload={
+                                    "output": str(e),
+                                    "result_type": "error",
+                                },
+                            )
+                        )
             finally:
                 if session is not None:
                     await self.context_engine.save_contexts(session)
