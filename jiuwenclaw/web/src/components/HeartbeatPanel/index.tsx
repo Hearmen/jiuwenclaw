@@ -4,14 +4,6 @@ import { HeartbeatMessageModal } from '../../features/HeartbeatMessageModal';
 import { webRequest } from '../../services/webClient';
 import { useSessionStore } from '../../stores';
 
-// 频道类型定义
-type ChannelItem = {
-  channel_id: string;
-  label: string;
-  logo_src: string | null;
-  enabled: boolean;
-};
-
 const HEARTBEAT_FILE_PATH = 'workspace/HEARTBEAT.md';
 const HEARTBEAT_FILE_NAME = 'HEARTBEAT.md';
 
