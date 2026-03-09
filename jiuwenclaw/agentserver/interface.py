@@ -86,12 +86,6 @@ _SKILL_ROUTES: dict[ReqMethod, str] = {
 }
 
 
-def _bootstrap_env_aliases() -> None:
-    """Normalize legacy env names for compatibility."""
-    if not os.getenv("API_BASE") and os.getenv("BASE_URL"):
-        os.environ["API_BASE"] = os.getenv("BASE_URL", "")
-
-
 class JiuWenClaw:
     """基于 openJiuwen ReActAgent 的 AgentServer 实现."""
 
@@ -108,32 +102,22 @@ class JiuWenClaw:
         self._todo_tool_sessions_registered: set[str] = set()
         self._sysop_card_id: str | None = None
 
-    async def create_instance(self, config: dict[str, Any] | None = None) -> None:
-        """初始化 ReActAgent 实例.
-
-        Args:
-            config: 可选配置，支持以下字段：
-                - agent_name: Agent 名称，默认 "main_agent"。
-                - workspace_dir: 工作区目录，默认 "workspace/agent"。
-                - 其余字段透传给 ReActAgentConfig。
-        """
-        PersistenceCheckpointerProvider()
-        checkpoint_path = USER_WORKSPACE_DIR / "checkpoint"
-        checkpointer = await CheckpointerFactory.create(
-            CheckpointerConfig(
-                type="persistence",
-                conf={"db_type": "sqlite", "db_path": f"{checkpoint_path}/checkpoint"},
+    @staticmethod
+    async def set_checkpoint():
+        try:
+            PersistenceCheckpointerProvider()
+            checkpoint_path = USER_WORKSPACE_DIR / "checkpoint"
+            checkpointer = await CheckpointerFactory.create(
+                CheckpointerConfig(
+                    type="persistence",
+                    conf={"db_type": "sqlite", "db_path": f"{checkpoint_path}/checkpoint"},
+                )
             )
-        )
-        CheckpointerFactory.set_default_checkpointer(checkpointer)
+            CheckpointerFactory.set_default_checkpointer(checkpointer)
+        except Exception as e:
+            logger.error(("[JiuWenClaw] fail to setup checkpoint due to: %s", e))
 
-        _bootstrap_env_aliases()
-        config_base = get_config()
-
-        # 使用传入的 config 或从文件加载的配置
-        if config is None:
-            config = config_base.get('react', {}).copy()
-
+    def _load_react_config(self, config):
         # 提取 agent_name，如果不存在则使用默认值
         agent_name = config.pop("agent_name", "main_agent")
         self._agent_name = agent_name
@@ -169,20 +153,8 @@ class JiuWenClaw:
             {"role": "system", "content": SYSTEM_PROMPT}
         ]
 
-        sysop_card_id: str | None = None
-        try:
-            sysop_card = SysOperationCard(
-                mode=OperationMode.LOCAL,
-                work_config=LocalWorkConfig(work_dir=None),
-            )
-            Runner.resource_mgr.add_sys_operation(sysop_card)
-            sysop_card_id = sysop_card.id
-        except Exception as exc:
-            logger.warning("[JiuWenClaw] add sys_operation failed, fallback without it: %s", exc)
-        self._sysop_card_id = sysop_card_id
-
         # 创建 ReActAgentConfig
-        agent_config = ReActAgentConfig(**config) if config else ReActAgentConfig()
+        agent_config = ReActAgentConfig(**config)
 
         # 上下文压缩卸载
         processors = [
@@ -211,8 +183,36 @@ class JiuWenClaw:
             )
         ]
         agent_config.configure_context_processors(processors)
+        return agent_config
 
-        agent_card = AgentCard(name=agent_name, id='jiuwenclaw')
+    async def create_instance(self, config: dict[str, Any] | None = None) -> None:
+        """初始化 ReActAgent 实例.
+
+        Args:
+            config: 可选配置，支持以下字段：
+                - agent_name: Agent 名称，默认 "main_agent"。
+                - workspace_dir: 工作区目录，默认 "workspace/agent"。
+                - 其余字段透传给 ReActAgentConfig。
+        """
+        await self.set_checkpoint()
+
+        config_base = get_config()
+        config = config_base.get('react', {}).copy()
+        agent_config = self._load_react_config(config)
+
+        sysop_card_id: str | None = None
+        try:
+            sysop_card = SysOperationCard(
+                mode=OperationMode.LOCAL,
+                work_config=LocalWorkConfig(work_dir=None),
+            )
+            Runner.resource_mgr.add_sys_operation(sysop_card)
+            sysop_card_id = sysop_card.id
+        except Exception as exc:
+            logger.warning("[JiuWenClaw] add sys_operation failed, fallback without it: %s", exc)
+        self._sysop_card_id = sysop_card_id
+
+        agent_card = AgentCard(name=self._agent_name, id='jiuwenclaw')
         self._instance = JiuClawReActAgent(card=agent_card)
 
         if sysop_card_id and hasattr(self._instance, "_skill_util"):
@@ -294,16 +294,15 @@ class JiuWenClaw:
                     keep_recent=10
                 )
 
-        if not self._browser_mcp_registered:
-            try:
-                self._browser_mcp_registered = await register_browser_runtime_mcp_server(
-                    self._instance,
-                    tag=f"agent.{self._agent_name}",
-                )
-            except Exception as exc:
-                logger.warning("[JiuWenClaw] browser MCP registration skipped: %s", exc)
+        try:
+            self._browser_mcp_registered = await register_browser_runtime_mcp_server(
+                self._instance,
+                tag=f"agent.{self._agent_name}",
+            )
+        except Exception as exc:
+            logger.warning("[JiuWenClaw] browser MCP registration skipped: %s", exc)
 
-        logger.info("[JiuWenClaw] 初始化完成: agent_name=%s", agent_name)
+        logger.info("[JiuWenClaw] 初始化完成: agent_name=%s", self._agent_name)
 
     def reload_agent_config(self) -> None:
         """从 config.yaml 重新加载配置并 reconfigure 当前实例，使模型/API 等配置生效且不重启进程。"""
@@ -311,56 +310,14 @@ class JiuWenClaw:
             raise RuntimeError("JiuWenClaw 未初始化，请先调用 create_instance()")
         clear_config_cache()
         clear_memory_manager_cache()
+
         config_base = get_config()
-        config = config_base.get("react", {}).copy()
-        config.pop("agent_name", None)
-        config.pop("workspace_dir", None)
-        if "model_client_config" in config:
-            mcc = config["model_client_config"]
-            if not isinstance(mcc, dict):
-                mcc = {}
-            else:
-                mcc = mcc.copy()
-            if "client_provider" not in mcc:
-                mcc["client_provider"] = config.get("model_provider", os.getenv("MODEL_PROVIDER", "OpenAI"))
-            p = mcc.get("client_provider", "")
-            if isinstance(p, str) and p.strip().lower() == "openai":
-                mcc["client_provider"] = "OpenAI"
-            if "api_base" not in mcc:
-                mcc["api_base"] = config.get("api_base", os.getenv("API_BASE", ""))
-            if "api_key" not in mcc:
-                mcc["api_key"] = config.get("api_key", os.getenv("API_KEY", ""))
-            config["model_client_config"] = mcc
-        config["model_config_obj"] = {"temperature": 0.95}
-        config["prompt_template"] = [{"role": "system", "content": SYSTEM_PROMPT}]
-        config.pop("evolution", None)
-        agent_config = ReActAgentConfig(**config)
+        config = config_base.get('react', {}).copy()
+        agent_config = self._load_react_config(config)
+
         if self._sysop_card_id:
             agent_config.sys_operation_id = self._sysop_card_id
-        processors = [
-            (
-                "MessageOffloader",
-                MessageOffloaderConfig(
-                    messages_threshold=40,
-                    tokens_threshold=20000,
-                    large_message_threshold=1000,
-                    trim_size=500,
-                    offload_message_type=["tool"],
-                    keep_last_round=False,
-                ),
-            ),
-            (
-                "DialogueCompressor",
-                DialogueCompressorConfig(
-                    messages_threshold=40,
-                    tokens_threshold=50000,
-                    model=ModelRequestConfig(model=config["model_name"]),
-                    model_client=config["model_client_config"],
-                    keep_last_round=False,
-                ),
-            ),
-        ]
-        agent_config.configure_context_processors(processors)
+
         if hasattr(self._instance, "_llm"):
             self._instance._llm = None
         self._instance.configure(agent_config)
@@ -452,14 +409,14 @@ class JiuWenClaw:
             self._mcp_tools_registered = True
 
         # Retry browser MCP registration on each request until success.
-        if not self._browser_mcp_registered:
-            try:
-                self._browser_mcp_registered = await register_browser_runtime_mcp_server(
-                    self._instance,
-                    tag=f"agent.{self._agent_name}",
-                )
-            except Exception as exc:
-                logger.warning("[JiuWenClaw] browser MCP registration retry skipped: %s", exc)
+        # if not self._browser_mcp_registered:
+        #     try:
+        #         self._browser_mcp_registered = await register_browser_runtime_mcp_server(
+        #             self._instance,
+        #             tag=f"agent.{self._agent_name}",
+        #         )
+        #     except Exception as exc:
+        #         logger.warning("[JiuWenClaw] browser MCP registration retry skipped: %s", exc)
 
     async def process_interrupt(self, request: AgentRequest) -> AgentResponse:
         """处理 interrupt 请求.
@@ -834,8 +791,7 @@ class JiuWenClaw:
             thinking      → chat.processing_status
             todo.updated  → todo.updated  (todo 列表变更通知)
         """
-        if self._instance is None:
-            raise RuntimeError("JiuWenClaw 未初始化，请先调用 create_instance()")
+        await self.create_instance()
 
         # 检查模型配置
         if not self._has_valid_model_config():
