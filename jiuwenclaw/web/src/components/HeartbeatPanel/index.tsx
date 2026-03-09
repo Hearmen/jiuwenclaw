@@ -4,6 +4,14 @@ import { HeartbeatMessageModal } from '../../features/HeartbeatMessageModal';
 import { webRequest } from '../../services/webClient';
 import { useSessionStore } from '../../stores';
 
+// 频道类型定义
+type ChannelItem = {
+  channel_id: string;
+  label: string;
+  logo_src: string | null;
+  enabled: boolean;
+};
+
 const HEARTBEAT_FILE_PATH = 'workspace/HEARTBEAT.md';
 const HEARTBEAT_FILE_NAME = 'HEARTBEAT.md';
 
@@ -71,6 +79,7 @@ export function HeartbeatPanel() {
   const [activeHoursEnabled, setActiveHoursEnabled] = useState(false);
   const [startInput, setStartInput] = useState('08:00');
   const [endInput, setEndInput] = useState('22:00');
+  
 
   const loadConf = useCallback(async () => {
     setLoading(true);
@@ -182,6 +191,11 @@ export function HeartbeatPanel() {
         setError('active_hours 需使用 HH:MM 格式（例如 08:00）');
         return;
       }
+      // 验证结束时间大于开始时间
+      if (endInput <= startInput) {
+        setError('结束时间必须大于开始时间');
+        return;
+      }
     }
     setSaving(true);
     setError(null);
@@ -189,8 +203,7 @@ export function HeartbeatPanel() {
     try {
       const params: Record<string, unknown> = {
         every,
-        // 暂时固定为当前配置中的目标频道，前端不允许修改
-        target: conf.target,
+        target: targetInput,
       };
       if (activeHoursEnabled) {
         params.active_hours = {
@@ -220,7 +233,7 @@ export function HeartbeatPanel() {
     } finally {
       setSaving(false);
     }
-  }, [activeHoursEnabled, conf.target, endInput, everyInput, saving, startInput]);
+  }, [activeHoursEnabled, endInput, everyInput, saving, startInput, targetInput]);
 
   const openMessageModal = useCallback((message: string) => {
     setModalMessage(message);
@@ -326,13 +339,15 @@ export function HeartbeatPanel() {
 
                   <label className="block space-y-1.5">
                     <span className="text-xs uppercase tracking-wide text-text-muted">目标频道 (channel_id)</span>
-                    <input
-                      type="text"
+                    <select
                       value={targetInput}
-                      disabled
-                      className="w-full rounded-md border border-border bg-secondary/60 px-3 py-2 text-[13px] text-text-muted cursor-not-allowed"
-                    />
-                    <p className="text-[11px] text-text-muted">目标频道暂不支持在此处修改</p>
+                      onChange={(event) => setTargetInput(event.target.value)}
+                      className="w-full rounded-md border border-border bg-bg px-3 py-2 text-[13px] text-text outline-none focus:border-accent"
+                    >
+                      <option value="web">网页 (web)</option>
+                      <option value="xiaoyi">小艺 (xiaoyi)</option>
+                      <option value="feishu">飞书 (feishu)</option>
+                    </select>
                   </label>
 
                   <div className="rounded-lg border border-border bg-secondary/20 p-3 space-y-2">
@@ -347,9 +362,9 @@ export function HeartbeatPanel() {
                     </label>
                     <div className="grid grid-cols-2 gap-2">
                       <label className="space-y-1">
-                        <span className="text-xs text-text-muted">开始时间 (HH:MM)</span>
+                        <span className="text-xs text-text-muted">开始时间</span>
                         <input
-                          type="text"
+                          type="time"
                           value={startInput}
                           onChange={(event) => setStartInput(event.target.value)}
                           disabled={!activeHoursEnabled}
@@ -361,9 +376,9 @@ export function HeartbeatPanel() {
                         />
                       </label>
                       <label className="space-y-1">
-                        <span className="text-xs text-text-muted">结束时间 (HH:MM)</span>
+                        <span className="text-xs text-text-muted">结束时间</span>
                         <input
-                          type="text"
+                          type="time"
                           value={endInput}
                           onChange={(event) => setEndInput(event.target.value)}
                           disabled={!activeHoursEnabled}

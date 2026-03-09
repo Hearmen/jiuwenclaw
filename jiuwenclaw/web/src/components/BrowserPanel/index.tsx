@@ -34,6 +34,7 @@ export function BrowserPanel({ isConnected, request }: BrowserPanelProps) {
   const [starting, setStarting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
+  const [showPathError, setShowPathError] = useState(false);
 
   const hasChanges = useMemo(() => chromePath !== initialPath, [chromePath, initialPath]);
   const isPathValid = useMemo(() => chromePath.trim().length > 0, [chromePath]);
@@ -98,8 +99,13 @@ export function BrowserPanel({ isConnected, request }: BrowserPanelProps) {
     if (starting || !isConnected) {
       return;
     }
+    if (!isPathValid) {
+      setShowPathError(true);
+      return;
+    }
     setStarting(true);
     clearFeedback();
+    setShowPathError(false);
     try {
       const payload = await request<BrowserStartPayload>('browser.start');
       const returncode = normalizeReturnCode(payload);
@@ -164,6 +170,7 @@ export function BrowserPanel({ isConnected, request }: BrowserPanelProps) {
                 onChange={(event) => {
                   setChromePath(event.target.value);
                   if (error) setError(null);
+                  if (showPathError) setShowPathError(false);
                 }}
                 placeholder="例如：/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
                 className="w-full rounded-md border border-border bg-bg px-3 py-2 text-[13px] text-text outline-none focus:border-accent"
@@ -171,7 +178,7 @@ export function BrowserPanel({ isConnected, request }: BrowserPanelProps) {
               />
             </label>
 
-            {!isPathValid ? (
+            {showPathError && !isPathValid ? (
               <div className="text-xs text-danger">Chrome 路径不能为空</div>
             ) : null}
 
