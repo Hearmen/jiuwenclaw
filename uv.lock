@@ -1272,6 +1272,7 @@ source = { editable = "." }
 dependencies = [
     { name = "aiosqlite" },
     { name = "chromadb" },
+    { name = "croniter" },
     { name = "lark-oapi" },
     { name = "loguru" },
     { name = "openjiuwen" },
@@ -1286,6 +1287,7 @@ dependencies = [
 requires-dist = [
     { name = "aiosqlite", specifier = ">=0.22.1" },
     { name = "chromadb", specifier = ">=1.5.0" },
+    { name = "croniter", specifier = ">=2.0.0" },
     { name = "lark-oapi", specifier = ">=1.5.3" },
     { name = "loguru", specifier = ">=0.7.3" },
     { name = "openjiuwen", specifier = "==0.1.7" },

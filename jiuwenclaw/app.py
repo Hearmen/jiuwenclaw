@@ -156,6 +156,7 @@ def _register_web_handlers(
         channel_manager=None,
         on_config_saved=None,
         heartbeat_service=None,
+        cron_controller=None,
 ):
     """注册 Web 前端需要的 method 与 on_connect。
     on_config_saved: 可选，config.set 写回 .env 后调用的回调；返回 True 表示已热更新未重启，False 表示已安排进程重启。
@@ -684,6 +685,156 @@ def _register_web_handlers(
             logger.exception("[channel.xiaoyi.set_conf] %s", e)
             await channel.send_response(ws, req_id, ok=False, error=str(e), code="INTERNAL_ERROR")
 
+    # ----- cron jobs -----
+
+    def _get_cron():
+        return _resolve(cron_controller)
+
+    async def _cron_job_list(ws, req_id, params, session_id):
+        cc = _get_cron()
+        if cc is None:
+            await channel.send_response(ws, req_id, ok=False, error="cron not available", code="INTERNAL_ERROR")
+            return
+        jobs = await cc.list_jobs()
+        await channel.send_response(ws, req_id, ok=True, payload={"jobs": jobs})
+
+    async def _cron_job_get(ws, req_id, params, session_id):
+        cc = _get_cron()
+        if cc is None:
+            await channel.send_response(ws, req_id, ok=False, error="cron not available", code="INTERNAL_ERROR")
+            return
+        if not isinstance(params, dict):
+            await channel.send_response(ws, req_id, ok=False, error="params must be object", code="BAD_REQUEST")
+            return
+        job_id = str(params.get("id") or "").strip()
+        if not job_id:
+            await channel.send_response(ws, req_id, ok=False, error="id is required", code="BAD_REQUEST")
+            return
+        job = await cc.get_job(job_id)
+        if job is None:
+            await channel.send_response(ws, req_id, ok=False, error="job not found", code="NOT_FOUND")
+            return
+        await channel.send_response(ws, req_id, ok=True, payload={"job": job})
+
+    async def _cron_job_create(ws, req_id, params, session_id):
+        cc = _get_cron()
+        if cc is None:
+            await channel.send_response(ws, req_id, ok=False, error="cron not available", code="INTERNAL_ERROR")
+            return
+        if not isinstance(params, dict):
+            await channel.send_response(ws, req_id, ok=False, error="params must be object", code="BAD_REQUEST")
+            return
+        try:
+            job = await cc.create_job(params)
+            await channel.send_response(ws, req_id, ok=True, payload={"job": job})
+        except Exception as e:  # noqa: BLE001
+            await channel.send_response(ws, req_id, ok=False, error=str(e), code="BAD_REQUEST")
+
+    async def _cron_job_update(ws, req_id, params, session_id):
+        cc = _get_cron()
+        if cc is None:
+            await channel.send_response(ws, req_id, ok=False, error="cron not available", code="INTERNAL_ERROR")
+            return
+        if not isinstance(params, dict):
+            await channel.send_response(ws, req_id, ok=False, error="params must be object", code="BAD_REQUEST")
+            return
+        job_id = str(params.get("id") or "").strip()
+        patch = params.get("patch") or {}
+        if not job_id:
+            await channel.send_response(ws, req_id, ok=False, error="id is required", code="BAD_REQUEST")
+            return
+        if not isinstance(patch, dict):
+            await channel.send_response(ws, req_id, ok=False, error="patch must be object", code="BAD_REQUEST")
+            return
+        try:
+            job = await cc.update_job(job_id, patch)
+            await channel.send_response(ws, req_id, ok=True, payload={"job": job})
+        except KeyError:
+            await channel.send_response(ws, req_id, ok=False, error="job not found", code="NOT_FOUND")
+        except Exception as e:  # noqa: BLE001
+            await channel.send_response(ws, req_id, ok=False, error=str(e), code="BAD_REQUEST")
+
+    async def _cron_job_delete(ws, req_id, params, session_id):
+        cc = _get_cron()
+        if cc is None:
+            await channel.send_response(ws, req_id, ok=False, error="cron not available", code="INTERNAL_ERROR")
+            return
+        if not isinstance(params, dict):
+            await channel.send_response(ws, req_id, ok=False, error="params must be object", code="BAD_REQUEST")
+            return
+        job_id = str(params.get("id") or "").strip()
+        if not job_id:
+            await channel.send_response(ws, req_id, ok=False, error="id is required", code="BAD_REQUEST")
+            return
+        deleted = await cc.delete_job(job_id)
+        if not deleted:
+            await channel.send_response(ws, req_id, ok=False, error="job not found", code="NOT_FOUND")
+            return
+        await channel.send_response(ws, req_id, ok=True, payload={"deleted": True})
+
+    async def _cron_job_toggle(ws, req_id, params, session_id):
+        cc = _get_cron()
+        if cc is None:
+            await channel.send_response(ws, req_id, ok=False, error="cron not available", code="INTERNAL_ERROR")
+            return
+        if not isinstance(params, dict):
+            await channel.send_response(ws, req_id, ok=False, error="params must be object", code="BAD_REQUEST")
+            return
+        job_id = str(params.get("id") or "").strip()
+        enabled = params.get("enabled", None)
+        if not job_id:
+            await channel.send_response(ws, req_id, ok=False, error="id is required", code="BAD_REQUEST")
+            return
+        if enabled is None:
+            await channel.send_response(ws, req_id, ok=False, error="enabled is required", code="BAD_REQUEST")
+            return
+        try:
+            job = await cc.toggle_job(job_id, bool(enabled))
+            await channel.send_response(ws, req_id, ok=True, payload={"job": job})
+        except KeyError:
+            await channel.send_response(ws, req_id, ok=False, error="job not found", code="NOT_FOUND")
+
+    async def _cron_job_preview(ws, req_id, params, session_id):
+        cc = _get_cron()
+        if cc is None:
+            await channel.send_response(ws, req_id, ok=False, error="cron not available", code="INTERNAL_ERROR")
+            return
+        if not isinstance(params, dict):
+            await channel.send_response(ws, req_id, ok=False, error="params must be object", code="BAD_REQUEST")
+            return
+        job_id = str(params.get("id") or "").strip()
+        count = params.get("count", 5)
+        if not job_id:
+            await channel.send_response(ws, req_id, ok=False, error="id is required", code="BAD_REQUEST")
+            return
+        try:
+            next_runs = await cc.preview_job(job_id, int(count) if count is not None else 5)
+            await channel.send_response(ws, req_id, ok=True, payload={"next": next_runs})
+        except KeyError:
+            await channel.send_response(ws, req_id, ok=False, error="job not found", code="NOT_FOUND")
+        except Exception as e:  # noqa: BLE001
+            await channel.send_response(ws, req_id, ok=False, error=str(e), code="BAD_REQUEST")
+
+    async def _cron_job_run_now(ws, req_id, params, session_id):
+        cc = _get_cron()
+        if cc is None:
+            await channel.send_response(ws, req_id, ok=False, error="cron not available", code="INTERNAL_ERROR")
+            return
+        if not isinstance(params, dict):
+            await channel.send_response(ws, req_id, ok=False, error="params must be object", code="BAD_REQUEST")
+            return
+        job_id = str(params.get("id") or "").strip()
+        if not job_id:
+            await channel.send_response(ws, req_id, ok=False, error="id is required", code="BAD_REQUEST")
+            return
+        try:
+            run_id = await cc.run_now(job_id)
+            await channel.send_response(ws, req_id, ok=True, payload={"run_id": run_id})
+        except KeyError:
+            await channel.send_response(ws, req_id, ok=False, error="job not found", code="NOT_FOUND")
+        except Exception as e:  # noqa: BLE001
+            await channel.send_response(ws, req_id, ok=False, error=str(e), code="INTERNAL_ERROR")
+
     channel.register_method("config.get", _config_get)
     channel.register_method("config.set", _config_set)
     channel.register_method("channel.get", _channel_get)
@@ -708,6 +859,14 @@ def _register_web_handlers(
     channel.register_method("channel.feishu.set_conf", _channel_feishu_set_conf)
     channel.register_method("channel.xiaoyi.get_conf", _channel_xiaoyi_get_conf)
     channel.register_method("channel.xiaoyi.set_conf", _channel_xiaoyi_set_conf)
+    channel.register_method("cron.job.list", _cron_job_list)
+    channel.register_method("cron.job.get", _cron_job_get)
+    channel.register_method("cron.job.create", _cron_job_create)
+    channel.register_method("cron.job.update", _cron_job_update)
+    channel.register_method("cron.job.delete", _cron_job_delete)
+    channel.register_method("cron.job.toggle", _cron_job_toggle)
+    channel.register_method("cron.job.preview", _cron_job_preview)
+    channel.register_method("cron.job.run_now", _cron_job_run_now)
 
 
 async def _run() -> None:
@@ -722,6 +881,7 @@ async def _run() -> None:
         WebSocketAgentServerClient,
     )
     from jiuwenclaw.gateway.channel_manager import ChannelManager
+    from jiuwenclaw.gateway.cron import CronController, CronJobStore, CronSchedulerService
     from jiuwenclaw.gateway.message_handler import MessageHandler
     from jiuwenclaw.schema.message import Message, EventType, ReqMethod
     from jiuwenclaw.agentserver.memory.config import _load_config as _load_agent_config
@@ -760,6 +920,10 @@ async def _run() -> None:
     await client.connect(uri)
     message_handler = MessageHandler(client)
     await message_handler.start_forwarding()
+
+    cron_store = CronJobStore()
+    cron_scheduler = CronSchedulerService(store=cron_store, agent_client=client, message_handler=message_handler)
+    cron_controller = CronController(store=cron_store, scheduler=cron_scheduler)
 
     # 探活：周期性向 AgentServer 发送心跳，便于检测连接与 Agent 可用性
     # 优先从 config/config.yaml 的 heartbeat 段读取配置，其次回退到环境变量/默认值
@@ -833,6 +997,7 @@ async def _run() -> None:
         channel_manager=channel_manager,
         on_config_saved=_on_config_saved,
         heartbeat_service=heartbeat_service,
+        cron_controller=cron_controller,
     )
 
     def _norm_and_forward(msg: Message) -> bool:
@@ -1004,6 +1169,7 @@ async def _run() -> None:
     await channel_manager.set_config(initial_channels_conf)
 
     await channel_manager.start_dispatch()
+    await cron_scheduler.start()
     web_task = asyncio.create_task(web_channel.start(), name="web-channel")
     logger.info(
         "[App] 已启动: Web ws://%s:%s%s  修改配置后将自动重启服务。Ctrl+C 退出。",
@@ -1042,6 +1208,7 @@ async def _run() -> None:
             except asyncio.CancelledError:
                 pass
             await xiaoyi_channel.stop()
+        await cron_scheduler.stop()
         await channel_manager.stop_dispatch()
         await heartbeat_service.stop()
         await message_handler.stop_forwarding()
