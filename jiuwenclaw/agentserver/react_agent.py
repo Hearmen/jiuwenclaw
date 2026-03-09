@@ -362,6 +362,8 @@ class JiuClawReActAgent(ReActAgent):
 
             history_messages = context_window.get_messages()
             history_snapshot = list(history_messages)
+            # Filter out SystemMessage from history to avoid "System message must be at the beginning" error
+            history_messages = [m for m in history_messages if not isinstance(m, SystemMessage)]
             messages = [*system_messages, *history_messages]
 
             compression_to_show = []
