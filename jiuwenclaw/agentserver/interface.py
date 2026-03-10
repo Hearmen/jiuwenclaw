@@ -41,6 +41,7 @@ from jiuwenclaw.agentserver.skill_manager import SkillManager, _SKILLS_DIR
 from jiuwenclaw.agentserver.prompt_builder import DEFAULT_WORKSPACE_DIR
 from jiuwenclaw.evolution.skill_optimizer import SkillOptimizer
 from jiuwenclaw.schema.agent import AgentRequest, AgentResponse, AgentResponseChunk
+from jiuwenclaw.agentserver.memory import get_memory_manager
 from jiuwenclaw.schema.message import ReqMethod
 
 load_dotenv(dotenv_path=get_root_dir() / ".env")
@@ -96,7 +97,10 @@ class JiuWenClaw:
     def __init__(self) -> None:
         self._instance: JiuClawReActAgent | None = None
         self._skill_manager = SkillManager()
-        self._running_task: asyncio.Task | None = None
+        self._session_tasks: dict[str, asyncio.Task] = {}  # session_id -> running_task
+        self._session_priorities: dict[str, int] = {}  # session_id -> 优先级计数器（用于先进后出）
+        self._session_queues: dict[str, asyncio.PriorityQueue] = {}  # session_id -> 优先队列
+        self._session_processors: dict[str, asyncio.Task] = {}  # session_id -> processor_task
         self._workspace_dir: str = DEFAULT_WORKSPACE_DIR
         self._agent_name: str = "main_agent"
         self._compaction_manager: ContextCompactionManager | None = None
@@ -286,7 +290,6 @@ class JiuWenClaw:
         self._mcp_tools_registered = True
 
         if self._compaction_manager is None:
-            from jiuwenclaw.agentserver.memory import get_memory_manager
             memory_mgr = await get_memory_manager(
                 agent_id=self._agent_name,
                 workspace_dir=self._workspace_dir
@@ -445,7 +448,6 @@ class JiuWenClaw:
         new_input = request.params.get("new_input")
 
         success = True
-        error_detail = None
 
         if intent == "pause":
             # 暂停：不取消任务，只暂停 ReAct 循环
@@ -473,17 +475,9 @@ class JiuWenClaw:
             if self._instance is not None and hasattr(self._instance, 'resume'):
                 self._instance.resume()
 
-            # 取消非流式任务
-            if self._running_task is not None and not self._running_task.done():
-                logger.info(
-                    "[JiuWenClaw] interrupt(supplement): 取消非流式任务 request_id=%s",
-                    request.request_id,
-                )
-                self._running_task.cancel()
-                try:
-                    await self._running_task
-                except (asyncio.CancelledError, Exception):
-                    pass
+            # 取消当前 session 的非流式任务
+            session_id = self._get_session_id(request)
+            await self._cancel_session_task(session_id, "interrupt(supplement): ")
 
             # 取消流式任务
             if self._instance is not None:
@@ -506,20 +500,8 @@ class JiuWenClaw:
             if self._instance is not None and hasattr(self._instance, 'resume'):
                 self._instance.resume()
 
-            # 取消非流式任务
-            if self._running_task is not None and not self._running_task.done():
-                logger.info(
-                    "[JiuWenClaw] interrupt: 取消正在运行的非流式任务 (intent=%s) request_id=%s",
-                    intent, request.request_id,
-                )
-                self._running_task.cancel()
-                try:
-                    await self._running_task
-                except asyncio.CancelledError:
-                    logger.info("[JiuWenClaw] 非流式任务已取消")
-                except Exception as e:
-                    error_detail = str(e)
-                    logger.warning("[JiuWenClaw] 取消非流式任务时发生异常: %s", e)
+            # 取消所有 session 的非流式任务
+            await self._cancel_all_session_tasks(f"interrupt(intent={intent}): ")
 
             # 取消流式任务
             if self._instance is not None:
@@ -552,10 +534,7 @@ class JiuWenClaw:
                 except Exception as exc:
                     logger.warning("[JiuWenClaw] 标记 todo cancelled 失败: %s", exc)
 
-            if error_detail:
-                success = False
-                message = f"取消任务失败: {error_detail}"
-            elif new_input:
+            if new_input:
                 message = "已切换到新任务"
             else:
                 message = "任务已取消"
@@ -611,10 +590,75 @@ class JiuWenClaw:
             metadata=request.metadata,
         )
 
+    def _get_session_id(self, request: AgentRequest) -> str:
+        """获取 session_id，默认为 'default'."""
+        return request.session_id or "default"
+
+    async def _cancel_session_task(self, session_id: str, log_msg_prefix: str = "") -> None:
+        """取消指定 session 的非流式任务."""
+        task = self._session_tasks.get(session_id)
+        if task is not None and not task.done():
+            logger.info(
+                "[JiuWenClaw] %s取消 session 非流式任务: session_id=%s",
+                log_msg_prefix, session_id,
+            )
+            task.cancel()
+            try:
+                await task
+            except (asyncio.CancelledError, Exception):
+                pass
+            self._session_tasks[session_id] = None
+
+    async def _cancel_all_session_tasks(self, log_msg_prefix: str = "") -> None:
+        """取消所有 session 的非流式任务."""
+        for session_id in list(self._session_tasks.keys()):
+            await self._cancel_session_task(session_id, log_msg_prefix)
+
+    async def _ensure_session_processor(self, session_id: str) -> None:
+        """确保 session 的任务处理器在运行."""
+        if session_id not in self._session_processors or self._session_processors[session_id].done():
+            # 创建新的优先级队列和计数器
+            self._session_queues[session_id] = asyncio.PriorityQueue()
+            self._session_priorities[session_id] = 0
+
+            # 创建任务处理器
+            async def process_session_queue():
+                """处理 session 任务队列（先进后出执行，新任务优先）."""
+                queue = self._session_queues[session_id]
+                while True:
+                    try:
+                        # 从队列获取任务（优先级高的先执行）
+                        priority, task_func = await queue.get()
+                        if task_func is None:  # 信号：关闭队列
+                            break
+
+                        # 执行任务
+                        self._session_tasks[session_id] = asyncio.create_task(task_func())
+                        try:
+                            await self._session_tasks[session_id]
+                        finally:
+                            self._session_tasks[session_id] = None
+                            queue.task_done()
+
+                    except asyncio.CancelledError:
+                        logger.info("[JiuWenClaw] Session 任务处理器被取消: session_id=%s", session_id)
+                        break
+                    except Exception as e:
+                        logger.error("[JiuWenClaw] Session 任务处理器异常: %s", e)
+
+                # 清理
+                self._session_queues.pop(session_id, None)
+                self._session_priorities.pop(session_id, None)
+                self._session_tasks.pop(session_id, None)
+                self._session_processors.pop(session_id, None)
+                logger.info("[JiuWenClaw] Session 任务处理器已关闭: session_id=%s", session_id)
+
+            self._session_processors[session_id] = asyncio.create_task(process_session_queue())
+
     async def process_message(self, request: AgentRequest) -> AgentResponse:
         """调用 Runner.run_agent 处理请求，返回完整响应.
 
-        如果已有任务正在运行，会先取消该任务，然后启动新的任务.
+        支持多 session 并发执行，同 session 内任务按先进先出顺序执行.
         """
         # Interrupt 请求路由
         if request.req_method == ReqMethod.CHAT_CANCEL:
@@ -714,23 +758,14 @@ class JiuWenClaw:
                 metadata=request.metadata,
             )
 
-        # 如果已有任务正在运行，取消它
-        if self._running_task is not None and not self._running_task.done():
-            logger.info(
-                "[JiuWenClaw] 取消正在运行的任务: request_id=%s",
-                request.request_id,
-            )
-            self._running_task.cancel()
-            try:
-                await self._running_task
-            except asyncio.CancelledError:
-                logger.info("[JiuWenClaw] 任务已取消")
-            except Exception as e:
-                logger.warning("[JiuWenClaw] 取消任务时发生异常: %s", e)
+        session_id = self._get_session_id(request)
+
+        # 确保 session 的任务处理器在运行
+        await self._ensure_session_processor(session_id)
 
         logger.info(
-            "[JiuWenClaw] 处理请求: request_id=%s channel_id=%s",
-            request.request_id, request.channel_id,
+            "[JiuWenClaw] 处理请求: request_id=%s channel_id=%s session_id=%s",
+            request.request_id, request.channel_id, session_id,
         )
         inputs = {
             "conversation_id": request.session_id,
@@ -742,7 +777,6 @@ class JiuWenClaw:
         if self._compaction_manager:
             self._compaction_manager.add_message("user", query)
 
-            from jiuwenclaw.agentserver.memory import get_memory_manager
             memory_mgr = await get_memory_manager(
                 agent_id=self._agent_name,
                 workspace_dir=self._workspace_dir
@@ -750,24 +784,43 @@ class JiuWenClaw:
             if memory_mgr:
                 await self._compaction_manager.check_and_compact(memory_mgr)
 
-        # 创建新的任务并运行
+        # 创建任务函数并放入队列（先进后出：新任务优先）
+        # 使用 Future 来获取结果
+        result_future = asyncio.get_event_loop().create_future()
+
         async def run_agent_task():
             try:
                 return await Runner.run_agent(agent=self._instance, inputs=inputs)
             except asyncio.CancelledError:
-                logger.info("[JiuWenClaw] Agent 任务被取消: request_id=%s", request.request_id)
+                logger.info("[JiuWenClaw] Agent 任务被取消: request_id=%s session_id=%s", request.request_id, session_id)
                 raise
             except Exception as e:
                 logger.error("[JiuWenClaw] Agent 任务执行异常: %s", e)
                 raise
 
-        self._running_task = asyncio.create_task(run_agent_task())
+        # 包装任务，完成后将结果放入 future
+        async def task_wrapper():
+            try:
+                result = await run_agent_task()
+                result_future.set_result(result)
+            except Exception as e:
+                result_future.set_exception(e)
 
+        # 使用负数优先级实现先进后出（新请求优先级更高）
+        # 每次递减，新请求的优先级更高
+        self._session_priorities[session_id] -= 1
+        priority = self._session_priorities[session_id]
+        await self._session_queues[session_id].put((priority, task_wrapper))
+
+        # 等待任务完成
         try:
-            result = await self._running_task
-        finally:
-            # 任务完成后清理
-            self._running_task = None
+            result = await result_future
+        except asyncio.CancelledError:
+            # 当前请求被取消，但队列中的任务会继续执行
+            raise
+        except Exception as e:
+            logger.error("[JiuWenClaw] 任务执行失败: %s", e)
+            raise
 
         content = result if isinstance(result, (str, dict)) else str(result)
 
@@ -791,6 +844,8 @@ class JiuWenClaw:
     ) -> AsyncIterator[AgentResponseChunk]:
         """流式处理：通过 JiuClawReActAgent.stream() 逐条返回 chunk.
 
+        支持多 session 并发执行，同 session 内任务按先进后出顺序执行.
+
         OutputSchema 事件类型映射:
             content_chunk → chat.delta   (逐字流式文本)
             answer        → chat.final   (最终完整回答)
@@ -812,6 +867,14 @@ class JiuWenClaw:
                 is_complete=True,
             )
             return
+
+        session_id = self._get_session_id(request)
+        await self._ensure_session_processor(session_id)
+
+        logger.info(
+            "[JiuWenClaw] 处理流式请求: request_id=%s channel_id=%s session_id=%s",
+            request.request_id, request.channel_id, session_id,
+        )
 
         inputs = {
             "conversation_id": request.session_id,
@@ -844,32 +907,81 @@ class JiuWenClaw:
 
         await self._register_runtime_tools(request.session_id, request.params.get("mode", "plan"))
 
+        query = request.params.get("query", "")
+        if self._compaction_manager:
+            self._compaction_manager.add_message("user", query)
+            memory_mgr = await get_memory_manager(
+                agent_id=self._agent_name,
+                workspace_dir=self._workspace_dir
+            )
+            if memory_mgr:
+                await self._compaction_manager.check_and_compact(memory_mgr)
+
         rid = request.request_id
         cid = request.channel_id
 
-        try:
-            async for chunk in Runner.run_agent_streaming(self._instance, inputs):
-                parsed = self._parse_stream_chunk(chunk)
-                if parsed is None:
-                    continue
-                yield AgentResponseChunk(
-                    request_id=rid,
-                    channel_id=cid,
-                    payload=parsed,
-                    is_complete=False,
-                )
+        # 创建流式输出队列
+        stream_queue = asyncio.Queue()
+        stream_done = asyncio.Event()
 
+        # 创建流式任务函数
+        async def run_stream_task():
+            """执行流式任务，将产生的 chunk 放入队列."""
+            try:
+                async for chunk in Runner.run_agent_streaming(self._instance, inputs):
+                    parsed = self._parse_stream_chunk(chunk)
+                    if parsed is None:
+                        continue
+                    await stream_queue.put(("chunk", parsed))
+            except asyncio.CancelledError:
+                logger.info("[JiuWenClaw] 流式任务被取消: request_id=%s session_id=%s", rid, session_id)
+                await stream_queue.put(("error", asyncio.CancelledError()))
+            except Exception as exc:
+                logger.exception("[JiuWenClaw] 流式任务异常: %s", exc)
+                await stream_queue.put(("error", exc))
+            finally:
+                stream_done.set()
+
+        # 包装任务
+        async def task_wrapper():
+            await run_stream_task()
+
+        # 使用负数优先级实现先进后出（新请求优先级更高）
+        self._session_priorities[session_id] -= 1
+        priority = self._session_priorities[session_id]
+        await self._session_queues[session_id].put((priority, task_wrapper))
+
+        # 从流式队列中读取并 yield 结果
+        try:
+            while not stream_done.is_set() or not stream_queue.empty():
+                try:
+                    # 使用 timeout 避免永久阻塞
+                    item = await asyncio.wait_for(stream_queue.get(), timeout=0.1)
+                except asyncio.TimeoutError:
+                    continue
+
+                event_type, data = item
+
+                if event_type == "error":
+                    if isinstance(data, asyncio.CancelledError):
+                        logger.info("[JiuWenClaw] 流式处理被中断: request_id=%s", rid)
+                        raise
+                    yield AgentResponseChunk(
+                        request_id=rid,
+                        channel_id=cid,
+                        payload={"event_type": "chat.error", "error": str(data)},
+                        is_complete=False,
+                    )
+                else:
+                    yield AgentResponseChunk(
+                        request_id=rid,
+                        channel_id=cid,
+                        payload=data,
+                        is_complete=False,
+                    )
         except asyncio.CancelledError:
             logger.info("[JiuWenClaw] 流式处理被中断: request_id=%s", rid)
-
-        except Exception as exc:
-            logger.exception("[JiuWenClaw] 流式处理异常: %s", exc)
-            yield AgentResponseChunk(
-                request_id=rid,
-                channel_id=cid,
-                payload={"event_type": "chat.error", "error": str(exc)},
-                is_complete=False,
-            )
+            raise
 
         # 终止 chunk
         yield AgentResponseChunk(
