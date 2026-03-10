@@ -14,6 +14,8 @@ from dotenv import load_dotenv
 from openjiuwen.core.runner import Runner
 from openjiuwen.core.single_agent import AgentCard, ReActAgentConfig
 from openjiuwen.core.sys_operation import SysOperationCard, OperationMode, LocalWorkConfig
+
+from jiuwenclaw.gateway.cron import CronController
 from jiuwenclaw.utils import _get_config_module, get_root_dir, logger, USER_WORKSPACE_DIR
 
 _config_module = _get_config_module()
@@ -302,6 +304,14 @@ class JiuWenClaw:
         except Exception as exc:
             logger.warning("[JiuWenClaw] browser MCP registration skipped: %s", exc)
 
+        # add cron tools
+        try:
+            cron_controller = CronController.get_instance()
+            for cron_tool in cron_controller.get_tools():
+                Runner.resource_mgr.add_tool(cron_tool)
+                self._instance.ability_manager.add(cron_tool.card)
+        except Exception as exc:
+            logger.error("[JiuWenClaw] 定时工具加载失败， reason=%s", exc)
         logger.info("[JiuWenClaw] 初始化完成: agent_name=%s", self._agent_name)
 
     def reload_agent_config(self) -> None:

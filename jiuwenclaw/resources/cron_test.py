@@ -76,9 +76,10 @@ async def main() -> None:
     sink = TestMessageSink()
 
     # 2. 初始化 cron 组件
+    CronController.reset_instance()
     store = CronJobStore()
     scheduler = CronSchedulerService(store=store, agent_client=client, message_handler=sink)
-    controller = CronController(store=store, scheduler=scheduler)
+    controller = CronController.get_instance(store=store, scheduler=scheduler)
 
     # 3. 创建一个立即执行的 cron 任务（通过 run_now 触发，无需等待真实 cron 时间）
     params = {

@@ -907,7 +907,7 @@ async def _run() -> None:
 
     # ---------- 一次启动所有服务 ----------
     agent = JiuWenClaw()
-    await agent.create_instance()
+
     server = AgentWebSocketServer(
         agent, host="127.0.0.1", port=agent_port,
         ping_interval=20.0, ping_timeout=20.0,
@@ -923,7 +923,10 @@ async def _run() -> None:
 
     cron_store = CronJobStore()
     cron_scheduler = CronSchedulerService(store=cron_store, agent_client=client, message_handler=message_handler)
-    cron_controller = CronController(store=cron_store, scheduler=cron_scheduler)
+    cron_controller = CronController.get_instance(store=cron_store, scheduler=cron_scheduler)
+
+    # agent实例化需要在定时任务后
+    await agent.create_instance()
 
     # 探活：周期性向 AgentServer 发送心跳，便于检测连接与 Agent 可用性
     # 优先从 config/config.yaml 的 heartbeat 段读取配置，其次回退到环境变量/默认值
