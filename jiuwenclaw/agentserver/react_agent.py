@@ -34,10 +34,9 @@ from jiuwenclaw.agentserver.tools.todo_toolkits import TodoToolkit
 from jiuwenclaw.agentserver.prompt_builder import build_system_prompt
 from jiuwenclaw.evolution.skill_call_operator import SkillCallOperator
 from jiuwenclaw.evolution.skill_optimizer import SkillOptimizer
-from jiuwenclaw.utils import _get_config_module, logger, USER_WORKSPACE_DIR
+from jiuwenclaw.utils import logger, USER_WORKSPACE_DIR
+from jiuwenclaw.config import get_config
 
-_config_module = _get_config_module()
-get_config = _config_module.get_config
 
 # 加载流式输出配置
 _react_config = get_config().get("react", {})

@@ -87,13 +87,11 @@ def init_user_workspace(overwrite: bool = True) -> Path:
 
     资源布局（新）:
     - 模板配置:   <package_root>/resources/config.yaml
-    - 模块实现:   <package_root>/config.py
     - .env 模板: <package_root>/resources/.env.template
     - workspace: 优先 <package_root>/workspace，其次 <package_root>/../workspace
 
     上述内容会被复制到:
     - ~/.jiuwenclaw/config/config.yaml
-    - ~/.jiuwenclaw/config/config.py
     - ~/.jiuwenclaw/.env
     - ~/.jiuwenclaw/workspace/...
 
@@ -105,40 +103,27 @@ def init_user_workspace(overwrite: bool = True) -> Path:
 
     USER_WORKSPACE_DIR.mkdir(parents=True, exist_ok=True)
 
-    # ----- config: copy config.yaml + config.py -----
+    # ----- config: copy config.yaml -----
     resources_dir = package_root / "resources"
     config_yaml_src_candidates = [
         resources_dir / "config.yaml",
         package_root / "config" / "config.yaml",
     ]
-    config_py_src_candidates = [
-        package_root / "config.py",
-        package_root / "config" / "config.py",
-    ]
 
     config_yaml_src = next((p for p in config_yaml_src_candidates if p.exists()), None)
-    config_py_src = next((p for p in config_py_src_candidates if p.exists()), None)
 
     if not config_yaml_src:
         raise RuntimeError(
             "config.yaml template not found; tried: "
             + ", ".join(str(p) for p in config_yaml_src_candidates)
         )
-    if not config_py_src:
-        raise RuntimeError(
-            "config.py source not found; tried: "
-            + ", ".join(str(p) for p in config_py_src_candidates)
-        )
 
     config_dest_dir = USER_WORKSPACE_DIR / "config"
     config_dest_dir.mkdir(parents=True, exist_ok=True)
     config_yaml_dest = config_dest_dir / "config.yaml"
-    config_py_dest = config_dest_dir / "config.py"
 
     if overwrite or not config_yaml_dest.exists():
         shutil.copy2(config_yaml_src, config_yaml_dest)
-    if overwrite or not config_py_dest.exists():
-        shutil.copy2(config_py_src, config_py_dest)
 
     # ----- workspace: copy tree -----
     workspace_src_candidates = [
@@ -245,35 +230,6 @@ def get_config_file() -> Path:
 def is_package_installation() -> bool:
     """Check if running from package installation."""
     return _detect_installation_mode()
-
-
-def _get_config_module() -> Any:
-    """Get config module from correct location.
-
-    This function dynamically loads the config module from either:
-    - User workspace: ~/.jiuwenclaw/config
-    - Source mode: project root config directory
-
-    Returns:
-        The loaded config module with get_config function
-
-    Raises:
-        ImportError: If config module cannot be loaded
-    """
-    # Check for user workspace
-    config_dir = Path.home() / ".jiuwenclaw" / "config"
-    if not config_dir.exists():
-        # Source mode: use relative path
-        config_dir = get_config_dir()
-
-    # Import config as a module
-    spec = importlib.util.spec_from_file_location("config_module", str(config_dir / "config.py"))
-    if spec and spec.loader:
-        module = importlib.util.module_from_spec(spec)
-        sys.modules["config_module"] = module
-        spec.loader.exec_module(module)
-        return module
-    raise ImportError(f"Cannot load config module from {config_dir}")
 
 
 def setup_logger(log_level: str = "INFO") -> logging.Logger:

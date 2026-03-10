@@ -8,27 +8,19 @@ import asyncio
 import os
 from typing import Any, AsyncIterator
 
+from dotenv import load_dotenv
 from openjiuwen.core.context_engine import MessageOffloaderConfig, DialogueCompressorConfig
 from openjiuwen.core.foundation.llm import ModelRequestConfig
-from dotenv import load_dotenv
 from openjiuwen.core.runner import Runner
 from openjiuwen.core.single_agent import AgentCard, ReActAgentConfig
 from openjiuwen.core.sys_operation import SysOperationCard, OperationMode, LocalWorkConfig
-
-from jiuwenclaw.gateway.cron import CronController
-from jiuwenclaw.utils import _get_config_module, get_root_dir, logger, USER_WORKSPACE_DIR
-
-_config_module = _get_config_module()
-get_config = _config_module.get_config
-set_config = _config_module.set_config
-update_heartbeat_in_config = _config_module.update_heartbeat_in_config
-update_channel_in_config = _config_module.update_channel_in_config
-update_browser_in_config = _config_module.update_browser_in_config
-
 from openjiuwen.core.session.checkpointer import CheckpointerFactory
 from openjiuwen.core.session.checkpointer.checkpointer import CheckpointerConfig
 from openjiuwen.core.session.checkpointer.persistence import PersistenceCheckpointerProvider
 
+from jiuwenclaw.gateway.cron import CronController
+from jiuwenclaw.utils import get_root_dir, logger, USER_WORKSPACE_DIR
+from jiuwenclaw.config import get_config
 from jiuwenclaw.agentserver.react_agent import JiuClawReActAgent
 from jiuwenclaw.agentserver.tools.browser_tools import register_browser_runtime_mcp_server
 from jiuwenclaw.agentserver.tools.mcp_toolkits import get_mcp_tools

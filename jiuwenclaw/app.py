@@ -22,7 +22,9 @@ from typing import Any
 import psutil
 
 # 项目根目录，用于查找 workspace、agentserver 等目录
-from jiuwenclaw.utils import get_root_dir, get_config_dir, is_package_installation, logger
+from openjiuwen.core.foundation.llm import ProviderType
+from jiuwenclaw.utils import get_root_dir, is_package_installation, logger
+from jiuwenclaw.config import get_config, update_heartbeat_in_config, update_channel_in_config, update_browser_in_config
 
 _PROJECT_ROOT = get_root_dir()
 _ENV_FILE = _PROJECT_ROOT / ".env"
@@ -39,34 +41,6 @@ def _get_package_dir() -> Path:
         # In source mode, app.py is at project root
         # So parent.parent is project root/jiuwenclaw/
         return Path(__file__).resolve().parent.parent / "jiuwenclaw"
-
-
-# 在导入 config 模块前，将其路径添加到 sys.path
-_config_dir = get_config_dir()
-os.environ["JIUWENCLAW_CONFIG_DIR"] = str(_config_dir)
-if str(_config_dir) not in sys.path:
-    sys.path.insert(0, str(_config_dir))
-
-# 动态导入 config 模块
-def _load_config_module():
-    """Dynamically load config module from correct location."""
-    import importlib.util
-    config_dir = get_config_dir()
-    config_path = config_dir / "config.py"
-    spec = importlib.util.spec_from_file_location("config_module", str(config_path))
-    if spec and spec.loader:
-        module = importlib.util.module_from_spec(spec)
-        sys.modules["config_module"] = module
-        spec.loader.exec_module(module)
-        return module
-    raise ImportError(f"Cannot load config module from {config_path}")
-
-_config_module = _load_config_module()
-get_config = _config_module.get_config
-set_config = _config_module.set_config
-update_heartbeat_in_config = _config_module.update_heartbeat_in_config
-update_channel_in_config = _config_module.update_channel_in_config
-update_browser_in_config = _config_module.update_browser_in_config
 
 
 # 仅满足 Channel 构造所需，不入队、不路由；仅用 channel_manager + message_handler 做入站/出站
@@ -263,10 +237,16 @@ def _register_web_handlers(
             await channel.send_response(ws, req_id, ok=False, error="params must be object", code="BAD_REQUEST")
             return
         updates: dict[str, str] = {}
+        available_model_providers = [provider.value for provider in ProviderType]
         for param_key, env_key in _CONFIG_SET_ENV_MAP.items():
             if param_key not in params:
                 continue
             val = params[param_key]
+            if param_key == "model_provider" and val not in available_model_providers:
+                await channel.send_response(
+                    ws, req_id, ok=False, error=f"Model provider must in: {available_model_providers} ", code="BAD_REQUEST"
+                )
+                return
             if val is None:
                 updates[env_key] = ""
             else:

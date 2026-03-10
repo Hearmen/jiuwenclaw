@@ -12,11 +12,8 @@ from pathlib import Path
 from openjiuwen.core.foundation.llm import Model
 from openjiuwen.core.foundation.llm.schema.config import ModelRequestConfig, ModelClientConfig
 
-from jiuwenclaw.utils import _get_config_module, logger
-
-# Import config functions dynamically to avoid path issues
-_config_module = _get_config_module()
-get_config = _config_module.get_config
+from jiuwenclaw.utils import logger
+from jiuwenclaw.config import get_config
 
 
 def format_messages_for_summary(
