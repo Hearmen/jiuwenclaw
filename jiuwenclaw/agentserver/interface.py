@@ -11,6 +11,7 @@ from typing import Any, AsyncIterator
 from dotenv import load_dotenv
 from openjiuwen.core.context_engine import MessageOffloaderConfig, DialogueCompressorConfig
 from openjiuwen.core.foundation.llm import ModelRequestConfig
+from openjiuwen.core.foundation.tool import ToolCard
 from openjiuwen.core.runner import Runner
 from openjiuwen.core.single_agent import AgentCard, ReActAgentConfig
 from openjiuwen.core.sys_operation import SysOperationCard, OperationMode, LocalWorkConfig
@@ -393,6 +394,11 @@ class JiuWenClaw:
                 "role": "system",
                 "content": SYSTEM_PROMPT,
             }]
+            tool_list = self._instance.ability_manager.list()
+            for tool in tool_list:
+                if isinstance(tool, ToolCard):
+                    if tool.name.startswith("todo_"):
+                        self._instance.ability_manager.remove(tool.name)
 
         if not self._memory_tools_registered:
             await init_memory_manager_async(
@@ -409,16 +415,6 @@ class JiuWenClaw:
                 Runner.resource_mgr.add_tool(mcp_tool)
                 self._instance.ability_manager.add(mcp_tool.card)
             self._mcp_tools_registered = True
-
-        # Retry browser MCP registration on each request until success.
-        # if not self._browser_mcp_registered:
-        #     try:
-        #         self._browser_mcp_registered = await register_browser_runtime_mcp_server(
-        #             self._instance,
-        #             tag=f"agent.{self._agent_name}",
-        #         )
-        #     except Exception as exc:
-        #         logger.warning("[JiuWenClaw] browser MCP registration retry skipped: %s", exc)
 
     async def process_interrupt(self, request: AgentRequest) -> AgentResponse:
         """处理 interrupt 请求.
