@@ -21,8 +21,12 @@ from dotenv import load_dotenv
 from typing import Any
 import psutil
 
-# 项目根目录，用于查找 workspace、agentserver 等目录
+# 减少日志打印
+from openjiuwen.core.common.logging import LogManager
+for logger in LogManager.get_all_loggers().values():
+    logger.set_level(logging.CRITICAL)
 from openjiuwen.core.foundation.llm import ProviderType
+
 from jiuwenclaw.utils import get_root_dir, is_package_installation, logger
 from jiuwenclaw.config import get_config, update_heartbeat_in_config, update_channel_in_config, update_browser_in_config
 
