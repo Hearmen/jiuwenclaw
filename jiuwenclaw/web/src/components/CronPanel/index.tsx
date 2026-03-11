@@ -219,16 +219,18 @@ export default function CronPanel() {
     }
 
     try {
-      // 准备更新数据，只包含必要的字段
+      // 准备更新数据，将除id外的参数用patch包起来
       const updateData: Record<string, unknown> = {
         id: editJob.id,
-        name: editJob.name,
-        enabled: editJob.enabled,
-        cron_expr: editJob.cron_expr,
-        timezone: editJob.timezone,
-        wake_offset_seconds: editJob.wake_offset_seconds,
-        description: editJob.description,
-        targets: editJob.targets
+        patch: {
+          name: editJob.name,
+          enabled: editJob.enabled,
+          cron_expr: editJob.cron_expr,
+          timezone: editJob.timezone,
+          wake_offset_seconds: editJob.wake_offset_seconds,
+          description: editJob.description,
+          targets: editJob.targets
+        }
       };
       
       await webRequest<{ job: CronJob }>('cron.job.update', updateData);
