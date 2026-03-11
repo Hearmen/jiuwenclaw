@@ -318,7 +318,10 @@ class DingTalkChannel(BaseChannel):
         if msg.params and "content" in msg.params:
             return str(msg.params["content"])
         elif msg.payload and "content" in msg.payload:
-            return str(msg.payload["content"])
+            content_ = msg.payload["content"]
+            if isinstance(content_, dict) and "output" in content_:
+                return str(content_["output"])
+            return str(content_)
         elif msg.payload and "text" in msg.payload:
             return str(msg.payload["text"])
         return None
