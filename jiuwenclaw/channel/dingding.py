@@ -137,9 +137,6 @@ class DingTalkChannel(BaseChannel):
 
         self._gateway_callback: Callable[[Message], None] | None = None
 
-        self._open_conversation_id: str | None = None  # 用于群聊
-        self._conversation_type: str = "1"  # 会话类型
-
     @property
     def channel_id(self) -> str:
         """返回通道的唯一标识"""
@@ -175,6 +172,8 @@ class DingTalkChannel(BaseChannel):
                             conversation_id: str, conversation_type: str,
                             metadata: dict[str, Any] | None = None) -> Message:
         """构建用户消息对象"""
+        metadata = metadata or {}
+        metadata.update({"conversation_id": conversation_id, "conversation_type": conversation_type})
         return Message(
             id=chat_id,
             type="req",
@@ -192,8 +191,6 @@ class DingTalkChannel(BaseChannel):
         """处理来自钉钉通道的传入消息"""
         msg = self._build_user_message(chat_id, sender_id, content, conversation_id, conversation_type, metadata)
 
-        self._open_conversation_id = conversation_id
-        self._conversation_type = conversation_type
 
         if self._gateway_callback:
             self._gateway_callback(msg)
@@ -328,16 +325,16 @@ class DingTalkChannel(BaseChannel):
 
     def _extract_chat_id(self, msg: Message) -> str | None:
         """从消息对象中提取聊天ID"""
-        chat_id = msg.params.get("chat_id") if msg.params else None
+        chat_id = msg.id if msg.id else None
         if not chat_id:
             chat_id = msg.session_id
         return chat_id
 
-    def _build_group_message_payload(self, content: str) -> dict:
+    def _build_group_message_payload(self, content: str, open_conversation_id: str) -> dict:
         """构建群聊消息负载"""
         return {
             "robotCode": self.config.client_id,
-            "openConversationId": self._open_conversation_id,
+            "openConversationId": open_conversation_id,
             "msgKey": "sampleMarkdown",
             "msgParam": json.dumps({
                 "text": content,
@@ -357,19 +354,19 @@ class DingTalkChannel(BaseChannel):
             }),
         }
 
-    def _get_send_api_url(self) -> str:
+    def _get_send_api_url(self, conversation_type: str) -> str:
         """根据会话类型获取发送API URL"""
-        if self._conversation_type == "2":
+        if conversation_type == "2":
             return "https://api.dingtalk.com/v1.0/robot/groupMessages/send"
         else:
             return "https://api.dingtalk.com/v1.0/robot/oToMessages/batchSend"
 
-    def _build_send_request(self, chat_id: str, content: str) -> tuple[str, dict]:
+    def _build_send_request(self, chat_id: str, content: str, conversation_type: str, open_conversation_id: str) -> tuple[str, dict]:
         """构建发送请求"""
-        url = self._get_send_api_url()
+        url = self._get_send_api_url(conversation_type)
 
-        if self._conversation_type == "2":
-            data = self._build_group_message_payload(content)
+        if conversation_type == "2":
+            data = self._build_group_message_payload(content, open_conversation_id)
         else:
             data = self._build_private_message_payload(chat_id, content)
 
@@ -411,7 +408,10 @@ class DingTalkChannel(BaseChannel):
             return
 
         # 构建请求
-        url, data = self._build_send_request(chat_id, content)
+        metadata = msg.metadata or {}
+        conversation_type = metadata.get("conversation_type", "")
+        open_conversation_id = metadata.get("conversation_id", "")
+        url, data = self._build_send_request(chat_id, content, conversation_type, open_conversation_id)
 
         # 发送HTTP请求
         await self._send_http_request(url, data, token, chat_id)

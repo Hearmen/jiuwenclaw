@@ -1231,10 +1231,13 @@ async def _run() -> None:
         # 先清理已存在的 DingtalkChannel
         if dingtalk_task is not None:
             dingtalk_task.cancel()
-            try:
-                await dingtalk_task
-            except asyncio.CancelledError:
-                pass
+            async def wait_cancel():
+                try:
+                    await dingtalk_task
+                except asyncio.CancelledError:
+                    logger.info("[App] 取消旧 DingtalkChannel 任务成功")
+                    pass
+            asyncio.create_task(wait_cancel(), name="wait_dingtalk_cancel")
             dingtalk_task = None
         if dingtalk_channel is not None:
             try:
@@ -1252,13 +1255,13 @@ async def _run() -> None:
 
             enabled_raw = dingtalk_conf.get("enabled", None)
             if enabled_raw is None:
-                enabled = bool(client_id and client_secret and allow_from)
+                enabled = bool(client_id and client_secret)
             else:
                 enabled = bool(enabled_raw)
 
             if not enabled:
                 logger.info("[App] channels.dingtalk.enabled = false，DingtalkChannel 未启用")
-            elif not (client_id and client_secret and allow_from):
+            elif not (client_id and client_secret):
                 logger.info("[App] channels.dingtalk 缺少 client_id/client_secret/allow_from，DingtalkChannel 未启用")
             else:
                 dingtalk_config = DingTalkConfig(
