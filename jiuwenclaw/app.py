@@ -1142,6 +1142,7 @@ async def _run() -> None:
             encrypt_key = str(feishu_conf.get("encrypt_key") or "").strip()
             verification_token = str(feishu_conf.get("verification_token") or "").strip()
             allow_from = feishu_conf.get("allow_from") or []
+            chat_id = str(feishu_conf.get("chat_id") or "").strip()
 
             enabled_raw = feishu_conf.get("enabled", None)
             if enabled_raw is None:
@@ -1161,6 +1162,7 @@ async def _run() -> None:
                     encrypt_key=encrypt_key,
                     verification_token=verification_token,
                     allow_from=allow_from,
+                    chat_id=chat_id,
                 )
                 feishu_channel = FeishuChannel(feishu_config, _DummyBus())
                 channel_manager.register_channel(feishu_channel)

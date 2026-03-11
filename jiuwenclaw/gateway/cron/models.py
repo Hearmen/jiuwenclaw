@@ -10,8 +10,8 @@ class CronTargetChannel(str, Enum):
 
     WEB = "web"
     FEISHU = "feishu"
-    XIAOYI = "xiaoyi"
-    DINGTALK = "dingtalk"
+    # XIAOYI = "xiaoyi"
+    # DINGTALK = "dingtalk"
 
 
 def _normalize_targets_str(raw: str) -> str:

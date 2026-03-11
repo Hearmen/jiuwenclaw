@@ -12,7 +12,7 @@ from pydantic import BaseModel, Field
 
 from jiuwenclaw.utils import logger
 from jiuwenclaw.channel.base import RobotMessageRouter, BaseChannel
-from jiuwenclaw.schema.message import Message, ReqMethod
+from jiuwenclaw.schema.message import Message, ReqMethod, EventType
 
 
 class FeishuConfig(BaseModel):
@@ -24,6 +24,7 @@ class FeishuConfig(BaseModel):
     encrypt_key: str = ""  # 事件订阅的加密密钥（可选）
     verification_token: str = ""  # 事件订阅的验证令牌（可选）
     allow_from: list[str] = Field(default_factory=list)  # 允许的用户的open_id列表
+    chat_id: str = ""  # 可选：固定推送目标 chat_id（群聊 oc_xxx 或个人 open_id）
 
 
 try:
@@ -411,7 +412,17 @@ class FeishuChannel(BaseChannel):
 
         try:
             receive_id, id_type = self._extract_receive_info(msg)
-            content_str = self._extract_message_content(msg)
+
+            # 心跳/系统事件：优先从 payload["heartbeat"] 读取内容
+            payload = getattr(msg, "payload", None) or {}
+            if (
+                msg.event_type == EventType.HEARTBEAT_RELAY
+                and isinstance(payload, dict)
+                and payload.get("heartbeat")
+            ):
+                content_str = str(payload.get("heartbeat"))
+            else:
+                content_str = self._extract_message_content(msg)
 
             if not content_str.strip():
                 logger.warning("飞书发送：消息内容为空，跳过发送")
@@ -449,7 +460,17 @@ class FeishuChannel(BaseChannel):
             receive_id = feishu_open_id
             id_type = "open_id"
 
-        # 2) 兼容旧逻辑：无 metadata 时用 session_id / id
+        # 2) 若 metadata 中没有平台身份，则使用配置中的 chat_id 作为固定推送目标
+        # print('this is in _extract_receive_info')
+        logger.info('this is in _extract_receive_info, chat_id is %s', self.config.chat_id)
+        if not receive_id:
+            cfg_chat_id = getattr(self.config, "chat_id", "") or ""
+            cfg_chat_id = cfg_chat_id.strip()
+            if cfg_chat_id:
+                receive_id = cfg_chat_id
+                id_type = "chat_id" if cfg_chat_id.startswith("oc_") else "open_id"
+
+        # 3) 仍然没有，则回退到 session_id / id（兼容旧逻辑）
         if not receive_id:
             receive_id = getattr(msg, "session_id", None) or msg.id or ""
             if receive_id.startswith("oc_"):
