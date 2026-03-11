@@ -756,45 +756,58 @@ class JiuClawReActAgent(ReActAgent):
 
         try:
             messages = context.get_messages()
-            needs_fix = False
-            tool_calls_needing_response: List[Dict[str, Any]] = []
-
-            # Scan for incomplete tool_calls
-            for msg in messages:
-                if isinstance(msg, AssistantMessage):
-                    tool_calls = getattr(msg, "tool_calls", None)
-                    if tool_calls:
-                        for tc in tool_calls:
-                            tool_calls_needing_response.append({
-                                "tool_call_id": getattr(tc, "id", ""),
-                                "tool_name": getattr(tc, "name", ""),
-                            })
-                elif isinstance(msg, ToolMessage):
-                    # This tool message responds to a previous tool_call
-                    tool_call_id = getattr(msg, "tool_call_id", "")
-                    # Remove matching tool_call from pending list
-                    tool_calls_needing_response = [
-                        tc for tc in tool_calls_needing_response
-                        if tc["tool_call_id"] != tool_call_id
-                    ]
-
-            # If there are pending tool_calls without responses, add placeholder messages
-            if tool_calls_needing_response:
-                needs_fix = True
-                logger.warning(
-                    "Found incomplete tool context: %d tool_calls missing tool messages",
-                    len(tool_calls_needing_response)
-                )
-                for tc in tool_calls_needing_response:
-                    tool_call_id = tc["tool_call_id"]
-                    tool_name = tc["tool_name"]
-                    await context.add_messages(ToolMessage(
-                        content=f"[工具执行被中断] 工具 {tool_name} 执行过程中被用户打断，没有执行结果。",
-                        tool_call_id=tool_call_id
-                    ))
-
-            if needs_fix:
-                logger.info("Fixed incomplete tool context with placeholder messages")
+            len_messages = len(messages)
+            messages = context.pop_messages(size=len_messages)
+            tool_message_cache = {}
+            tool_id_cache = []  # 与assistant一致
+            for i in range(len_messages):
+                if isinstance(messages[i], AssistantMessage):
+                    if not tool_id_cache:
+                        await context.add_messages(messages[i])
+                        tool_calls = getattr(messages[i], "tool_calls", None)
+                        if tool_calls:
+                            for tc in tool_calls:
+                                tool_id_cache.append({
+                                    "tool_call_id": getattr(tc, "id", ""),
+                                    "tool_name": getattr(tc, "name", ""),
+                                })
+                    else:
+                        logger.info("Fixed incomplete tool context with placeholder messages")
+                        for tc in tool_id_cache:
+                            tool_name = tc["tool_name"]
+                            tool_call_id = tc["tool_call_id"]
+                            if tool_call_id in tool_message_cache:
+                                await context.add_messages(tool_message_cache[tool_call_id])
+                            else:
+                                await context.add_messages(ToolMessage(
+                                    content=f"[工具执行被中断] 工具 {tool_name} 执行过程中被用户打断，没有执行结果。",
+                                    tool_call_id=tool_call_id
+                                ))
+                        tool_id_cache = []
+                elif isinstance(messages[i], ToolMessage):
+                    if not tool_id_cache:
+                        tool_message_cache[messages[i].tool_call_id] = messages[i]
+                        continue
+                    if messages[i].tool_call_id == tool_id_cache[0]["tool_call_id"]:
+                        await context.add_messages(messages[i])
+                        tool_id_cache.pop(0)
+                    else:
+                        tool_message_cache[messages[i].tool_call_id] = messages[i]
+                        continue
+                else:
+                    logger.info("Fixed incomplete tool context with placeholder messages")
+                    for tc in tool_id_cache:
+                        tool_name = tc["tool_name"]
+                        tool_call_id = tc["tool_call_id"]
+                        if tool_call_id in tool_message_cache:
+                            await context.add_messages(tool_message_cache[tool_call_id])
+                        else:
+                            await context.add_messages(ToolMessage(
+                                content=f"[工具执行被中断] 工具 {tool_name} 执行过程中被用户打断，没有执行结果。",
+                                tool_call_id=tool_call_id
+                            ))
+                    tool_id_cache = []
+                    await context.add_messages(messages[i])
         except Exception as e:
             logger.warning("Failed to fix incomplete tool context: %s", e)
 
