@@ -21,15 +21,22 @@ _global_settings: Optional[MemorySettings] = None
 _global_agent_id: str = "default"
 
 
-def _resolve_memory_path(path: str) -> str:
-    """Resolve memory file path. Maps USER.md and MEMORY.md to memory/ subdirectory."""
-    # If path already starts with memory/, return as-is
+def _validate_memory_path(path: str) -> tuple[bool, str]:
+    """Validate that path is within memory directory.
+    
+    Returns:
+        (is_valid, resolved_path_or_error)
+    """
+    if ".." in path or path.startswith("/"):
+        return (False, "Invalid path: directory traversal not allowed")
+    
     if path.startswith("memory/"):
-        return path
-    # Map USER.md and MEMORY.md to memory/ subdirectory
+        return (True, path)
+    
     if path in ("USER.md", "MEMORY.md"):
-        return f"memory/{path}"
-    return path
+        return (True, f"memory/{path}")
+    
+    return (False, f"Path must be in memory/ directory. Got: {path}")
 
 
 def set_global_memory_manager(
@@ -240,11 +247,11 @@ async def write_memory(
     content: str,
     append: bool = False
 ) -> Dict[str, Any]:
-    """创建新文件或覆盖现有文件。可用于创建新的记忆文件、保存重要信息、生成代码文件。
-    主要用于新建memory/*.md文件，以及更新USER.md和MEMORY.md文件
+    """在 memory 目录下创建或更新记忆文件。仅用于写入记忆相关内容，如 USER.md、MEMORY.md 或 memory/*.md 文件。
+    禁止用于创建代码文件、配置文件或其他非记忆类文件。
 
     Args:
-        path: 文件路径 (相对于工作区)
+        path: 文件路径，仅允许 memory/ 目录下的文件（如 "memory/xxx.md" 或 "USER.md"）
         content: 要写入的内容
         append: 是否追加模式 (默认覆盖)
 
@@ -252,15 +259,16 @@ async def write_memory(
         操作结果字典
     """
     try:
-        resolved_path = _resolve_memory_path(path)
-        full_path = os.path.join(_global_workspace_dir, resolved_path)
-        
-        if ".." in path or path.startswith("/"):
+        is_valid, result = _validate_memory_path(path)
+        if not is_valid:
             return {
                 "success": False,
                 "path": path,
-                "error": "Invalid path: directory traversal not allowed"
+                "error": result
             }
+        
+        resolved_path = result
+        full_path = os.path.join(_global_workspace_dir, resolved_path)
         
         parent_dir = os.path.dirname(full_path)
         if parent_dir:
@@ -373,11 +381,10 @@ async def read_memory(
     offset: Optional[int] = None,
     limit: Optional[int] = None
 ) -> Dict[str, Any]:
-    """读取文件内容。可以读取整个文件或指定行范围。
-    主要用于更新USER.md和MEMORY.md前的文件读取
+    """读取 memory 目录下的文件内容。仅用于读取记忆文件（如 USER.md、MEMORY.md 或 memory/*.md）。
 
     Args:
-        path: 文件路径 (相对于工作区)
+        path: 文件路径，仅允许 memory/ 目录下的文件
         offset: 起始行号 (从1开始)
         limit: 读取的行数
 
@@ -385,16 +392,17 @@ async def read_memory(
         文件内容字典
     """
     try:
-        resolved_path = _resolve_memory_path(path)
-        full_path = os.path.join(_global_workspace_dir, resolved_path)
-        
-        if ".." in path or path.startswith("/"):
+        is_valid, result = _validate_memory_path(path)
+        if not is_valid:
             return {
                 "success": False,
                 "path": path,
                 "content": "",
-                "error": "Invalid path: directory traversal not allowed"
+                "error": result
             }
+        
+        resolved_path = result
+        full_path = os.path.join(_global_workspace_dir, resolved_path)
         
         if not os.path.exists(full_path):
             return {
