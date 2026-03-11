@@ -389,18 +389,24 @@ class JiuWenClaw:
         if self._instance is None:
             raise RuntimeError("JiuWenClaw 未初始化，请先调用 create_instance()")
 
+        tool_list = self._instance.ability_manager.list()
+        for tool in tool_list:
+            if isinstance(tool, ToolCard):
+                if tool.name.startswith("todo_"):
+                    self._instance.ability_manager.remove(tool.name)
+
         effective_session_id = session_id or "default"
         if mode == "plan":
             self._instance._config.prompt_template = [{
                 "role": "system",
                 "content": SYSTEM_PROMPT + TODO_PROMPT,
             }]
-            if effective_session_id not in self._todo_tool_sessions_registered:
-                todo_toolkit = TodoToolkit(session_id=effective_session_id)
-                for tool in todo_toolkit.get_tools():
-                    Runner.resource_mgr.add_tool(tool)
-                    self._instance.ability_manager.add(tool.card)
-                self._todo_tool_sessions_registered.add(effective_session_id)
+            # if effective_session_id not in self._todo_tool_sessions_registered:
+            todo_toolkit = TodoToolkit(session_id=effective_session_id)
+            for tool in todo_toolkit.get_tools():
+                Runner.resource_mgr.add_tool(tool)
+                self._instance.ability_manager.add(tool.card)
+            self._todo_tool_sessions_registered.add(effective_session_id)
         else:
             self._instance._config.prompt_template = [{
                 "role": "system",
@@ -771,7 +777,6 @@ class JiuWenClaw:
             "conversation_id": request.session_id,
             "query": request.params.get("query", ""),
         }
-        await self._register_runtime_tools(request.session_id)
 
         query = request.params.get("query", "")
         if self._compaction_manager:
@@ -790,6 +795,7 @@ class JiuWenClaw:
 
         async def run_agent_task():
             try:
+                await self._register_runtime_tools(request.session_id)
                 return await Runner.run_agent(agent=self._instance, inputs=inputs)
             except asyncio.CancelledError:
                 logger.info("[JiuWenClaw] Agent 任务被取消: request_id=%s session_id=%s", request.request_id, session_id)
@@ -905,7 +911,7 @@ class JiuWenClaw:
             except Exception as exc:
                 logger.warning("[JiuWenClaw] supplement: 读取 todo 列表失败: %s", exc)
 
-        await self._register_runtime_tools(request.session_id, request.params.get("mode", "plan"))
+        # await self._register_runtime_tools(request.session_id, request.params.get("mode", "plan"))
 
         query = request.params.get("query", "")
         if self._compaction_manager:
@@ -928,6 +934,7 @@ class JiuWenClaw:
         async def run_stream_task():
             """执行流式任务，将产生的 chunk 放入队列."""
             try:
+                await self._register_runtime_tools(request.session_id, request.params.get("mode", "plan"))
                 async for chunk in Runner.run_agent_streaming(self._instance, inputs):
                     parsed = self._parse_stream_chunk(chunk)
                     if parsed is None:
@@ -1151,3 +1158,6 @@ class JiuWenClaw:
             logger.debug("[_parse_stream_chunk] 解析异常", exc_info=True)
 
         return None
+
+    def _prepare_instance_by_session(self):
+        pass
