@@ -97,6 +97,16 @@ def init_user_workspace(overwrite: bool = True) -> Path:
 
     无论是通过 pip/whl 安装还是源码目录直接运行，效果保持一致。
     """
+    if USER_WORKSPACE_DIR.exists():
+        # Warn user about data loss and ask for confirmation
+        print("[jiuwenclaw-init] WARNING: This will delete all historical configuration and memory information.")
+        print("[jiuwenclaw-init] This action cannot be undone.")
+        confirmation = input("[jiuwenclaw-init] Do you want to confirm reinitialization? (yes/no): ").strip().lower()
+
+        if confirmation not in ("yes", "y"):
+            print("[jiuwenclaw-init] Initialization cancelled. Exiting.")
+            return "cancelled"
+
     package_root = _find_package_root()
     if not package_root:
         raise RuntimeError("package root not found")
@@ -138,6 +148,8 @@ def init_user_workspace(overwrite: bool = True) -> Path:
         )
     workspace_dest = USER_WORKSPACE_DIR / "workspace"
     if overwrite:
+        if workspace_dest.exists():
+            shutil.rmtree(workspace_dest)
         shutil.copytree(workspace_src, workspace_dest, dirs_exist_ok=True)
     elif not workspace_dest.exists():
         shutil.copytree(workspace_src, workspace_dest)
