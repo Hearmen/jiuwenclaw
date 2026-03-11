@@ -337,8 +337,8 @@ export function HeartbeatPanel() {
                       className="w-full rounded-md border border-border bg-bg px-3 py-2 text-[13px] text-text outline-none focus:border-accent"
                     >
                       <option value="web">网页 (web)</option>
-                      <option value="xiaoyi">小艺 (xiaoyi)</option>
                       <option value="feishu">飞书 (feishu)</option>
+                      <option value="xiaoyi" disabled style={{ color: '#8c8c96ff'}} >小艺 (xiaoyi)</option>
                       <option value="dingtalk" disabled style={{ color: '#8c8c96ff' }}>钉钉 (dingtalk)</option>
                     </select>
                   </label>

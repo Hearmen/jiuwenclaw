@@ -71,7 +71,7 @@ export default function CronPanel() {
   const targetOptions = [
     { value: 'web', label: '网页 (web)' },
     { value: 'feishu', label: '飞书 (feishu)' },
-    { value: 'xiaoyi', label: '小艺 (xiaoyi)' },
+    { value: 'xiaoyi', label: '小艺 (xiaoyi)', disabled: true, style: { color: '#8c8c96ff' } },
     { value: 'dingtalk', label: '钉钉 (dingtalk)', disabled: true, style: { color: '#8c8c96ff' } }
   ];
 

@@ -166,7 +166,7 @@ export function BrowserPanel({ isConnected, request }: BrowserPanelProps) {
 
         <div className="rounded-xl border border-border bg-card/70 backdrop-blur-sm overflow-hidden shadow-sm">
           <div className="px-4 py-3 border-b border-border bg-secondary/30">
-            <span className="text-xs text-text-muted uppercase tracking-wider font-medium">Chrome 路径配置</span>
+            <span className="text-xs text-text-muted tracking-wider font-medium">CHROME 路径配置（Chrome地址栏输入：chrome://version查看，复制可执行文件路径）</span>
           </div>
           <div className="p-4 space-y-4">
             <label className="block space-y-1.5">
