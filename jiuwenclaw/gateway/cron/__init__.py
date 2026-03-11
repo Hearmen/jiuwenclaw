@@ -5,7 +5,7 @@ This package provides:
 - An asyncio scheduler that wakes the agent before push time and pushes results to channels
 """
 
-from .models import CronJob, CronTarget
+from .models import CronJob, CronTarget, CronTargetChannel
 from .store import CronJobStore
 from .scheduler import CronSchedulerService
 from .controller import CronController
@@ -13,6 +13,7 @@ from .controller import CronController
 __all__ = [
     "CronJob",
     "CronTarget",
+    "CronTargetChannel",
     "CronJobStore",
     "CronSchedulerService",
     "CronController",

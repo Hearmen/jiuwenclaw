@@ -6,6 +6,7 @@ from typing import Any, ClassVar, List
 from openjiuwen.core.foundation.tool import LocalFunction, Tool, ToolCard
 from zoneinfo import ZoneInfo
 
+from jiuwenclaw.gateway.cron.models import CronTargetChannel
 from jiuwenclaw.gateway.cron.scheduler import CronSchedulerService, _cron_next_push_dt
 from jiuwenclaw.gateway.cron.store import CronJobStore
 
@@ -63,6 +64,16 @@ class CronController:
 
     _DESCRIPTION_TIME_KEYWORDS = ("每天", "每周", "每月", "上午", "下午", "早上", "晚上", "凌晨")
 
+    @staticmethod
+    def _normalize_targets(raw: Any) -> str:
+        """将 targets 规范为 CronTargetChannel 枚举值，非法则默认 web。"""
+        s = str(raw or "").strip() or "web"
+        try:
+            CronTargetChannel(s)
+            return s
+        except ValueError:
+            return CronTargetChannel.WEB.value
+
     @classmethod
     def _normalize_description(cls, description: str, name: str) -> str:
         """若 description 含时间/频率用语且 name 为纯任务，则只保留任务内容（用 name）。"""
@@ -92,7 +103,8 @@ class CronController:
         enabled = bool(params.get("enabled", True))
         description = str(params.get("description") or "")
         wake_offset_seconds = params.get("wake_offset_seconds", None)
-        targets = params.get("targets") or "web"
+        raw_targets = params.get("targets") or "web"
+        targets = self._normalize_targets(raw_targets)
 
         # if not targets:
         #     from jiuwenclaw.agentserver.request_context import get_current_request
@@ -119,6 +131,8 @@ class CronController:
 
     async def update_job(self, job_id: str, patch: dict[str, Any]) -> dict[str, Any]:
         patch = dict(patch or {})
+        if "targets" in patch:
+            patch["targets"] = self._normalize_targets(patch["targets"])
         existing = await self._store.get_job(job_id)
         if existing is None:
             raise KeyError("job not found")
@@ -278,8 +292,9 @@ class CronController:
                         },
                         "targets": {
                             "type": "string",
-                            "description": "推送频道，如网页用web, 飞书用feishu, 小艺用xiaoyi",
-                             "default": "web"
+                            "enum": [e.value for e in CronTargetChannel],
+                            "description": "推送频道：web=网页, feishu=飞书, xiaoyi=小艺, dingtalk=钉钉",
+                            "default": CronTargetChannel.WEB.value,
                         },
                          "enabled": {
                             "type": "boolean",
@@ -310,6 +325,13 @@ class CronController:
                         "patch": {
                             "type": "object",
                             "description": "Fields to update (name, enabled, cron_expr, timezone, description, wake_offset_seconds, targets)",
+                            "properties": {
+                                "targets": {
+                                    "type": "string",
+                                    "enum": [e.value for e in CronTargetChannel],
+                                    "description": "推送频道：web/feishu/xiaoyi/dingtalk",
+                                },
+                            },
                         },
                     },
                     "required": ["job_id", "patch"],

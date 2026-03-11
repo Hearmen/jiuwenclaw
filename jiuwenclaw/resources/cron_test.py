@@ -90,12 +90,7 @@ async def main() -> None:
         "timezone": "Asia/Shanghai",
         "wake_offset_seconds": 60,
         "description": "你叫什么名字？",
-        "targets": [
-            {
-                "channel_id": "web",
-                "session_id": "cron-demo-session",
-            }
-        ],
+        "targets": "web",
     }
 
     job = await controller.create_job(params)

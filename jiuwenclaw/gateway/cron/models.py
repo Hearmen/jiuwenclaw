@@ -1,7 +1,27 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from enum import Enum
 from typing import Any
+
+
+class CronTargetChannel(str, Enum):
+    """推送频道枚举。"""
+
+    WEB = "web"
+    FEISHU = "feishu"
+    XIAOYI = "xiaoyi"
+    DINGTALK = "dingtalk"
+
+
+def _normalize_targets_str(raw: str) -> str:
+    """将 targets 字符串规范为 CronTargetChannel 枚举值，非法则默认 web。"""
+    s = (raw or "").strip() or "web"
+    try:
+        CronTargetChannel(s)
+        return s
+    except ValueError:
+        return CronTargetChannel.WEB.value
 
 
 @dataclass(frozen=True)
@@ -105,6 +125,8 @@ class CronJob:
             raise ValueError("timezone is required")
         if not targets_str:
             raise ValueError("targets is required")
+
+        targets_str = _normalize_targets_str(targets_str)
 
         return CronJob(
             id=job_id,
