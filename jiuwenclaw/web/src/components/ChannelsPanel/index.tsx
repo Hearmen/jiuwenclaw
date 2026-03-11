@@ -22,6 +22,7 @@ type FeishuConfig = {
   app_secret: string;
   encrypt_key: string;
   verification_token: string;
+  chat_id: string;
   allow_from: string[];
 };
 
@@ -31,6 +32,7 @@ type FeishuDraft = {
   app_secret: string;
   encrypt_key: string;
   verification_token: string;
+  chat_id: string;
   allow_from: string;
 };
 
@@ -70,6 +72,7 @@ const DEFAULT_FEISHU_CONF: FeishuConfig = {
   app_secret: '',
   encrypt_key: '',
   verification_token: '',
+  chat_id: '',
   allow_from: [],
 };
 
@@ -158,6 +161,7 @@ function normalizeFeishuConfig(input: unknown): FeishuConfig {
     app_secret: String(data.app_secret ?? '').trim(),
     encrypt_key: String(data.encrypt_key ?? '').trim(),
     verification_token: String(data.verification_token ?? '').trim(),
+    chat_id: String(data.chat_id ?? '').trim(),
     allow_from: allowFrom,
   };
 }
@@ -169,6 +173,7 @@ function draftFromFeishuConfig(conf: FeishuConfig): FeishuDraft {
     app_secret: conf.app_secret,
     encrypt_key: conf.encrypt_key,
     verification_token: conf.verification_token,
+    chat_id: conf.chat_id,
     allow_from: conf.allow_from.join('\n'),
   };
 }
@@ -187,6 +192,7 @@ function buildFeishuPayload(draft: FeishuDraft): Record<string, unknown> {
     app_secret: draft.app_secret.trim(),
     encrypt_key: draft.encrypt_key.trim(),
     verification_token: draft.verification_token.trim(),
+    chat_id: draft.chat_id.trim(),
     allow_from: normalizeAllowFromText(draft.allow_from),
   };
 }
@@ -457,6 +463,7 @@ export function ChannelsPanel({ isConnected }: ChannelsPanelProps) {
       baseDraft.app_secret !== draft.app_secret ||
       baseDraft.encrypt_key !== draft.encrypt_key ||
       baseDraft.verification_token !== draft.verification_token ||
+      baseDraft.chat_id !== draft.chat_id ||
       normalizeAllowFromText(baseDraft.allow_from).join('\n') !== normalizeAllowFromText(draft.allow_from).join('\n')
     );
   }, [draft, feishuConfig]);
@@ -1037,7 +1044,7 @@ export function ChannelsPanel({ isConnected }: ChannelsPanelProps) {
                                 </button>
                               </td>
                             </tr>
-                            {(['app_id', 'app_secret', 'encrypt_key', 'verification_token'] as const).map((field) => (
+                            {(['app_id', 'app_secret', 'encrypt_key', 'verification_token', 'chat_id'] as const).map((field) => (
                               <tr key={field} className="border-t border-border first:border-t-0 even:bg-secondary/10">
                                 <td className="px-4 py-2.5 align-middle mono text-xs text-text-muted w-[32%]">{field}</td>
                                 <td className="px-4 py-2.5 break-all text-[13px] align-middle">
@@ -1046,7 +1053,7 @@ export function ChannelsPanel({ isConnected }: ChannelsPanelProps) {
                                       type={isSensitiveField(field) && !visibleFields[field] ? 'password' : 'text'}
                                       value={draft[field]}
                                       onChange={(e) => handleFieldChange(field, e.target.value)}
-                                      placeholder="请输入配置值"
+                                      placeholder={field === 'chat_id' ? '请输入聊天 ID' : '请输入配置值'}
                                       className={`w-full rounded-md border border-border bg-bg px-3 py-2 text-[13px] outline-none focus:border-accent ${
                                         isSensitiveField(field) ? 'pr-10' : ''
                                       }`}

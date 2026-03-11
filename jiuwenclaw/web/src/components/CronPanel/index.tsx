@@ -72,7 +72,7 @@ export default function CronPanel() {
     { value: 'web', label: '网页 (web)' },
     { value: 'feishu', label: '飞书 (feishu)' },
     { value: 'xiaoyi', label: '小艺 (xiaoyi)' },
-    { value: 'dingtalk', label: '钉钉 (dingtalk)' }
+    { value: 'dingtalk', label: '钉钉 (dingtalk)', disabled: true, style: { color: '#8c8c96ff' } }
   ];
 
   // 加载任务列表
@@ -281,10 +281,10 @@ export default function CronPanel() {
               正在加载任务列表...
             </div>
           ) : (
-            <div className="overflow-auto rounded-lg border border-border">
+            <div className="overflow-auto rounded-lg border border-border max-h-[750px]">
               <table className="w-full border-collapse">
                 <thead>
-                  <tr className="border-b border-border">
+                  <tr className="border-b border-border sticky top-0 bg-bg">
                     <th className="px-4 py-3 text-left text-sm font-medium text-text-muted w-[120px]">任务名称</th>
                     <th className="px-4 py-3 text-left text-sm font-medium text-text-muted w-[400px]">Cron 表达式</th>
                     <th className="px-4 py-3 text-left text-sm font-medium text-text-muted">状态</th>
@@ -370,7 +370,7 @@ export default function CronPanel() {
                           className="w-full rounded-md border border-border bg-bg px-3 py-2 text-[13px] text-text outline-none focus:border-accent"
                         >
                           {targetOptions.map(option => (
-                            <option key={option.value} value={option.value}>
+                            <option key={option.value} value={option.value} disabled={option.disabled} style={option.style}>
                               {option.label}
                             </option>
                           ))}
@@ -480,7 +480,7 @@ export default function CronPanel() {
                           className="w-full rounded-md border border-border bg-bg px-3 py-2 text-[13px] text-text outline-none focus:border-accent"
                         >
                           {targetOptions.map(option => (
-                            <option key={option.value} value={option.value}>
+                            <option key={option.value} value={option.value} disabled={option.disabled} style={option.style}>
                               {option.label}
                             </option>
                           ))}
