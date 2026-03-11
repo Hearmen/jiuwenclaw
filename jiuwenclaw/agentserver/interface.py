@@ -394,6 +394,15 @@ class JiuWenClaw:
             if isinstance(tool, ToolCard):
                 if tool.name.startswith("todo_"):
                     self._instance.ability_manager.remove(tool.name)
+                elif tool.name.startswith("cron_"):
+                    self._instance.ability_manager.remove(tool.name)
+
+        # 定时工具
+        if session_id.split('_')[0] not in ["heartbeat", "cron"]:
+            cron_controller = CronController.get_instance()
+            for cron_tool in cron_controller.get_tools():
+                Runner.resource_mgr.add_tool(cron_tool)
+                self._instance.ability_manager.add(cron_tool.card)
 
         effective_session_id = session_id or "default"
         if mode == "plan":
