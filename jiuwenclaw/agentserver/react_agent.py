@@ -663,6 +663,7 @@ class JiuClawReActAgent(ReActAgent):
     async def _emit_tool_result(self, session: Session, tool_call: Any, result: Any) -> None:
         """Emit tool_result OutputSchema, notify frontend of tool execution result."""
         try:
+            # todo 工具结果待优化
             await session.write_stream(
                 OutputSchema(
                     type="tool_result",
@@ -671,7 +672,7 @@ class JiuClawReActAgent(ReActAgent):
                         "tool_result": {
                             "tool_name": getattr(tool_call, "name", "") if tool_call else "",
                             "tool_call_id": getattr(tool_call, "id", "") if tool_call else "",
-                            "result": str(result) if result is not None else "",
+                            "result": str(result)[:1000] if result is not None else "",
                         }
                     },
                 )
