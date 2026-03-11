@@ -41,24 +41,48 @@ function isPlausibleDate(date: Date): boolean {
 function parseSessionDisplayLabel(sessionId: string): string {
   if (!sessionId) return '未知会话-未知时间';
 
-  if (sessionId.startsWith('sess_')) {
-    const parts = sessionId.split('_');
-    const hexTs = parts[1] ?? '';
-    if (/^[0-9a-fA-F]+$/.test(hexTs)) {
-      const ms = Number.parseInt(hexTs, 16);
-      if (Number.isFinite(ms)) {
-        const date = new Date(ms);
-        if (!Number.isNaN(date.getTime()) && isPlausibleDate(date)) {
-          return `会话-${formatDateTime(date)}`;
+  // 处理以 sess_、cron_、feishu_、xiaoyi_、dingtalk_ 开头的会话ID
+  const prefixes = ['sess_', 'cron_', 'feishu_', 'xiaoyi_', 'dingtalk_'];
+  const prefixMap: Record<string, string> = {
+    'sess_': '会话',
+    'cron_': '定时',
+    'feishu_': '飞书',
+    'xiaoyi_': '小艺',
+    'dingtalk_': '钉钉'
+  };
+  
+  for (const prefix of prefixes) {
+    if (sessionId.startsWith(prefix)) {
+      const parts = sessionId.split('_');
+      const hexTs = parts[1] ?? '';
+      if (/^[0-9a-fA-F]+$/.test(hexTs)) {
+        const ms = Number.parseInt(hexTs, 16);
+        if (Number.isFinite(ms)) {
+          const date = new Date(ms);
+          if (!Number.isNaN(date.getTime()) && isPlausibleDate(date)) {
+            return `${prefixMap[prefix]}-${formatDateTime(date)}`;
+          }
         }
       }
+      return `${prefixMap[prefix]}-未知时间`;
     }
-    return '会话-未知时间';
   }
 
   if (sessionId.startsWith('heartbeat_')) {
     const rawBody = sessionId.slice('heartbeat_'.length);
     return rawBody ? `心跳-${rawBody}` : '心跳';
+  }
+
+  // 解析会话ID中可能包含的时间戳格式，如 YYYYMMDD_HHMMSS_xxxx
+  const timestampRegex = /(\d{4})(\d{2})(\d{2})_(\d{2})(\d{2})(\d{2})/;
+  const match = sessionId.match(timestampRegex);
+  if (match) {
+    const [, year, month, day, hours, minutes, seconds] = match;
+    const date = new Date(`${year}-${month}-${day} ${hours}:${minutes}:${seconds}`);
+    if (!Number.isNaN(date.getTime()) && isPlausibleDate(date)) {
+      const prefix = sessionId.includes('_') ? sessionId.split('_')[0] : '未知';
+      return `${prefix}-${formatDateTime(date)}`;
+    }
   }
 
   const prefix = sessionId.includes('_') ? sessionId.split('_')[0] : '未知';

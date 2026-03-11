@@ -72,7 +72,7 @@ export default function CronPanel() {
     { value: 'web', label: '网页 (web)' },
     { value: 'feishu', label: '飞书 (feishu)' },
     { value: 'xiaoyi', label: '小艺 (xiaoyi)' },
-    { value: 'dingding', label: '钉钉 (dingding)' }
+    { value: 'dingtalk', label: '钉钉 (dingtalk)' }
   ];
 
   // 加载任务列表
