@@ -61,6 +61,22 @@ class CronController:
         base = datetime.now(tz=tz)
         _ = _cron_next_push_dt(cron_expr, base)
 
+    _DESCRIPTION_TIME_KEYWORDS = ("每天", "每周", "每月", "上午", "下午", "早上", "晚上", "凌晨")
+
+    @classmethod
+    def _normalize_description(cls, description: str, name: str) -> str:
+        """若 description 含时间/频率用语且 name 为纯任务，则只保留任务内容（用 name）。"""
+        description = (description or "").strip()
+        name = (name or "").strip()
+        if not name:
+            return description
+        if not any(kw in description for kw in cls._DESCRIPTION_TIME_KEYWORDS):
+            return description
+        if name in description or description.endswith(name):
+            return name
+        return description
+
+
     async def list_jobs(self) -> list[dict[str, Any]]:
         jobs = await self._store.list_jobs()
         return [j.to_dict() for j in jobs]
@@ -72,13 +88,22 @@ class CronController:
     async def create_job(self, params: dict[str, Any]) -> dict[str, Any]:
         name = str(params.get("name") or "").strip()
         cron_expr = str(params.get("cron_expr") or "").strip()
-        timezone = str(params.get("timezone") or "").strip()
+        timezone = str(params.get("timezone") or "Asia/Shanghai").strip() or "Asia/Shanghai"
         enabled = bool(params.get("enabled", True))
         description = str(params.get("description") or "")
         wake_offset_seconds = params.get("wake_offset_seconds", None)
-        targets = params.get("targets") or []
+        targets = params.get("targets") or "web"
+
+        # if not targets:
+        #     from jiuwenclaw.agentserver.request_context import get_current_request
+        #     req = get_current_request()
+        #     if req and (req.channel_id or req.session_id):
+        #         targets = [
+        #             {"channel_id": req.channel_id or "web", "session_id": req.session_id},
+        #         ]
 
         self._validate_schedule(cron_expr=cron_expr, timezone=timezone)
+        description = self._normalize_description(description, name)
 
         job = await self._store.create_job(
             name=name,
@@ -94,13 +119,16 @@ class CronController:
 
     async def update_job(self, job_id: str, patch: dict[str, Any]) -> dict[str, Any]:
         patch = dict(patch or {})
+        existing = await self._store.get_job(job_id)
+        if existing is None:
+            raise KeyError("job not found")
         if "cron_expr" in patch or "timezone" in patch:
-            existing = await self._store.get_job(job_id)
-            if existing is None:
-                raise KeyError("job not found")
             cron_expr = str(patch.get("cron_expr") or existing.cron_expr).strip()
             timezone = str(patch.get("timezone") or existing.timezone).strip()
             self._validate_schedule(cron_expr=cron_expr, timezone=timezone)
+        if "description" in patch:
+            name = str(patch.get("name") or existing.name or "").strip()
+            patch["description"] = self._normalize_description(str(patch.get("description") or ""), name)
 
         job = await self._store.update_job(job_id, patch)
         await self._scheduler.reload()
@@ -142,7 +170,7 @@ class CronController:
         name: str,
         cron_expr: str,
         timezone: str,
-        targets: list[dict[str, Any]],
+        targets: str,
         enabled: bool = True,
         description: str = "",
         wake_offset_seconds: int | None = None,
@@ -151,7 +179,7 @@ class CronController:
             "name": name,
             "cron_expr": cron_expr,
             "timezone": timezone,
-            "targets": targets,
+            "targets": targets or 'web',
             "enabled": enabled,
             "description": description,
         }
@@ -230,50 +258,45 @@ class CronController:
             make_tool(
                 name="cron_create_job",
                 description=(
-                    "Create a new cron job. Requires name, cron_expr (e.g. '0 9 * * 1-5'), "
-                    "timezone (e.g. 'Asia/Shanghai'), and targets (list of {channel_id, session_id?}). "
-                    "Optional: enabled, description, wake_offset_seconds."
+                    "创建定时任务。当用户说「每天/每周/每月某时间做某事」时使用。"
+                    "cron_expr 为 5 段：分 时 日 月 周。例：每天 9 点 = '0 9 * * *'，每天 11 点 58 分 = '58 11 * * *'，每周一 9 点 = '0 9 * * 1'。"
+                    "description 只填任务内容，不要包含时间、频率等，时间由 cron_expr 表达。"
+                    "timezone 默认 Asia/Shanghai。"
                 ),
                 input_params={
                     "type": "object",
                     "properties": {
-                        "name": {"type": "string", "description": "Job name"},
+                        "name": {"type": "string", "description": "任务名称"},
                         "cron_expr": {
                             "type": "string",
-                            "description": "Cron expression, e.g. '0 9 * * 1-5' for 9am weekdays",
+                            "description": "Cron 表达式，如每天9点10分用 '10 9 * * *'",
                         },
                         "timezone": {
                             "type": "string",
-                            "description": "Timezone, e.g. 'Asia/Shanghai'",
+                            "description": "时区，如 Asia/Shanghai",
+                            "default": "Asia/Shanghai",
                         },
                         "targets": {
-                            "type": "array",
-                            "items": {
-                                "type": "object",
-                                "properties": {
-                                    "channel_id": {"type": "string"},
-                                    "session_id": {"type": "string"},
-                                },
-                                "required": ["channel_id"],
-                            },
-                            "description": "List of push targets",
+                            "type": "string",
+                            "description": "推送频道，如网页用web, 飞书用feishu, 小艺用xiaoyi",
+                             "default": "web"
                         },
-                        "enabled": {
+                         "enabled": {
                             "type": "boolean",
-                            "description": "Whether job is enabled",
+                            "description": "是否启用",
                             "default": True,
                         },
                         "description": {
                             "type": "string",
-                            "description": "Optional job description",
-                            "default": "",
+                            "description": "具体任务名称，到点执行时发给助手，不能为空。不要包含时间/频率，例如填「搜索美国总统年龄」而非「每天上午11点58分搜索美国总统年龄」",
                         },
                         "wake_offset_seconds": {
                             "type": "integer",
-                            "description": "Seconds before push time to wake (default 300)",
+                            "description": "提前多少秒执行，默认 300",
+                            "default": 300,
                         },
                     },
-                    "required": ["name", "cron_expr", "timezone", "targets"],
+                    "required": ["name", "cron_expr", "timezone", "description"],
                 },
                 func=self._create_job_tool,
             ),

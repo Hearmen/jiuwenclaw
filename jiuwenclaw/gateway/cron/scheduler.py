@@ -248,10 +248,11 @@ class CronSchedulerService:
             state.status = "running"
             state.started_at = self._now_fn()
             try:
+                ts = format(int(time.time() * 1000), "x")
                 req = AgentRequest(
                     request_id=f"cron-{run_id}",
                     channel_id="__cron__",
-                    session_id=f"cron_{job.id}_{run_id.split(':')[-1]}",
+                    session_id=f"cron_{ts}_{job.id}",
                     req_method=ReqMethod.CHAT_SEND,
                     params={
                         "content": job.description,
@@ -350,17 +351,18 @@ class CronSchedulerService:
                 "status": state.status,
             },
         }
-        for target in job.targets:
-            msg = Message(
-                id=f"cron-push-{state.run_id}-{target.channel_id}",
-                type="event",
-                channel_id=target.channel_id,
-                session_id=target.session_id,
-                params={},
-                timestamp=self._now_fn(),
-                ok=True,
-                payload=payload_extra,
-                event_type=EventType.CHAT_FINAL,
-            )
-            await self._message_handler.publish_robot_messages(msg)
-
+        channel_id = (job.targets or "").strip()
+        if not channel_id:
+            return
+        msg = Message(
+            id=f"cron-push-{state.run_id}-{channel_id}",
+            type="event",
+            channel_id=channel_id,
+            session_id=None,
+            params={},
+            timestamp=self._now_fn(),
+            ok=True,
+            payload=payload_extra,
+            event_type=EventType.CHAT_FINAL,
+        )
+        await self._message_handler.publish_robot_messages(msg)

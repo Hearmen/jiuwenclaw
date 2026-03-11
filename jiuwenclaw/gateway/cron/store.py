@@ -57,7 +57,7 @@ class CronJobStore:
         cron_expr: str,
         timezone: str,
         description: str,
-        targets: list[dict[str, Any]] | list[CronTarget],
+        targets: str,
         enabled: bool = True,
         wake_offset_seconds: int | None = None,
     ) -> CronJob:
@@ -70,7 +70,7 @@ class CronJobStore:
             timezone=str(timezone or "").strip(),
             wake_offset_seconds=int(wake_offset_seconds) if wake_offset_seconds is not None else 300,
             description=str(description or ""),
-            targets=self._normalize_targets(targets),
+            targets=str(targets or "").strip(),
             created_at=now,
             updated_at=now,
         )
@@ -107,7 +107,7 @@ class CronJobStore:
         if "description" in patch:
             updated = replace(updated, description=str(patch.get("description") or ""))
         if "targets" in patch:
-            updated = replace(updated, targets=self._normalize_targets(patch.get("targets") or []))
+            updated = replace(updated, targets=str(patch.get("targets") or "").strip())
 
         updated.updated_at = time.time()
         CronJob.from_dict(updated.to_dict())
@@ -201,4 +201,3 @@ class CronJobStore:
         if not out:
             raise ValueError("targets is required")
         return out
-

@@ -350,7 +350,7 @@ class JiuClawReActAgent(ReActAgent):
                 await _pause_event.wait()
 
             logger.info(
-                "session s%, ReAct iteration %d/%d",
+                "session %s, ReAct iteration %d/%d",
                 session_id,
                 iteration + 1,
                 self._config.max_iterations,

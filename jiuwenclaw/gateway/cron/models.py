@@ -38,7 +38,9 @@ class CronJob:
     timezone: str
     wake_offset_seconds: int = 300
     description: str = ""
-    targets: list[CronTarget] = field(default_factory=list)
+    # Target channel ID to push results to (e.g. "web").
+    # JSON 字段名仍然叫 targets，用字符串保存频道 ID，兼容旧数据。
+    targets: str = ""
     created_at: float | None = None
     updated_at: float | None = None
 
@@ -51,7 +53,7 @@ class CronJob:
             "timezone": self.timezone,
             "wake_offset_seconds": int(self.wake_offset_seconds),
             "description": self.description,
-            "targets": [t.to_dict() for t in self.targets],
+            "targets": self.targets,
             "created_at": self.created_at,
             "updated_at": self.updated_at,
         }
@@ -74,14 +76,19 @@ class CronJob:
 
         description = str(data.get("description") or "")
 
-        targets_raw = data.get("targets") or []
-        if not isinstance(targets_raw, list):
-            raise ValueError("targets must be list")
-        targets: list[CronTarget] = []
-        for item in targets_raw:
-            if not isinstance(item, dict):
-                continue
-            targets.append(CronTarget.from_dict(item))
+        # targets 新格式是字符串；旧格式是 list[dict]，此处做兼容。
+        targets_raw = data.get("targets", "")
+        targets_str = ""
+        if isinstance(targets_raw, str):
+            targets_str = targets_raw.strip()
+        elif isinstance(targets_raw, list):
+            # legacy: list of {channel_id, session_id?}
+            for item in targets_raw:
+                if isinstance(item, dict):
+                    ch = str(item.get("channel_id") or "").strip()
+                    if ch:
+                        targets_str = ch
+                        break
 
         created_at = data.get("created_at", None)
         updated_at = data.get("updated_at", None)
@@ -96,7 +103,7 @@ class CronJob:
             raise ValueError("cron_expr is required")
         if not timezone:
             raise ValueError("timezone is required")
-        if not targets:
+        if not targets_str:
             raise ValueError("targets is required")
 
         return CronJob(
@@ -107,7 +114,7 @@ class CronJob:
             timezone=timezone,
             wake_offset_seconds=wake_offset_seconds,
             description=description,
-            targets=targets,
+            targets=targets_str,
             created_at=created_at_f,
             updated_at=updated_at_f,
         )
@@ -128,4 +135,3 @@ class CronRunState:
     finished_at: float | None = None
     result_text: str | None = None
     error: str | None = None
-
