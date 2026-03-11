@@ -82,6 +82,11 @@ class MessageHandler(ABC):
             ch_cfg = channels_cfg.get(ch) or {}
             sid_raw = ch_cfg.get("default_session_id") or ""
             sid = str(sid_raw).strip() or None
+            # 若未在 config 中指定默认 session_id，则为该 channel 生成一个带时间戳的新 session_id，
+            # 这样 feishu/xiaoyi/dingtalk 在未执行 \new_session 之前，消息的 session_id 也是
+            # `<channel>_<ts_hex>_<rand>` 这种可解析时间戳的格式。
+            if not sid:
+                sid = self._generate_channel_session_id(ch)
             mode_raw = str(ch_cfg.get("default_mode") or "plan").strip().lower()
             mode = ChannelMode.AGENT if mode_raw == "agent" else ChannelMode.PLAN
             self._channel_states[ch] = ChannelControlState(session_id=sid, mode=mode)
@@ -143,7 +148,7 @@ class MessageHandler(ABC):
 
         logger.info('this is in _handle_channel_control, channel id is %s, text is %s, "\\new_session" in text is %s', ch, text, str("\\new_session" in text))
         # \new_session：重置当前 Channel 的会话 ID
-        if "\\new_session" in text:
+        if "/new_session" == text:
             state = self._channel_states.get(ch) or ChannelControlState()
             new_sid = self._generate_channel_session_id(ch)
             state.session_id = new_sid
@@ -151,12 +156,17 @@ class MessageHandler(ABC):
             self._save_channel_state_to_config(ch)
             # 给当前会话回复提示（用原有 session_id）
             asyncio.create_task(
-                self._send_channel_notice(ch, msg.session_id, f"session_id 已变更为 {new_sid}")
+                self._send_channel_notice(ch, msg.session_id, f"[收到 CLI 指令], session_id 已变更为 {new_sid}")
+            )
+            return True
+        elif "/new_session" in text:
+            asyncio.create_task(
+                self._send_channel_notice(ch, msg.session_id, f"非法指令")
             )
             return True
 
         # \mode plan / \mode agent
-        if text.startswith("\\mode"):
+        if text == "/mode plan" or text == "/mode agent": 
             parts = text.split()
             if len(parts) >= 2 and parts[1] in ("plan", "agent"):
                 state = self._channel_states.get(ch) or ChannelControlState()
@@ -164,9 +174,14 @@ class MessageHandler(ABC):
                 self._channel_states[ch] = state
                 self._save_channel_state_to_config(ch)
                 asyncio.create_task(
-                    self._send_channel_notice(ch, msg.session_id, f"mode 已变更为 {state.mode.value}")
+                    self._send_channel_notice(ch, msg.session_id, f"[收到 CLI 指令], mode 已变更为 {state.mode.value}")
                 )
                 return True
+        elif "/mode" in text:
+            asyncio.create_task(
+                self._send_channel_notice(ch, msg.session_id, f"非法指令")
+            )
+            return True
 
         return False
 
