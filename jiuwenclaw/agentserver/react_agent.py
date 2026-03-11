@@ -382,11 +382,29 @@ class JiuClawReActAgent(ReActAgent):
                     uncompressed.append(message)
             await self._emit_context_compression(session, compression_to_show, uncompressed)
 
-            ai_message = await self._call_llm(
-                messages,
-                context_window.get_tools() or None,
-                session,  # Pass session for streaming
-            )
+            try:
+                ai_message = await self._call_llm(
+                    messages,
+                    context_window.get_tools() or None,
+                    session,  # Pass session for streaming
+                )
+            except Exception as e:
+                logger.error(f"[JiuwenClaw] 尝试修复上下文")
+                await self._fix_incomplete_tool_context(context)
+                context_window = await context.get_context_window(
+                    system_messages=[],
+                    tools=tools if tools else None,
+                )
+                history_messages = context_window.get_messages()
+                history_snapshot = list(history_messages)
+                # Filter out SystemMessage from history to avoid "System message must be at the beginning" error
+                history_messages = [m for m in history_messages if not isinstance(m, SystemMessage)]
+                messages = [*system_messages, *history_messages]
+                ai_message = await self._call_llm(
+                    messages,
+                    context_window.get_tools() or None,
+                    session,  # Pass session for streaming
+                )
 
             # Pause checkpoint: after LLM returns, before tool execution
             if _pause_event is not None:
