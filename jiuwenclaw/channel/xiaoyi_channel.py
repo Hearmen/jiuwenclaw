@@ -231,7 +231,7 @@ class XiaoyiChannel(BaseChannel):
                     self._heartbeat_tasks[url_key] = None
                 self._ws_connections[url_key] = None
                 logger.info(f"XiaoyiChannel 连接关闭 {url_key} : {url}")
-
+                await asyncio.sleep(8)
     async def _send_init_message(self, url_key: str) -> None:
         """发送初始化消息 (clawd_bot_init) 到指定通道."""
         ws = self._ws_connections.get(url_key)

@@ -62,6 +62,7 @@ export function SkillPanel({ sessionId }: SkillPanelProps) {
   const [detailState, setDetailState] = useState<LoadState>("idle");
   const [actionTarget, setActionTarget] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
+  const [messageType, setMessageType] = useState<"success" | "error" | null>(null);
   const [sourceModalOpen, setSourceModalOpen] = useState(false);
   const withSession = useCallback(
     (params?: Record<string, unknown>) => ({
@@ -197,6 +198,7 @@ export function SkillPanel({ sessionId }: SkillPanelProps) {
 
       setActionTarget(spec);
       setMessage(null);
+      setMessageType(null);
       try {
         const data = await webRequest<{
           success: boolean;
@@ -207,6 +209,7 @@ export function SkillPanel({ sessionId }: SkillPanelProps) {
           throw new Error(data.detail || data.message || "安装失败");
         }
         setMessage(`已安装：${spec}`);
+        setMessageType("success");
         await fetchSkills();
         if (selectedSkill) {
           await fetchSkillDetail(selectedSkill.name);
@@ -214,6 +217,7 @@ export function SkillPanel({ sessionId }: SkillPanelProps) {
       } catch (error) {
         console.error(error);
         setMessage("安装失败，请检查插件规格或网络");
+        setMessageType("error");
       } finally {
         setActionTarget(null);
       }
@@ -229,6 +233,7 @@ export function SkillPanel({ sessionId }: SkillPanelProps) {
 
     setActionTarget("import_local");
     setMessage(null);
+    setMessageType(null);
     try {
       const data = await webRequest<{
         success: boolean;
@@ -243,6 +248,7 @@ export function SkillPanel({ sessionId }: SkillPanelProps) {
         throw new Error(data.detail || data.message || "导入失败");
       }
       setMessage(`已导入：${data.skill?.name || path}`);
+      setMessageType("success");
       await fetchSkills();
       if (data.skill?.name) {
         await fetchSkillDetail(data.skill.name);
@@ -250,6 +256,7 @@ export function SkillPanel({ sessionId }: SkillPanelProps) {
     } catch (error) {
       console.error(error);
       setMessage("导入失败，请检查路径或权限");
+      setMessageType("error");
     } finally {
       setActionTarget(null);
     }
@@ -263,6 +270,7 @@ export function SkillPanel({ sessionId }: SkillPanelProps) {
 
       setActionTarget(pluginName);
       setMessage(null);
+      setMessageType(null);
       try {
         const data = await webRequest<{
           success: boolean;
@@ -275,6 +283,7 @@ export function SkillPanel({ sessionId }: SkillPanelProps) {
           throw new Error(data.detail || data.message || "卸载失败");
         }
         setMessage(`已卸载：${pluginName}`);
+        setMessageType("success");
         await fetchSkills();
         if (selectedSkill) {
           await fetchSkillDetail(selectedSkill.name);
@@ -282,6 +291,7 @@ export function SkillPanel({ sessionId }: SkillPanelProps) {
       } catch (error) {
         console.error(error);
         setMessage("卸载失败，请稍后重试");
+        setMessageType("error");
       } finally {
         setActionTarget(null);
       }
@@ -389,7 +399,9 @@ export function SkillPanel({ sessionId }: SkillPanelProps) {
         </div>
 
         {message && (
-          <div className="mt-3 px-3 py-2 rounded-md bg-secondary text-sm text-text">
+          <div className={`mt-3 px-3 py-2 rounded-md bg-secondary text-sm ${
+            messageType === "error" ? "text-danger" : "text-text"
+          }`}>
             {message}
           </div>
         )}
