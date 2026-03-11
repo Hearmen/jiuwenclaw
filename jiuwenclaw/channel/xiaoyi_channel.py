@@ -132,12 +132,28 @@ class XiaoyiChannel(BaseChannel):
         self._ws_connections.clear()
         logger.info("XiaoyiChannel 已停止")
 
+    def _extract_platform_receive_info(self, msg: Message) -> tuple[str, str]:
+        """
+        从消息中提取小艺平台会话 ID 与任务 ID。
+        优先使用 metadata（避免 \new_session 覆盖 session_id 后无法回发），否则回退到 session_id 与 _session_task_map。
+        """
+        meta = getattr(msg, "metadata", None) or {}
+        platform_session_id = (meta.get("xiaoyi_session_id") or "").strip()
+        platform_task_id = (meta.get("xiaoyi_task_id") or "").strip()
+        if platform_session_id or platform_task_id:
+            return (
+                platform_session_id or (msg.session_id or ""),
+                platform_task_id or platform_session_id,
+            )
+        session_id = msg.session_id or ""
+        task_id = self._session_task_map.get(session_id, session_id)
+        return session_id, task_id
+
     async def send(self, msg: Message) -> None:
         """发送消息到小艺服务端（A2A 格式，双通道发送）."""
         if not self._ws_connections:
             return
-        session_id = msg.session_id or ""
-        task_id = self._session_task_map.get(session_id, session_id)
+        session_id, task_id = self._extract_platform_receive_info(msg)
         logger.info(f"XiaoyiChannel 发送消息: {msg}")
 
         content = ""
@@ -284,6 +300,7 @@ class XiaoyiChannel(BaseChannel):
 
         self._session_task_map[session_id] = task_id
 
+        # 平台身份写入 metadata，供回发时使用（与 session_id 解耦，\new_session 后仍可正确回发）
         user_message = Message(
             id=message.get("id", ""),
             type="req",
@@ -293,7 +310,11 @@ class XiaoyiChannel(BaseChannel):
             timestamp=time.time(),
             ok=True,
             req_method=ReqMethod.CHAT_SEND,
-            metadata={"method": "message/stream"},
+            metadata={
+                "method": "message/stream",
+                "xiaoyi_session_id": session_id,
+                "xiaoyi_task_id": task_id,
+            },
         )
 
         handled = False

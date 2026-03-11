@@ -426,6 +426,8 @@ class FeishuChannel(BaseChannel):
     def _extract_receive_info(self, msg: Message) -> tuple[str, str]:
         """
         从消息对象中提取接收者ID和ID类型。
+        优先使用 metadata 中的平台身份（feishu_chat_id / feishu_open_id），
+        避免 \new_session 覆盖 session_id 后导致 Invalid ids。
 
         Args:
             msg: 消息对象
@@ -433,14 +435,27 @@ class FeishuChannel(BaseChannel):
         Returns:
             tuple: (接收者ID, ID类型)
         """
-        # 优先使用session_id（回复对象），否则使用id
-        receive_id = getattr(msg, "session_id", None) or msg.id
+        meta = getattr(msg, "metadata", None) or {}
+        receive_id = ""
+        id_type = "open_id"
 
-        # 飞书API：群聊 oc_ 使用 chat_id，用户 ou_ 使用 open_id
-        if receive_id.startswith("oc_"):
-            id_type = "chat_id"
-        else:
+        # 1) 优先用 metadata 中的平台身份
+        feishu_chat_id = (meta.get("feishu_chat_id") or "").strip()
+        feishu_open_id = (meta.get("feishu_open_id") or "").strip()
+        if feishu_chat_id:
+            receive_id = feishu_chat_id
+            id_type = "chat_id" if feishu_chat_id.startswith("oc_") else "open_id"
+        elif feishu_open_id:
+            receive_id = feishu_open_id
             id_type = "open_id"
+
+        # 2) 兼容旧逻辑：无 metadata 时用 session_id / id
+        if not receive_id:
+            receive_id = getattr(msg, "session_id", None) or msg.id or ""
+            if receive_id.startswith("oc_"):
+                id_type = "chat_id"
+            else:
+                id_type = "open_id"
 
         return receive_id, id_type
 
@@ -564,7 +579,7 @@ class FeishuChannel(BaseChannel):
                 getattr(getattr(sender, "sender_id", None), "open_id", None) or ""
             )
 
-            # 处理消息
+            # 处理消息：将平台身份写入 metadata，供回发时使用（与 session_id 解耦，\new_session 后仍可正确回发）
             await self._handle_message(
                 chat_id=message.chat_id,
                 content=content,
@@ -573,6 +588,8 @@ class FeishuChannel(BaseChannel):
                     "chat_type": message.chat_type,
                     "msg_type": message.message_type,
                     "open_id": open_id,
+                    "feishu_open_id": open_id,
+                    "feishu_chat_id": getattr(message, "chat_id", None) or "",
                 },
             )
 
