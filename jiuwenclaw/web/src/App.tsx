@@ -11,6 +11,7 @@ import { SkillPanel } from './components/SkillPanel';
 import { AgentPanel } from './components/AgentPanel/index';
 import { SessionsPanel } from './components/SessionsPanel';
 import { HeartbeatPanel } from './components/HeartbeatPanel';
+import CronPanel from './components/CronPanel';
 import { ToolPanel } from './components/ToolPanel';
 import { ConfigPanel } from './components/ConfigPanel';
 import { LogsPanel } from './components/LogsPanel';
@@ -23,7 +24,7 @@ import { AgentMode } from './types';
 import { useSessionStore, useChatStore, useTodoStore } from './stores';
 import './App.css';
 
-type MainNavKey = 'chat' | 'skills' | 'agents' | 'sessions' | 'heartbeat' | 'channels' | 'configpanel' | 'logspanel' | 'browserpanel';
+type MainNavKey = 'chat' | 'skills' | 'agents' | 'sessions' | 'heartbeat' | 'cron' | 'channels' | 'configpanel' | 'logspanel' | 'browserpanel';
 
 // 错误边界组件
 interface ErrorBoundaryState {
@@ -556,6 +557,11 @@ function AppContent() {
         {activeNav === 'heartbeat' && (
           <div className="app-section">
             <HeartbeatPanel />
+          </div>
+        )}
+        {activeNav === 'cron' && (
+          <div className="app-section">
+            <CronPanel />
           </div>
         )}
         {activeNav === 'configpanel' && (

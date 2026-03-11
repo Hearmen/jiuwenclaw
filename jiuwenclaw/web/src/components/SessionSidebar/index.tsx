@@ -7,7 +7,7 @@
 import { OffloadFilesWidget } from './OffloadFilesWidget';
 import './SessionSidebar.css';
 
-type MainNavKey = 'chat' | 'skills' | 'agents' | 'sessions' | 'heartbeat' | 'channels' | 'configpanel' | 'logspanel' | 'browserpanel';
+type MainNavKey = 'chat' | 'skills' | 'agents' | 'sessions' | 'heartbeat' | 'cron' | 'channels' | 'configpanel' | 'logspanel' | 'browserpanel';
 
 interface SessionSidebarProps {
   activeNav: MainNavKey;
@@ -68,6 +68,15 @@ export function SessionSidebar({
             <path strokeLinecap="round" strokeLinejoin="round" d="M3.75 12h3.75l1.5-4.5 3 9 2.25-6h6" />
           </svg>
           心跳
+        </button>
+        <button
+          onClick={() => onNavigate('cron')}
+          className={`nav-item w-full ${activeNav === 'cron' ? 'active' : ''}`}
+        >
+          <svg className="w-4 h-4 nav-item__icon" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={1.5}>
+            <path strokeLinecap="round" strokeLinejoin="round" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+          </svg>
+          定时任务
         </button>
         <button
           onClick={() => onNavigate('skills')}

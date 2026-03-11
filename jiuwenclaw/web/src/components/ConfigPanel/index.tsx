@@ -217,6 +217,29 @@ function GroupSection({
                         </button>
                       </div>
                     </div>
+                  ) : key === "model_provider" ? (
+                    <div className="flex items-center gap-2">
+                      <span
+                        className={`inline-flex w-3 justify-center shrink-0 font-semibold leading-none select-none ${
+                          isRequiredModelField(key) ? "text-danger" : "text-transparent"
+                        }`}
+                        aria-hidden="true"
+                      >
+                        *
+                      </span>
+                      <div className="flex-1">
+                        <select
+                          value={draftValues[key] ?? value}
+                          onChange={(e) => onChange(key, e.target.value)}
+                          className="w-full rounded-md border border-border bg-bg px-3 py-2 text-[13px] outline-none focus:border-accent"
+                        >
+                          <option value="" disabled>请选择模型提供商</option>
+                          <option value="OpenAI">OpenAI</option>
+                          <option value="DashScope">DashScope</option>
+                          <option value="SiliconFlow">SiliconFlow</option> 
+                        </select>
+                      </div>
+                    </div>
                   ) : (
                     <div className="flex items-center gap-2">
                       <span
