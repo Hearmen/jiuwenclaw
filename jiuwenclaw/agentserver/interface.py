@@ -795,7 +795,7 @@ class JiuWenClaw:
 
         async def run_agent_task():
             try:
-                await self._register_runtime_tools(request.session_id)
+                await self._register_runtime_tools(request.session_id, request.params.get("mode", "plan"))
                 return await Runner.run_agent(agent=self._instance, inputs=inputs)
             except asyncio.CancelledError:
                 logger.info("[JiuWenClaw] Agent 任务被取消: request_id=%s session_id=%s", request.request_id, session_id)
