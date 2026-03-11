@@ -62,6 +62,12 @@ channels:
     ws_url2: wss://116.63.174.231/openclaw/v1/ws/link
     enable_streaming: true
     enabled: false
+  dingtalk:
+    # 钉钉应用配置
+    client_id:
+    client_secret:
+    allow_from: []
+    enabled: false
 
 browser:
   # chrome_path can be a string or per-OS map.

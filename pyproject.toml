@@ -19,6 +19,9 @@ dependencies = [
     "psutil>=7.2.2",
     "aiosqlite>=0.22.1",
     "croniter>=2.0.0",
+    "dingtalk-stream>=0.24.3",
+    "python-socks>=2.8.1",
+    "greenlet>=3.3.2",
 ]
 
 [project.scripts]

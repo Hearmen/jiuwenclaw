@@ -23,6 +23,12 @@ import psutil
 
 # 减少日志打印
 from openjiuwen.core.common.logging import LogManager
+
+from jiuwenclaw.channel import (
+    DingTalkChannel,
+    DingTalkConfig,
+)
+
 for logger in LogManager.get_all_loggers().values():
     logger.set_level(logging.CRITICAL)
 from openjiuwen.core.foundation.llm import ProviderType
@@ -684,6 +690,57 @@ def _register_web_handlers(
             logger.exception("[channel.xiaoyi.set_conf] %s", e)
             await channel.send_response(ws, req_id, ok=False, error=str(e), code="INTERNAL_ERROR")
 
+    async def _channel_dingtalk_get_conf(ws, req_id, params, session_id):
+        cm = _resolve(channel_manager)
+        if cm is None:
+            await channel.send_response(
+                ws,
+                req_id,
+                ok=False,
+                error="channel manager not available",
+                code="SERVICE_UNAVAILABLE",
+            )
+            return
+        try:
+            conf = cm.get_conf("dingtalk")
+            await channel.send_response(ws, req_id, ok=True, payload={"config": conf})
+        except Exception as e:  # noqa: BLE001
+            logger.exception("[channel.dingtalk.get_conf] %s", e)
+            await channel.send_response(ws, req_id, ok=False, error=str(e), code="INTERNAL_ERROR")
+
+    async def _channel_dingtalk_set_conf(ws, req_id, params, session_id):
+        cm = _resolve(channel_manager)
+        if cm is None:
+            await channel.send_response(
+                ws,
+                req_id,
+                ok=False,
+                error="channel manager not available",
+                code="SERVICE_UNAVAILABLE",
+            )
+            return
+        if not isinstance(params, dict):
+            await channel.send_response(
+                ws,
+                req_id,
+                ok=False,
+                error="params must be object",
+                code="BAD_REQUEST",
+            )
+            return
+        try:
+            await cm.set_conf("dingtalk", params)
+            conf = cm.get_conf("dingtalk")
+            try:
+                update_channel_in_config("dingtalk", conf)
+                _clear_agent_config_cache()
+            except Exception as e:  # noqa: BLE001
+                logger.warning("[channel.dingtalk.set_conf] 写回 config.yaml 失败: %s", e)
+            await channel.send_response(ws, req_id, ok=True, payload={"config": conf})
+        except Exception as e:  # noqa: BLE001
+            logger.exception("[channel.dingtalk.set_conf] %s", e)
+            await channel.send_response(ws, req_id, ok=False, error=str(e), code="INTERNAL_ERROR")
+
     # ----- cron jobs -----
 
     def _get_cron():
@@ -858,6 +915,8 @@ def _register_web_handlers(
     channel.register_method("channel.feishu.set_conf", _channel_feishu_set_conf)
     channel.register_method("channel.xiaoyi.get_conf", _channel_xiaoyi_get_conf)
     channel.register_method("channel.xiaoyi.set_conf", _channel_xiaoyi_set_conf)
+    channel.register_method("channel.dingtalk.get_conf", _channel_dingtalk_get_conf)
+    channel.register_method("channel.dingtalk.set_conf", _channel_dingtalk_set_conf)
     channel.register_method("cron.job.list", _cron_job_list)
     channel.register_method("cron.job.get", _cron_job_get)
     channel.register_method("cron.job.create", _cron_job_create)
@@ -1040,9 +1099,11 @@ async def _run() -> None:
     feishu_task = None
     xiaoyi_channel = None
     xiaoyi_task = None
+    dingtalk_channel = None
+    dingtalk_task = None
 
     async def _apply_channel_config(conf: dict) -> None:
-        """根据最新 Channel 配置重新实例化各 Channel，目前管理 FeishuChannel 与 XiaoyiChannel.
+        """根据最新 Channel 配置重新实例化各 Channel，目前管理 FeishuChannel 与 XiaoyiChannel 与 DingtalkChannel.
 
         FeishuChannel 的启用规则：
         - 若配置中包含 enabled 字段，则以其布尔值为准；
@@ -1052,7 +1113,7 @@ async def _run() -> None:
         - 若配置中包含 enabled 字段，则以其布尔值为准；
         - 否则，当 ak / sk / agent_id 均非空时视为启用。
         """
-        nonlocal feishu_channel, feishu_task, xiaoyi_channel, xiaoyi_task
+        nonlocal feishu_channel, feishu_task, xiaoyi_channel, xiaoyi_task, dingtalk_channel, dingtalk_task
 
         # ----- FeishuChannel -----
 
@@ -1165,6 +1226,54 @@ async def _run() -> None:
         else:
             logger.info("[App] channels.xiaoyi 未配置或格式错误，XiaoyiChannel 不启用")
 
+        # ----- DingtalkChannel -----
+        dingtalk_conf = conf.get("dingtalk") if isinstance(conf, dict) else None
+        # 先清理已存在的 DingtalkChannel
+        if dingtalk_task is not None:
+            dingtalk_task.cancel()
+            try:
+                await dingtalk_task
+            except asyncio.CancelledError:
+                pass
+            dingtalk_task = None
+        if dingtalk_channel is not None:
+            try:
+                await dingtalk_channel.stop()
+            except Exception as e:  # noqa: BLE001
+                logger.warning("[App] 停止旧 DingtalkChannel 失败: %s", e)
+            channel_manager.unregister_channel(dingtalk_channel.channel_id)
+            dingtalk_channel = None
+
+        # 再根据新配置决定是否创建新的 DingtalkChannel
+        if isinstance(dingtalk_conf, dict):
+            client_id = str(dingtalk_conf.get("client_id") or "").strip()
+            client_secret = str(dingtalk_conf.get("client_secret") or "").strip()
+            allow_from = dingtalk_conf.get("allow_from") or []
+
+            enabled_raw = dingtalk_conf.get("enabled", None)
+            if enabled_raw is None:
+                enabled = bool(client_id and client_secret and allow_from)
+            else:
+                enabled = bool(enabled_raw)
+
+            if not enabled:
+                logger.info("[App] channels.dingtalk.enabled = false，DingtalkChannel 未启用")
+            elif not (client_id and client_secret and allow_from):
+                logger.info("[App] channels.dingtalk 缺少 client_id/client_secret/allow_from，DingtalkChannel 未启用")
+            else:
+                dingtalk_config = DingTalkConfig(
+                    enabled=True,
+                    client_id=client_id,
+                    client_secret=client_secret,
+                    allow_from=allow_from,
+                )
+                dingtalk_channel = DingTalkChannel(dingtalk_config, _DummyBus())
+                channel_manager.register_channel(dingtalk_channel)
+                dingtalk_task = asyncio.create_task(dingtalk_channel.start(), name="dingtalk")
+                logger.info("[App] 已按 config.yaml.channels.dingtalk 注册 DingtalkChannel")
+        else:
+            logger.info("[App] channels.dingtalk 未配置或格式错误，DingtalkChannel 不启用")
+
     # 将「配置更新时如何重新实例化 Channel」逻辑注册到 ChannelManager
     channel_manager.set_config_callback(_apply_channel_config)
     # 使用初始配置实例化一次（启动时，针对 feishu / xiaoyi）
@@ -1184,6 +1293,8 @@ async def _run() -> None:
             tasks.append(feishu_task)
         if xiaoyi_task is not None:
             tasks.append(xiaoyi_task)
+        if dingtalk_task is not None:
+            tasks.append(dingtalk_task)
         await asyncio.gather(*tasks)
     except KeyboardInterrupt:
         logger.info("收到 Ctrl+C，正在退出…")
@@ -1210,6 +1321,13 @@ async def _run() -> None:
             except asyncio.CancelledError:
                 pass
             await xiaoyi_channel.stop()
+        if dingtalk_channel is not None and dingtalk_task is not None:
+            dingtalk_task.cancel()
+            try:
+                await dingtalk_task
+            except asyncio.CancelledError:
+                pass
+            await dingtalk_channel.stop()
         await cron_scheduler.stop()
         await channel_manager.stop_dispatch()
         await heartbeat_service.stop()
