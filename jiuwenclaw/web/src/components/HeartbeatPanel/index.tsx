@@ -339,6 +339,7 @@ export function HeartbeatPanel() {
                       <option value="web">网页 (web)</option>
                       <option value="xiaoyi">小艺 (xiaoyi)</option>
                       <option value="feishu">飞书 (feishu)</option>
+                      <option value="dingding">钉钉 (dingding)</option>
                     </select>
                   </label>
 

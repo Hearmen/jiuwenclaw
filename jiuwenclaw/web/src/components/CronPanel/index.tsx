@@ -71,7 +71,8 @@ export default function CronPanel() {
   const targetOptions = [
     { value: 'web', label: '网页 (web)' },
     { value: 'feishu', label: '飞书 (feishu)' },
-    { value: 'xiaoyi', label: '小艺 (xiaoyi)' }
+    { value: 'xiaoyi', label: '小艺 (xiaoyi)' },
+    { value: 'dingding', label: '钉钉 (dingding)' }
   ];
 
   // 加载任务列表
@@ -287,7 +288,7 @@ export default function CronPanel() {
                     <th className="px-4 py-3 text-left text-sm font-medium text-text-muted w-[120px]">任务名称</th>
                     <th className="px-4 py-3 text-left text-sm font-medium text-text-muted w-[400px]">Cron 表达式</th>
                     <th className="px-4 py-3 text-left text-sm font-medium text-text-muted">状态</th>
-                    <th className="px-4 py-3 text-left text-sm font-medium text-text-muted">描述</th>
+                    <th className="px-4 py-3 text-left text-sm font-medium text-text-muted w-[300px]">描述</th>
                     <th className="px-4 py-3 text-left text-sm font-medium text-text-muted w-[120px]">唤醒偏移秒数</th>
                     <th className="px-4 py-3 text-left text-sm font-medium text-text-muted">时区</th>
                     <th className="px-4 py-3 text-left text-sm font-medium text-text-muted">推送频道</th>
@@ -529,7 +530,7 @@ export default function CronPanel() {
                           </span>
                         </td>
                         <td className="px-4 py-3 text-sm text-text-muted">
-                          <div className="max-w-[200px] overflow-hidden text-ellipsis whitespace-nowrap" title={job.description || '-'}>
+                          <div className="max-w-[300px] overflow-hidden text-ellipsis whitespace-nowrap" title={job.description || '-'}>
                             {job.description || '-'}
                           </div>
                         </td>
