@@ -38,6 +38,10 @@ export function BrowserPanel({ isConnected, request }: BrowserPanelProps) {
 
   const hasChanges = useMemo(() => chromePath !== initialPath, [chromePath, initialPath]);
   const isPathValid = useMemo(() => chromePath.trim().length > 0, [chromePath]);
+  const canStart = useMemo(
+    () => isConnected && !starting && !saving && !loading && isPathValid && !hasChanges,
+    [hasChanges, isConnected, isPathValid, loading, saving, starting]
+  );
 
   const clearFeedback = () => {
     setError(null);
@@ -75,7 +79,7 @@ export function BrowserPanel({ isConnected, request }: BrowserPanelProps) {
   }, [success]);
 
   const handleSave = async () => {
-    if (saving || !hasChanges || !isPathValid || !isConnected) {
+    if (saving || !hasChanges || !isConnected) {
       return;
     }
     setSaving(true);
@@ -103,22 +107,25 @@ export function BrowserPanel({ isConnected, request }: BrowserPanelProps) {
       setShowPathError(true);
       return;
     }
+    if (hasChanges) {
+      clearFeedback();
+      setError('请先保存 Chrome 路径后再启动浏览器服务');
+      return;
+    }
     setStarting(true);
     clearFeedback();
     setShowPathError(false);
     try {
       const payload = await request<BrowserStartPayload>('browser.start');
       const returncode = normalizeReturnCode(payload);
-      if (returncode === null) {
-        setSuccess('浏览器服务启动请求已发送');
-      } else if (returncode === 0) {
+      if (returncode === null || returncode === 0) {
         setSuccess('浏览器服务启动成功');
       } else {
         setError(`浏览器服务启动失败，返回码 ${returncode}`);
       }
     } catch (startError) {
       const message = startError instanceof Error ? startError.message : '启动浏览器服务失败';
-      setError(message);
+      setError(`浏览器服务启动失败：${message}`);
     } finally {
       setStarting(false);
     }
@@ -198,7 +205,7 @@ export function BrowserPanel({ isConnected, request }: BrowserPanelProps) {
                 type="button"
                 className="btn primary !px-3 !py-1.5 disabled:opacity-50 disabled:cursor-not-allowed"
                 onClick={() => void handleSave()}
-                disabled={!isConnected || !hasChanges || !isPathValid || saving || starting || loading}
+                disabled={!isConnected || !hasChanges || saving || starting || loading}
               >
                 {saving ? '保存中...' : '保存路径'}
               </button>
@@ -206,7 +213,14 @@ export function BrowserPanel({ isConnected, request }: BrowserPanelProps) {
                 type="button"
                 className="btn !px-3 !py-1.5 disabled:opacity-50 disabled:cursor-not-allowed"
                 onClick={() => void handleStart()}
-                disabled={!isConnected || starting || saving}
+                disabled={!canStart}
+                title={
+                  !isPathValid
+                    ? '请先填写 Chrome 路径'
+                    : hasChanges
+                      ? '请先保存 Chrome 路径'
+                      : undefined
+                }
               >
                 {starting ? '启动中...' : '启动浏览器服务'}
               </button>

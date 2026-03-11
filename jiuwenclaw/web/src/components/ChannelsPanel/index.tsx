@@ -14,7 +14,7 @@ type ChannelItem = {
 };
 
 type LoadState = 'idle' | 'loading' | 'success' | 'error';
-type SupportedChannelId = 'web' | 'xiaoyi' | 'feishu';
+type SupportedChannelId = 'web' | 'xiaoyi' | 'feishu' | 'dingtalk';
 
 type FeishuConfig = {
   enabled: boolean;
@@ -50,6 +50,20 @@ type XiaoyiDraft = {
   enable_streaming: boolean;
 };
 
+type DingTalkConfig = {
+  enabled: boolean;
+  client_id: string;
+  client_secret: string;
+  allow_from: string[];
+};
+
+type DingTalkDraft = {
+  enabled: boolean;
+  client_id: string;
+  client_secret: string;
+  allow_from: string;
+};
+
 const DEFAULT_FEISHU_CONF: FeishuConfig = {
   enabled: false,
   app_id: '',
@@ -67,10 +81,18 @@ const DEFAULT_XIAOYI_CONF: XiaoyiConfig = {
   enable_streaming: true,
 };
 
+const DEFAULT_DINGTALK_CONF: DingTalkConfig = {
+  enabled: false,
+  client_id: '',
+  client_secret: '',
+  allow_from: [],
+};
+
 const SUPPORTED_CHANNELS: Array<{ channel_id: SupportedChannelId; label: string; logo_src: string | null }> = [
   { channel_id: 'web', label: '网页', logo_src: null },
   { channel_id: 'xiaoyi', label: '小艺', logo_src: '/xiaoyi.webp' },
   { channel_id: 'feishu', label: '飞书', logo_src: '/feishu.webp' },
+  { channel_id: 'dingtalk', label: '钉钉', logo_src: '/dingtalk.png' },
 ];
 
 
@@ -87,6 +109,10 @@ function isSensitiveField(field: keyof FeishuDraft): boolean {
 
 function isSensitiveXiaoyiField(field: keyof XiaoyiDraft): boolean {
   return field === 'ak' || field === 'sk';
+}
+
+function isSensitiveDingtalkField(field: keyof DingTalkDraft): boolean {
+  return field === 'client_secret';
 }
 
 function normalizeEnabledChannels(channels: unknown): Set<string> {
@@ -199,6 +225,41 @@ function buildXiaoyiPayload(draft: XiaoyiDraft): Record<string, unknown> {
   };
 }
 
+function normalizeDingtalkConfig(input: unknown): DingTalkConfig {
+  if (!input || typeof input !== 'object') {
+    return DEFAULT_DINGTALK_CONF;
+  }
+  const data = input as Record<string, unknown>;
+  const allowFromRaw = Array.isArray(data.allow_from) ? data.allow_from : [];
+  const allowFrom = allowFromRaw
+    .map((item) => String(item ?? '').trim())
+    .filter((item) => item.length > 0);
+  return {
+    enabled: Boolean(data.enabled),
+    client_id: String(data.client_id ?? '').trim(),
+    client_secret: String(data.client_secret ?? '').trim(),
+    allow_from: allowFrom,
+  };
+}
+
+function draftFromDingtalkConfig(conf: DingTalkConfig): DingTalkDraft {
+  return {
+    enabled: conf.enabled,
+    client_id: conf.client_id,
+    client_secret: conf.client_secret,
+    allow_from: conf.allow_from.join('\n'),
+  };
+}
+
+function buildDingtalkPayload(draft: DingTalkDraft): Record<string, unknown> {
+  return {
+    enabled: draft.enabled,
+    client_id: draft.client_id.trim(),
+    client_secret: draft.client_secret.trim(),
+    allow_from: normalizeAllowFromText(draft.allow_from),
+  };
+}
+
 function VisibilityIcon({ visible }: { visible: boolean }) {
   return visible ? (
     <svg className="channels-panel__icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8}>
@@ -278,6 +339,13 @@ export function ChannelsPanel({ isConnected }: ChannelsPanelProps) {
   const [xiaoyiSaving, setXiaoyiSaving] = useState(false);
   const [xiaoyiSaveError, setXiaoyiSaveError] = useState<string | null>(null);
   const [xiaoyiSuccess, setXiaoyiSuccess] = useState<string | null>(null);
+  const [dingtalkConfig, setDingtalkConfig] = useState<DingTalkConfig>(DEFAULT_DINGTALK_CONF);
+  const [dingtalkDraft, setDingtalkDraft] = useState<DingTalkDraft>(draftFromDingtalkConfig(DEFAULT_DINGTALK_CONF));
+  const [dingtalkVisibleFields, setDingtalkVisibleFields] = useState<Record<string, boolean>>({});
+  const [dingtalkLoading, setDingtalkLoading] = useState(false);
+  const [dingtalkSaving, setDingtalkSaving] = useState(false);
+  const [dingtalkSaveError, setDingtalkSaveError] = useState<string | null>(null);
+  const [dingtalkSuccess, setDingtalkSuccess] = useState<string | null>(null);
 
   const fetchChannels = useCallback(async () => {
     setLoadState('loading');
@@ -332,6 +400,23 @@ export function ChannelsPanel({ isConnected }: ChannelsPanelProps) {
     }
   }, []);
 
+  const fetchDingtalkConfig = useCallback(async () => {
+    setDingtalkLoading(true);
+    setDingtalkSaveError(null);
+    setDingtalkSuccess(null);
+    try {
+      const payload = await webRequest<{ config?: unknown }>('channel.dingtalk.get_conf');
+      const normalized = normalizeDingtalkConfig(payload?.config);
+      setDingtalkConfig(normalized);
+      setDingtalkDraft(draftFromDingtalkConfig(normalized));
+      setDingtalkVisibleFields({});
+    } catch (err) {
+      setDingtalkSaveError(err instanceof Error ? err.message : '获取钉钉配置失败');
+    } finally {
+      setDingtalkLoading(false);
+    }
+  }, []);
+
   const handleSelectChannel = useCallback(
     (channelId: SupportedChannelId) => {
       setActiveChannelId(channelId);
@@ -346,8 +431,12 @@ export function ChannelsPanel({ isConnected }: ChannelsPanelProps) {
     }
     if (activeChannelId === 'xiaoyi') {
       void fetchXiaoyiConfig();
+      return;
     }
-  }, [activeChannelId, fetchFeishuConfig, fetchXiaoyiConfig]);
+    if (activeChannelId === 'dingtalk') {
+      void fetchDingtalkConfig();
+    }
+  }, [activeChannelId, fetchDingtalkConfig, fetchFeishuConfig, fetchXiaoyiConfig]);
 
   const statusText = useMemo(() => {
     const enabledCount = channels.filter((channel) => channel.enabled).length;
@@ -381,6 +470,15 @@ export function ChannelsPanel({ isConnected }: ChannelsPanelProps) {
       baseDraft.enable_streaming !== xiaoyiDraft.enable_streaming
     );
   }, [xiaoyiConfig, xiaoyiDraft]);
+  const hasDingtalkConfigChanges = useMemo(() => {
+    const baseDraft = draftFromDingtalkConfig(dingtalkConfig);
+    return (
+      baseDraft.enabled !== dingtalkDraft.enabled ||
+      baseDraft.client_id !== dingtalkDraft.client_id ||
+      baseDraft.client_secret !== dingtalkDraft.client_secret ||
+      normalizeAllowFromText(baseDraft.allow_from).join('\n') !== normalizeAllowFromText(dingtalkDraft.allow_from).join('\n')
+    );
+  }, [dingtalkConfig, dingtalkDraft]);
 
   const handleFieldChange = <K extends keyof FeishuDraft>(key: K, value: FeishuDraft[K]) => {
     setDraft((prev) => ({ ...prev, [key]: value }));
@@ -424,6 +522,27 @@ export function ChannelsPanel({ isConnected }: ChannelsPanelProps) {
     setXiaoyiVisibleFields((prev) => ({ ...prev, [field]: !prev[field] }));
   };
 
+  const handleDingtalkFieldChange = <K extends keyof DingTalkDraft>(key: K, value: DingTalkDraft[K]) => {
+    setDingtalkDraft((prev) => ({ ...prev, [key]: value }));
+    if (dingtalkSaveError) {
+      setDingtalkSaveError(null);
+    }
+    if (dingtalkSuccess) {
+      setDingtalkSuccess(null);
+    }
+  };
+
+  const handleCancelDingtalkConfig = () => {
+    if (!hasDingtalkConfigChanges) return;
+    setDingtalkDraft(draftFromDingtalkConfig(dingtalkConfig));
+    setDingtalkSaveError(null);
+    setDingtalkSuccess(null);
+  };
+
+  const toggleDingtalkFieldVisible = (field: keyof DingTalkDraft) => {
+    setDingtalkVisibleFields((prev) => ({ ...prev, [field]: !prev[field] }));
+  };
+
   const handleSaveConfig = async () => {
     if (!hasConfigChanges || saving) return;
     setSaving(true);
@@ -462,10 +581,31 @@ export function ChannelsPanel({ isConnected }: ChannelsPanelProps) {
     }
   };
 
-  const isConfigRefreshing = feishuLoading || xiaoyiLoading;
+  const handleSaveDingtalkConfig = async () => {
+    if (!hasDingtalkConfigChanges || dingtalkSaving) return;
+    setDingtalkSaving(true);
+    setDingtalkSaveError(null);
+    try {
+      const payload = buildDingtalkPayload(dingtalkDraft);
+      const result = await webRequest<{ config?: unknown }>('channel.dingtalk.set_conf', payload);
+      const normalized = normalizeDingtalkConfig(result?.config);
+      setDingtalkConfig(normalized);
+      setDingtalkDraft(draftFromDingtalkConfig(normalized));
+      setDingtalkSuccess('钉钉配置已保存');
+    } catch (saveErr) {
+      const message = saveErr instanceof Error ? saveErr.message : '保存失败，请稍后重试';
+      setDingtalkSaveError(message);
+    } finally {
+      setDingtalkSaving(false);
+    }
+  };
+
+  const isConfigRefreshing = feishuLoading || xiaoyiLoading || dingtalkLoading;
   const configErrorNotice = useMemo(() => {
-    return Array.from(new Set([saveError, xiaoyiSaveError].filter((message): message is string => Boolean(message)))).join('；');
-  }, [saveError, xiaoyiSaveError]);
+    return Array.from(
+      new Set([saveError, xiaoyiSaveError, dingtalkSaveError].filter((message): message is string => Boolean(message))),
+    ).join('；');
+  }, [dingtalkSaveError, saveError, xiaoyiSaveError]);
   useEffect(() => {
     if (!configErrorNotice) {
       return;
@@ -473,6 +613,7 @@ export function ChannelsPanel({ isConnected }: ChannelsPanelProps) {
     const timer = window.setTimeout(() => {
       setSaveError(null);
       setXiaoyiSaveError(null);
+      setDingtalkSaveError(null);
     }, 2000);
     return () => {
       window.clearTimeout(timer);
@@ -691,6 +832,132 @@ export function ChannelsPanel({ isConnected }: ChannelsPanelProps) {
                                 </td>
                               </tr>
                             ))}
+                          </tbody>
+                        </table>
+                      )}
+                    </div>
+                  </div>
+                ) : null}
+
+                {activeChannelId === 'dingtalk' ? (
+                  <div className="w-full h-full rounded-xl border border-border bg-card/70 backdrop-blur-sm overflow-hidden shadow-sm flex flex-col">
+                    <div className="px-4 py-3 bg-secondary/30 border-b border-border">
+                      <div className="flex items-center justify-between gap-4">
+                        <div className="flex items-center gap-3">
+                          <ChannelHeaderLogo channelId="dingtalk" label="钉钉" />
+                          <div>
+                            <h4 className="text-sm font-medium text-text">钉钉频道参数配置</h4>
+                            <p className="text-xs text-text-muted mt-1">配置钉钉频道服务相关参数</p>
+                          </div>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <button
+                            type="button"
+                            onClick={() => void fetchDingtalkConfig()}
+                            disabled={dingtalkSaving || isConfigRefreshing}
+                            className="btn !px-3 !py-1.5 disabled:opacity-50 disabled:cursor-not-allowed"
+                          >
+                            {dingtalkLoading ? '刷新中...' : '刷新'}
+                          </button>
+                          <button
+                            type="button"
+                            onClick={handleCancelDingtalkConfig}
+                            disabled={!hasDingtalkConfigChanges || dingtalkSaving}
+                            className="btn !px-3 !py-1.5 disabled:opacity-50 disabled:cursor-not-allowed"
+                          >
+                            取消
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => void handleSaveDingtalkConfig()}
+                            disabled={
+                              !hasDingtalkConfigChanges ||
+                              dingtalkSaving ||
+                              !isConnected ||
+                              !dingtalkDraft.client_id.trim() ||
+                              !dingtalkDraft.client_secret.trim()
+                            }
+                            className="btn primary !px-3 !py-1.5 disabled:opacity-50 disabled:cursor-not-allowed"
+                          >
+                            {dingtalkSaving ? '保存中...' : '保存'}
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+
+                    {dingtalkSuccess ? (
+                      <div className="mx-4 mt-4 rounded-md border border-[var(--border-ok)] bg-ok-subtle px-3 py-2 text-sm text-ok">
+                        {dingtalkSuccess}
+                      </div>
+                    ) : null}
+
+                    <div className="p-4 pt-3 flex-1 overflow-auto">
+                      {dingtalkLoading ? (
+                        <div className="text-sm text-text-muted">正在加载钉钉配置...</div>
+                      ) : (
+                        <table className="w-full text-sm">
+                          <tbody>
+                            <tr className="border-t border-border first:border-t-0 even:bg-secondary/10">
+                              <td className="px-4 py-2.5 align-middle mono text-xs text-text-muted w-[32%]">enabled</td>
+                              <td className="px-4 py-2.5 align-middle">
+                                <button
+                                  type="button"
+                                  role="switch"
+                                  aria-checked={dingtalkDraft.enabled}
+                                  onClick={() => handleDingtalkFieldChange('enabled', !dingtalkDraft.enabled)}
+                                  className={`relative inline-flex h-5 w-9 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 focus:outline-none ${
+                                    dingtalkDraft.enabled ? 'bg-ok' : 'bg-secondary'
+                                  }`}
+                                >
+                                  <span
+                                    className={`pointer-events-none inline-block h-4 w-4 transform rounded-full bg-white shadow transition duration-200 ${
+                                      dingtalkDraft.enabled ? 'translate-x-4' : 'translate-x-0'
+                                    }`}
+                                  />
+                                </button>
+                              </td>
+                            </tr>
+                            {(['client_id', 'client_secret'] as const).map((field) => (
+                              <tr key={field} className="border-t border-border first:border-t-0 even:bg-secondary/10">
+                                <td className="px-4 py-2.5 align-middle mono text-xs text-text-muted w-[32%]">{field}</td>
+                                <td className="px-4 py-2.5 break-all text-[13px] align-middle">
+                                  <div className="relative">
+                                    <input
+                                      type={isSensitiveDingtalkField(field) && !dingtalkVisibleFields[field] ? 'password' : 'text'}
+                                      value={dingtalkDraft[field]}
+                                      onChange={(e) => handleDingtalkFieldChange(field, e.target.value)}
+                                      placeholder={field === 'client_id' ? '请输入应用 ID' : '请输入应用密钥'}
+                                      className={`w-full rounded-md border border-border bg-bg px-3 py-2 text-[13px] outline-none focus:border-accent ${
+                                        isSensitiveDingtalkField(field) ? 'pr-10' : ''
+                                      }`}
+                                    />
+                                    {isSensitiveDingtalkField(field) ? (
+                                      <button
+                                        type="button"
+                                        onClick={() => toggleDingtalkFieldVisible(field)}
+                                        className="channels-panel__visibility-toggle"
+                                        aria-label={dingtalkVisibleFields[field] ? '隐藏明文' : '显示明文'}
+                                        title={dingtalkVisibleFields[field] ? '隐藏明文' : '显示明文'}
+                                      >
+                                        <VisibilityIcon visible={Boolean(dingtalkVisibleFields[field])} />
+                                      </button>
+                                    ) : null}
+                                  </div>
+                                </td>
+                              </tr>
+                            ))}
+                            <tr className="border-t border-border first:border-t-0 even:bg-secondary/10">
+                              <td className="px-4 py-2.5 align-top mono text-xs text-text-muted w-[32%]">allow_from</td>
+                              <td className="px-4 py-2.5 break-all text-[13px] align-middle">
+                                <textarea
+                                  value={dingtalkDraft.allow_from}
+                                  onChange={(e) => handleDingtalkFieldChange('allow_from', e.target.value)}
+                                  placeholder="每行一个员工 ID（也支持逗号分隔）"
+                                  rows={4}
+                                  className="w-full rounded-md border border-border bg-bg px-3 py-2 text-[13px] outline-none focus:border-accent resize-y"
+                                />
+                              </td>
+                            </tr>
                           </tbody>
                         </table>
                       )}

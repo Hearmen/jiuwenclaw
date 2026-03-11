@@ -27,7 +27,7 @@ for logger in LogManager.get_all_loggers().values():
     logger.set_level(logging.CRITICAL)
 from openjiuwen.core.foundation.llm import ProviderType
 
-from jiuwenclaw.utils import get_root_dir, is_package_installation, logger
+from jiuwenclaw.utils import get_config_file, get_root_dir, is_package_installation, logger
 from jiuwenclaw.config import get_config, update_heartbeat_in_config, update_channel_in_config, update_browser_in_config
 
 _PROJECT_ROOT = get_root_dir()
@@ -393,8 +393,8 @@ def _register_web_handlers(
             return
 
         chrome_path = params.get("chrome_path")
-        if not isinstance(chrome_path, str) or not chrome_path.strip():
-            await channel.send_response(ws, req_id, ok=False, error="chrome_path is required", code="BAD_REQUEST")
+        if not isinstance(chrome_path, str):
+            await channel.send_response(ws, req_id, ok=False, error="chrome_path must be string", code="BAD_REQUEST")
             return
         chrome_path = chrome_path.strip()
 
@@ -443,14 +443,29 @@ def _register_web_handlers(
             # )
 
             result = subprocess.run(
-                [sys.executable, str(script_path)],
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
+                [sys.executable, str(script_path), "--config", str(get_config_file())],
+                capture_output=True,
+                text=True,
             )
+            if result.returncode != 0:
+                error_message = (
+                    result.stderr.strip()
+                    or result.stdout.strip()
+                    or "浏览器服务启动失败"
+                )
+                await channel.send_response(
+                    ws,
+                    req_id,
+                    ok=False,
+                    error=error_message,
+                    code="INTERNAL_ERROR",
+                    payload={"returncode": result.returncode},
+                )
+                return
             await channel.send_response(
                 ws,
                 req_id,
-                ok=result.returncode == 0,
+                ok=True,
                 payload={"returncode": result.returncode},
             )
 

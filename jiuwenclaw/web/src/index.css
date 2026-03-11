@@ -679,6 +679,22 @@ select {
   .btn:disabled {
     opacity: 0.5;
     cursor: not-allowed;
+    pointer-events: none;
+    transform: none;
+    box-shadow: none;
+  }
+
+  .btn:disabled:hover,
+  .btn.primary:disabled:hover {
+    background: var(--bg-elevated);
+    border-color: var(--border);
+    transform: none;
+    box-shadow: none;
+  }
+
+  .btn.primary:disabled {
+    background: color-mix(in oklab, var(--accent) 55%, var(--bg-elevated));
+    border-color: color-mix(in oklab, var(--accent) 55%, var(--border));
   }
 
   /* Form Fields */
