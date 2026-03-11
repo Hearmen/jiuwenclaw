@@ -300,6 +300,20 @@ class XiaoyiChannel(BaseChannel):
 
         self._session_task_map[session_id] = task_id
 
+        # 将最近一次可回发的小艺身份写入 config.yaml，供 cron 推送时使用
+        try:
+            from jiuwenclaw.config import update_channel_in_config
+
+            update_channel_in_config(
+                "xiaoyi",
+                {
+                    "last_session_id": session_id or "",
+                    "last_task_id": task_id or "",
+                },
+            )
+        except Exception:
+            pass
+
         # 平台身份写入 metadata，供回发时使用（与 session_id 解耦，\new_session 后仍可正确回发）
         user_message = Message(
             id=message.get("id", ""),

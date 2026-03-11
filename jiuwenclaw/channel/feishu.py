@@ -579,6 +579,22 @@ class FeishuChannel(BaseChannel):
                 getattr(getattr(sender, "sender_id", None), "open_id", None) or ""
             )
 
+            # 将最近一次可回发的飞书身份写入 config.yaml，供 cron 推送时使用
+            try:
+                from jiuwenclaw.config import update_channel_in_config
+
+                update_channel_in_config(
+                    "feishu",
+                    {
+                        "last_chat_id": getattr(message, "chat_id", None) or "",
+                        "last_open_id": open_id or "",
+                        "last_message_id": getattr(message, "message_id", None) or "",
+                    },
+                )
+            except Exception:
+                # 不影响正常收消息
+                pass
+
             # 处理消息：将平台身份写入 metadata，供回发时使用（与 session_id 解耦，\new_session 后仍可正确回发）
             await self._handle_message(
                 chat_id=message.chat_id,

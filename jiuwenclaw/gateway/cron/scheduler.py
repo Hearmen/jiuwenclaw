@@ -354,6 +354,34 @@ class CronSchedulerService:
         channel_id = (job.targets or "").strip()
         if not channel_id:
             return
+
+        # 针对 feishu/xiaoyi：从 config.yaml 取最近一次可回发的平台身份，写入 metadata
+        # 这样即使 cron 推送没有 session_id，也能让 Channel.send 正常路由到对应会话。
+        metadata: dict | None = None
+        try:
+            from jiuwenclaw.config import get_config_raw
+
+            cfg = get_config_raw() or {}
+            ch_cfg = (cfg.get("channels") or {}).get(channel_id) or {}
+            if channel_id == "feishu":
+                last_chat_id = str(ch_cfg.get("last_chat_id") or "").strip()
+                last_open_id = str(ch_cfg.get("last_open_id") or "").strip()
+                if last_chat_id or last_open_id:
+                    metadata = {
+                        "feishu_chat_id": last_chat_id,
+                        "feishu_open_id": last_open_id,
+                    }
+            elif channel_id == "xiaoyi":
+                last_session_id = str(ch_cfg.get("last_session_id") or "").strip()
+                last_task_id = str(ch_cfg.get("last_task_id") or "").strip()
+                if last_session_id or last_task_id:
+                    metadata = {
+                        "xiaoyi_session_id": last_session_id,
+                        "xiaoyi_task_id": last_task_id,
+                    }
+        except Exception:
+            metadata = None
+
         msg = Message(
             id=f"cron-push-{state.run_id}-{channel_id}",
             type="event",
@@ -364,5 +392,6 @@ class CronSchedulerService:
             ok=True,
             payload=payload_extra,
             event_type=EventType.CHAT_FINAL,
+            metadata=metadata,
         )
         await self._message_handler.publish_robot_messages(msg)

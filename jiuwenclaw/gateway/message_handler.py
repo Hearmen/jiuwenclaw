@@ -49,7 +49,7 @@ class MessageHandler(ABC):
         self._stream_sessions: dict[str, str | None] = {}  # request_id -> session_id
 
         # per-channel 控制状态：支持 \new_session / \mode 指令（feishu/xiaoyi/dingding）
-        self._control_channels = {"feishu", "xiaoyi", "dingding"}
+        self._control_channels = {"feishu", "xiaoyi", "dingtalk"}
         self._channel_states: Dict[str, ChannelControlState] = {}
 
         # 直接使用 jiuwenclaw.config 的 get_config_raw/set_config/update_channel_in_config
@@ -177,7 +177,7 @@ class MessageHandler(ABC):
         if not state:
             return
 
-        # 对 feishu/xiaoyi/dingding 强制覆盖 session_id；web 等保持原有行为
+        # 对 feishu/xiaoyi/dingtalk 强制覆盖 session_id；web 等保持原有行为
         if ch in self._control_channels and state.session_id:
             msg.session_id = state.session_id
 
@@ -344,7 +344,7 @@ class MessageHandler(ABC):
                     continue
                 
          
-                # 先处理 Channel 控制指令（仅 feishu/xiaoyi/dingding）
+                # 先处理 Channel 控制指令（仅 feishu/xiaoyi/dingtalk）
                 if self._handle_channel_control(msg):
                     # 该消息仅用于修改 session/mode，已给 Channel 回复提示，不再转发给 Agent
                     continue
