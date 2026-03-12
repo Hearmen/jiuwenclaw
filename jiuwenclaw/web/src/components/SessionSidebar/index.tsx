@@ -140,7 +140,7 @@ export function SessionSidebar({
 
       <div className="pt-4 mt-4 border-t border-border text-xs text-text-muted">
         <div className="px-2.5">
-          <span>版本 0.1.3</span>
+          <span>版本 0.1.5</span>
         </div>
       </div>
     </aside>
