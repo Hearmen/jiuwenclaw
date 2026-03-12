@@ -305,11 +305,11 @@ async def edit_memory(
     oldText: str,
     newText: str
 ) -> Dict[str, Any]:
-    """精确编辑文件内容。oldText 必须完全匹配文件中的内容。如果 oldText 出现多次，需要更具体地指定。
-    主要用于更新USER.md和MEMORY.md文件
+    """精确编辑 memory 目录下的文件内容。仅用于更新记忆文件（如 USER.md、MEMORY.md）。
+    oldText 必须完全匹配文件中的内容。如果 oldText 出现多次，需要更具体地指定。
 
     Args:
-        path: 文件路径 (相对于工作区)
+        path: 文件路径，仅允许 memory/ 目录下的文件
         oldText: 要查找的文本 (必须完全匹配)
         newText: 替换的文本
 
@@ -317,15 +317,16 @@ async def edit_memory(
         操作结果字典
     """
     try:
-        resolved_path = _resolve_memory_path(path)
-        full_path = os.path.join(_global_workspace_dir, resolved_path)
-        
-        if ".." in path or path.startswith("/"):
+        is_valid, result = _validate_memory_path(path)
+        if not is_valid:
             return {
                 "success": False,
                 "path": path,
-                "error": "Invalid path: directory traversal not allowed"
+                "error": result
             }
+        
+        resolved_path = result
+        full_path = os.path.join(_global_workspace_dir, resolved_path)
         
         if not os.path.exists(full_path):
             return {
