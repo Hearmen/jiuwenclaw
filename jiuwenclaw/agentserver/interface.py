@@ -981,7 +981,7 @@ class JiuWenClaw:
                 if event_type == "error":
                     if isinstance(data, asyncio.CancelledError):
                         logger.info("[JiuWenClaw] 流式处理被中断: request_id=%s", rid)
-                        raise
+                        raise data
                     yield AgentResponseChunk(
                         request_id=rid,
                         channel_id=cid,
