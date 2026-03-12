@@ -1101,183 +1101,157 @@ async def _run() -> None:
     xiaoyi_task = None
     dingtalk_channel = None
     dingtalk_task = None
+    _last_channels_conf = {}  # Store previous config to detect changes
+
+    def _should_restart_channel(channel_name: str, old_conf: dict, new_conf: dict) -> bool:
+        """Check if a channel configuration changed enough to require restart."""
+        old_channel_conf = old_conf.get(channel_name) if isinstance(old_conf, dict) else None
+        new_channel_conf = new_conf.get(channel_name) if isinstance(new_conf, dict) else None
+
+        # If one exists and the other doesn't, changed
+        if (old_channel_conf is None) != (new_channel_conf is None):
+            return True
+
+        # If both are None, not changed
+        if old_channel_conf is None:
+            return False
+
+        # Compare all config fields (including nested structures)
+        return old_channel_conf != new_channel_conf
+
+    async def _stop_channel(channel, task, channel_name: str, background_wait: bool = False) -> None:
+        """Stop a channel and its task.
+
+        Args:
+            channel: The channel instance to stop
+            task: The async task to cancel
+            channel_name: Name of the channel for logging
+            background_wait: If True, wait for task cancellation in background (like DingtalkChannel)
+        """
+        if task is not None:
+            task.cancel()
+
+            if background_wait:
+                async def wait_cancel():
+                    try:
+                        await task
+                    except (TypeError, asyncio.CancelledError):
+                        logger.info("[App] 取消旧 %sChannel 任务成功", channel_name.capitalize())
+                asyncio.create_task(wait_cancel(), name=f"wait_{channel_name}_cancel")
+            else:
+                try:
+                    await asyncio.wait_for(task, timeout=5.0)
+                except asyncio.TimeoutError:
+                    logger.warning("[App] 等待 %sChannel 任务取消超时", channel_name.capitalize())
+                except asyncio.CancelledError:
+                    pass
+
+        if channel is not None:
+            try:
+                await asyncio.wait_for(channel.stop(), timeout=10.0)
+            except asyncio.TimeoutError:
+                logger.warning("[App] 停止 %sChannel 超时", channel_name.capitalize())
+            except Exception as e:  # noqa: BLE001
+                logger.warning("[App] 停止旧 %sChannel 失败: %s", channel_name.capitalize(), e)
+            channel_manager.unregister_channel(channel.channel_id)
+
+    def _is_channel_enabled(conf: dict | None, required_fields: list[str]) -> tuple[bool, str]:
+        """Check if a channel should be enabled based on config. Returns (enabled, reason_log)."""
+        if conf is None:
+            return False, "未配置或格式错误"
+        enabled_raw = conf.get("enabled", None)
+        if enabled_raw is None:
+            # Auto-enable if all required fields are present
+            all_fields_present = all(conf.get(f) for f in required_fields)
+            return all_fields_present, f"缺少 {','.join(required_fields)}" if not all_fields_present else ""
+        return bool(enabled_raw), "enabled = false" if not enabled_raw else ""
 
     async def _apply_channel_config(conf: dict) -> None:
-        """根据最新 Channel 配置重新实例化各 Channel，目前管理 FeishuChannel 与 XiaoyiChannel 与 DingtalkChannel.
+        """根据最新 Channel 配置重新实例化各 Channel"""
+        nonlocal feishu_channel, feishu_task, xiaoyi_channel, xiaoyi_task, dingtalk_channel, dingtalk_task, _last_channels_conf
 
-        FeishuChannel 的启用规则：
-        - 若配置中包含 enabled 字段，则以其布尔值为准；
-        - 否则，当 app_id 和 app_secret 均非空时视为启用。
-
-        XiaoyiChannel 的启用规则：
-        - 若配置中包含 enabled 字段，则以其布尔值为准；
-        - 否则，当 ak / sk / agent_id 均非空时视为启用。
-        """
-        nonlocal feishu_channel, feishu_task, xiaoyi_channel, xiaoyi_task, dingtalk_channel, dingtalk_task
+        # Detect which channels changed
+        changed_channels = [c for c in ["feishu", "xiaoyi", "dingtalk"]
+                           if _should_restart_channel(c, _last_channels_conf, conf)]
+        _last_channels_conf = dict(conf or {})
 
         # ----- FeishuChannel -----
+        if "feishu" in changed_channels:
+            feishu_conf = conf.get("feishu") if isinstance(conf, dict) else None
+            await _stop_channel(feishu_channel, feishu_task, "feishu")
+            feishu_channel, feishu_task = None, None
 
-        feishu_conf = conf.get("feishu") if isinstance(conf, dict) else None
-
-        # 先清理已存在的 FeishuChannel
-        if feishu_task is not None:
-            feishu_task.cancel()
-            try:
-                await feishu_task
-            except asyncio.CancelledError:
-                pass
-            feishu_task = None
-        if feishu_channel is not None:
-            try:
-                await feishu_channel.stop()
-            except Exception as e:  # noqa: BLE001
-                logger.warning("[App] 停止旧 FeishuChannel 失败: %s", e)
-            channel_manager.unregister_channel(feishu_channel.channel_id)
-            feishu_channel = None
-
-        # 再根据新配置决定是否创建新的 FeishuChannel
-        if isinstance(feishu_conf, dict):
-            app_id = str(feishu_conf.get("app_id") or "").strip()
-            app_secret = str(feishu_conf.get("app_secret") or "").strip()
-            encrypt_key = str(feishu_conf.get("encrypt_key") or "").strip()
-            verification_token = str(feishu_conf.get("verification_token") or "").strip()
-            allow_from = feishu_conf.get("allow_from") or []
-            chat_id = str(feishu_conf.get("chat_id") or "").strip()
-
-            enabled_raw = feishu_conf.get("enabled", None)
-            if enabled_raw is None:
-                enabled = bool(app_id and app_secret)
+            if isinstance(feishu_conf, dict):
+                enabled, reason = _is_channel_enabled(feishu_conf, ["app_id", "app_secret"])
+                if not enabled:
+                    logger.info("[App] channels.feishu.%s，FeishuChannel 未启用", reason)
+                else:
+                    feishu_config = FeishuConfig(
+                        enabled=True,
+                        app_id=str(feishu_conf.get("app_id") or "").strip(),
+                        app_secret=str(feishu_conf.get("app_secret") or "").strip(),
+                        encrypt_key=str(feishu_conf.get("encrypt_key") or "").strip(),
+                        verification_token=str(feishu_conf.get("verification_token") or "").strip(),
+                        allow_from=feishu_conf.get("allow_from") or [],
+                        chat_id=str(feishu_conf.get("chat_id") or "").strip(),
+                    )
+                    feishu_channel = FeishuChannel(feishu_config, _DummyBus())
+                    channel_manager.register_channel(feishu_channel)
+                    feishu_task = asyncio.create_task(feishu_channel.start(), name="feishu")
+                    logger.info("[App] 已按 config.yaml.channels.feishu 注册 FeishuChannel")
             else:
-                enabled = bool(enabled_raw)
-
-            if not enabled:
-                logger.info("[App] channels.feishu.enabled = false，FeishuChannel 未启用")
-            elif not (app_id and app_secret):
-                logger.info("[App] channels.feishu 缺少 app_id/app_secret，FeishuChannel 未启用")
-            else:
-                feishu_config = FeishuConfig(
-                    enabled=True,
-                    app_id=app_id,
-                    app_secret=app_secret,
-                    encrypt_key=encrypt_key,
-                    verification_token=verification_token,
-                    allow_from=allow_from,
-                    chat_id=chat_id,
-                )
-                feishu_channel = FeishuChannel(feishu_config, _DummyBus())
-                channel_manager.register_channel(feishu_channel)
-                feishu_task = asyncio.create_task(feishu_channel.start(), name="feishu")
-                logger.info("[App] 已按 config.yaml.channels.feishu 注册 FeishuChannel")
-        else:
-            logger.info("[App] channels.feishu 未配置或格式错误，FeishuChannel 不启用")
+                logger.info("[App] channels.feishu 未配置或格式错误，FeishuChannel 不启用")
 
         # ----- XiaoyiChannel -----
+        if "xiaoyi" in changed_channels:
+            xiaoyi_conf = conf.get("xiaoyi") if isinstance(conf, dict) else None
+            await _stop_channel(xiaoyi_channel, xiaoyi_task, "xiaoyi")
+            xiaoyi_channel, xiaoyi_task = None, None
 
-        xiaoyi_conf = conf.get("xiaoyi") if isinstance(conf, dict) else None
-
-        # 先清理已存在的 XiaoyiChannel
-        if xiaoyi_task is not None:
-            xiaoyi_task.cancel()
-            try:
-                await xiaoyi_task
-            except asyncio.CancelledError:
-                pass
-            xiaoyi_task = None
-        if xiaoyi_channel is not None:
-            try:
-                await xiaoyi_channel.stop()
-            except Exception as e:  # noqa: BLE001
-                logger.warning("[App] 停止旧 XiaoyiChannel 失败: %s", e)
-            channel_manager.unregister_channel(xiaoyi_channel.channel_id)
-            xiaoyi_channel = None
-
-        # 再根据新配置决定是否创建新的 XiaoyiChannel
-        if isinstance(xiaoyi_conf, dict):
-            ak = str(xiaoyi_conf.get("ak") or "").strip()
-            sk = str(xiaoyi_conf.get("sk") or "").strip()
-            agent_id = str(xiaoyi_conf.get("agent_id") or "").strip()
-            ws_url1 = str(xiaoyi_conf.get("ws_url1") or "wss://116.63.174.231/openclaw/v1/ws/link").strip()
-            ws_url2 = str(xiaoyi_conf.get("ws_url2") or "wss://hag.cloud.huawei.com/openclaw/v1/ws/link").strip()
-            enable_streaming_raw = xiaoyi_conf.get("enable_streaming", True)
-            enable_streaming = bool(enable_streaming_raw)
-
-            enabled_raw = xiaoyi_conf.get("enabled", None)
-            if enabled_raw is None:
-                enabled = bool(ak and sk and agent_id)
+            if isinstance(xiaoyi_conf, dict):
+                enabled, reason = _is_channel_enabled(xiaoyi_conf, ["ak", "sk", "agent_id"])
+                if not enabled:
+                    logger.info("[App] channels.xiaoyi.%s，XiaoyiChannel 未启用", reason)
+                else:
+                    xiaoyi_config = XiaoyiChannelConfig(
+                        enabled=True,
+                        ak=str(xiaoyi_conf.get("ak") or "").strip(),
+                        sk=str(xiaoyi_conf.get("sk") or "").strip(),
+                        agent_id=str(xiaoyi_conf.get("agent_id") or "").strip(),
+                        ws_url1=str(xiaoyi_conf.get("ws_url1") or "wss://116.63.174.231/openclaw/v1/ws/link").strip(),
+                        ws_url2=str(xiaoyi_conf.get("ws_url2") or "wss://hag.cloud.huawei.com/openclaw/v1/ws/link").strip(),
+                        enable_streaming=bool(xiaoyi_conf.get("enable_streaming", True)),
+                    )
+                    xiaoyi_channel = XiaoyiChannel(xiaoyi_config, _DummyBus())
+                    channel_manager.register_channel(xiaoyi_channel)
+                    xiaoyi_task = asyncio.create_task(xiaoyi_channel.start(), name="xiaoyi")
+                    logger.info("[App] 已按 config.yaml.channels.xiaoyi 注册 XiaoyiChannel")
             else:
-                enabled = bool(enabled_raw)
-
-            if not enabled:
-                logger.info("[App] channels.xiaoyi.enabled = false，XiaoyiChannel 未启用")
-            elif not (ak and sk and agent_id):
-                logger.info("[App] channels.xiaoyi 缺少 ak/sk/agent_id，XiaoyiChannel 未启用")
-            else:
-                xiaoyi_config = XiaoyiChannelConfig(
-                    enabled=True,
-                    ak=ak,
-                    sk=sk,
-                    agent_id=agent_id,
-                    ws_url1=ws_url1,
-                    ws_url2=ws_url2,
-                    enable_streaming=enable_streaming,
-                )
-                xiaoyi_channel = XiaoyiChannel(xiaoyi_config, _DummyBus())
-                channel_manager.register_channel(xiaoyi_channel)
-                xiaoyi_task = asyncio.create_task(xiaoyi_channel.start(), name="xiaoyi")
-                logger.info("[App] 已按 config.yaml.channels.xiaoyi 注册 XiaoyiChannel")
-        else:
-            logger.info("[App] channels.xiaoyi 未配置或格式错误，XiaoyiChannel 不启用")
+                logger.info("[App] channels.xiaoyi 未配置或格式错误，XiaoyiChannel 不启用")
 
         # ----- DingtalkChannel -----
-        dingtalk_conf = conf.get("dingtalk") if isinstance(conf, dict) else None
-        # 先清理已存在的 DingtalkChannel
-        if dingtalk_task is not None:
-            dingtalk_task.cancel()
-            async def wait_cancel():
-                try:
-                    await dingtalk_task
-                except asyncio.CancelledError:
-                    logger.info("[App] 取消旧 DingtalkChannel 任务成功")
-                    pass
-            asyncio.create_task(wait_cancel(), name="wait_dingtalk_cancel")
-            dingtalk_task = None
-        if dingtalk_channel is not None:
-            try:
-                await dingtalk_channel.stop()
-            except Exception as e:  # noqa: BLE001
-                logger.warning("[App] 停止旧 DingtalkChannel 失败: %s", e)
-            channel_manager.unregister_channel(dingtalk_channel.channel_id)
-            dingtalk_channel = None
+        if "dingtalk" in changed_channels:
+            dingtalk_conf = conf.get("dingtalk") if isinstance(conf, dict) else None
+            await _stop_channel(dingtalk_channel, dingtalk_task, "dingtalk", background_wait=True)
+            dingtalk_channel, dingtalk_task = None, None
 
-        # 再根据新配置决定是否创建新的 DingtalkChannel
-        if isinstance(dingtalk_conf, dict):
-            client_id = str(dingtalk_conf.get("client_id") or "").strip()
-            client_secret = str(dingtalk_conf.get("client_secret") or "").strip()
-            allow_from = dingtalk_conf.get("allow_from") or []
-
-            enabled_raw = dingtalk_conf.get("enabled", None)
-            if enabled_raw is None:
-                enabled = bool(client_id and client_secret)
+            if isinstance(dingtalk_conf, dict):
+                enabled, reason = _is_channel_enabled(dingtalk_conf, ["client_id", "client_secret"])
+                if not enabled:
+                    logger.info("[App] channels.dingtalk.%s，DingtalkChannel 未启用", reason)
+                else:
+                    dingtalk_config = DingTalkConfig(
+                        enabled=True,
+                        client_id=str(dingtalk_conf.get("client_id") or "").strip(),
+                        client_secret=str(dingtalk_conf.get("client_secret") or "").strip(),
+                        allow_from=dingtalk_conf.get("allow_from") or [],
+                    )
+                    dingtalk_channel = DingTalkChannel(dingtalk_config, _DummyBus())
+                    channel_manager.register_channel(dingtalk_channel)
+                    dingtalk_task = asyncio.create_task(dingtalk_channel.start(), name="dingtalk")
+                    logger.info("[App] 已按 config.yaml.channels.dingtalk 注册 DingtalkChannel")
             else:
-                enabled = bool(enabled_raw)
-
-            if not enabled:
-                logger.info("[App] channels.dingtalk.enabled = false，DingtalkChannel 未启用")
-            elif not (client_id and client_secret):
-                logger.info("[App] channels.dingtalk 缺少 client_id/client_secret/allow_from，DingtalkChannel 未启用")
-            else:
-                dingtalk_config = DingTalkConfig(
-                    enabled=True,
-                    client_id=client_id,
-                    client_secret=client_secret,
-                    allow_from=allow_from,
-                )
-                dingtalk_channel = DingTalkChannel(dingtalk_config, _DummyBus())
-                channel_manager.register_channel(dingtalk_channel)
-                dingtalk_task = asyncio.create_task(dingtalk_channel.start(), name="dingtalk")
-                logger.info("[App] 已按 config.yaml.channels.dingtalk 注册 DingtalkChannel")
-        else:
-            logger.info("[App] channels.dingtalk 未配置或格式错误，DingtalkChannel 不启用")
+                logger.info("[App] channels.dingtalk 未配置或格式错误，DingtalkChannel 不启用")
 
     # 将「配置更新时如何重新实例化 Channel」逻辑注册到 ChannelManager
     channel_manager.set_config_callback(_apply_channel_config)
@@ -1326,7 +1300,7 @@ async def _run() -> None:
             dingtalk_task.cancel()
             try:
                 await dingtalk_task
-            except asyncio.CancelledError:
+            except (TypeError, asyncio.CancelledError):
                 pass
             await dingtalk_channel.stop()
         await cron_scheduler.stop()

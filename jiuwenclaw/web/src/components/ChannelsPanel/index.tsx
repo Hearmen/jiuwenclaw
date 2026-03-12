@@ -15,7 +15,7 @@ type ChannelItem = {
 
 type LoadState = 'idle' | 'loading' | 'success' | 'error';
 type SupportedChannelId = 'web' | 'xiaoyi' | 'feishu' | 'dingtalk';
-const ADAPTING_CHANNEL_IDS = new Set<SupportedChannelId>(['dingtalk']);
+const ADAPTING_CHANNEL_IDS = new Set<SupportedChannelId>([]);
 
 type FeishuConfig = {
   enabled: boolean;

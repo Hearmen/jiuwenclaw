@@ -45,6 +45,10 @@ class ChannelManager(ABC):
             "[ChannelManager] Channel 消息 -> MessageHandler: id=%s channel_id=%s",
             msg.id, msg.channel_id,
         )
+        if not self._channels.get(msg.channel_id, None):
+            logger.info(f"[ChannelManager] Channel: {msg.channel_id} closed, cancel this user message.")
+            return
+
         self._message_handler.handle_message(msg)
 
     def register_channel(self, channel: "BaseChannel") -> None:
