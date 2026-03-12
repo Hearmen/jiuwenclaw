@@ -1292,15 +1292,11 @@ async def _run() -> None:
         web_host, web_port, web_path,
     )
 
+    # 主循环仅以 WebChannel 的生命周期为准：
+    # Feishu/Xiaoyi/Dingtalk 等 Channel 的 start/stop 由 _apply_channel_config 动态管理，
+    # 不再将其任务纳入这里的 gather，以避免在热更新（如关闭 Feishu）时取消任务导致整个 E2E 提前退出。
     try:
-        tasks = [web_task]
-        if feishu_task is not None:
-            tasks.append(feishu_task)
-        if xiaoyi_task is not None:
-            tasks.append(xiaoyi_task)
-        if dingtalk_task is not None:
-            tasks.append(dingtalk_task)
-        await asyncio.gather(*tasks)
+        await web_task
     except KeyboardInterrupt:
         logger.info("收到 Ctrl+C，正在退出…")
     except asyncio.CancelledError:
