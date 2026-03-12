@@ -4,7 +4,7 @@
 
 > Your On-Call AI Butler — Bringing Intelligence to Your Fingertips
 
-[![Python Version](https://img.shields.io/badge/python-3.13-blue)](https://www.python.org/)
+[![Python Version](https://img.shields.io/badge/python-3.11%2C3.12%2C3.13-blue)](https://www.python.org/)
 [![License](https://img.shields.io/badge/license-Apache--2.0-green)](LICENSE)
 [![Huawei Cloud MaaS](https://img.shields.io/badge/华为云-MaaS-red)](https://www.huaweicloud.com/)
 

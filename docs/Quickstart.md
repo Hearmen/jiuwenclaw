@@ -18,11 +18,15 @@ JiuwenClaw提供两种安装方式：
 可以使用`uv`或Anaconda新建虚拟环境
 
 ```bash
-# 使用uv新建虚拟环境
-uv venv --python=3.13.11
+# 使用uv新建虚拟环境（支持 3.11、3.12、3.13 任一版本）
+uv venv --python=3.11
+# 或 uv venv --python=3.12
+# 或 uv venv --python=3.13
 
-# 使用Anaconda新建虚拟环境
-conda create -n JiuwenClaw python=3.13
+# 使用Anaconda新建虚拟环境（支持 3.11、3.12、3.13 任一版本）
+conda create -n JiuwenClaw python=3.11
+# 或 conda create -n JiuwenClaw python=3.12
+# 或 conda create -n JiuwenClaw python=3.13
 ```
 
 **方式一：pip安装（推荐）**
