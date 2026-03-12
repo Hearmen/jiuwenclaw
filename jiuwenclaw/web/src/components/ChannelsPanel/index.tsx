@@ -15,6 +15,7 @@ type ChannelItem = {
 
 type LoadState = 'idle' | 'loading' | 'success' | 'error';
 type SupportedChannelId = 'web' | 'xiaoyi' | 'feishu' | 'dingtalk';
+const ADAPTING_CHANNEL_IDS = new Set<SupportedChannelId>(['dingtalk']);
 
 type FeishuConfig = {
   enabled: boolean;
@@ -425,6 +426,9 @@ export function ChannelsPanel({ isConnected }: ChannelsPanelProps) {
 
   const handleSelectChannel = useCallback(
     (channelId: SupportedChannelId) => {
+      if (ADAPTING_CHANNEL_IDS.has(channelId)) {
+        return;
+      }
       setActiveChannelId(channelId);
     },
     [],
@@ -681,40 +685,48 @@ export function ChannelsPanel({ isConnected }: ChannelsPanelProps) {
                   </div>
                 ) : (
                   <div className="space-y-2">
-                    {channels.map((channel, index) => (
-                      <button
-                        type="button"
-                        key={channel.channel_id}
-                        onClick={() => handleSelectChannel(channel.channel_id)}
-                        className={`w-full rounded-xl border px-4 py-3.5 text-left transition-colors ${
-                          activeChannelId === channel.channel_id
-                            ? 'border-accent bg-accent-subtle text-text'
-                            : 'border-border bg-card text-text hover:bg-bg-hover'
-                        }`}
-                      >
-                        <div className="flex items-center justify-between gap-3">
-                          <div className="flex items-center gap-3 min-w-0">
-                            <span className="text-xs px-2.5 py-1 rounded-full border border-border bg-secondary text-text-muted font-medium">
-                              #{index + 1}
-                            </span>
-                            <ChannelLogo channel={channel} />
-                            <span className="text-sm font-medium text-text">{channel.label}</span>
-                            <span className="mono text-xs px-2.5 py-1 rounded-md border border-border bg-secondary text-text-muted">
-                              {channel.channel_id}
+                    {channels.map((channel, index) => {
+                      const isAdapting = ADAPTING_CHANNEL_IDS.has(channel.channel_id);
+                      return (
+                        <button
+                          type="button"
+                          key={channel.channel_id}
+                          onClick={() => handleSelectChannel(channel.channel_id)}
+                          disabled={isAdapting}
+                          className={`w-full rounded-xl border px-4 py-3.5 text-left transition-colors ${
+                            isAdapting
+                              ? 'channels-panel__channel-disabled border-border bg-card text-text-muted'
+                              : activeChannelId === channel.channel_id
+                                ? 'border-accent bg-accent-subtle text-text'
+                                : 'border-border bg-card text-text hover:bg-bg-hover'
+                          }`}
+                        >
+                          <div className="flex items-center justify-between gap-3">
+                            <div className="flex items-center gap-3 min-w-0">
+                              <span className="text-xs px-2.5 py-1 rounded-full border border-border bg-secondary text-text-muted font-medium">
+                                #{index + 1}
+                              </span>
+                              <ChannelLogo channel={channel} />
+                              <span className="text-sm font-medium text-text">{channel.label}</span>
+                              <span className="mono text-xs px-2.5 py-1 rounded-md border border-border bg-secondary text-text-muted">
+                                {channel.channel_id}
+                              </span>
+                            </div>
+                            <span
+                              className={`text-xs px-2.5 py-1 rounded-full border font-medium ${
+                                isAdapting
+                                  ? 'text-text-muted border-border bg-secondary'
+                                  : channel.enabled
+                                    ? 'text-ok border-ok bg-ok-subtle'
+                                    : 'text-text-muted border-border bg-secondary'
+                              }`}
+                            >
+                              {isAdapting ? '适配中' : channel.enabled ? '已启用' : '未启用'}
                             </span>
                           </div>
-                          <span
-                            className={`text-xs px-2.5 py-1 rounded-full border font-medium ${
-                              channel.enabled
-                                ? 'text-ok border-ok bg-ok-subtle'
-                                : 'text-text-muted border-border bg-secondary'
-                            }`}
-                          >
-                            {channel.enabled ? '已启用' : '未启用'}
-                          </span>
-                        </div>
-                      </button>
-                    ))}
+                        </button>
+                      );
+                    })}
                   </div>
                 )}
               </div>
