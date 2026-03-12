@@ -19,7 +19,7 @@ from openjiuwen.core.session.checkpointer import CheckpointerFactory
 from openjiuwen.core.session.checkpointer.checkpointer import CheckpointerConfig
 from openjiuwen.core.session.checkpointer.persistence import PersistenceCheckpointerProvider
 
-from jiuwenclaw.gateway.cron import CronController
+from jiuwenclaw.gateway.cron import CronController, CronTargetChannel
 from jiuwenclaw.utils import get_root_dir, logger, USER_WORKSPACE_DIR
 from jiuwenclaw.config import get_config
 from jiuwenclaw.agentserver.react_agent import JiuClawReActAgent
@@ -398,8 +398,15 @@ class JiuWenClaw:
                     self._instance.ability_manager.remove(tool.name)
 
         # 定时工具
-        if session_id.split('_')[0] not in ["heartbeat", "cron"]:
+        channel = session_id.split('_')[0]
+        if channel not in ["heartbeat", "cron"]:
             cron_controller = CronController.get_instance()
+
+            if channel == "feishu":
+                cron_controller.set_target_channel(CronTargetChannel.FEISHU)
+            if channel == "sess":
+                cron_controller.set_target_channel(CronTargetChannel.WEB)
+
             for cron_tool in cron_controller.get_tools():
                 Runner.resource_mgr.add_tool(cron_tool)
                 self._instance.ability_manager.add(cron_tool.card)
@@ -919,8 +926,6 @@ class JiuWenClaw:
                     )
             except Exception as exc:
                 logger.warning("[JiuWenClaw] supplement: 读取 todo 列表失败: %s", exc)
-
-        # await self._register_runtime_tools(request.session_id, request.params.get("mode", "plan"))
 
         query = request.params.get("query", "")
         if self._compaction_manager:

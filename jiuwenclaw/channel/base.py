@@ -4,6 +4,7 @@ import asyncio
 import time
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
+from enum import Enum
 from typing import TYPE_CHECKING, Any, Callable, Awaitable
 
 from jiuwenclaw.utils import logger
@@ -11,6 +12,14 @@ from jiuwenclaw.schema.message import Message
 
 if TYPE_CHECKING:
     pass
+
+
+class ChannelType(str, Enum):
+    """<UNK>"""
+    WEB = "web"
+    FEISHU = "feishu"
+    XIAOYI = "xiaoyi"
+    DINGTALK = "dingtalk"
 
 
 @dataclass

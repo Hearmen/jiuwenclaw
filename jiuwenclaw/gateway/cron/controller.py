@@ -19,6 +19,10 @@ class CronController:
     def __init__(self, *, store: CronJobStore, scheduler: CronSchedulerService) -> None:
         self._store = store
         self._scheduler = scheduler
+        self._target_channel: CronTargetChannel = CronTargetChannel.WEB
+
+    def set_target_channel(self, channel: CronTargetChannel) -> None:
+        self._target_channel = channel
 
     @classmethod
     def get_instance(
@@ -64,10 +68,9 @@ class CronController:
 
     _DESCRIPTION_TIME_KEYWORDS = ("每天", "每周", "每月", "上午", "下午", "早上", "晚上", "凌晨")
 
-    @staticmethod
-    def _normalize_targets(raw: Any) -> str:
+    def _normalize_targets(self, raw: Any) -> str:
         """将 targets 规范为 CronTargetChannel 枚举值，非法则默认 web。"""
-        s = str(raw or "").strip() or "web"
+        s = str(raw or "").strip() or self._target_channel.value
         try:
             CronTargetChannel(s)
             return s
@@ -103,16 +106,8 @@ class CronController:
         enabled = bool(params.get("enabled", True))
         description = str(params.get("description") or "")
         wake_offset_seconds = params.get("wake_offset_seconds", None)
-        raw_targets = params.get("targets") or "web"
+        raw_targets = params.get("targets")
         targets = self._normalize_targets(raw_targets)
-
-        # if not targets:
-        #     from jiuwenclaw.agentserver.request_context import get_current_request
-        #     req = get_current_request()
-        #     if req and (req.channel_id or req.session_id):
-        #         targets = [
-        #             {"channel_id": req.channel_id or "web", "session_id": req.session_id},
-        #         ]
 
         self._validate_schedule(cron_expr=cron_expr, timezone=timezone)
         description = self._normalize_description(description, name)
@@ -193,7 +188,7 @@ class CronController:
             "name": name,
             "cron_expr": cron_expr,
             "timezone": timezone,
-            "targets": targets or 'web',
+            "targets": targets,
             "enabled": enabled,
             "description": description,
         }
@@ -240,7 +235,7 @@ class CronController:
             func,
         ) -> Tool:
             card = ToolCard(
-                id=f"cron_{name}",
+                id=f"cron_{name}_{self._target_channel}",
                 name=name,
                 description=description,
                 input_params=input_params,
@@ -294,7 +289,7 @@ class CronController:
                             "type": "string",
                             "enum": [e.value for e in CronTargetChannel],
                             "description": "推送频道：web=网页, feishu=飞书",
-                            "default": CronTargetChannel.WEB.value,
+                            "default": self._target_channel.value,
                         },
                          "enabled": {
                             "type": "boolean",
