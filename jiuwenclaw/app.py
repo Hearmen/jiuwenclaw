@@ -13,8 +13,6 @@ import shutil
 import sys
 import time
 import re
-import subprocess
-
 
 from pathlib import Path
 from dotenv import load_dotenv
@@ -415,64 +413,17 @@ def _register_web_handlers(
         await channel.send_response(ws, req_id, ok=True, payload={"chrome_path": chrome_path})
 
     async def _browser_start(ws, req_id, params, session_id):
-        """收到 browser.start 请求时，启动浏览器客户端脚本。"""
+        """收到 browser.start 请求时，通过 import 调用 start_browser 启动浏览器。"""
         try:
-            package_dir = _get_package_dir()
-            script_path = package_dir / "agentserver" / "tools" / "browser_start_client.py"
-            if not script_path.exists():
-                # 可编辑安装时 package_dir 可能在 site-packages，脚本在源码树里
-                script_path = _PROJECT_ROOT / "jiuwenclaw" / "agentserver" / "tools" / "browser_start_client.py"
-            if not script_path.exists():
-                await channel.send_response(
-                    ws,
-                    req_id,
-                    ok=False,
-                    error="browser_start_client.py not found",
-                    code="NOT_FOUND",
-                )
-                return
+            from jiuwenclaw.agentserver.tools.browser_start_client import start_browser
 
-            # 异步启动浏览器
-            # proc = await asyncio.create_subprocess_exec(
-            #     sys.executable,
-            #     str(script_path),
-            #     stdout=asyncio.subprocess.DEVNULL,
-            #     stderr=asyncio.subprocess.DEVNULL,
-            # )
-            # returncode = await proc.wait()
-
-            # await channel.send_response(
-            #     ws,
-            #     req_id,
-            #     ok=True,
-            #     payload={"started": returncode == 0, "returncode": returncode},
-            # )
-
-            result = subprocess.run(
-                [sys.executable, str(script_path), "--config", str(get_config_file())],
-                capture_output=True,
-                text=True,
-            )
-            if result.returncode != 0:
-                error_message = (
-                    result.stderr.strip()
-                    or result.stdout.strip()
-                    or "浏览器服务启动失败"
-                )
-                await channel.send_response(
-                    ws,
-                    req_id,
-                    ok=False,
-                    error=error_message,
-                    code="INTERNAL_ERROR",
-                    payload={"returncode": result.returncode},
-                )
-                return
+            config_path = str(get_config_file())
+            returncode = start_browser(dry_run=False, config_file=config_path)
             await channel.send_response(
                 ws,
                 req_id,
                 ok=True,
-                payload={"returncode": result.returncode},
+                payload={"returncode": returncode},
             )
 
         except Exception as e:  # noqa: BLE001

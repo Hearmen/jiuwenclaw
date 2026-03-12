@@ -4,6 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "jiuwenclaw"
+optional-dependencies = { dev = ["pyinstaller>=6.0.0"] }
 version = "0.1.5"
 description = "JiuwenClaw"
 requires-python = ">=3.11,<3.14"

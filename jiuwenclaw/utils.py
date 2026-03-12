@@ -35,10 +35,15 @@ _initialized: bool = False
 
 
 def _detect_installation_mode() -> bool:
-    """Detect if running from a package installation (whl)."""
+    """Detect if running from a package installation (whl) or PyInstaller bundle."""
     global _is_package
     if _is_package is not None:
         return _is_package
+
+    # PyInstaller 打包后使用用户工作区路径
+    if getattr(sys, "frozen", False):
+        _is_package = True
+        return True
 
     # Check if module is in site-packages
     module_file = Path(__file__).resolve()
