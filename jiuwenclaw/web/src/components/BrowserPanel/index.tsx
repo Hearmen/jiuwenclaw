@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useTranslation } from 'react-i18next';
 
 interface BrowserPathPayload {
   chrome_path?: unknown;
@@ -27,6 +28,7 @@ function normalizeReturnCode(payload: unknown): number | null {
 }
 
 export function BrowserPanel({ isConnected, request }: BrowserPanelProps) {
+  const { t } = useTranslation();
   const [chromePath, setChromePath] = useState('');
   const [initialPath, setInitialPath] = useState('');
   const [loading, setLoading] = useState(false);
@@ -57,12 +59,12 @@ export function BrowserPanel({ isConnected, request }: BrowserPanelProps) {
       setChromePath(value);
       setInitialPath(value);
     } catch (loadError) {
-      const message = loadError instanceof Error ? loadError.message : '加载 Chrome 路径失败';
+      const message = loadError instanceof Error ? loadError.message : t('browser.errors.loadPath');
       setError(message);
     } finally {
       setLoading(false);
     }
-  }, [request]);
+  }, [request, t]);
 
   useEffect(() => {
     void loadPath();
@@ -90,9 +92,9 @@ export function BrowserPanel({ isConnected, request }: BrowserPanelProps) {
       const savedPath = normalizeChromePath(payload) || nextPath;
       setChromePath(savedPath);
       setInitialPath(savedPath);
-      setSuccess('Chrome 路径已保存');
+      setSuccess(t('browser.success.pathSaved'));
     } catch (saveError) {
-      const message = saveError instanceof Error ? saveError.message : '保存 Chrome 路径失败';
+      const message = saveError instanceof Error ? saveError.message : t('browser.errors.savePath');
       setError(message);
     } finally {
       setSaving(false);
@@ -109,7 +111,7 @@ export function BrowserPanel({ isConnected, request }: BrowserPanelProps) {
     }
     if (hasChanges) {
       clearFeedback();
-      setError('请先保存 Chrome 路径后再启动浏览器服务');
+      setError(t('browser.errors.saveBeforeStart'));
       return;
     }
     setStarting(true);
@@ -119,13 +121,13 @@ export function BrowserPanel({ isConnected, request }: BrowserPanelProps) {
       const payload = await request<BrowserStartPayload>('browser.start');
       const returncode = normalizeReturnCode(payload);
       if (returncode === null || returncode === 0) {
-        setSuccess('浏览器服务启动成功');
+        setSuccess(t('browser.success.started'));
       } else {
-        setError(`浏览器服务启动失败，返回码 ${returncode}`);
+        setError(t('browser.errors.startFailedWithCode', { code: returncode }));
       }
     } catch (startError) {
-      const message = startError instanceof Error ? startError.message : '启动浏览器服务失败';
-      setError(`浏览器服务启动失败：${message}`);
+      const message = startError instanceof Error ? startError.message : t('browser.errors.startFailed');
+      setError(t('browser.errors.startFailedWithMessage', { message }));
     } finally {
       setStarting(false);
     }
@@ -136,9 +138,9 @@ export function BrowserPanel({ isConnected, request }: BrowserPanelProps) {
       <div className="card w-full h-full flex flex-col">
         <div className="flex items-center justify-between gap-4 mb-4">
           <div>
-            <h2 className="text-lg font-semibold">浏览器服务</h2>
+            <h2 className="text-lg font-semibold">{t('browser.title')}</h2>
             <p className="text-sm text-text-muted mt-1">
-              配置浏览器路径，启动浏览器服务。
+              {t('browser.subtitle')}
             </p>
           </div>
           <div className="flex items-center gap-2">
@@ -148,7 +150,7 @@ export function BrowserPanel({ isConnected, request }: BrowserPanelProps) {
               disabled={saving || starting}
               className="btn !px-3 !py-1.5 disabled:opacity-50 disabled:cursor-not-allowed"
             >
-              {loading ? '刷新中...' : '刷新路径'}
+              {loading ? t('common.refreshing') : t('browser.refreshPath')}
             </button>
           </div>
         </div>
@@ -166,7 +168,7 @@ export function BrowserPanel({ isConnected, request }: BrowserPanelProps) {
 
         <div className="rounded-xl border border-border bg-card/70 backdrop-blur-sm overflow-hidden shadow-sm">
           <div className="px-4 py-3 border-b border-border bg-secondary/30">
-            <span className="text-xs text-text-muted tracking-wider font-medium">CHROME 路径配置（Chrome地址栏输入：chrome://version查看，复制可执行文件路径）</span>
+            <span className="text-xs text-text-muted tracking-wider font-medium">{t('browser.pathConfigHelp')}</span>
           </div>
           <div className="p-4 space-y-4">
             <label className="block space-y-1.5">
@@ -179,14 +181,14 @@ export function BrowserPanel({ isConnected, request }: BrowserPanelProps) {
                   if (error) setError(null);
                   if (showPathError) setShowPathError(false);
                 }}
-                placeholder="例如：/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
+                placeholder={t('browser.examplePath')}
                 className="w-full rounded-md border border-border bg-bg px-3 py-2 text-[13px] text-text outline-none focus:border-accent"
                 disabled={loading || saving || starting}
               />
             </label>
 
             {showPathError && !isPathValid ? (
-              <div className="text-xs text-danger">Chrome 路径不能为空</div>
+              <div className="text-xs text-danger">{t('browser.errors.pathRequired')}</div>
             ) : null}
 
             <div className="flex items-center gap-2">
@@ -199,7 +201,7 @@ export function BrowserPanel({ isConnected, request }: BrowserPanelProps) {
                 }}
                 disabled={!hasChanges || saving || starting}
               >
-                取消
+                {t('common.cancel')}
               </button>
               <button
                 type="button"
@@ -207,7 +209,7 @@ export function BrowserPanel({ isConnected, request }: BrowserPanelProps) {
                 onClick={() => void handleSave()}
                 disabled={!isConnected || !hasChanges || saving || starting || loading}
               >
-                {saving ? '保存中...' : '保存路径'}
+                {saving ? t('common.saving') : t('browser.savePath')}
               </button>
               <button
                 type="button"
@@ -216,13 +218,13 @@ export function BrowserPanel({ isConnected, request }: BrowserPanelProps) {
                 disabled={!canStart}
                 title={
                   !isPathValid
-                    ? '请先填写 Chrome 路径'
+                    ? t('browser.tooltips.fillPath')
                     : hasChanges
-                      ? '请先保存 Chrome 路径'
+                      ? t('browser.tooltips.savePath')
                       : undefined
                 }
               >
-                {starting ? '启动中...' : '启动浏览器服务'}
+                {starting ? t('browser.starting') : t('browser.startService')}
               </button>
             </div>
           </div>

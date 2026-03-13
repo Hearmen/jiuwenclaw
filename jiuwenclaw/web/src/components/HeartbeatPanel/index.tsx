@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useTranslation } from 'react-i18next';
 import { FileViewer } from '../AgentPanel/FileViewer';
 import { HeartbeatMessageModal } from '../../features/HeartbeatMessageModal';
 import { webRequest } from '../../services/webClient';
@@ -58,6 +59,7 @@ function isValidTime(text: string): boolean {
 }
 
 export function HeartbeatPanel() {
+  const { t, i18n } = useTranslation();
   const { isConnected, heartbeatState, heartbeatMessage, heartbeatUpdatedAt, heartbeatHistory } = useSessionStore();
   const [modalOpen, setModalOpen] = useState(false);
   const [modalMessage, setModalMessage] = useState('');
@@ -91,12 +93,12 @@ export function HeartbeatPanel() {
         setActiveHoursEnabled(false);
       }
     } catch (loadError) {
-      const message = loadError instanceof Error ? loadError.message : '加载心跳配置失败';
+      const message = loadError instanceof Error ? loadError.message : t('heartbeat.errors.loadConfig');
       setError(message);
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [t]);
 
   useEffect(() => {
     void loadConf();
@@ -117,21 +119,21 @@ export function HeartbeatPanel() {
   const heartbeatBadge = useMemo(() => {
     if (heartbeatState === 'ok') {
       return {
-        text: '最近心跳正常',
+        text: t('heartbeat.badges.ok'),
         className: 'text-ok border-[var(--border-ok)] bg-ok-subtle',
       };
     }
     if (heartbeatState === 'alert') {
       return {
-        text: '最近心跳告警',
+        text: t('heartbeat.badges.alert'),
         className: 'text-danger border-[var(--border-danger)] bg-danger-subtle',
       };
     }
     return {
-      text: '尚无心跳结果',
+      text: t('heartbeat.badges.unknown'),
       className: 'text-text-muted border-border bg-secondary/50',
     };
-  }, [heartbeatState]);
+  }, [heartbeatState, t]);
 
   const hasChanges = useMemo(() => {
     if (Number(everyInput) !== conf.every) {
@@ -175,17 +177,17 @@ export function HeartbeatPanel() {
     }
     const every = Number(everyInput);
     if (!Number.isFinite(every) || every <= 0) {
-      setError('心跳间隔 every 必须是大于 0 的数字');
+      setError(t('heartbeat.errors.invalidEvery'));
       return;
     }
     if (activeHoursEnabled) {
       if (!isValidTime(startInput) || !isValidTime(endInput)) {
-        setError('active_hours 需使用 HH:MM 格式（例如 08:00）');
+        setError(t('heartbeat.errors.invalidActiveHours'));
         return;
       }
       // 验证结束时间大于开始时间
       if (endInput <= startInput) {
-        setError('结束时间必须大于开始时间');
+        setError(t('heartbeat.errors.invalidRange'));
         return;
       }
     }
@@ -218,14 +220,14 @@ export function HeartbeatPanel() {
       } else {
         setActiveHoursEnabled(false);
       }
-      setSuccess('心跳参数已保存');
+      setSuccess(t('heartbeat.saved'));
     } catch (saveError) {
-      const message = saveError instanceof Error ? saveError.message : '保存心跳配置失败';
+      const message = saveError instanceof Error ? saveError.message : t('heartbeat.errors.saveConfig');
       setError(message);
     } finally {
       setSaving(false);
     }
-  }, [activeHoursEnabled, endInput, everyInput, saving, startInput, targetInput]);
+  }, [activeHoursEnabled, endInput, everyInput, saving, startInput, t, targetInput]);
 
   const openMessageModal = useCallback((message: string) => {
     setModalMessage(message);
@@ -256,8 +258,8 @@ export function HeartbeatPanel() {
         ) : null}
         <div className="flex items-center justify-between gap-4 mb-4">
           <div>
-            <h2 className="text-lg font-semibold">心跳管理</h2>
-            <p className="text-sm text-text-muted mt-1">维护心跳参数与指令文件</p>
+            <h2 className="text-lg font-semibold">{t('heartbeat.title')}</h2>
+            <p className="text-sm text-text-muted mt-1">{t('heartbeat.subtitle')}</p>
           </div>
           <div className="flex items-center gap-2">
             <span className={`mono px-2.5 py-1 rounded-full border text-xs ${heartbeatBadge.className}`}>
@@ -271,8 +273,8 @@ export function HeartbeatPanel() {
             <div className="px-4 py-3 bg-secondary/30 border-b border-border">
               <div className="flex items-start justify-between gap-4">
                 <div>
-                  <h3 className="text-sm font-medium text-text">心跳参数配置</h3>
-                  <p className="text-xs text-text-muted mt-1">配置心跳间隔、目标频道与生效时间</p>
+                  <h3 className="text-sm font-medium text-text">{t('heartbeat.configTitle')}</h3>
+                  <p className="text-xs text-text-muted mt-1">{t('heartbeat.configSubtitle')}</p>
                 </div>
                 <div className="flex items-center gap-2">
                   <button
@@ -281,7 +283,7 @@ export function HeartbeatPanel() {
                     onClick={() => void loadConf()}
                     disabled={saving}
                   >
-                    刷新
+                    {t('common.refresh')}
                   </button>
                   <button
                     type="button"
@@ -289,7 +291,7 @@ export function HeartbeatPanel() {
                     onClick={resetDraft}
                     disabled={loading || saving || !hasChanges}
                   >
-                    取消
+                    {t('common.cancel')}
                   </button>
                   <button
                     type="button"
@@ -297,7 +299,7 @@ export function HeartbeatPanel() {
                     onClick={() => void saveConf()}
                     disabled={loading || saving || !hasChanges || !isConnected}
                   >
-                    {saving ? '保存中...' : '保存'}
+                    {saving ? t('common.saving') : t('common.save')}
                   </button>
                 </div>
               </div>
@@ -305,7 +307,7 @@ export function HeartbeatPanel() {
             <div className="flex-1 min-h-0 p-4 flex flex-col gap-3 text-sm text-text-muted">
               {loading ? (
                 <div className="rounded-lg border border-border bg-secondary/30 px-3 py-2">
-                  正在加载心跳配置...
+                  {t('heartbeat.loadingConfig')}
                 </div>
               ) : null}
 
@@ -318,7 +320,7 @@ export function HeartbeatPanel() {
               {!loading ? (
                 <>
                   <label className="block space-y-1.5">
-                    <span className="text-xs uppercase tracking-wide text-text-muted">间隔时间 (秒)</span>
+                    <span className="text-xs uppercase tracking-wide text-text-muted">{t('heartbeat.everyLabel')}</span>
                     <input
                       type="number"
                       min={1}
@@ -330,16 +332,16 @@ export function HeartbeatPanel() {
                   </label>
 
                   <label className="block space-y-1.5">
-                    <span className="text-xs uppercase tracking-wide text-text-muted">目标频道 (channel_id)</span>
+                    <span className="text-xs uppercase tracking-wide text-text-muted">{t('heartbeat.targetLabel')}</span>
                     <select
                       value={targetInput}
                       onChange={(event) => setTargetInput(event.target.value)}
                       className="w-full rounded-md border border-border bg-bg px-3 py-2 text-[13px] text-text outline-none focus:border-accent"
                     >
-                      <option value="web">网页 (web)</option>
-                      <option value="feishu">飞书 (feishu)</option>
-                      <option value="xiaoyi" disabled style={{ color: '#8c8c96ff'}} >小艺 (xiaoyi)</option>
-                      <option value="dingtalk" disabled style={{ color: '#8c8c96ff' }}>钉钉 (dingtalk)</option>
+                      <option value="web">{t('heartbeat.channels.web')}</option>
+                      <option value="feishu">{t('heartbeat.channels.feishu')}</option>
+                      <option value="xiaoyi" disabled style={{ color: '#8c8c96ff'}}>{t('heartbeat.channels.xiaoyi')}</option>
+                      <option value="dingtalk" disabled style={{ color: '#8c8c96ff' }}>{t('heartbeat.channels.dingtalk')}</option>
                     </select>
                   </label>
 
@@ -351,11 +353,11 @@ export function HeartbeatPanel() {
                         onChange={(event) => setActiveHoursEnabled(event.target.checked)}
                         className="rounded border-border"
                       />
-                      <span className="text-sm text-text">启用生效时间</span>
+                      <span className="text-sm text-text">{t('heartbeat.enableActiveHours')}</span>
                     </label>
                     <div className="grid grid-cols-2 gap-2">
                       <label className="space-y-1">
-                        <span className="text-xs text-text-muted">开始时间</span>
+                        <span className="text-xs text-text-muted">{t('heartbeat.startTime')}</span>
                         <input
                           type="time"
                           value={startInput}
@@ -369,7 +371,7 @@ export function HeartbeatPanel() {
                         />
                       </label>
                       <label className="space-y-1">
-                        <span className="text-xs text-text-muted">结束时间</span>
+                        <span className="text-xs text-text-muted">{t('heartbeat.endTime')}</span>
                         <input
                           type="time"
                           value={endInput}
@@ -387,12 +389,12 @@ export function HeartbeatPanel() {
 
                   <div className="rounded-lg border border-border bg-secondary/20 p-3 flex-1 min-h-0 flex flex-col">
                     <div className="flex items-center justify-between mb-2">
-                      <p className="text-xs uppercase tracking-wide text-text-muted">最近 20 条心跳消息</p>
+                      <p className="text-xs uppercase tracking-wide text-text-muted">{t('heartbeat.recentMessages')}</p>
                       <span className="mono text-[11px] text-text-muted">{heartbeatHistory.length}/20</span>
                     </div>
                     {heartbeatHistory.length === 0 ? (
                       <div className="flex-1 min-h-0 rounded-md border border-border bg-card/40 flex items-center justify-center">
-                        <p className="text-xs text-text-muted">暂无历史心跳消息</p>
+                        <p className="text-xs text-text-muted">{t('heartbeat.noHistory')}</p>
                       </div>
                     ) : (
                       <div className="flex-1 min-h-0 overflow-auto pr-1">
@@ -412,13 +414,13 @@ export function HeartbeatPanel() {
                                     : 'text-text-muted border-border bg-secondary/60'
                               }`}
                             >
-                              {item.status === 'unknown' ? 'UNKNOWN' : 'OK'}
+                              {item.status === 'unknown' ? t('heartbeat.statusUnknown') : t('heartbeat.statusOk')}
                             </span>
                             <div className="min-w-0 flex-1">
                               <p className="text-[13px] text-text leading-snug overflow-hidden text-ellipsis whitespace-nowrap">
                                 {getMessagePreview(item.message)}
                               </p>
-                              <p className="text-[11px] text-text-muted mt-0.5">{new Date(item.updatedAt).toLocaleString()}</p>
+                              <p className="text-[11px] text-text-muted mt-0.5">{new Date(item.updatedAt).toLocaleString(i18n.language)}</p>
                             </div>
                           </button>
                         ))}
@@ -430,12 +432,12 @@ export function HeartbeatPanel() {
               ) : null}
 
               <div className="text-xs text-text-muted space-y-1">
-                <p>最近心跳时间：{heartbeatUpdatedAt ? new Date(heartbeatUpdatedAt).toLocaleString() : '暂无'}</p>
+                <p>{t('heartbeat.latestTime')}：{heartbeatUpdatedAt ? new Date(heartbeatUpdatedAt).toLocaleString(i18n.language) : t('heartbeat.none')}</p>
                 <p
                   className="block w-full max-w-full overflow-hidden text-ellipsis whitespace-nowrap"
                   title={heartbeatMessage ?? 'HEARTBEAT_UNKNOWN'}
                 >
-                  最近心跳内容：{heartbeatMessage ? getMessagePreview(heartbeatMessage) : 'HEARTBEAT_UNKNOWN'}
+                  {t('heartbeat.latestContent')}：{heartbeatMessage ? getMessagePreview(heartbeatMessage) : 'HEARTBEAT_UNKNOWN'}
                 </p>
               </div>
 

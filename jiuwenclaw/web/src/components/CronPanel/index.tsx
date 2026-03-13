@@ -5,6 +5,7 @@
  */
 
 import { useState, useEffect, useCallback } from 'react';
+import { useTranslation } from 'react-i18next';
 import { webRequest } from '../../services/webClient';
 
 
@@ -36,6 +37,7 @@ interface UpdateCronJob {
 }
 
 export default function CronPanel() {
+  const { t } = useTranslation();
   const [cronJobs, setCronJobs] = useState<CronJob[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -69,10 +71,10 @@ export default function CronPanel() {
 
   // 目标选项
   const targetOptions = [
-    { value: 'web', label: '网页 (web)' },
-    { value: 'feishu', label: '飞书 (feishu)' },
-    { value: 'xiaoyi', label: '小艺 (xiaoyi)', disabled: true, style: { color: '#8c8c96ff' } },
-    { value: 'dingtalk', label: '钉钉 (dingtalk)', disabled: true, style: { color: '#8c8c96ff' } }
+    { value: 'web', label: t('cron.targets.web') },
+    { value: 'feishu', label: t('cron.targets.feishu') },
+    { value: 'xiaoyi', label: t('cron.targets.xiaoyi'), disabled: true, style: { color: '#8c8c96ff' } },
+    { value: 'dingtalk', label: t('cron.targets.dingtalk'), disabled: true, style: { color: '#8c8c96ff' } }
   ];
 
   // 加载任务列表
@@ -83,14 +85,14 @@ export default function CronPanel() {
       const payload = await webRequest<{ jobs: CronJob[] }>('cron.job.list');
       setCronJobs(payload.jobs || []);
     } catch (loadError) {
-      const message = loadError instanceof Error ? loadError.message : '加载定时任务失败';
+      const message = loadError instanceof Error ? loadError.message : t('cron.errors.loadJobs');
       setError(message);
       // 加载失败时使用空数组
       setCronJobs([]);
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [t]);
 
   // 初始化加载
   useEffect(() => {
@@ -110,29 +112,29 @@ export default function CronPanel() {
   const handleCreateJob = async () => {
     // 检查必填字段
     if (!newJob.name) {
-      setError('任务名称不能为空');
+      setError(t('cron.errors.nameRequired'));
       return;
     }
     if (!newJob.cron_expr) {
-      setError('Cron 表达式不能为空');
+      setError(t('cron.errors.cronRequired'));
       return;
     }
     if (!newJob.timezone) {
-      setError('时区不能为空');
+      setError(t('cron.errors.timezoneRequired'));
       return;
     }
     if (!newJob.targets) {
-      setError('推送频道不能为空');
+      setError(t('cron.errors.targetRequired'));
       return;
     }
     if (!newJob.description) {
-      setError('描述不能为空');
+      setError(t('cron.errors.descriptionRequired'));
       return;
     }
 
     try {
       await webRequest<{ job: CronJob }>('cron.job.create', newJob);
-      setSuccess('任务创建成功');
+      setSuccess(t('cron.success.created'));
       setIsCreating(false);
       setNewJob({
         name: '',
@@ -145,7 +147,7 @@ export default function CronPanel() {
       });
       await loadJobs();
     } catch (createError) {
-      const message = createError instanceof Error ? createError.message : '创建任务失败';
+      const message = createError instanceof Error ? createError.message : t('cron.errors.createFailed');
       setError(message);
     }
   };
@@ -157,24 +159,24 @@ export default function CronPanel() {
         id,
         enabled: !enabled
       });
-      setSuccess('任务状态更新成功');
+      setSuccess(t('cron.success.statusUpdated'));
       await loadJobs();
     } catch (toggleError) {
-      const message = toggleError instanceof Error ? toggleError.message : '更新任务状态失败';
+      const message = toggleError instanceof Error ? toggleError.message : t('cron.errors.toggleFailed');
       setError(message);
     }
   };
 
   // 删除任务
   const handleDeleteJob = async (id: string) => {
-    if (!window.confirm('确定要删除这个任务吗？')) return;
+    if (!window.confirm(t('cron.deleteConfirm'))) return;
 
     try {
       await webRequest<{ deleted: boolean }>('cron.job.delete', { id });
-      setSuccess('任务删除成功');
+      setSuccess(t('cron.success.deleted'));
       await loadJobs();
     } catch (deleteError) {
-      const message = deleteError instanceof Error ? deleteError.message : '删除任务失败';
+      const message = deleteError instanceof Error ? deleteError.message : t('cron.errors.deleteFailed');
       setError(message);
     }
   };
@@ -188,7 +190,7 @@ export default function CronPanel() {
       setEditJob(payload.job as UpdateCronJob);
       setEditingJobId(id);
     } catch (viewError) {
-      const message = viewError instanceof Error ? viewError.message : '获取任务详情失败';
+      const message = viewError instanceof Error ? viewError.message : t('cron.errors.loadDetailFailed');
       setError(message);
     }
   };
@@ -199,23 +201,23 @@ export default function CronPanel() {
 
     // 检查必填字段
     if (!editJob.name) {
-      setError('任务名称不能为空');
+      setError(t('cron.errors.nameRequired'));
       return;
     }
     if (!editJob.cron_expr) {
-      setError('Cron 表达式不能为空');
+      setError(t('cron.errors.cronRequired'));
       return;
     }
     if (!editJob.timezone) {
-      setError('时区不能为空');
+      setError(t('cron.errors.timezoneRequired'));
       return;
     }
     if (!editJob.targets) {
-      setError('推送频道不能为空');
+      setError(t('cron.errors.targetRequired'));
       return;
     }
     if (!editJob.description) {
-      setError('描述不能为空');
+      setError(t('cron.errors.descriptionRequired'));
       return;
     }
 
@@ -235,12 +237,12 @@ export default function CronPanel() {
       };
       
       await webRequest<{ job: CronJob }>('cron.job.update', updateData);
-      setSuccess('任务更新成功');
+      setSuccess(t('cron.success.updated'));
       setEditingJobId(null);
       setEditJob(null);
       await loadJobs();
     } catch (updateError) {
-      const message = updateError instanceof Error ? updateError.message : '更新任务失败';
+      const message = updateError instanceof Error ? updateError.message : t('cron.errors.updateFailed');
       setError(message);
     }
   };
@@ -258,14 +260,14 @@ export default function CronPanel() {
       <div className="card w-full h-full flex flex-col">
         <div className="flex items-center justify-between gap-4 mb-4">
           <div>
-            <h2 className="text-lg font-semibold">定时任务管理</h2>
-            <p className="text-sm text-text-muted mt-1">使用 cron 表达式管理定时任务，支持添加、启用和删除操作</p>
+            <h2 className="text-lg font-semibold">{t('cron.title')}</h2>
+            <p className="text-sm text-text-muted mt-1">{t('cron.subtitle')}</p>
           </div>
           <button
             onClick={() => setIsCreating(!isCreating)}
             className="btn primary !px-4 !py-2"
           >
-            {isCreating ? '取消创建' : '创建任务'}
+            {isCreating ? t('cron.cancelCreate') : t('cron.create')}
           </button>
         </div>
 
@@ -278,21 +280,21 @@ export default function CronPanel() {
 
           {loading ? (
             <div className="rounded-lg border border-border bg-secondary/30 px-3 py-4 flex items-center justify-center">
-              正在加载任务列表...
+              {t('cron.loading')}
             </div>
           ) : (
             <div className="overflow-auto rounded-lg border border-border max-h-[750px]">
               <table className="w-full border-collapse">
                 <thead>
                   <tr className="border-b border-border sticky top-0 bg-bg">
-                    <th className="px-4 py-3 text-left text-sm font-medium text-text-muted w-[120px]">任务名称</th>
-                    <th className="px-4 py-3 text-left text-sm font-medium text-text-muted w-[400px]">Cron 表达式</th>
-                    <th className="px-4 py-3 text-left text-sm font-medium text-text-muted">状态</th>
-                    <th className="px-4 py-3 text-left text-sm font-medium text-text-muted w-[300px]">描述</th>
-                    <th className="px-4 py-3 text-left text-sm font-medium text-text-muted w-[120px]">唤醒偏移秒数</th>
-                    <th className="px-4 py-3 text-left text-sm font-medium text-text-muted">时区</th>
-                    <th className="px-4 py-3 text-left text-sm font-medium text-text-muted">推送频道</th>
-                    <th className="px-4 py-3 text-right text-sm font-medium text-text-muted">操作</th>
+                    <th className="px-4 py-3 text-left text-sm font-medium text-text-muted w-[120px]">{t('cron.columns.name')}</th>
+                    <th className="px-4 py-3 text-left text-sm font-medium text-text-muted w-[400px]">{t('cron.columns.cron')}</th>
+                    <th className="px-4 py-3 text-left text-sm font-medium text-text-muted">{t('cron.columns.status')}</th>
+                    <th className="px-4 py-3 text-left text-sm font-medium text-text-muted w-[300px]">{t('cron.columns.description')}</th>
+                    <th className="px-4 py-3 text-left text-sm font-medium text-text-muted w-[120px]">{t('cron.columns.wakeOffset')}</th>
+                    <th className="px-4 py-3 text-left text-sm font-medium text-text-muted">{t('cron.columns.timezone')}</th>
+                    <th className="px-4 py-3 text-left text-sm font-medium text-text-muted">{t('cron.columns.target')}</th>
+                    <th className="px-4 py-3 text-right text-sm font-medium text-text-muted">{t('cron.columns.actions')}</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -305,7 +307,7 @@ export default function CronPanel() {
                           value={newJob.name}
                           onChange={(e) => setNewJob({ ...newJob, name: e.target.value })}
                           className="w-full rounded-md border border-border bg-bg px-3 py-2 text-[13px] text-text outline-none focus:border-accent"
-                          placeholder="输入任务名称"
+                          placeholder={t('cron.placeholders.name')}
                         />
                       </td>
                       <td className="px-4 py-3">
@@ -314,12 +316,12 @@ export default function CronPanel() {
                           value={newJob.cron_expr}
                           onChange={(e) => setNewJob({ ...newJob, cron_expr: e.target.value })}
                           className="w-full rounded-md border border-border bg-bg px-3 py-2 text-[13px] text-text outline-none focus:border-accent"
-                          placeholder="5段式：分 时 日 月 周。例：每周一11时58分='58 11 * * 1'"
+                          placeholder={t('cron.placeholders.cron')}
                         />
                       </td>
                       <td className="px-4 py-3">
                         <div className="flex items-center justify-between">
-                          <span className="text-sm">{newJob.enabled ? '启用' : '禁用'}</span>
+                          <span className="text-sm">{newJob.enabled ? t('cron.status.enabled') : t('cron.status.disabled')}</span>
                           <div 
                             className="relative inline-block w-10 h-6 align-middle select-none rounded-full cursor-pointer"
                             onClick={() => setNewJob({ ...newJob, enabled: !newJob.enabled })}
@@ -338,7 +340,7 @@ export default function CronPanel() {
                           value={newJob.description}
                           onChange={(e) => setNewJob({ ...newJob, description: e.target.value })}
                           className="w-full rounded-md border border-border bg-bg px-3 py-2 text-[13px] text-text outline-none focus:border-accent"
-                          placeholder="输入描述"
+                          placeholder={t('cron.placeholders.description')}
                         />
                       </td>
                       <td className="px-4 py-3">
@@ -347,7 +349,7 @@ export default function CronPanel() {
                           value={newJob.wake_offset_seconds}
                           onChange={(e) => setNewJob({ ...newJob, wake_offset_seconds: parseInt(e.target.value) || 0 })}
                           className="w-full rounded-md border border-border bg-bg px-3 py-2 text-[13px] text-text outline-none focus:border-accent"
-                          placeholder="唤醒偏移秒数"
+                          placeholder={t('cron.placeholders.wakeOffset')}
                         />
                       </td>
                       <td className="px-4 py-3">
@@ -393,13 +395,13 @@ export default function CronPanel() {
                             }}
                             className="px-2 py-1 text-sm border border-gray-300 bg-white text-gray-600 rounded hover:bg-gray-50"
                           >
-                            取消
+                            {t('common.cancel')}
                           </button>
                           <button
                             onClick={handleCreateJob}
                             className="px-2 py-1 text-sm bg-blue-500 text-white rounded hover:bg-blue-600"
                           >
-                            创建
+                            {t('cron.create')}
                           </button>
                         </div>
                       </td>
@@ -415,7 +417,7 @@ export default function CronPanel() {
                           value={editJob.name}
                           onChange={(e) => setEditJob({ ...editJob, name: e.target.value })}
                           className="w-full rounded-md border border-border bg-bg px-3 py-2 text-[13px] text-text outline-none focus:border-accent"
-                          placeholder="输入任务名称"
+                          placeholder={t('cron.placeholders.name')}
                         />
                       </td>
                       <td className="px-4 py-3">
@@ -424,12 +426,12 @@ export default function CronPanel() {
                           value={editJob.cron_expr}
                           onChange={(e) => setEditJob({ ...editJob, cron_expr: e.target.value })}
                           className="w-full rounded-md border border-border bg-bg px-3 py-2 text-[13px] text-text outline-none focus:border-accent"
-                          placeholder="例：58 11 * * 1"
+                          placeholder={t('cron.placeholders.cronShort')}
                         />
                       </td>
                       <td className="px-4 py-3">
                         <div className="flex items-center justify-between">
-                          <span className="text-sm">{editJob.enabled ? '启用' : '禁用'}</span>
+                          <span className="text-sm">{editJob.enabled ? t('cron.status.enabled') : t('cron.status.disabled')}</span>
                           <div 
                             className="relative inline-block w-10 h-6 align-middle select-none rounded-full cursor-pointer"
                             onClick={() => setEditJob({ ...editJob, enabled: !editJob.enabled })}
@@ -448,7 +450,7 @@ export default function CronPanel() {
                           value={editJob.description || ''}
                           onChange={(e) => setEditJob({ ...editJob, description: e.target.value })}
                           className="w-full rounded-md border border-border bg-bg px-3 py-2 text-[13px] text-text outline-none focus:border-accent"
-                          placeholder="输入描述"
+                          placeholder={t('cron.placeholders.description')}
                         />
                       </td>
                       <td className="px-4 py-3">
@@ -457,7 +459,7 @@ export default function CronPanel() {
                           value={editJob.wake_offset_seconds}
                           onChange={(e) => setEditJob({ ...editJob, wake_offset_seconds: parseInt(e.target.value) || 0 })}
                           className="w-full rounded-md border border-border bg-bg px-3 py-2 text-[13px] text-text outline-none focus:border-accent"
-                          placeholder="唤醒偏移秒数"
+                          placeholder={t('cron.placeholders.wakeOffset')}
                         />
                       </td>
                       <td className="px-4 py-3">
@@ -495,13 +497,13 @@ export default function CronPanel() {
                             }}
                             className="px-2 py-1 text-sm border border-gray-300 bg-white text-gray-600 rounded hover:bg-gray-50"
                           >
-                            取消
+                            {t('common.cancel')}
                           </button>
                           <button
                             onClick={handleSubmitUpdate}
                             className="px-2 py-1 text-sm bg-blue-500 text-white rounded hover:bg-blue-600"
                           >
-                            更新
+                            {t('cron.update')}
                           </button>
                         </div>
                       </td>
@@ -512,7 +514,7 @@ export default function CronPanel() {
                   {cronJobs.length === 0 ? (
                     <tr>
                       <td colSpan={8} className="px-4 py-8 text-center text-text-muted">
-                        暂无定时任务
+                        {t('cron.empty')}
                       </td>
                     </tr>
                   ) : (
@@ -526,7 +528,7 @@ export default function CronPanel() {
                         <td className="px-4 py-3 text-sm mono">{job.cron_expr}</td>
                         <td className="px-4 py-3">
                           <span className={`inline-flex items-center px-2 py-1 rounded-full text-xs font-medium ${job.enabled ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-700'}`}>
-                            {job.enabled ? '启用' : '禁用'}
+                            {job.enabled ? t('cron.status.enabled') : t('cron.status.disabled')}
                           </span>
                         </td>
                         <td className="px-4 py-3 text-sm text-text-muted">
@@ -549,19 +551,19 @@ export default function CronPanel() {
                               onClick={() => handleToggleJob(job.id, job.enabled)}
                               className={`px-2 py-1 text-sm rounded hover:bg-opacity-90 ${job.enabled ? 'bg-red-500 text-white hover:bg-red-600' : 'bg-blue-500 text-white'}`}
                             >
-                              {job.enabled ? '停用' : '启动'}
+                              {job.enabled ? t('cron.disable') : t('cron.enable')}
                             </button>
                             <button
                               onClick={() => handleUpdateJob(job.id)}
                               className="px-2 py-1 text-sm bg-blue-500 text-white rounded hover:bg-blue-600"
                             >
-                              更新
+                              {t('cron.update')}
                             </button>
                             <button
                               onClick={() => handleDeleteJob(job.id)}
                               className="px-2 py-1 text-sm bg-blue-500 text-white rounded hover:bg-blue-600"
                             >
-                              删除
+                              {t('cron.delete')}
                             </button>
                           </div>
                         </td>

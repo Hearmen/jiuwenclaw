@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useTranslation } from 'react-i18next';
 import { webRequest } from '../../services/webClient';
 import './ChannelsPanel.css';
 
@@ -8,7 +9,6 @@ interface ChannelsPanelProps {
 
 type ChannelItem = {
   channel_id: SupportedChannelId;
-  label: string;
   logo_src: string | null;
   enabled: boolean;
 };
@@ -92,19 +92,19 @@ const DEFAULT_DINGTALK_CONF: DingTalkConfig = {
   allow_from: [],
 };
 
-const SUPPORTED_CHANNELS: Array<{ channel_id: SupportedChannelId; label: string; logo_src: string | null }> = [
-  { channel_id: 'web', label: '网页', logo_src: null },
-  { channel_id: 'xiaoyi', label: '小艺', logo_src: '/xiaoyi.webp' },
-  { channel_id: 'feishu', label: '飞书', logo_src: '/feishu.webp' },
-  { channel_id: 'dingtalk', label: '钉钉', logo_src: '/dingtalk.png' },
+const SUPPORTED_CHANNELS: Array<{ channel_id: SupportedChannelId; logo_src: string | null }> = [
+  { channel_id: 'web', logo_src: null },
+  { channel_id: 'xiaoyi', logo_src: '/xiaoyi.webp' },
+  { channel_id: 'feishu', logo_src: '/feishu.webp' },
+  { channel_id: 'dingtalk', logo_src: '/dingtalk.png' },
 ];
 
 
-function formatTime(iso: string | null): string {
+function formatTime(iso: string | null, locale: string): string {
   if (!iso) return '-';
   const date = new Date(iso);
   if (Number.isNaN(date.getTime())) return '-';
-  return date.toLocaleTimeString('zh-CN', { hour12: false });
+  return date.toLocaleTimeString(locale, { hour12: false });
 }
 
 function isSensitiveField(field: keyof FeishuDraft): boolean {
@@ -145,6 +145,10 @@ function buildChannels(channels: unknown): ChannelItem[] {
     ...channel,
     enabled: enabledChannels.has(channel.channel_id),
   }));
+}
+
+function getChannelLabel(t: (key: string) => string, channelId: SupportedChannelId): string {
+  return t(`channels.labels.${channelId}`);
 }
 
 function normalizeFeishuConfig(input: unknown): FeishuConfig {
@@ -284,12 +288,12 @@ function VisibilityIcon({ visible }: { visible: boolean }) {
   );
 }
 
-function ChannelLogo({ channel }: { channel: ChannelItem }) {
+function ChannelLogo({ channel, label }: { channel: ChannelItem; label: string }) {
   if (channel.logo_src) {
     return (
       <img
         src={channel.logo_src}
-        alt={`${channel.label} logo`}
+        alt={`${label} logo`}
         className="h-6 w-6 rounded-md border border-border object-contain bg-card"
       />
     );
@@ -326,6 +330,7 @@ function ChannelHeaderLogo({ channelId, label }: { channelId: SupportedChannelId
 }
 
 export function ChannelsPanel({ isConnected }: ChannelsPanelProps) {
+  const { t, i18n } = useTranslation();
   const [channels, setChannels] = useState<ChannelItem[]>(() => buildChannels([]));
   const [activeChannelId, setActiveChannelId] = useState<SupportedChannelId>('xiaoyi');
   const [loadState, setLoadState] = useState<LoadState>('idle');
@@ -365,9 +370,9 @@ export function ChannelsPanel({ isConnected }: ChannelsPanelProps) {
     } catch (err) {
       setChannels(buildChannels([]));
       setLoadState('error');
-      setError(err instanceof Error ? err.message : '获取 channels 失败');
+      setError(err instanceof Error ? err.message : t('channels.errors.loadChannels'));
     }
-  }, []);
+  }, [t]);
 
   useEffect(() => {
     void fetchChannels();
@@ -384,11 +389,11 @@ export function ChannelsPanel({ isConnected }: ChannelsPanelProps) {
       setDraft(draftFromFeishuConfig(normalized));
       setVisibleFields({});
     } catch (err) {
-      setSaveError(err instanceof Error ? err.message : '获取飞书配置失败');
+      setSaveError(err instanceof Error ? err.message : t('channels.errors.loadFeishu'));
     } finally {
       setFeishuLoading(false);
     }
-  }, []);
+  }, [t]);
 
   const fetchXiaoyiConfig = useCallback(async () => {
     setXiaoyiLoading(true);
@@ -401,11 +406,11 @@ export function ChannelsPanel({ isConnected }: ChannelsPanelProps) {
       setXiaoyiDraft(draftFromXiaoyiConfig(normalized));
       setXiaoyiVisibleFields({});
     } catch (err) {
-      setXiaoyiSaveError(err instanceof Error ? err.message : '获取小艺配置失败');
+      setXiaoyiSaveError(err instanceof Error ? err.message : t('channels.errors.loadXiaoyi'));
     } finally {
       setXiaoyiLoading(false);
     }
-  }, []);
+  }, [t]);
 
   const fetchDingtalkConfig = useCallback(async () => {
     setDingtalkLoading(true);
@@ -418,11 +423,11 @@ export function ChannelsPanel({ isConnected }: ChannelsPanelProps) {
       setDingtalkDraft(draftFromDingtalkConfig(normalized));
       setDingtalkVisibleFields({});
     } catch (err) {
-      setDingtalkSaveError(err instanceof Error ? err.message : '获取钉钉配置失败');
+      setDingtalkSaveError(err instanceof Error ? err.message : t('channels.errors.loadDingtalk'));
     } finally {
       setDingtalkLoading(false);
     }
-  }, []);
+  }, [t]);
 
   const handleSelectChannel = useCallback(
     (channelId: SupportedChannelId) => {
@@ -451,13 +456,13 @@ export function ChannelsPanel({ isConnected }: ChannelsPanelProps) {
   const statusText = useMemo(() => {
     const enabledCount = channels.filter((channel) => channel.enabled).length;
     if (loadState === 'loading') {
-      return '加载中...';
+      return t('common.loading');
     }
     if (loadState === 'error') {
-      return '加载失败';
+      return t('channels.status.loadFailed');
     }
-    return `${enabledCount}/${channels.length} 已启用`;
-  }, [channels, loadState]);
+    return t('channels.status.enabledSummary', { enabledCount, total: channels.length });
+  }, [channels, loadState, t]);
 
   const hasConfigChanges = useMemo(() => {
     const baseDraft = draftFromFeishuConfig(feishuConfig);
@@ -564,9 +569,9 @@ export function ChannelsPanel({ isConnected }: ChannelsPanelProps) {
       const normalized = normalizeFeishuConfig(result?.config);
       setFeishuConfig(normalized);
       setDraft(draftFromFeishuConfig(normalized));
-      setSuccess('飞书配置已保存');
+      setSuccess(t('channels.saved.feishu'));
     } catch (saveErr) {
-      const message = saveErr instanceof Error ? saveErr.message : '保存失败，请稍后重试';
+      const message = saveErr instanceof Error ? saveErr.message : t('channels.errors.saveGeneric');
       setSaveError(message);
     } finally {
       setSaving(false);
@@ -583,9 +588,9 @@ export function ChannelsPanel({ isConnected }: ChannelsPanelProps) {
       const normalized = normalizeXiaoyiConfig(result?.config);
       setXiaoyiConfig(normalized);
       setXiaoyiDraft(draftFromXiaoyiConfig(normalized));
-      setXiaoyiSuccess('小艺配置已保存');
+      setXiaoyiSuccess(t('channels.saved.xiaoyi'));
     } catch (saveErr) {
-      const message = saveErr instanceof Error ? saveErr.message : '保存失败，请稍后重试';
+      const message = saveErr instanceof Error ? saveErr.message : t('channels.errors.saveGeneric');
       setXiaoyiSaveError(message);
     } finally {
       setXiaoyiSaving(false);
@@ -602,9 +607,9 @@ export function ChannelsPanel({ isConnected }: ChannelsPanelProps) {
       const normalized = normalizeDingtalkConfig(result?.config);
       setDingtalkConfig(normalized);
       setDingtalkDraft(draftFromDingtalkConfig(normalized));
-      setDingtalkSuccess('钉钉配置已保存');
+      setDingtalkSuccess(t('channels.saved.dingtalk'));
     } catch (saveErr) {
-      const message = saveErr instanceof Error ? saveErr.message : '保存失败，请稍后重试';
+      const message = saveErr instanceof Error ? saveErr.message : t('channels.errors.saveGeneric');
       setDingtalkSaveError(message);
     } finally {
       setDingtalkSaving(false);
@@ -615,8 +620,8 @@ export function ChannelsPanel({ isConnected }: ChannelsPanelProps) {
   const configErrorNotice = useMemo(() => {
     return Array.from(
       new Set([saveError, xiaoyiSaveError, dingtalkSaveError].filter((message): message is string => Boolean(message))),
-    ).join('；');
-  }, [dingtalkSaveError, saveError, xiaoyiSaveError]);
+    ).join(t('common.and'));
+  }, [dingtalkSaveError, saveError, t, xiaoyiSaveError]);
   useEffect(() => {
     if (!configErrorNotice) {
       return;
@@ -643,17 +648,17 @@ export function ChannelsPanel({ isConnected }: ChannelsPanelProps) {
         ) : null}
         <div className="flex items-center justify-between gap-4 mb-4">
           <div>
-            <h2 className="text-lg font-semibold">频道管理</h2>
-            <p className="text-sm text-text-muted mt-1">查看并管理频道服务</p>
+            <h2 className="text-lg font-semibold">{t('channels.title')}</h2>
+            <p className="text-sm text-text-muted mt-1">{t('channels.subtitle')}</p>
           </div>
           <div className="flex items-center gap-2" />
         </div>
 
         {error ? (
           <div className="border border-[var(--border-danger)] bg-danger-subtle rounded-lg p-4 text-sm text-danger flex items-center justify-between">
-            <span>获取失败：{error}</span>
+            <span>{t('channels.fetchFailed')}: {error}</span>
             <button onClick={() => void fetchChannels()} className="btn !px-3 !py-1.5">
-              重试
+              {t('channels.retry')}
             </button>
           </div>
         ) : (
@@ -662,9 +667,9 @@ export function ChannelsPanel({ isConnected }: ChannelsPanelProps) {
               <div className="px-4 py-3 bg-secondary/30 border-b border-border">
                 <div className="flex items-start justify-between gap-4">
                   <div>
-                    <h3 className="text-sm font-medium text-text">频道列表</h3>
+                    <h3 className="text-sm font-medium text-text">{t('channels.listTitle')}</h3>
                     <p className="text-xs text-text-muted mt-1 mono">
-                      频道个数：{statusText}，刷新时间：{formatTime(lastUpdatedAt)}
+                      {t('channels.listMeta', { status: statusText, time: formatTime(lastUpdatedAt, i18n.language) })}
                     </p>
                   </div>
                   <button
@@ -673,7 +678,7 @@ export function ChannelsPanel({ isConnected }: ChannelsPanelProps) {
                     className="btn !px-3 !py-1.5 disabled:opacity-50 disabled:cursor-not-allowed"
                     disabled={loadState === 'loading'}
                   >
-                    {loadState === 'loading' ? '刷新中...' : '刷新'}
+                    {loadState === 'loading' ? t('common.refreshing') : t('common.refresh')}
                   </button>
                 </div>
               </div>
@@ -687,6 +692,7 @@ export function ChannelsPanel({ isConnected }: ChannelsPanelProps) {
                   <div className="space-y-2">
                     {channels.map((channel, index) => {
                       const isAdapting = ADAPTING_CHANNEL_IDS.has(channel.channel_id);
+                      const label = getChannelLabel(t, channel.channel_id);
                       return (
                         <button
                           type="button"
@@ -706,8 +712,8 @@ export function ChannelsPanel({ isConnected }: ChannelsPanelProps) {
                               <span className="text-xs px-2.5 py-1 rounded-full border border-border bg-secondary text-text-muted font-medium">
                                 #{index + 1}
                               </span>
-                              <ChannelLogo channel={channel} />
-                              <span className="text-sm font-medium text-text">{channel.label}</span>
+                              <ChannelLogo channel={channel} label={label} />
+                              <span className="text-sm font-medium text-text">{label}</span>
                               <span className="mono text-xs px-2.5 py-1 rounded-md border border-border bg-secondary text-text-muted">
                                 {channel.channel_id}
                               </span>
@@ -721,7 +727,7 @@ export function ChannelsPanel({ isConnected }: ChannelsPanelProps) {
                                     : 'text-text-muted border-border bg-secondary'
                               }`}
                             >
-                              {isAdapting ? '适配中' : channel.enabled ? '已启用' : '未启用'}
+                              {isAdapting ? t('channels.status.adapting') : channel.enabled ? t('channels.status.enabled') : t('channels.status.disabled')}
                             </span>
                           </div>
                         </button>
@@ -737,15 +743,15 @@ export function ChannelsPanel({ isConnected }: ChannelsPanelProps) {
                   <div className="w-full h-full rounded-xl border border-border bg-card/70 backdrop-blur-sm overflow-hidden shadow-sm flex flex-col">
                     <div className="px-4 py-3 bg-secondary/30 border-b border-border">
                       <div className="flex items-center gap-3">
-                        <ChannelHeaderLogo channelId="web" label="网页" />
+                        <ChannelHeaderLogo channelId="web" label={getChannelLabel(t, 'web')} />
                         <div>
-                          <h4 className="text-sm font-medium text-text">网页频道参数配置</h4>
-                          <p className="text-xs text-text-muted mt-1">配置网页频道服务相关参数</p>
+                          <h4 className="text-sm font-medium text-text">{t('channels.config.webTitle')}</h4>
+                          <p className="text-xs text-text-muted mt-1">{t('channels.config.webSubtitle')}</p>
                         </div>
                       </div>
                     </div>
                     <div className="p-4 text-sm text-text-muted flex-1 overflow-auto flex items-center justify-center text-center">
-                      网页频道暂无配置，点击其他频道加载配置。
+                      {t('channels.config.webEmpty')}
                     </div>
                   </div>
                 ) : null}
@@ -755,10 +761,10 @@ export function ChannelsPanel({ isConnected }: ChannelsPanelProps) {
                     <div className="px-4 py-3 bg-secondary/30 border-b border-border">
                       <div className="flex items-center justify-between gap-4">
                         <div className="flex items-center gap-3">
-                          <ChannelHeaderLogo channelId="xiaoyi" label="小艺" />
+                          <ChannelHeaderLogo channelId="xiaoyi" label={getChannelLabel(t, 'xiaoyi')} />
                           <div>
-                            <h4 className="text-sm font-medium text-text">小艺频道参数配置</h4>
-                            <p className="text-xs text-text-muted mt-1">配置小艺频道服务相关参数</p>
+                            <h4 className="text-sm font-medium text-text">{t('channels.config.xiaoyiTitle')}</h4>
+                            <p className="text-xs text-text-muted mt-1">{t('channels.config.xiaoyiSubtitle')}</p>
                           </div>
                         </div>
                         <div className="flex items-center gap-2">
@@ -768,7 +774,7 @@ export function ChannelsPanel({ isConnected }: ChannelsPanelProps) {
                             disabled={xiaoyiSaving || isConfigRefreshing}
                             className="btn !px-3 !py-1.5 disabled:opacity-50 disabled:cursor-not-allowed"
                           >
-                            {xiaoyiLoading ? '刷新中...' : '刷新'}
+                            {xiaoyiLoading ? t('common.refreshing') : t('common.refresh')}
                           </button>
                           <button
                             type="button"
@@ -776,7 +782,7 @@ export function ChannelsPanel({ isConnected }: ChannelsPanelProps) {
                             disabled={!hasXiaoyiConfigChanges || xiaoyiSaving}
                             className="btn !px-3 !py-1.5 disabled:opacity-50 disabled:cursor-not-allowed"
                           >
-                            取消
+                            {t('common.cancel')}
                           </button>
                           <button
                             type="button"
@@ -784,7 +790,7 @@ export function ChannelsPanel({ isConnected }: ChannelsPanelProps) {
                             disabled={!hasXiaoyiConfigChanges || xiaoyiSaving || !isConnected}
                             className="btn primary !px-3 !py-1.5 disabled:opacity-50 disabled:cursor-not-allowed"
                           >
-                            {xiaoyiSaving ? '保存中...' : '保存'}
+                            {xiaoyiSaving ? t('common.saving') : t('common.save')}
                           </button>
                         </div>
                       </div>
@@ -798,7 +804,7 @@ export function ChannelsPanel({ isConnected }: ChannelsPanelProps) {
 
                     <div className="p-4 pt-3 flex-1 overflow-auto">
                       {xiaoyiLoading ? (
-                        <div className="text-sm text-text-muted">正在加载小艺配置...</div>
+                        <div className="text-sm text-text-muted">{t('channels.loading.xiaoyi')}</div>
                       ) : (
                         <table className="w-full text-sm">
                           <tbody>
@@ -831,7 +837,7 @@ export function ChannelsPanel({ isConnected }: ChannelsPanelProps) {
                                       type={isSensitiveXiaoyiField(field) && !xiaoyiVisibleFields[field] ? 'password' : 'text'}
                                       value={xiaoyiDraft[field]}
                                       onChange={(e) => handleXiaoyiFieldChange(field, e.target.value)}
-                                      placeholder="请输入配置值"
+                                      placeholder={t('channels.placeholders.configValue')}
                                       className={`w-full rounded-md border border-border bg-bg px-3 py-2 text-[13px] outline-none focus:border-accent ${
                                         isSensitiveXiaoyiField(field) ? 'pr-10' : ''
                                       }`}
@@ -841,8 +847,8 @@ export function ChannelsPanel({ isConnected }: ChannelsPanelProps) {
                                         type="button"
                                         onClick={() => toggleXiaoyiFieldVisible(field)}
                                         className="channels-panel__visibility-toggle"
-                                        aria-label={xiaoyiVisibleFields[field] ? '隐藏明文' : '显示明文'}
-                                        title={xiaoyiVisibleFields[field] ? '隐藏明文' : '显示明文'}
+                                        aria-label={xiaoyiVisibleFields[field] ? t('channels.hideValue') : t('channels.showValue')}
+                                        title={xiaoyiVisibleFields[field] ? t('channels.hideValue') : t('channels.showValue')}
                                       >
                                         <VisibilityIcon visible={Boolean(xiaoyiVisibleFields[field])} />
                                       </button>
@@ -863,10 +869,10 @@ export function ChannelsPanel({ isConnected }: ChannelsPanelProps) {
                     <div className="px-4 py-3 bg-secondary/30 border-b border-border">
                       <div className="flex items-center justify-between gap-4">
                         <div className="flex items-center gap-3">
-                          <ChannelHeaderLogo channelId="dingtalk" label="钉钉" />
+                          <ChannelHeaderLogo channelId="dingtalk" label={getChannelLabel(t, 'dingtalk')} />
                           <div>
-                            <h4 className="text-sm font-medium text-text">钉钉频道参数配置</h4>
-                            <p className="text-xs text-text-muted mt-1">配置钉钉频道服务相关参数</p>
+                            <h4 className="text-sm font-medium text-text">{t('channels.config.dingtalkTitle')}</h4>
+                            <p className="text-xs text-text-muted mt-1">{t('channels.config.dingtalkSubtitle')}</p>
                           </div>
                         </div>
                         <div className="flex items-center gap-2">
@@ -876,7 +882,7 @@ export function ChannelsPanel({ isConnected }: ChannelsPanelProps) {
                             disabled={dingtalkSaving || isConfigRefreshing}
                             className="btn !px-3 !py-1.5 disabled:opacity-50 disabled:cursor-not-allowed"
                           >
-                            {dingtalkLoading ? '刷新中...' : '刷新'}
+                            {dingtalkLoading ? t('common.refreshing') : t('common.refresh')}
                           </button>
                           <button
                             type="button"
@@ -884,7 +890,7 @@ export function ChannelsPanel({ isConnected }: ChannelsPanelProps) {
                             disabled={!hasDingtalkConfigChanges || dingtalkSaving}
                             className="btn !px-3 !py-1.5 disabled:opacity-50 disabled:cursor-not-allowed"
                           >
-                            取消
+                            {t('common.cancel')}
                           </button>
                           <button
                             type="button"
@@ -898,7 +904,7 @@ export function ChannelsPanel({ isConnected }: ChannelsPanelProps) {
                             }
                             className="btn primary !px-3 !py-1.5 disabled:opacity-50 disabled:cursor-not-allowed"
                           >
-                            {dingtalkSaving ? '保存中...' : '保存'}
+                            {dingtalkSaving ? t('common.saving') : t('common.save')}
                           </button>
                         </div>
                       </div>
@@ -912,7 +918,7 @@ export function ChannelsPanel({ isConnected }: ChannelsPanelProps) {
 
                     <div className="p-4 pt-3 flex-1 overflow-auto">
                       {dingtalkLoading ? (
-                        <div className="text-sm text-text-muted">正在加载钉钉配置...</div>
+                        <div className="text-sm text-text-muted">{t('channels.loading.dingtalk')}</div>
                       ) : (
                         <table className="w-full text-sm">
                           <tbody>
@@ -945,7 +951,7 @@ export function ChannelsPanel({ isConnected }: ChannelsPanelProps) {
                                       type={isSensitiveDingtalkField(field) && !dingtalkVisibleFields[field] ? 'password' : 'text'}
                                       value={dingtalkDraft[field]}
                                       onChange={(e) => handleDingtalkFieldChange(field, e.target.value)}
-                                      placeholder={field === 'client_id' ? '请输入应用 ID' : '请输入应用密钥'}
+                                      placeholder={field === 'client_id' ? t('channels.placeholders.appId') : t('channels.placeholders.appSecret')}
                                       className={`w-full rounded-md border border-border bg-bg px-3 py-2 text-[13px] outline-none focus:border-accent ${
                                         isSensitiveDingtalkField(field) ? 'pr-10' : ''
                                       }`}
@@ -955,8 +961,8 @@ export function ChannelsPanel({ isConnected }: ChannelsPanelProps) {
                                         type="button"
                                         onClick={() => toggleDingtalkFieldVisible(field)}
                                         className="channels-panel__visibility-toggle"
-                                        aria-label={dingtalkVisibleFields[field] ? '隐藏明文' : '显示明文'}
-                                        title={dingtalkVisibleFields[field] ? '隐藏明文' : '显示明文'}
+                                        aria-label={dingtalkVisibleFields[field] ? t('channels.hideValue') : t('channels.showValue')}
+                                        title={dingtalkVisibleFields[field] ? t('channels.hideValue') : t('channels.showValue')}
                                       >
                                         <VisibilityIcon visible={Boolean(dingtalkVisibleFields[field])} />
                                       </button>
@@ -971,7 +977,7 @@ export function ChannelsPanel({ isConnected }: ChannelsPanelProps) {
                                 <textarea
                                   value={dingtalkDraft.allow_from}
                                   onChange={(e) => handleDingtalkFieldChange('allow_from', e.target.value)}
-                                  placeholder="每行一个员工 ID（也支持逗号分隔）"
+                                  placeholder={t('channels.placeholders.employeeIds')}
                                   rows={4}
                                   className="w-full rounded-md border border-border bg-bg px-3 py-2 text-[13px] outline-none focus:border-accent resize-y"
                                 />
@@ -989,10 +995,10 @@ export function ChannelsPanel({ isConnected }: ChannelsPanelProps) {
                     <div className="px-4 py-3 bg-secondary/30 border-b border-border">
                       <div className="flex items-center justify-between gap-4">
                         <div className="flex items-center gap-3">
-                          <ChannelHeaderLogo channelId="feishu" label="飞书" />
+                          <ChannelHeaderLogo channelId="feishu" label={getChannelLabel(t, 'feishu')} />
                           <div>
-                            <h4 className="text-sm font-medium text-text">飞书频道参数配置</h4>
-                            <p className="text-xs text-text-muted mt-1">配置飞书频道服务相关参数</p>
+                            <h4 className="text-sm font-medium text-text">{t('channels.config.feishuTitle')}</h4>
+                            <p className="text-xs text-text-muted mt-1">{t('channels.config.feishuSubtitle')}</p>
                           </div>
                         </div>
                         <div className="flex items-center gap-2">
@@ -1002,7 +1008,7 @@ export function ChannelsPanel({ isConnected }: ChannelsPanelProps) {
                             disabled={saving || isConfigRefreshing}
                             className="btn !px-3 !py-1.5 disabled:opacity-50 disabled:cursor-not-allowed"
                           >
-                            {feishuLoading ? '刷新中...' : '刷新'}
+                            {feishuLoading ? t('common.refreshing') : t('common.refresh')}
                           </button>
                           <button
                             type="button"
@@ -1010,7 +1016,7 @@ export function ChannelsPanel({ isConnected }: ChannelsPanelProps) {
                             disabled={!hasConfigChanges || saving}
                             className="btn !px-3 !py-1.5 disabled:opacity-50 disabled:cursor-not-allowed"
                           >
-                            取消
+                            {t('common.cancel')}
                           </button>
                           <button
                             type="button"
@@ -1018,7 +1024,7 @@ export function ChannelsPanel({ isConnected }: ChannelsPanelProps) {
                             disabled={!hasConfigChanges || saving || !isConnected || !draft.app_id.trim() || !draft.app_secret.trim()}
                             className="btn primary !px-3 !py-1.5 disabled:opacity-50 disabled:cursor-not-allowed"
                           >
-                            {saving ? '保存中...' : '保存'}
+                            {saving ? t('common.saving') : t('common.save')}
                           </button>
                         </div>
                       </div>
@@ -1032,7 +1038,7 @@ export function ChannelsPanel({ isConnected }: ChannelsPanelProps) {
 
                     <div className="p-4 pt-3 flex-1 overflow-auto">
                       {feishuLoading ? (
-                        <div className="text-sm text-text-muted">正在加载飞书配置...</div>
+                        <div className="text-sm text-text-muted">{t('channels.loading.feishu')}</div>
                       ) : (
                         <table className="w-full text-sm">
                           <tbody>
@@ -1065,7 +1071,7 @@ export function ChannelsPanel({ isConnected }: ChannelsPanelProps) {
                                       type={isSensitiveField(field) && !visibleFields[field] ? 'password' : 'text'}
                                       value={draft[field]}
                                       onChange={(e) => handleFieldChange(field, e.target.value)}
-                                      placeholder={field === 'chat_id' ? '请输入聊天 ID' : '请输入配置值'}
+                                      placeholder={field === 'chat_id' ? t('channels.placeholders.chatId') : t('channels.placeholders.configValue')}
                                       className={`w-full rounded-md border border-border bg-bg px-3 py-2 text-[13px] outline-none focus:border-accent ${
                                         isSensitiveField(field) ? 'pr-10' : ''
                                       }`}
@@ -1075,8 +1081,8 @@ export function ChannelsPanel({ isConnected }: ChannelsPanelProps) {
                                         type="button"
                                         onClick={() => toggleFieldVisible(field)}
                                         className="channels-panel__visibility-toggle"
-                                        aria-label={visibleFields[field] ? '隐藏明文' : '显示明文'}
-                                        title={visibleFields[field] ? '隐藏明文' : '显示明文'}
+                                        aria-label={visibleFields[field] ? t('channels.hideValue') : t('channels.showValue')}
+                                        title={visibleFields[field] ? t('channels.hideValue') : t('channels.showValue')}
                                       >
                                         <VisibilityIcon visible={Boolean(visibleFields[field])} />
                                       </button>
@@ -1091,7 +1097,7 @@ export function ChannelsPanel({ isConnected }: ChannelsPanelProps) {
                                 <textarea
                                   value={draft.allow_from}
                                   onChange={(e) => handleFieldChange('allow_from', e.target.value)}
-                                  placeholder="每行一个 ID（也支持逗号分隔）"
+                                  placeholder={t('channels.placeholders.ids')}
                                   rows={4}
                                   className="w-full rounded-md border border-border bg-bg px-3 py-2 text-[13px] outline-none focus:border-accent resize-y"
                                 />

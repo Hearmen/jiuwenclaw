@@ -4,6 +4,7 @@
  * Skills 管理面板
  */
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { useTranslation } from 'react-i18next';
 import { webRequest } from "../../services/webClient";
 import { SourceManagerModal } from "../../features/SourceManagerModal";
 
@@ -46,13 +47,14 @@ interface SkillPanelProps {
   sessionId: string;
 }
 
-function getSourceLabel(source: string): string {
-  if (source === "local") return "本地";
-  if (source === "project") return "项目";
-  return source || "未知";
+function getSourceLabel(source: string, t: (key: string) => string): string {
+  if (source === "local") return t('skills.source.local');
+  if (source === "project") return t('skills.source.project');
+  return source || t('skills.source.unknown');
 }
 
 export function SkillPanel({ sessionId }: SkillPanelProps) {
+  const { t } = useTranslation();
   const [skills, setSkills] = useState<SkillItem[]>([]);
   const [plugins, setPlugins] = useState<InstalledPluginItem[]>([]);
   const [marketplaces, setMarketplaces] = useState<MarketplaceItem[]>([]);
@@ -108,7 +110,7 @@ export function SkillPanel({ sessionId }: SkillPanelProps) {
       );
       setMarketplaces(data.marketplaces || []);
     } catch (error) {
-      console.error("获取 marketplaces 失败:", error);
+      console.error('Failed to load marketplaces:', error);
     }
   }, []);
 
@@ -188,10 +190,10 @@ export function SkillPanel({ sessionId }: SkillPanelProps) {
         ? `${skillName}@${preferredMarketplace}`
         : "plugin-name@anthropics";
       const hint = marketplaceNames
-        ? `可用 marketplace: ${marketplaceNames}`
-        : "默认 marketplace: anthropics";
+        ? t('skills.marketplacesAvailable', { names: marketplaceNames })
+        : t('skills.marketplacesDefault');
       const spec = window.prompt(
-        `请输入插件规格 (plugin@marketplace)\n${hint}`,
+        `${t('skills.installPrompt')}\n${hint}`,
         defaultSpec
       );
       if (!spec) return;
@@ -206,9 +208,9 @@ export function SkillPanel({ sessionId }: SkillPanelProps) {
           message?: string;
         }>("skills.install", withSession({ spec, force: false }));
         if (!data.success) {
-          throw new Error(data.detail || data.message || "安装失败");
+          throw new Error(data.detail || data.message || t('skills.errors.installFailed'));
         }
-        setMessage(`已安装：${spec}`);
+        setMessage(t('skills.messages.installed', { spec }));
         setMessageType("success");
         await fetchSkills();
         if (selectedSkill) {
@@ -216,7 +218,7 @@ export function SkillPanel({ sessionId }: SkillPanelProps) {
         }
       } catch (error) {
         console.error(error);
-        setMessage("安装失败，请检查插件规格或网络");
+        setMessage(t('skills.errors.installFailedHint'));
         setMessageType("error");
       } finally {
         setActionTarget(null);
@@ -227,7 +229,7 @@ export function SkillPanel({ sessionId }: SkillPanelProps) {
 
   const handleImportLocal = useCallback(async () => {
     const path = window.prompt(
-      "请输入服务端本地 skill 路径（SKILL.md 或目录）"
+      t('skills.importPrompt')
     );
     if (!path) return;
 
@@ -245,9 +247,9 @@ export function SkillPanel({ sessionId }: SkillPanelProps) {
         force: false,
       }));
       if (!data.success) {
-        throw new Error(data.detail || data.message || "导入失败");
+        throw new Error(data.detail || data.message || t('skills.errors.importFailed'));
       }
-      setMessage(`已导入：${data.skill?.name || path}`);
+      setMessage(t('skills.messages.imported', { name: data.skill?.name || path }));
       setMessageType("success");
       await fetchSkills();
       if (data.skill?.name) {
@@ -255,17 +257,17 @@ export function SkillPanel({ sessionId }: SkillPanelProps) {
       }
     } catch (error) {
       console.error(error);
-      setMessage("导入失败，请检查路径或权限");
+      setMessage(t('skills.errors.importFailedHint'));
       setMessageType("error");
     } finally {
       setActionTarget(null);
     }
-  }, [fetchSkills, fetchSkillDetail, withSession]);
+  }, [fetchSkills, fetchSkillDetail, t, withSession]);
 
   const handleUninstall = useCallback(
     async (pluginName: string) => {
       if (!pluginName) return;
-      const confirmed = window.confirm(`确认卸载 ${pluginName} ?`);
+      const confirmed = window.confirm(t('skills.uninstallConfirm', { pluginName }));
       if (!confirmed) return;
 
       setActionTarget(pluginName);
@@ -280,9 +282,9 @@ export function SkillPanel({ sessionId }: SkillPanelProps) {
           name: pluginName,
         }));
         if (!data.success) {
-          throw new Error(data.detail || data.message || "卸载失败");
+          throw new Error(data.detail || data.message || t('skills.errors.uninstallFailed'));
         }
-        setMessage(`已卸载：${pluginName}`);
+        setMessage(t('skills.messages.uninstalled', { pluginName }));
         setMessageType("success");
         await fetchSkills();
         if (selectedSkill) {
@@ -290,13 +292,13 @@ export function SkillPanel({ sessionId }: SkillPanelProps) {
         }
       } catch (error) {
         console.error(error);
-        setMessage("卸载失败，请稍后重试");
+        setMessage(t('skills.errors.uninstallFailedHint'));
         setMessageType("error");
       } finally {
         setActionTarget(null);
       }
     },
-    [fetchSkills, fetchSkillDetail, selectedSkill, withSession]
+    [fetchSkills, fetchSkillDetail, selectedSkill, t, withSession]
   );
 
   const renderActionButton = (skill: SkillItem) => {
@@ -317,7 +319,7 @@ export function SkillPanel({ sessionId }: SkillPanelProps) {
           }`}
           disabled={isLoading}
         >
-          卸载
+          {t('skills.actions.uninstall')}
         </button>
       );
     }
@@ -337,7 +339,7 @@ export function SkillPanel({ sessionId }: SkillPanelProps) {
           }`}
           disabled={isLoading}
         >
-          安装
+          {t('skills.actions.install')}
         </button>
       );
     }
@@ -347,16 +349,16 @@ export function SkillPanel({ sessionId }: SkillPanelProps) {
         className="px-3 py-1.5 rounded-md text-sm bg-secondary text-text-muted cursor-not-allowed whitespace-nowrap"
         disabled
       >
-        内置
+        {t('skills.builtIn')}
       </button>
     );
   };
 
   const renderStatus = (skill: SkillItem) => {
     const plugin = installedSkillMap.get(skill.name);
-    if (plugin) return "已安装";
-    if (skill.source !== "local" && skill.source !== "project") return "未安装";
-    return "内置";
+    if (plugin) return t('skills.status.installed');
+    if (skill.source !== "local" && skill.source !== "project") return t('skills.status.notInstalled');
+    return t('skills.status.builtIn');
   };
 
   return (
@@ -365,10 +367,10 @@ export function SkillPanel({ sessionId }: SkillPanelProps) {
         <div className="flex items-center justify-between gap-4">
           <div>
             <h2 className="text-lg font-semibold">
-              技能管理
+              {t('skills.title')}
             </h2>
             <p className="text-sm text-text-muted mt-1">
-              管理并安装智能体可用的技能。
+              {t('skills.subtitle')}
             </p>
           </div>
           <div className="flex items-center gap-2">
@@ -376,7 +378,7 @@ export function SkillPanel({ sessionId }: SkillPanelProps) {
               onClick={() => fetchSkills(true)}
               className="px-3 py-1.5 rounded-md text-sm bg-secondary text-text-muted hover:text-text hover:bg-card border border-border"
             >
-              刷新
+              {t('common.refresh')}
             </button>
             <button
               onClick={handleImportLocal}
@@ -387,13 +389,13 @@ export function SkillPanel({ sessionId }: SkillPanelProps) {
               }`}
               disabled={actionTarget === "import_local"}
             >
-              导入本地技能
+              {t('skills.actions.importLocal')}
             </button>
             <button
               onClick={() => setSourceModalOpen(true)}
               className="px-3 py-1.5 rounded-md text-sm bg-accent text-white hover:bg-accent-hover"
             >
-              源管理
+              {t('skills.actions.sourceManager')}
             </button>
           </div>
         </div>
@@ -413,11 +415,11 @@ export function SkillPanel({ sessionId }: SkillPanelProps) {
                 onClick={handleBackToList}
                 className="px-3 py-1.5 rounded-md text-sm bg-secondary text-text-muted hover:text-text hover:bg-card border border-border"
               >
-                返回列表
+                {t('skills.actions.backToList')}
               </button>
               <div className="text-sm text-text-muted">
-                {detailState === "loading" && "加载详情中..."}
-                {detailState === "error" && "加载详情失败"}
+                {detailState === "loading" && t('skills.detailLoading')}
+                {detailState === "error" && t('skills.detailError')}
               </div>
             </div>
 
@@ -428,17 +430,17 @@ export function SkillPanel({ sessionId }: SkillPanelProps) {
                     {selectedSkill.name}
                   </div>
                   <div className="text-sm text-text-muted mt-1">
-                    {selectedSkill.description || "暂无描述"}
+                    {selectedSkill.description || t('skills.noDescription')}
                   </div>
                   <div className="flex flex-wrap gap-2 mt-3 text-xs text-text-muted">
                     <span className="px-2 py-1 rounded-full bg-secondary border border-border">
-                      来源：{getSourceLabel(selectedSkill.source)}
+                      {t('skills.sourceLabel')}: {getSourceLabel(selectedSkill.source, t)}
                     </span>
                     <span className="px-2 py-1 rounded-full bg-secondary border border-border">
-                      版本：{selectedSkill.version || "unknown"}
+                      {t('skills.versionLabel')}: {selectedSkill.version || 'unknown'}
                     </span>
                     <span className="px-2 py-1 rounded-full bg-secondary border border-border">
-                      作者：{selectedSkill.author || "unknown"}
+                      {t('skills.authorLabel')}: {selectedSkill.author || 'unknown'}
                     </span>
                   </div>
                 </div>
@@ -450,7 +452,7 @@ export function SkillPanel({ sessionId }: SkillPanelProps) {
 
               <div className="mt-4">
                 <div className="text-sm font-medium text-text mb-2">
-                  允许工具
+                  {t('skills.allowedTools')}
                 </div>
                 <div className="flex flex-wrap gap-2 text-xs text-text-muted">
                   {selectedSkill.allowed_tools?.length ? (
@@ -463,17 +465,17 @@ export function SkillPanel({ sessionId }: SkillPanelProps) {
                       </span>
                     ))
                   ) : (
-                    <span className="text-text-muted">无限制</span>
+                    <span className="text-text-muted">{t('skills.unlimited')}</span>
                   )}
                 </div>
               </div>
 
               <div className="mt-4">
                 <div className="text-sm font-medium text-text mb-2">
-                  内容预览
+                  {t('skills.contentPreview')}
                 </div>
                 <div className="text-sm text-text whitespace-pre-wrap bg-secondary border border-border rounded-md p-3">
-                  {selectedSkill.content || "暂无内容"}
+                  {selectedSkill.content || t('skills.noContent')}
                 </div>
               </div>
             </div>
@@ -485,26 +487,26 @@ export function SkillPanel({ sessionId }: SkillPanelProps) {
                 <input
                   value={search}
                   onChange={(event) => setSearch(event.target.value)}
-                  placeholder="搜索技能名称、描述或标签"
+                  placeholder={t('skills.searchPlaceholder')}
                   className="w-full px-3 py-2 rounded-md bg-panel border border-border text-sm text-text placeholder:text-text-muted"
                 />
               </div>
               <div className="text-xs text-text-muted flex-shrink-0">
-                共 {filteredSkills.length} 个
+                {t('skills.totalCount', { count: filteredSkills.length })}
               </div>
             </div>
 
             <div className="mt-4 flex-1 min-h-0 overflow-y-auto space-y-3">
               {listState === "loading" && (
-                <div className="text-sm text-text-muted">加载中...</div>
+                <div className="text-sm text-text-muted">{t('common.loading')}</div>
               )}
               {listState === "error" && (
                 <div className="text-sm text-text-muted">
-                  获取技能失败，请检查后端服务
+                  {t('skills.listError')}
                 </div>
               )}
               {listState === "success" && filteredSkills.length === 0 && (
-                <div className="text-sm text-text-muted">暂无匹配的技能</div>
+                <div className="text-sm text-text-muted">{t('skills.noMatches')}</div>
               )}
                 {listState === "success" &&
                 filteredSkills.map((skill) => (
@@ -519,14 +521,14 @@ export function SkillPanel({ sessionId }: SkillPanelProps) {
                           {skill.name}
                         </div>
                         <div className="text-sm text-text-muted mt-1 line-clamp-3">
-                          {skill.description || "暂无描述"}
+                          {skill.description || t('skills.noDescription')}
                         </div>
                         <div className="flex flex-wrap gap-2 mt-3 text-xs text-text-muted">
                           <span className="px-2 py-1 rounded-full bg-secondary border border-border">
-                            来源：{getSourceLabel(skill.source)}
+                            {t('skills.sourceLabel')}: {getSourceLabel(skill.source, t)}
                           </span>
                           <span className="px-2 py-1 rounded-full bg-secondary border border-border">
-                            状态：{renderStatus(skill)}
+                            {t('skills.statusLabel')}: {renderStatus(skill)}
                           </span>
                         </div>
                       </div>
