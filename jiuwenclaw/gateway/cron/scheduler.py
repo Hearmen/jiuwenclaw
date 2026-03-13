@@ -355,7 +355,7 @@ class CronSchedulerService:
         if not channel_id:
             return
 
-        # 针对 feishu/xiaoyi：从 config.yaml 取最近一次可回发的平台身份，写入 metadata
+        # 针对 feishu/xiaoyi/whatsapp：从 config.yaml 取最近一次可回发的平台身份，写入 metadata
         # 这样即使 cron 推送没有 session_id，也能让 Channel.send 正常路由到对应会话。
         metadata: dict | None = None
         try:
@@ -378,6 +378,12 @@ class CronSchedulerService:
                     metadata = {
                         "xiaoyi_session_id": last_session_id,
                         "xiaoyi_task_id": last_task_id,
+                    }
+            elif channel_id == "whatsapp":
+                last_jid = str(ch_cfg.get("last_jid") or "").strip()
+                if last_jid:
+                    metadata = {
+                        "whatsapp_jid": last_jid,
                     }
         except Exception:
             metadata = None

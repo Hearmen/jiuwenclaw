@@ -55,3 +55,4 @@ workspace/session
 workspace/agent/memory/*.db
 workspace/agent/memory/*.db-shm
 workspace/agent/memory/*.db-wal
+jiuwenclaw/workspace/.whatsapp-auth/

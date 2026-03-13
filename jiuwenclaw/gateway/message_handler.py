@@ -48,8 +48,8 @@ class MessageHandler(ABC):
         self._stream_tasks: dict[str, asyncio.Task] = {}  # request_id -> task
         self._stream_sessions: dict[str, str | None] = {}  # request_id -> session_id
 
-        # per-channel 控制状态：支持 \new_session / \mode 指令（feishu/xiaoyi/dingding）
-        self._control_channels = {"feishu", "xiaoyi", "dingtalk"}
+        # per-channel 控制状态：支持 \new_session / \mode 指令（feishu/xiaoyi/dingding/whatsapp）
+        self._control_channels = {"feishu", "xiaoyi", "dingtalk", "whatsapp"}
         self._channel_states: Dict[str, ChannelControlState] = {}
 
         # 直接使用 jiuwenclaw.config 的 get_config_raw/set_config/update_channel_in_config
@@ -83,7 +83,7 @@ class MessageHandler(ABC):
             sid_raw = ch_cfg.get("default_session_id") or ""
             sid = str(sid_raw).strip() or None
             # 若未在 config 中指定默认 session_id，则为该 channel 生成一个带时间戳的新 session_id，
-            # 这样 feishu/xiaoyi/dingtalk 在未执行 \new_session 之前，消息的 session_id 也是
+            # 这样 feishu/xiaoyi/dingtalk/whatsapp 在未执行 \new_session 之前，消息的 session_id 也是
             # `<channel>_<ts_hex>_<rand>` 这种可解析时间戳的格式。
             if not sid:
                 sid = self._generate_channel_session_id(ch)
@@ -192,7 +192,7 @@ class MessageHandler(ABC):
         if not state:
             return
 
-        # 对 feishu/xiaoyi/dingtalk 强制覆盖 session_id；web 等保持原有行为
+        # 对 feishu/xiaoyi/dingtalk/whatsapp 强制覆盖 session_id；web 等保持原有行为
         if ch in self._control_channels and state.session_id:
             msg.session_id = state.session_id
 
@@ -359,7 +359,7 @@ class MessageHandler(ABC):
                     continue
                 
          
-                # 先处理 Channel 控制指令（仅 feishu/xiaoyi/dingtalk）
+                # 先处理 Channel 控制指令（仅 feishu/xiaoyi/dingtalk/whatsapp）
                 if self._handle_channel_control(msg):
                     # 该消息仅用于修改 session/mode，已给 Channel 回复提示，不再转发给 Agent
                     continue

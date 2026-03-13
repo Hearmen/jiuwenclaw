@@ -31,6 +31,8 @@ from openjiuwen.core.common.logging import LogManager
 from jiuwenclaw.channel import (
     DingTalkChannel,
     DingTalkConfig,
+    WhatsAppChannel,
+    WhatsAppChannelConfig,
 )
 
 for logger in LogManager.get_all_loggers().values():
@@ -698,6 +700,57 @@ def _register_web_handlers(
             logger.exception("[channel.dingtalk.set_conf] %s", e)
             await channel.send_response(ws, req_id, ok=False, error=str(e), code="INTERNAL_ERROR")
 
+    async def _channel_whatsapp_get_conf(ws, req_id, params, session_id):
+        cm = _resolve(channel_manager)
+        if cm is None:
+            await channel.send_response(
+                ws,
+                req_id,
+                ok=False,
+                error="channel manager not available",
+                code="SERVICE_UNAVAILABLE",
+            )
+            return
+        try:
+            conf = cm.get_conf("whatsapp")
+            await channel.send_response(ws, req_id, ok=True, payload={"config": conf})
+        except Exception as e:  # noqa: BLE001
+            logger.exception("[channel.whatsapp.get_conf] %s", e)
+            await channel.send_response(ws, req_id, ok=False, error=str(e), code="INTERNAL_ERROR")
+
+    async def _channel_whatsapp_set_conf(ws, req_id, params, session_id):
+        cm = _resolve(channel_manager)
+        if cm is None:
+            await channel.send_response(
+                ws,
+                req_id,
+                ok=False,
+                error="channel manager not available",
+                code="SERVICE_UNAVAILABLE",
+            )
+            return
+        if not isinstance(params, dict):
+            await channel.send_response(
+                ws,
+                req_id,
+                ok=False,
+                error="params must be object",
+                code="BAD_REQUEST",
+            )
+            return
+        try:
+            await cm.set_conf("whatsapp", params)
+            conf = cm.get_conf("whatsapp")
+            try:
+                update_channel_in_config("whatsapp", conf)
+                _clear_agent_config_cache()
+            except Exception as e:  # noqa: BLE001
+                logger.warning("[channel.whatsapp.set_conf] 写回 config.yaml 失败: %s", e)
+            await channel.send_response(ws, req_id, ok=True, payload={"config": conf})
+        except Exception as e:  # noqa: BLE001
+            logger.exception("[channel.whatsapp.set_conf] %s", e)
+            await channel.send_response(ws, req_id, ok=False, error=str(e), code="INTERNAL_ERROR")
+
     # ----- cron jobs -----
 
     def _get_cron():
@@ -874,6 +927,8 @@ def _register_web_handlers(
     channel.register_method("channel.xiaoyi.set_conf", _channel_xiaoyi_set_conf)
     channel.register_method("channel.dingtalk.get_conf", _channel_dingtalk_get_conf)
     channel.register_method("channel.dingtalk.set_conf", _channel_dingtalk_set_conf)
+    channel.register_method("channel.whatsapp.get_conf", _channel_whatsapp_get_conf)
+    channel.register_method("channel.whatsapp.set_conf", _channel_whatsapp_set_conf)
     channel.register_method("cron.job.list", _cron_job_list)
     channel.register_method("cron.job.get", _cron_job_get)
     channel.register_method("cron.job.create", _cron_job_create)
@@ -1051,13 +1106,16 @@ async def _run() -> None:
     web_channel.on_message(_norm_and_forward)
     channel_manager._channels[web_channel.channel_id] = web_channel
 
-    # ---------- 按配置管理 FeishuChannel / XiaoyiChannel（配置来源：config/config.yaml -> channels.*） ----------
+    # ---------- 按配置管理各 Channel（配置来源：config/config.yaml -> channels.*） ----------
     feishu_channel = None
     feishu_task = None
     xiaoyi_channel = None
     xiaoyi_task = None
     dingtalk_channel = None
     dingtalk_task = None
+    whatsapp_channel = None
+    whatsapp_task = None
+
     _last_channels_conf = {}  # Store previous config to detect changes
 
     def _should_restart_channel(channel_name: str, old_conf: dict, new_conf: dict) -> bool:
@@ -1125,10 +1183,9 @@ async def _run() -> None:
 
     async def _apply_channel_config(conf: dict) -> None:
         """根据最新 Channel 配置重新实例化各 Channel"""
-        nonlocal feishu_channel, feishu_task, xiaoyi_channel, xiaoyi_task, dingtalk_channel, dingtalk_task, _last_channels_conf
-
+        nonlocal feishu_channel, feishu_task, xiaoyi_channel, xiaoyi_task, dingtalk_channel, dingtalk_task, _last_channels_conf, whatsapp_channel, whatsapp_task
         # Detect which channels changed
-        changed_channels = [c for c in ["feishu", "xiaoyi", "dingtalk"]
+        changed_channels = [c for c in ["feishu", "xiaoyi", "dingtalk", "whatsapp"]
                            if _should_restart_channel(c, _last_channels_conf, conf)]
         _last_channels_conf = dict(conf or {})
 
@@ -1210,9 +1267,55 @@ async def _run() -> None:
             else:
                 logger.info("[App] channels.dingtalk 未配置或格式错误，DingtalkChannel 不启用")
 
+        # ----- WhatsAppChannel -----
+        if "whatsapp" in changed_channels:
+            whatsapp_conf = conf.get("whatsapp") if isinstance(conf, dict) else None
+            await _stop_channel(whatsapp_channel, whatsapp_task, "whatsapp")
+            whatsapp_channel, whatsapp_task = None, None
+
+            if isinstance(whatsapp_conf, dict):
+                bridge_ws_url = str(whatsapp_conf.get("bridge_ws_url") or "ws://127.0.0.1:19600/ws").strip()
+                default_jid = str(whatsapp_conf.get("default_jid") or "").strip()
+                allow_from = whatsapp_conf.get("allow_from") or []
+                enable_streaming = bool(whatsapp_conf.get("enable_streaming", True))
+                auto_start_bridge = bool(whatsapp_conf.get("auto_start_bridge", False))
+                bridge_command = str(whatsapp_conf.get("bridge_command") or "node scripts/whatsapp-bridge.js").strip()
+                bridge_workdir = str(whatsapp_conf.get("bridge_workdir") or "").strip()
+                bridge_env_raw = whatsapp_conf.get("bridge_env") or {}
+                bridge_env = bridge_env_raw if isinstance(bridge_env_raw, dict) else {}
+
+                enabled_raw = whatsapp_conf.get("enabled", None)
+                if enabled_raw is None:
+                    enabled = bool(bridge_ws_url)
+                else:
+                    enabled = bool(enabled_raw)
+
+                if not enabled:
+                    logger.info("[App] channels.whatsapp.enabled = false，WhatsAppChannel 未启用")
+                elif not bridge_ws_url:
+                    logger.info("[App] channels.whatsapp 缺少 bridge_ws_url，WhatsAppChannel 未启用")
+                else:
+                    whatsapp_config = WhatsAppChannelConfig(
+                        enabled=True,
+                        enable_streaming=enable_streaming,
+                        bridge_ws_url=bridge_ws_url,
+                        allow_from=allow_from,
+                        default_jid=default_jid,
+                        auto_start_bridge=auto_start_bridge,
+                        bridge_command=bridge_command,
+                        bridge_workdir=bridge_workdir,
+                        bridge_env={str(k): str(v) for k, v in bridge_env.items()},
+                    )
+                    whatsapp_channel = WhatsAppChannel(whatsapp_config, _DummyBus())
+                    channel_manager.register_channel(whatsapp_channel)
+                    whatsapp_task = asyncio.create_task(whatsapp_channel.start(), name="whatsapp")
+                    logger.info("[App] 已按 config.yaml.channels.whatsapp 注册 WhatsAppChannel")
+            else:
+                logger.info("[App] channels.whatsapp 未配置或格式错误，WhatsAppChannel 不启用")
+
     # 将「配置更新时如何重新实例化 Channel」逻辑注册到 ChannelManager
     channel_manager.set_config_callback(_apply_channel_config)
-    # 使用初始配置实例化一次（启动时，针对 feishu / xiaoyi）
+    # 使用初始配置实例化一次（启动时，针对动态管理的各 Channel）
     await channel_manager.set_config(initial_channels_conf)
 
     await channel_manager.start_dispatch()
@@ -1224,7 +1327,7 @@ async def _run() -> None:
     )
 
     # 主循环仅以 WebChannel 的生命周期为准：
-    # Feishu/Xiaoyi/Dingtalk 等 Channel 的 start/stop 由 _apply_channel_config 动态管理，
+    # Feishu/Xiaoyi/Dingtalk/WhatsApp 等 Channel 的 start/stop 由 _apply_channel_config 动态管理，
     # 不再将其任务纳入这里的 gather，以避免在热更新（如关闭 Feishu）时取消任务导致整个 E2E 提前退出。
     try:
         await web_task
@@ -1260,6 +1363,13 @@ async def _run() -> None:
             except (TypeError, asyncio.CancelledError):
                 pass
             await dingtalk_channel.stop()
+        if whatsapp_channel is not None and whatsapp_task is not None:
+            whatsapp_task.cancel()
+            try:
+                await whatsapp_task
+            except asyncio.CancelledError:
+                pass
+            await whatsapp_channel.stop()
         await cron_scheduler.stop()
         await channel_manager.stop_dispatch()
         await heartbeat_service.stop()

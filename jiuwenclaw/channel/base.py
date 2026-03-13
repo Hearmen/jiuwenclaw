@@ -20,6 +20,7 @@ class ChannelType(str, Enum):
     FEISHU = "feishu"
     XIAOYI = "xiaoyi"
     DINGTALK = "dingtalk"
+    WHATSAPP = "whatsapp"
 
 
 @dataclass

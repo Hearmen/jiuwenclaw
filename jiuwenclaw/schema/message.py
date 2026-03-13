@@ -55,6 +55,9 @@ class ReqMethod(Enum):
     CHANNEL_DINGTALK_GET_CONF = "channel.dingtalk.get_conf"
     CHANNEL_DINGTALK_SET_CONF = "channel.dingtalk.set_conf"
 
+    CHANNEL_WHATSAPP_GET_CONF = "channel.whatsapp.get_conf"
+    CHANNEL_WHATSAPP_SET_CONF = "channel.whatsapp.set_conf"
+
 class EventType(Enum):
     CONNECTION_ACK = "connection.ack"
     HELLO = "hello"

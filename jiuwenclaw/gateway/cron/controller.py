@@ -288,7 +288,7 @@ class CronController:
                         "targets": {
                             "type": "string",
                             "enum": [e.value for e in CronTargetChannel],
-                            "description": "推送频道：web=网页, feishu=飞书",
+                            "description": "推送频道：web=网页, feishu=飞书, whatsapp=WhatsApp",
                             "default": self._target_channel.value,
                         },
                          "enabled": {
@@ -324,7 +324,7 @@ class CronController:
                                 "targets": {
                                     "type": "string",
                                     "enum": [e.value for e in CronTargetChannel],
-                                    "description": "推送频道：web/feishu",
+                                    "description": "推送频道：web/feishu/whatsapp",
                                 },
                             },
                         },
