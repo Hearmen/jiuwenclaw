@@ -71,7 +71,7 @@ jiuwenclaw-app
 下载JiuwenClaw代码
 
 ```bash
-  git  clone https://gitcode.com/openjiuwen/jiuwenclaw.git
+  git clone https://gitcode.com/openjiuwen/jiuwenclaw.git
 ```
 
 进入源码目录执行uv同步操作
