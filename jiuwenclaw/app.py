@@ -895,15 +895,11 @@ async def _run() -> None:
     from jiuwenclaw.schema.message import Message, EventType, ReqMethod
     from jiuwenclaw.agentserver.memory.config import _load_config as _load_agent_config
     from jiuwenclaw.agentserver.tools.browser_tools import restart_local_browser_runtime_server
-    from jiuwenclaw.utils import prepare_workspace, USER_WORKSPACE_DIR
 
     agent_port = int(os.getenv("AGENT_PORT", "18092"))
     web_host = os.getenv("WEB_HOST", "127.0.0.1")
     web_port = int(os.getenv("WEB_PORT", "19000"))
     web_path = os.getenv("WEB_PATH", "/ws")
-
-    if not USER_WORKSPACE_DIR.exists():
-        prepare_workspace(overwrite=False)
 
     def _do_restart() -> None:
         """重新执行当前进程以加载新 .env（配置修改后重启服务）。"""
@@ -1272,4 +1268,7 @@ def main() -> None:
 
 
 if __name__ == "__main__":
+    from jiuwenclaw.utils import prepare_workspace, USER_WORKSPACE_DIR
+    if not USER_WORKSPACE_DIR.exists():
+        prepare_workspace(overwrite=False)
     main()
