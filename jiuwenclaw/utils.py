@@ -197,21 +197,14 @@ def _resolve_paths() -> None:
         _config_dir = user_config_dir
         _workspace_dir = user_workspace_dir
     else:
-        if _detect_installation_mode():
-            # Package mode（尚未执行 init），计划根目录仍是用户家目录，
-            # 但 config/workspace 可能还不存在。
-            package_root = _find_package_root()
-            if package_root:
-                _root_dir = USER_WORKSPACE_DIR
-                _config_dir = USER_WORKSPACE_DIR / "config"
-                _workspace_dir = USER_WORKSPACE_DIR / "workspace"
-            else:
-                source_root = _find_source_root()
-                _root_dir = source_root
-                _config_dir = source_root / "config"
-                _workspace_dir = source_root / "workspace"
+        # Package mode（尚未执行 init），计划根目录仍是用户家目录，
+        # 但 config/workspace 可能还不存在。
+        package_root = _find_package_root()
+        if package_root:
+            _root_dir = USER_WORKSPACE_DIR
+            _config_dir = USER_WORKSPACE_DIR / "config"
+            _workspace_dir = USER_WORKSPACE_DIR / "workspace"
         else:
-            # 纯源码模式且未初始化用户工作区：直接使用工程根目录。
             source_root = _find_source_root()
             _root_dir = source_root
             _config_dir = source_root / "config"

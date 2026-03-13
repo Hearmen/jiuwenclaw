@@ -19,6 +19,12 @@ from dotenv import load_dotenv
 from typing import Any
 import psutil
 
+
+from jiuwenclaw.utils import USER_WORKSPACE_DIR, prepare_workspace
+_config_file = USER_WORKSPACE_DIR / "config" / "config.yaml"
+if not _config_file.exists():
+    prepare_workspace(overwrite=False)
+
 # 减少日志打印
 from openjiuwen.core.common.logging import LogManager
 
@@ -1268,7 +1274,4 @@ def main() -> None:
 
 
 if __name__ == "__main__":
-    from jiuwenclaw.utils import prepare_workspace, USER_WORKSPACE_DIR
-    if not USER_WORKSPACE_DIR.exists():
-        prepare_workspace(overwrite=False)
     main()
