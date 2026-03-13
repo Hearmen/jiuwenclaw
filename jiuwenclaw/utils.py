@@ -20,7 +20,7 @@ import sys
 from pathlib import Path
 from typing import Any
 
-from openjiuwen.core.common.logging.default import SafeRotatingFileHandler
+from logging.handlers import RotatingFileHandler
 
 # User home directory
 USER_HOME = Path.home()
@@ -268,7 +268,7 @@ def setup_logger(log_level: str = "INFO") -> logging.Logger:
     stream_handler = logging.StreamHandler()
     stream_handler.setFormatter(formatter)
 
-    file_handler = SafeRotatingFileHandler(
+    file_handler = RotatingFileHandler(
         filename=logs_root / "app.log",
         maxBytes=20 * 1024 * 1024,
         backupCount=20,
