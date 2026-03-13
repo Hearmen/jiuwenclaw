@@ -84,7 +84,7 @@ daily-report/
 当用户请求生成日报/周报/月报时，**执行以下命令**：
 
 ```bash
-# 生成今日日报（包含Git提交、待办任务、记忆数据）
+# 生成今日日报（包含Git提交、待办任务、记忆数据、AI智能分析）
 cd D:/Download/jiuwenclaw && python workspace/agent/skills/daily-report/run_report.py daily --save
 
 # 生成指定日期日报
@@ -291,5 +291,6 @@ monthly = generator.generate_monthly(2026, 3)
 
 ## 更新日志
 
+- **v2.1.0** (2026-03-10): 添加 AI 智能分析功能（智能摘要、 明日计划建议、 工作模式分析）
 - **v2.0.0** (2026-03-06): 进阶版，支持多数据源、趋势对比、周报月报
 - **v1.0.0** (2026-03-06): 初始版本，基础日报生成

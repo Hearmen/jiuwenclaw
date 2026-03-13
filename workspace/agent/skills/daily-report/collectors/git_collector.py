@@ -240,6 +240,34 @@ class GitCollector:
 
         return result
 
+    def get_commits_for_pattern_analysis(self, days: int = 7) -> list[dict]:
+        """
+        获取近期提交数据，用于工作模式分析
+
+        Args:
+            days: 天数，默认 7 天
+
+        Returns:
+            包含日期、时间、提交信息的字典列表
+        """
+        end_date = datetime.now()
+        result = []
+
+        for i in range(days):
+            check_date = (end_date - timedelta(days=i)).strftime("%Y-%m-%d")
+            stats = self.get_commits(check_date)
+
+            for commit in stats.commits:
+                result.append({
+                    "date": commit.date.strftime("%Y-%m-%d"),
+                    "time": commit.date.strftime("%H:%M"),
+                    "hour": commit.date.hour,
+                    "message": commit.message,
+                    "hash": commit.hash,
+                })
+
+        return result
+
 
 def main():
     """测试入口"""

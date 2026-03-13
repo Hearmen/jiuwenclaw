@@ -224,6 +224,20 @@ class DataAggregator:
 
         return result
 
+    def collect_for_pattern_analysis(self, days: int = 7) -> list[dict]:
+        """
+        采集用于工作模式分析的数据
+
+        Args:
+            days: 天数，默认 7 天
+
+        Returns:
+            包含日期、时间、提交信息的字典列表
+        """
+        if self.git_collector:
+            return self.git_collector.get_commits_for_pattern_analysis(days)
+        return []
+
 
 def main():
     """测试入口"""

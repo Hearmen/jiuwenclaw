@@ -6,8 +6,10 @@
 - 日报生成
 - 周报生成（聚合一周数据）
 - 月报生成（聚合一月数据）
+- AI 智能分析（智能摘要、明日计划建议、工作模式分析）
 """
 
+import asyncio
 import json
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
@@ -15,6 +17,7 @@ from pathlib import Path
 from typing import Any, Optional
 
 from ..analyzers.work_analyzer import AnalysisResult, WorkAnalyzer
+from ..analyzers.ai_analyzer import AIAnalyzer, AIAnalysisResult
 from ..collectors.aggregator import CollectedData, DataAggregator
 
 
@@ -27,6 +30,9 @@ class ReportConfig:
     include_trends: bool = True  # 是否包含趋势
     include_suggestions: bool = True  # 是否包含建议
     output_format: str = "markdown"  # markdown, json
+    # AI 分析配置
+    enable_ai_analysis: bool = False  # 是否启用 AI 分析
+    ai_auto_mode: bool = True  # AI 分析模式：True=自动，False=手动触发
 
 
 class ReportGenerator:
@@ -36,6 +42,7 @@ class ReportGenerator:
         self,
         data_aggregator: DataAggregator,
         work_analyzer: Optional[WorkAnalyzer] = None,
+        ai_analyzer: Optional[AIAnalyzer] = None,
     ):
         """
         初始化报告生成器
@@ -43,9 +50,11 @@ class ReportGenerator:
         Args:
             data_aggregator: 数据聚合器
             work_analyzer: 工作分析器（可选）
+            ai_analyzer: AI 分析器（可选）
         """
         self.data_aggregator = data_aggregator
         self.work_analyzer = work_analyzer or WorkAnalyzer()
+        self.ai_analyzer = ai_analyzer
 
     def generate_daily(self, date: Optional[str] = None, config: Optional[ReportConfig] = None) -> str:
         """
@@ -70,8 +79,32 @@ class ReportGenerator:
         # 分析数据
         analysis = self.work_analyzer.analyze(data.to_dict())
 
+        # AI 分析（如果启用）
+        ai_result = None
+        if config.enable_ai_analysis:
+            ai_result = self._run_ai_analysis(data, config)
+
         # 生成报告
-        return self._render_daily_report(data, analysis, config)
+        return self._render_daily_report(data, analysis, config, ai_result)
+
+    def _run_ai_analysis(self, data: CollectedData, config: ReportConfig) -> Optional[AIAnalysisResult]:
+        """运行 AI 分析"""
+        if self.ai_analyzer is None:
+            try:
+                self.ai_analyzer = AIAnalyzer()
+            except Exception as e:
+                print(f"[ReportGenerator] AI 分析器初始化失败: {e}")
+                return None
+
+        try:
+            # 采集工作模式分析数据
+            pattern_data = self.data_aggregator.collect_for_pattern_analysis(days=7)
+
+            # 运行完整分析
+            return asyncio.run(self.ai_analyzer.analyze_full(data.to_dict(), pattern_data))
+        except Exception as e:
+            print(f"[ReportGenerator] AI 分析失败: {e}")
+            return None
 
     def generate_weekly(self, end_date: Optional[str] = None) -> str:
         """
@@ -174,13 +207,23 @@ class ReportGenerator:
         return aggregated
 
     def _render_daily_report(
-        self, data: CollectedData, analysis: AnalysisResult, config: ReportConfig
+        self, data: CollectedData, analysis: AnalysisResult, config: ReportConfig,
+        ai_result: Optional[AIAnalysisResult] = None
     ) -> str:
         """渲染日报"""
         lines = [
             f"# 📋 工作日报 - {data.date}",
             "",
         ]
+
+        # AI 智能摘要（放在开头）
+        if ai_result and ai_result.summary:
+            lines.extend([
+                "## 🤖 AI 智能摘要",
+                "",
+                f"> {ai_result.summary}",
+                "",
+            ])
 
         # 效率概览
         lines.extend([
@@ -280,28 +323,57 @@ class ReportGenerator:
                 lines.append(f"- 效率: {symbol} {abs(change):.1f} 分")
             lines.append("")
 
-        # 工作建议
+        # 工作建议与明日计划
+        lines.extend([
+            "## 💡 工作建议与明日计划",
+            "",
+        ])
+
+        # 原有建议
         if config.include_suggestions and analysis.suggestions:
-            lines.extend([
-                "## 💡 工作建议",
-                "",
-            ])
+            lines.append("### 今日改进建议")
+            lines.append("")
             for i, suggestion in enumerate(analysis.suggestions, 1):
                 lines.append(f"{i}. {suggestion}")
             lines.append("")
 
-        # 明日计划
+        # AI 明日计划建议
+        if ai_result and ai_result.tomorrow_suggestions:
+            lines.append("### 🔜 AI 明日计划建议")
+            lines.append("")
+            for suggestion in ai_result.tomorrow_suggestions:
+                lines.append(f"- {suggestion}")
+            lines.append("")
+
+        # 待办任务
         waiting_tasks = [t for t in data.todo.tasks if t.status == "waiting"]
-        lines.extend([
-            "## 🔜 明日计划",
-            "",
-        ])
         if waiting_tasks:
+            lines.append("### 📋 待办任务")
+            lines.append("")
             for task in waiting_tasks[:5]:
                 lines.append(f"- {task.content}")
-        else:
-            lines.append("- 待补充")
-        lines.append("")
+            lines.append("")
+
+        # 工作模式分析
+        if ai_result and ai_result.work_pattern and ai_result.work_pattern.get("description"):
+            lines.extend([
+                "## 📊 工作模式分析（近7天）",
+                "",
+                ai_result.work_pattern.get("description", ""),
+                "",
+            ])
+
+            # 高峰时段
+            peak_hours = ai_result.work_pattern.get("peak_hours", [])
+            if peak_hours:
+                lines.append(f"- **效率高峰时段**: {', '.join([f'{h}:00' for h in peak_hours])}")
+
+            # 平均提交
+            avg_commits = ai_result.work_pattern.get("avg_commits_per_day", 0)
+            if avg_commits > 0:
+                lines.append(f"- **平均每日提交**: {avg_commits:.1f} 次")
+
+            lines.append("")
 
         return "\n".join(lines)
 

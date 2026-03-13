@@ -385,19 +385,119 @@ class FeishuChannel(BaseChannel):
         for m in self._TABLE_RE.finditer(content):
             before = content[last_end : m.start()].strip()
             if before:
-                elements.append({"tag": "markdown", "content": before})
+                # 转换非表格内容为富文本 div 元素
+                elements.extend(self._markdown_to_feishu_elements(before))
 
             elements.append(
                 self._parse_markdown_table(m.group(1))
-                or {"tag": "markdown", "content": m.group(1)}
+                or self._markdown_to_feishu_elements(m.group(1))
             )
             last_end = m.end()
 
         remaining = content[last_end:].strip()
         if remaining:
-            elements.append({"tag": "markdown", "content": remaining})
+            elements.extend(self._markdown_to_feishu_elements(remaining))
 
-        return elements or [{"tag": "markdown", "content": content}]
+        return elements or self._markdown_to_feishu_elements(content)
+
+    def _markdown_to_feishu_elements(self, md_content: str) -> list[dict]:
+        """
+        将 Markdown 内容转换为飞书卡片元素列表。
+
+        Args:
+            md_content: Markdown 内容
+
+        Returns:
+            list[dict]: 飞书卡片元素列表
+        """
+        elements = []
+        lines = md_content.split('\n')
+        current_text = []
+
+        for line in lines:
+            stripped = line.strip()
+
+            # 处理标题
+            if stripped.startswith('## '):
+                if current_text:
+                    elements.append(self._create_div_element('\n'.join(current_text)))
+                    current_text = []
+                elements.append({
+                    "tag": "div",
+                    "text": {
+                        "tag": "lark_md",
+                        "content": f"**{stripped[3:]}**"
+                    }
+                })
+            elif stripped.startswith('### '):
+                if current_text:
+                    elements.append(self._create_div_element('\n'.join(current_text)))
+                    current_text = []
+                elements.append({
+                    "tag": "div",
+                    "text": {
+                        "tag": "lark_md",
+                        "content": f"**{stripped[4:]}**"
+                    }
+                })
+            elif stripped.startswith('# '):
+                if current_text:
+                    elements.append(self._create_div_element('\n'.join(current_text)))
+                    current_text = []
+                elements.append({
+                    "tag": "div",
+                    "text": {
+                        "tag": "lark_md",
+                        "content": f"**{stripped[2:]}**"
+                    }
+                })
+            # 处理分隔线
+            elif stripped == '---':
+                if current_text:
+                    elements.append(self._create_div_element('\n'.join(current_text)))
+                    current_text = []
+                elements.append({"tag": "hr"})
+            # 处理引用块
+            elif stripped.startswith('> '):
+                current_text.append(stripped[2:])
+            # 处理列表项
+            elif stripped.startswith('- ') or stripped.startswith('* '):
+                current_text.append(f"• {stripped[2:]}")
+            elif re.match(r'^\d+\. ', stripped):
+                current_text.append(stripped)
+            else:
+                current_text.append(line)
+
+        if current_text:
+            elements.append(self._create_div_element('\n'.join(current_text)))
+
+        return elements if elements else [{"tag": "div", "text": {"tag": "lark_md", "content": md_content}}]
+
+    def _create_div_element(self, content: str) -> dict:
+        """
+        创建飞书 div 元素。
+
+        Args:
+            content: 文本内容
+
+        Returns:
+            dict: 飞书 div 元素
+        """
+        # 处理内联格式：粗体、斜体、代码等
+        formatted = content
+        # 保留粗体和斜体
+        # 处理行内代码
+        formatted = re.sub(r'`([^`]+)`', r'`\1`', formatted)
+        # 处理链接
+        formatted = re.sub(r'\[([^\]]+)\]\(([^)]+)\)', r'[\1](\2)', formatted)
+
+        return {
+            "tag": "div",
+            "text": {
+                "tag": "lark_md",
+                "content": formatted
+            }
+        }
 
     async def send(self, msg: Message) -> None:
         """

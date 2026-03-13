@@ -15,8 +15,20 @@ import os
 import re
 import sys
 import subprocess
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
+
+# 加载 .env 文件中的环境变量
+try:
+    from dotenv import load_dotenv
+    # run_report.py 位于 workspace/agent/skills/daily-report/
+    # 需要向上 5 级到达项目根目录
+    PROJECT_ROOT = Path(__file__).parent.parent.parent.parent.parent
+    env_file = PROJECT_ROOT / ".env"
+    if env_file.exists():
+        load_dotenv(env_file)
+except ImportError:
+    pass  # dotenv 未安装时跳过
 
 # 修复 Windows 编码问题 - 必须在所有输出之前
 os.environ["PYTHONIOENCODING"] = "utf-8"
@@ -338,7 +350,15 @@ def collect_email_content(limit: int = 20, days: int = 30) -> list:
         pass
 
     return emails
-    """生成日报"""
+
+
+def generate_daily_report(date: str = None, enable_ai: bool = True) -> str:
+    """生成日报
+
+    Args:
+        date: 日期字符串
+        enable_ai: 是否启用 AI 智能分析（默认启用）
+    """
     if date is None:
         date = datetime.now().strftime("%Y-%m-%d")
 
@@ -441,14 +461,119 @@ def collect_email_content(limit: int = 20, days: int = 30) -> list:
             lines.append(f"- {item}")
         lines.append("")
 
-    # 明日计划
-    lines.extend(["## 🔜 明日计划", ""])
-    if pending_tasks:
-        for task in pending_tasks[:5]:
-            lines.append(f"- {task}")
+    # AI 智能分析（如果启用）
+    if enable_ai:
+        try:
+            # 使用相对导入
+            from analyzers.ai_analyzer import AIAnalyzer
+
+            ai_analyzer = AIAnalyzer()
+
+            # 准备 AI 分析数据
+            ai_data = {
+                "date": date,
+                "git": {
+                    "total_commits": git_stats.get("total_commits", 0),
+                    "total_insertions": git_stats.get("total_insertions", 0),
+                    "total_deletions": git_stats.get("total_deletions", 0),
+                    "commits": git_stats.get("commits", []),
+                },
+                "todo": {
+                    "completed_count": len(completed_tasks),
+                    "total_count": len(completed_tasks) + len(pending_tasks),
+                    "pending_items": pending_tasks[:5],
+                    "in_progress_items": [],
+                },
+                "email": {
+                    "received_count": email_stats.get("received_today", 0),
+                    "sent_count": 0,
+                },
+                "memory": {
+                    "content": memory_content[:500] if memory_content else "",
+                }
+            }
+
+            # 采集工作模式分析数据
+            pattern_data = []
+            for i in range(7):
+                check_date = (datetime.now() - timedelta(days=i)).strftime("%Y-%m-%d")
+                day_stats = collect_git_stats(check_date)
+                for commit in day_stats.get("commits", []):
+                    pattern_data.append({
+                        "date": check_date,
+                        "time": commit.get("hash", "")[:8],  # 使用 hash 作为时间占位
+                        "message": commit.get("message", ""),
+                    })
+
+            # 运行 AI 分析
+            import asyncio
+            ai_result = asyncio.run(ai_analyzer.analyze_full(ai_data, pattern_data))
+
+            # 在开头添加 AI 摘要
+            if ai_result.summary:
+                lines.insert(2, "")  # 在标题后插入空行
+                lines.insert(2, f"> {ai_result.summary}")
+                lines.insert(2, "")
+                lines.insert(2, "## 🤖 AI 智能摘要")
+                lines.insert(2, "")
+
+            # 替换明日计划为 AI 建议
+            if ai_result.tomorrow_suggestions:
+                ai_plan_index = None
+                for i, line in enumerate(lines):
+                    if "## 🔜 明日计划" in line:
+                        ai_plan_index = i
+                        break
+
+                if ai_plan_index:
+                    lines[ai_plan_index] = "## 💡 工作建议与明日计划"
+                    # 在明日计划后添加 AI 建议
+                    insert_index = ai_plan_index + 1
+                    for j, suggestion in enumerate(ai_result.tomorrow_suggestions):
+                        lines.insert(insert_index + j, f"- {suggestion}")
+                    lines.insert(insert_index + len(ai_result.tomorrow_suggestions), "")
+                else:
+                    # 如果没有明日计划章节，在报告末尾添加 AI 建议章节
+                    lines.append("")
+                    lines.append("## 💡 工作建议与明日计划")
+                    lines.append("")
+                    lines.append("### 🔜 AI 明日计划建议")
+                    lines.append("")
+                    for suggestion in ai_result.tomorrow_suggestions:
+                        lines.append(f"- {suggestion}")
+                    lines.append("")
+
+            # 添加工作模式分析
+            if ai_result.work_pattern and ai_result.work_pattern.get("description"):
+                lines.append("")
+                lines.append("## 📊 工作模式分析（近7天）")
+                lines.append("")
+                lines.append(ai_result.work_pattern.get("description", ""))
+                lines.append("")
+
+                peak_hours = ai_result.work_pattern.get("peak_hours", [])
+                if peak_hours:
+                    lines.append(f"- **效率高峰时段**: {', '.join([f'{h}:00' for h in peak_hours])}")
+
+                avg_commits = ai_result.work_pattern.get("avg_commits_per_day", 0)
+                if avg_commits > 0:
+                    lines.append(f"- **平均每日提交**: {avg_commits:.1f} 次")
+
+                lines.append("")
+
+        except Exception as e:
+            lines.append("")
+            lines.append(f"<!-- AI 分析失败: {e} -->")
+            lines.append("")
     else:
-        lines.append("- 待补充")
-    lines.append("")
+        # 明日计划
+        lines.extend(["## 🔜 明日计划", ""])
+        if pending_tasks:
+            for task in pending_tasks[:5]:
+                lines.append(f"- {task}")
+        else:
+            lines.append("- 待补充")
+        lines.append("")
 
     return "\n".join(lines)
 
@@ -584,14 +709,21 @@ def main():
     parser.add_argument("--save", "-s", action="store_true", default=True, help="保存到文件(默认开启)")
     parser.add_argument("--no-save", action="store_true", help="不保存文件，直接输出")
     parser.add_argument("--output-file", "-o", help="输出文件路径")
+    parser.add_argument("--ai", action="store_true", help="启用 AI 智能分析")
+    parser.add_argument("--no-ai", action="store_true", help="禁用 AI 智能分析")
 
     args = parser.parse_args()
 
     try:
         if args.type == "daily":
             date = args.date or datetime.now().strftime("%Y-%m-%d")
-            content = generate_daily_report(date)
+            # AI 分析默认启用，除非显式指定 --no-ai
+            enable_ai = not args.no_ai
+            content = generate_daily_report(date, enable_ai=enable_ai)
             date_str = date
+
+            if enable_ai:
+                print("INFO: AI 智能分析已启用", file=sys.stderr)
 
         elif args.type == "weekly":
             date = args.date or datetime.now().strftime("%Y-%m-%d")
