@@ -87,31 +87,7 @@ def _find_package_root() -> Path | None:
     return current
 
 
-def init_user_workspace(overwrite: bool = True) -> Path:
-    """Initialize ~/.jiuwenclaw from package or source resources.
-
-    资源布局（新）:
-    - 模板配置:   <package_root>/resources/config.yaml
-    - .env 模板: <package_root>/resources/.env.template
-    - workspace: 优先 <package_root>/workspace，其次 <package_root>/../workspace
-
-    上述内容会被复制到:
-    - ~/.jiuwenclaw/config/config.yaml
-    - ~/.jiuwenclaw/.env
-    - ~/.jiuwenclaw/workspace/...
-
-    无论是通过 pip/whl 安装还是源码目录直接运行，效果保持一致。
-    """
-    if USER_WORKSPACE_DIR.exists():
-        # Warn user about data loss and ask for confirmation
-        print("[jiuwenclaw-init] WARNING: This will delete all historical configuration and memory information.")
-        print("[jiuwenclaw-init] This action cannot be undone.")
-        confirmation = input("[jiuwenclaw-init] Do you want to confirm reinitialization? (yes/no): ").strip().lower()
-
-        if confirmation not in ("yes", "y"):
-            print("[jiuwenclaw-init] Initialization cancelled. Exiting.")
-            return "cancelled"
-
+def prepare_workspace(overwrite: bool = True):
     package_root = _find_package_root()
     if not package_root:
         raise RuntimeError("package root not found")
@@ -173,6 +149,34 @@ def init_user_workspace(overwrite: bool = True) -> Path:
     env_dest = USER_WORKSPACE_DIR / ".env"
     if overwrite or not env_dest.exists():
         shutil.copy2(env_template_src, env_dest)
+
+
+def init_user_workspace(overwrite: bool = True) -> Path:
+    """Initialize ~/.jiuwenclaw from package or source resources.
+
+    资源布局（新）:
+    - 模板配置:   <package_root>/resources/config.yaml
+    - .env 模板: <package_root>/resources/.env.template
+    - workspace: 优先 <package_root>/workspace，其次 <package_root>/../workspace
+
+    上述内容会被复制到:
+    - ~/.jiuwenclaw/config/config.yaml
+    - ~/.jiuwenclaw/.env
+    - ~/.jiuwenclaw/workspace/...
+
+    无论是通过 pip/whl 安装还是源码目录直接运行，效果保持一致。
+    """
+    if USER_WORKSPACE_DIR.exists():
+        # Warn user about data loss and ask for confirmation
+        print("[jiuwenclaw-init] WARNING: This will delete all historical configuration and memory information.")
+        print("[jiuwenclaw-init] This action cannot be undone.")
+        confirmation = input("[jiuwenclaw-init] Do you want to confirm reinitialization? (yes/no): ").strip().lower()
+
+        if confirmation not in ("yes", "y"):
+            print("[jiuwenclaw-init] Initialization cancelled. Exiting.")
+            return "cancelled"
+
+    prepare_workspace(overwrite)
 
     return USER_WORKSPACE_DIR
 
