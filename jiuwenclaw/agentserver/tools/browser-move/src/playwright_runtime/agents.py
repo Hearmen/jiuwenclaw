@@ -181,7 +181,7 @@ def build_main_agent(
             api_base=api_base,
             model_name=model_name,
         )
-        .configure_max_iterations(8)
+        .configure_max_iterations(20)
         .configure_prompt_template(
             [
                 {

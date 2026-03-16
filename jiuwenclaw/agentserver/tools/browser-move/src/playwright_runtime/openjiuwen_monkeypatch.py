@@ -17,6 +17,7 @@ from typing import Any, Dict, Iterable, List
 
 _PATCH_APPLIED = False
 _TOOL_LOG_FILE_DEFAULT = "run/tools.log"
+_LOG_FILE_PATTERN_DEFAULT = "{name}-{pid}{ext}"
 _PATCH_SOURCE_ROOT = Path(__file__).resolve().parent.parent / "openjiuwen_patch_sources"
 
 
@@ -96,16 +97,25 @@ def _install_openjiuwen_import_hook() -> None:
 
 
 def _patch_default_inner_config(constant_mod: Any, log_config_mod: Any) -> None:
+    shared_log_file = (os.getenv("PLAYWRIGHT_RUNTIME_SHARED_LOG_FILE") or "").strip().lower()
+    use_pid_log_pattern = shared_log_file not in {"1", "true", "yes", "on"}
+
     constant_mod.DEFAULT_INNER_LOG_CONFIG.setdefault("tool_log_file", _TOOL_LOG_FILE_DEFAULT)
+    if use_pid_log_pattern and not constant_mod.DEFAULT_INNER_LOG_CONFIG.get("log_file_pattern"):
+        constant_mod.DEFAULT_INNER_LOG_CONFIG["log_file_pattern"] = _LOG_FILE_PATTERN_DEFAULT
 
     module_default = getattr(log_config_mod, "DEFAULT_INNER_LOG_CONFIG", None)
     if isinstance(module_default, dict):
         module_default.setdefault("tool_log_file", _TOOL_LOG_FILE_DEFAULT)
+        if use_pid_log_pattern and not module_default.get("log_file_pattern"):
+            module_default["log_file_pattern"] = _LOG_FILE_PATTERN_DEFAULT
 
     log_config = getattr(log_config_mod, "log_config", None)
     runtime_log_config = getattr(log_config, "_log_config", None)
     if isinstance(runtime_log_config, dict):
         runtime_log_config.setdefault("tool_log_file", _TOOL_LOG_FILE_DEFAULT)
+        if use_pid_log_pattern and not runtime_log_config.get("log_file_pattern"):
+            runtime_log_config["log_file_pattern"] = _LOG_FILE_PATTERN_DEFAULT
 
 
 def _patch_log_config(log_config_mod: Any) -> None:
@@ -119,6 +129,10 @@ def _patch_log_config(log_config_mod: Any) -> None:
         config = original_load_config(config_path)
         if isinstance(config, dict):
             config.setdefault("tool_log_file", _TOOL_LOG_FILE_DEFAULT)
+            shared_log_file = (os.getenv("PLAYWRIGHT_RUNTIME_SHARED_LOG_FILE") or "").strip().lower()
+            use_pid_log_pattern = shared_log_file not in {"1", "true", "yes", "on"}
+            if use_pid_log_pattern and not config.get("log_file_pattern"):
+                config["log_file_pattern"] = _LOG_FILE_PATTERN_DEFAULT
         return config
 
     def _get_common_config_with_tool_log(self: Any) -> Dict[str, Any]:

@@ -10,6 +10,7 @@ import json
 import os
 import shutil
 import subprocess
+import sys
 import time
 from pathlib import Path
 from typing import Optional
@@ -19,34 +20,149 @@ from urllib.request import urlopen
 from playwright_runtime.profiles import BrowserProfile
 
 
-def _candidate_binaries() -> list[str]:
+def _default_chrome_user_data_dir() -> str:
+    """Return the platform-standard Chrome user data directory path.
+
+    Does not guarantee the directory exists — only that this is where Chrome
+    stores its default profile on the current OS.
+    """
+    if os.name == "nt":
+        local_app_data = os.getenv("LOCALAPPDATA") or str(Path.home() / "AppData" / "Local")
+        return str(Path(local_app_data) / "Google" / "Chrome" / "User Data")
+    if sys.platform == "darwin":
+        return str(Path.home() / "Library" / "Application Support" / "Google" / "Chrome")
+    return str(Path.home() / ".config" / "google-chrome")
+
+
+def _kill_chrome_by_user_data_dir(user_data_dir: str) -> int:
+    """Kill Chrome processes whose command line references user_data_dir.
+
+    Returns the number of PIDs sent a kill signal. Failures are silently
+    swallowed so a misconfigured environment never blocks startup.
+    """
+    normalized = str(Path(user_data_dir).expanduser().resolve()).lower().replace("\\", "/")
+    killed = 0
+
+    if os.name == "nt":
+        ps_script = (
+            "Get-WmiObject Win32_Process -Filter \"name='chrome.exe'\" "
+            "| Select-Object -Property CommandLine,ProcessId "
+            "| ConvertTo-Json -Depth 1"
+        )
+        try:
+            result = subprocess.run(
+                ["powershell", "-NoProfile", "-NonInteractive", "-Command", ps_script],
+                capture_output=True,
+                text=True,
+                timeout=15,
+            )
+            if result.returncode == 0 and result.stdout.strip():
+                items = json.loads(result.stdout.strip())
+                if isinstance(items, dict):
+                    items = [items]
+                for item in items or []:
+                    cmdline = str(item.get("CommandLine") or "").lower().replace("\\", "/")
+                    pid = item.get("ProcessId")
+                    if not pid or normalized not in cmdline:
+                        continue
+                    subprocess.run(
+                        ["taskkill", "/F", "/PID", str(pid)],
+                        capture_output=True,
+                        timeout=10,
+                    )
+                    killed += 1
+        except Exception:  # noqa: BLE001
+            pass
+    else:
+        try:
+            result = subprocess.run(
+                ["pgrep", "-f", f"--user-data-dir={user_data_dir}"],
+                capture_output=True,
+                text=True,
+                timeout=10,
+            )
+            if result.returncode == 0:
+                for line in result.stdout.strip().splitlines():
+                    pid_str = line.strip()
+                    if pid_str.isdigit():
+                        subprocess.run(["kill", "-9", pid_str], capture_output=True, timeout=5)
+                        killed += 1
+        except Exception:  # noqa: BLE001
+            pass
+
+    return killed
+
+
+def _cleanup_chrome_singleton_files(user_data_dir: str) -> None:
+    """Remove stale Chrome singleton lock files left after a forced kill."""
+    base = Path(user_data_dir).expanduser()
+    for name in ("SingletonLock", "SingletonSocket", "SingletonCookie"):
+        target = base / name
+        try:
+            if target.is_symlink() or target.exists():
+                target.unlink(missing_ok=True)
+        except OSError:
+            pass
+
+
+def _candidate_chrome_binaries() -> list[str]:
     names = [
         "chrome",
-        "chromium",
-        "msedge",
-        "brave",
+        "google-chrome",
+        "google-chrome-stable",
     ]
     resolved = [shutil.which(name) for name in names]
     binaries = [item for item in resolved if item]
 
     if os.name == "nt":
-        windows_defaults = [
-            r"C:\Program Files\Google\Chrome\Application\chrome.exe",
-            r"C:\Program Files (x86)\Google\Chrome\Application\chrome.exe",
-            r"C:\Program Files\Chromium\Application\chrome.exe",
-            r"C:\Program Files\Microsoft\Edge\Application\msedge.exe",
-            r"C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe",
-            r"C:\Program Files\BraveSoftware\Brave-Browser\Application\brave.exe",
-            r"C:\Program Files (x86)\BraveSoftware\Brave-Browser\Application\brave.exe",
+        windows_roots = [
+            os.getenv("LOCALAPPDATA"),
+            os.getenv("ProgramFiles"),
+            os.getenv("ProgramFiles(x86)"),
+            os.getenv("ProgramW6432"),
+            str(Path.home() / "AppData" / "Local"),
         ]
-        for path in windows_defaults:
-            if Path(path).exists():
-                binaries.append(path)
-    return binaries
+        install_paths = []
+        for root in windows_roots:
+            if not root:
+                continue
+            install_paths.append(str(Path(root) / "Google" / "Chrome" / "Application" / "chrome.exe"))
+    elif sys.platform == "darwin":
+        install_paths = [
+            "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+            str(Path.home() / "Applications/Google Chrome.app/Contents/MacOS/Google Chrome"),
+        ]
+    else:
+        install_paths = [
+            "/usr/bin/google-chrome",
+            "/usr/bin/google-chrome-stable",
+            "/opt/google/chrome/chrome",
+        ]
+
+    for path in install_paths:
+        if Path(path).exists():
+            binaries.append(path)
+
+    # Preserve order and remove duplicates.
+    unique: list[str] = []
+    seen: set[str] = set()
+    for candidate in binaries:
+        if candidate in seen:
+            continue
+        seen.add(candidate)
+        unique.append(candidate)
+    return unique
+
+
+def _is_chrome_identifier(value: str) -> bool:
+    lowered = (value or "").strip().replace("\\", "/").lower()
+    if not lowered:
+        return False
+    return "chrome" in Path(lowered).name
 
 
 class ManagedBrowserDriver:
-    """Launch and manage a dedicated local Chromium-family process."""
+    """Launch and manage a dedicated local Chrome process."""
 
     def __init__(self, profile: BrowserProfile) -> None:
         self.profile = profile
@@ -60,18 +176,22 @@ class ManagedBrowserDriver:
     def _resolve_binary(self) -> str:
         explicit = (self.profile.browser_binary or "").strip()
         if explicit:
+            if not _is_chrome_identifier(explicit):
+                raise RuntimeError("Managed mode supports Chrome only. Set BROWSER_MANAGED_BINARY to a Chrome executable.")
             candidate = Path(explicit).expanduser()
             if candidate.exists():
                 return str(candidate)
             resolved = shutil.which(explicit)
             if resolved:
                 return resolved
-            raise RuntimeError(f"Configured browser binary not found: {explicit}")
+            raise RuntimeError(
+                f"Chrome needs to be installed. Configured Chrome binary not found: {explicit}"
+            )
 
-        candidates = _candidate_binaries()
+        candidates = _candidate_chrome_binaries()
         if not candidates:
             raise RuntimeError(
-                "No Chromium-family browser binary found. Set BROWSER_MANAGED_BINARY to chrome/msedge/brave path."
+                "Chrome needs to be installed. No Chrome binary was found on this machine."
             )
         return candidates[0]
 
@@ -107,10 +227,16 @@ class ManagedBrowserDriver:
             return False
         return False
 
-    def start(self, timeout_s: float = 20.0) -> str:
+    def start(self, timeout_s: float = 20.0, kill_existing: bool = False) -> str:
         if self._process is not None and self._process.poll() is None:
             if self._is_endpoint_ready():
                 return self.cdp_endpoint
+
+        if kill_existing:
+            user_data_dir = str(Path(self.profile.user_data_dir).expanduser())
+            _kill_chrome_by_user_data_dir(user_data_dir)
+            time.sleep(1.5)
+            _cleanup_chrome_singleton_files(user_data_dir)
 
         binary = self._resolve_binary()
         args = self._build_args(binary)
@@ -150,4 +276,3 @@ class ManagedBrowserDriver:
                 process.kill()
             except Exception:
                 pass
-

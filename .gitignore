@@ -55,4 +55,9 @@ workspace/session
 workspace/agent/memory/*.db
 workspace/agent/memory/*.db-shm
 workspace/agent/memory/*.db-wal
+
+jiuwenclaw/agentserver/tools/browser-move/.browser
+jiuwenclaw/agentserver/tools/browser-move/.browser-profiles
+jiuwenclaw/agentserver/tools/browser-move/screenshots
+
 jiuwenclaw/workspace/.whatsapp-auth/

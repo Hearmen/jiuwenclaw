@@ -113,7 +113,7 @@ class BrowserAgentRuntime:
                 "Prefer one comprehensive task per request instead of many tiny retries. "
                 "Use a long timeout and do not pass timeout_s below the configured default; "
                 "omit timeout_s to use the default long timeout. "
-                "Returns JSON with ok/session_id/final/page/screenshot/error/attempt."
+                "Returns JSON with ok/session_id/final/page/screenshot/error/attempt/failure_summary."
             ),
         )
         async def browser_run_task(

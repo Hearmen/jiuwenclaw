@@ -27,7 +27,7 @@ for _p in (str(_REPO_ROOT), str(_SRC_ROOT)):
     if _p not in sys.path:
         sys.path.insert(0, _p)
 
-from fastmcp import FastMCP
+from fastmcp import Context, FastMCP
 from jiuwenclaw.browser_timeout_policy import resolve_browser_task_timeout
 from playwright_runtime.openjiuwen_monkeypatch import apply_openjiuwen_monkeypatch
 
@@ -109,6 +109,32 @@ async def _shutdown_runtime() -> None:
         clear_runtime_runner()
 
 
+def _resolve_session_id(explicit_session_id: str, ctx: Context | None = None) -> str:
+    """Resolve logical browser session id, preferring explicit value over MCP context."""
+    explicit = (explicit_session_id or "").strip()
+    if explicit:
+        return explicit
+    if ctx is None:
+        return ""
+    try:
+        return (ctx.session_id or "").strip()
+    except Exception:
+        return ""
+
+
+def _resolve_request_id(explicit_request_id: str, ctx: Context | None = None) -> str:
+    """Resolve request id, preferring explicit value over MCP context."""
+    explicit = (explicit_request_id or "").strip()
+    if explicit:
+        return explicit
+    if ctx is None:
+        return ""
+    try:
+        return (ctx.request_id or "").strip()
+    except Exception:
+        return ""
+
+
 @asynccontextmanager
 async def _lifespan(_server: FastMCP):
     try:
@@ -144,15 +170,18 @@ async def browser_run_task(
     session_id: str = "",
     request_id: str = "",
     timeout_s: int = 0,
-) -> Dict[str, Any]:
+    ctx: Context | None = None,
+) -> dict[str, Any]:
     runtime = await _get_runtime()
     effective_timeout = None
     if timeout_s > 0:
         effective_timeout = resolve_browser_task_timeout(timeout_s, runtime._service.guardrails.timeout_s)
+    effective_session_id = _resolve_session_id(session_id, ctx)
+    effective_request_id = _resolve_request_id(request_id, ctx)
     return await runtime.run_browser_task(
         task=task,
-        session_id=session_id or None,
-        request_id=request_id or None,
+        session_id=effective_session_id or None,
+        request_id=effective_request_id or None,
         timeout_s=effective_timeout,
     )
 
@@ -162,11 +191,16 @@ async def browser_run_task(
     description="Cancel an in-flight browser run for a session/request.",
 )
 async def browser_cancel_task(
-    session_id: str,
+    session_id: str = "",
     request_id: str = "",
-) -> Dict[str, Any]:
+    ctx: Context | None = None,
+) -> dict[str, Any]:
     runtime = await _get_runtime()
-    return await runtime.cancel_run(session_id=session_id, request_id=request_id or None)
+    effective_session_id = _resolve_session_id(session_id, ctx)
+    if not effective_session_id:
+        raise ValueError("session_id is required for cancellation")
+    effective_request_id = _resolve_request_id(request_id, ctx)
+    return await runtime.cancel_run(session_id=effective_session_id, request_id=effective_request_id or None)
 
 
 @mcp.tool(
@@ -174,11 +208,16 @@ async def browser_cancel_task(
     description="Clear cancellation flag for a session/request.",
 )
 async def browser_clear_cancel(
-    session_id: str,
+    session_id: str = "",
     request_id: str = "",
-) -> Dict[str, Any]:
+    ctx: Context | None = None,
+) -> dict[str, Any]:
     runtime = await _get_runtime()
-    return await runtime.clear_cancel(session_id=session_id, request_id=request_id or None)
+    effective_session_id = _resolve_session_id(session_id, ctx)
+    if not effective_session_id:
+        raise ValueError("session_id is required to clear cancellation")
+    effective_request_id = _resolve_request_id(request_id, ctx)
+    return await runtime.clear_cancel(session_id=effective_session_id, request_id=effective_request_id or None)
 
 
 @mcp.tool(
@@ -199,12 +238,15 @@ async def browser_custom_action(
     action: str,
     session_id: str = "",
     request_id: str = "",
-    params: Optional[Dict[str, Any]] = None,
-) -> Dict[str, Any]:
+    params: dict[str, Any] | None = None,
+    ctx: Context | None = None,
+) -> dict[str, Any]:
+    effective_session_id = _resolve_session_id(session_id, ctx)
+    effective_request_id = _resolve_request_id(request_id, ctx)
     result = await run_action(
         action=action,
-        session_id=session_id,
-        request_id=request_id,
+        session_id=effective_session_id,
+        request_id=effective_request_id,
         **(params or {}),
     )
     if isinstance(result, dict) and str(result.get("error", "")).startswith("runtime_not_bound:"):
@@ -212,8 +254,8 @@ async def browser_custom_action(
         bind_runtime(runtime)
         result = await run_action(
             action=action,
-            session_id=session_id,
-            request_id=request_id,
+            session_id=effective_session_id,
+            request_id=effective_request_id,
             **(params or {}),
         )
     return result
@@ -223,7 +265,7 @@ async def browser_custom_action(
     name="browser_list_custom_actions",
     description="List registered custom action names (for browser_custom_action).",
 )
-async def browser_list_custom_actions() -> Dict[str, Any]:
+async def browser_list_custom_actions() -> dict[str, Any]:
     return {"ok": True, "actions": list_actions()}
 
 
@@ -231,7 +273,7 @@ async def browser_list_custom_actions() -> Dict[str, Any]:
     name="browser_runtime_health",
     description="Return runtime readiness and selected model/provider config.",
 )
-async def browser_runtime_health() -> Dict[str, Any]:
+async def browser_runtime_health() -> dict[str, Any]:
     provider, _api_key, api_base = resolve_model_settings()
     model_name = (os.getenv("MODEL_NAME") or "anthropic/claude-sonnet-4").strip()
     return {

@@ -4,7 +4,6 @@
 
 """Runtime-native custom action controller for Playwright runtime.
 
-This module intentionally contains no browser_use dependencies.
 It exposes a lightweight action registry consumed by the MCP wrapper.
 """
 

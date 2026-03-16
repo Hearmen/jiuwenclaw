@@ -34,9 +34,11 @@ from openjiuwen.core.single_agent.middleware.base import (
 from playwright_runtime import REPO_ROOT
 from playwright_runtime.agents import build_browser_worker_agent
 from playwright_runtime.config import BrowserRunGuardrails, resolve_playwright_mcp_cwd
-from playwright_runtime.drivers.managed_browser import ManagedBrowserDriver
+from playwright_runtime.drivers.managed_browser import ManagedBrowserDriver, _default_chrome_user_data_dir
 from playwright_runtime.hooks import BrowserCancellationMiddleware, BrowserRunCancelled
 from playwright_runtime.profiles import BrowserProfile, BrowserProfileStore
+
+MAX_ITERATION_MESSAGE = "Max iterations reached without completion"
 
 
 def extract_json_object(text: Any) -> Dict[str, Any]:
@@ -50,12 +52,26 @@ def extract_json_object(text: Any) -> Dict[str, Any]:
     if not raw:
         return {}
 
-    try:
-        parsed = json.loads(raw)
+    marker_result = "### Result"
+    marker_ran = "### Ran Playwright code"
+    if marker_result in raw and marker_ran in raw:
+        start = raw.find(marker_result) + len(marker_result)
+        end = raw.find(marker_ran, start)
+        if end > start:
+            raw = raw[start:end].strip()
+
+    # Some wrappers return JSON as a quoted string.
+    for _ in range(2):
+        try:
+            parsed = json.loads(raw)
+        except Exception:
+            break
         if isinstance(parsed, dict):
             return parsed
-    except Exception:
-        pass
+        if isinstance(parsed, str):
+            raw = parsed.strip()
+            continue
+        break
 
     if "```json" in raw:
         start = raw.find("```json") + len("```json")
@@ -119,6 +135,7 @@ class BrowserService:
         self._driver_mode = self._resolve_driver_mode()
         self._active_profile: Optional[BrowserProfile] = None
         self._managed_driver: Optional[ManagedBrowserDriver] = None
+        self._failure_context_by_session: Dict[str, str] = {}
 
     @staticmethod
     def _parse_env_args(value: str) -> List[str]:
@@ -143,8 +160,8 @@ class BrowserService:
     def _resolve_driver_mode(self) -> str:
         explicit = (os.getenv("BROWSER_DRIVER") or "").strip().lower()
         if explicit:
-            if explicit not in {"remote", "managed"}:
-                raise ValueError("BROWSER_DRIVER must be one of: remote, managed")
+            if explicit not in {"remote", "managed", "extension"}:
+                raise ValueError("BROWSER_DRIVER must be one of: remote, managed, extension")
             return explicit
         return "remote"
 
@@ -213,10 +230,15 @@ class BrowserService:
         except ValueError as exc:
             raise ValueError(f"Invalid BROWSER_MANAGED_PORT: {port_raw}") from exc
 
-        user_data_dir = (
-            os.getenv("BROWSER_MANAGED_USER_DATA_DIR")
-            or str(Path(REPO_ROOT).expanduser() / ".browser-profiles" / self._profile_name)
-        ).strip()
+        kill_existing_raw = (os.getenv("BROWSER_MANAGED_KILL_EXISTING") or "").strip().lower()
+        kill_existing = kill_existing_raw in {"1", "true", "yes", "on"}
+        explicit_user_data_dir = (os.getenv("BROWSER_MANAGED_USER_DATA_DIR") or "").strip()
+        if explicit_user_data_dir:
+            user_data_dir = explicit_user_data_dir
+        elif kill_existing:
+            user_data_dir = _default_chrome_user_data_dir()
+        else:
+            user_data_dir = str(Path(REPO_ROOT).expanduser() / ".browser-profiles" / self._profile_name)
         browser_binary = (os.getenv("BROWSER_MANAGED_BINARY") or "").strip()
         extra_args = self._parse_env_args(os.getenv("BROWSER_MANAGED_ARGS") or "")
         cdp_url = f"http://{host}:{port}"
@@ -254,11 +276,17 @@ class BrowserService:
             or not str(profile.user_data_dir).strip()
         ):
             profile = self._build_managed_profile()
+        configured_binary = (os.getenv("BROWSER_MANAGED_BINARY") or "").strip()
+        if configured_binary:
+            profile.browser_binary = configured_binary
         self._profile_store.upsert_profile(profile, select=True)
         self._active_profile = profile
 
+        kill_existing_raw = (os.getenv("BROWSER_MANAGED_KILL_EXISTING") or "").strip().lower()
+        kill_existing = kill_existing_raw in {"1", "true", "yes", "on"}
+
         driver = ManagedBrowserDriver(profile=profile)
-        endpoint = await asyncio.to_thread(driver.start, 20.0)
+        endpoint = await asyncio.to_thread(driver.start, 20.0, kill_existing)
         self._inject_cdp_endpoint(endpoint)
         profile.cdp_url = endpoint
         self._profile_store.upsert_profile(profile, select=True)
@@ -504,13 +532,119 @@ class BrowserService:
         parsed = extract_json_object(output_text)
         if parsed:
             return parsed
+
+        output_str = str(output_text) if output_text is not None else ""
+        output_lower = output_str.lower()
+        if MAX_ITERATION_MESSAGE.lower() in output_lower:
+            return {
+                "ok": False,
+                "final": output_str,
+                "page": {"url": "", "title": ""},
+                "screenshot": None,
+                "error": "max_iterations_reached",
+            }
+
         return {
             "ok": False,
-            "final": str(output_text) if output_text is not None else "",
+            "final": output_str,
             "page": {"url": "", "title": ""},
             "screenshot": None,
             "error": "Browser worker did not return valid JSON output",
         }
+
+    @staticmethod
+    def _is_max_iteration_result(parsed: Dict[str, Any]) -> bool:
+        if not isinstance(parsed, dict):
+            return False
+        if str(parsed.get("error", "")).strip().lower() == "max_iterations_reached":
+            return True
+        marker = MAX_ITERATION_MESSAGE.lower()
+        for key in ("final", "error"):
+            value = parsed.get(key)
+            if value is None:
+                continue
+            if marker in str(value).lower():
+                return True
+        return False
+
+    @staticmethod
+    def _build_resume_task(task: str, previous_final: str) -> str:
+        base = (task or "").strip()
+        previous = (previous_final or "").strip()
+        if len(previous) > 1200:
+            previous = previous[:1200] + "...[truncated]"
+        if previous:
+            return (
+                f"{base}\n\n"
+                "Continuation context:\n"
+                "- The previous run reached max iterations before completion.\n"
+                "- Continue from the current browser state in this same session.\n"
+                "- Avoid repeating already completed steps unless needed for recovery.\n"
+                "- Previous partial status (may be incomplete):\n"
+                f"{previous}"
+            )
+        return (
+            f"{base}\n\n"
+            "Continuation context:\n"
+            "- The previous run reached max iterations before completion.\n"
+            "- Continue from the current browser state in this same session.\n"
+            "- Avoid repeating already completed steps unless needed for recovery."
+        )
+
+    @staticmethod
+    def _trim_text(value: Any, limit: int) -> str:
+        text = str(value or "").strip()
+        if len(text) > limit:
+            return text[:limit] + "...[truncated]"
+        return text
+
+    @classmethod
+    def _build_failure_summary(
+        cls,
+        *,
+        task: str,
+        error: str,
+        page_url: str,
+        page_title: str,
+        final: str,
+        screenshot: Any,
+        attempt: int,
+    ) -> str:
+        lines = [
+            "Failure summary for continuation:",
+            f"- Original task: {cls._trim_text(task, 400) or '(empty)'}",
+            f"- Failed attempt: {attempt}",
+            f"- Error: {cls._trim_text(error, 300) or '(unknown)'}",
+        ]
+        if page_url or page_title:
+            lines.append(
+                f"- Last page: url={cls._trim_text(page_url, 240) or '(unknown)'}, "
+                f"title={cls._trim_text(page_title, 120) or '(unknown)'}"
+            )
+        screenshot_text = cls._trim_text(screenshot, 200)
+        if screenshot_text:
+            lines.append(f"- Last screenshot: {screenshot_text}")
+        final_excerpt = cls._trim_text(final, 1200)
+        if final_excerpt:
+            lines.append("- Partial output excerpt:")
+            lines.append(final_excerpt)
+        return "\n".join(lines)
+
+    @staticmethod
+    def _build_task_with_failure_context(task: str, failure_summary: str) -> str:
+        base = (task or "").strip()
+        summary = (failure_summary or "").strip()
+        if not summary:
+            return base
+        return (
+            f"{base}\n\n"
+            "Previous failed attempt context:\n"
+            f"{summary}\n\n"
+            "Continuation instructions:\n"
+            "- Continue from the current browser state in this same session.\n"
+            "- Do not repeat completed steps unless required for recovery.\n"
+            "- Prioritize resolving the listed failure."
+        )
 
     async def run_task(
         self,
@@ -524,6 +658,8 @@ class BrowserService:
         rid = (request_id or "").strip() or uuid.uuid4().hex
         effective_timeout = self._resolve_effective_timeout(timeout_s)
         attempts = 2 if self.guardrails.retry_once else 1
+        base_task = (task or "").strip()
+        previous_failure_summary = self._failure_context_by_session.get(sid, "")
 
         async with self._locks[sid]:
             current_task = asyncio.current_task()
@@ -542,18 +678,44 @@ class BrowserService:
                         "screenshot": None,
                         "error": "cancelled_by_frontend",
                         "attempt": 0,
+                        "failure_summary": None,
                     }
                 last_error: Optional[str] = None
-                for attempt_idx in range(attempts):
+                used_max_iteration_resume = False
+                next_task = self._build_task_with_failure_context(base_task, previous_failure_summary)
+                attempt_idx = 0
+                max_attempts = attempts + 1  # one extra continuation pass for max-iteration exhaustion
+                last_failure_final = ""
+                last_failure_page: Dict[str, Any] = {}
+                last_failure_screenshot: Any = None
+                while attempt_idx < max_attempts:
                     try:
                         parsed = await asyncio.wait_for(
-                            self._run_task_once(task=task, session_id=sid, request_id=rid),
+                            self._run_task_once(task=next_task, session_id=sid, request_id=rid),
                             timeout=float(effective_timeout),
                         )
+                        attempt_idx += 1
+                        parsed_ok = bool(parsed.get("ok", False))
+                        if not parsed_ok:
+                            last_error = str(parsed.get("error") or "")
+                            last_failure_final = str(parsed.get("final", ""))
+                            last_failure_page = parsed.get("page") if isinstance(parsed.get("page"), dict) else {}
+                            last_failure_screenshot = parsed.get("screenshot")
+
+                        if (
+                            not parsed_ok
+                            and self._is_max_iteration_result(parsed)
+                            and not used_max_iteration_resume
+                        ):
+                            used_max_iteration_resume = True
+                            next_task = self._build_resume_task(next_task, str(parsed.get("final", "")))
+                            last_error = str(parsed.get("error") or MAX_ITERATION_MESSAGE)
+                            continue
+
                         page = parsed.get("page") if isinstance(parsed.get("page"), dict) else {}
                         screenshot = self._normalize_screenshot_value(parsed.get("screenshot"))
-                        return {
-                            "ok": bool(parsed.get("ok", False)),
+                        response = {
+                            "ok": parsed_ok,
                             "session_id": sid,
                             "request_id": rid,
                             "final": str(parsed.get("final", "")),
@@ -563,11 +725,29 @@ class BrowserService:
                             },
                             "screenshot": screenshot,
                             "error": parsed.get("error"),
-                            "attempt": attempt_idx + 1,
+                            "attempt": attempt_idx,
                         }
+                        if parsed_ok:
+                            self._failure_context_by_session.pop(sid, None)
+                            response["failure_summary"] = None
+                            return response
+
+                        failure_summary = self._build_failure_summary(
+                            task=base_task,
+                            error=str(parsed.get("error") or ""),
+                            page_url=str(page.get("url", "")),
+                            page_title=str(page.get("title", "")),
+                            final=str(parsed.get("final", "")),
+                            screenshot=parsed.get("screenshot"),
+                            attempt=attempt_idx,
+                        )
+                        self._failure_context_by_session[sid] = failure_summary
+                        response["failure_summary"] = failure_summary
+                        return response
                     except TimeoutError:
+                        attempt_idx += 1
                         last_error = f"task_timeout: exceeded {effective_timeout}s"
-                        if attempt_idx + 1 >= attempts:
+                        if attempt_idx >= attempts:
                             break
                     except asyncio.CancelledError:
                         await self.clear_cancel(sid, rid)
@@ -581,8 +761,10 @@ class BrowserService:
                             "screenshot": None,
                             "error": "cancelled_by_frontend",
                             "attempt": attempt_idx + 1,
+                            "failure_summary": None,
                         }
                     except BrowserRunCancelled:
+                        attempt_idx += 1
                         await self.clear_cancel(sid, rid)
                         await self.clear_cancel(sid, None)
                         return {
@@ -593,11 +775,13 @@ class BrowserService:
                             "page": {"url": "", "title": ""},
                             "screenshot": None,
                             "error": "cancelled_by_frontend",
-                            "attempt": attempt_idx + 1,
+                            "attempt": attempt_idx,
+                            "failure_summary": None,
                         }
                     except Exception as exc:
+                        attempt_idx += 1
                         last_error = str(exc) or repr(exc)
-                        if attempt_idx + 1 >= attempts:
+                        if attempt_idx >= attempts:
                             break
                         # Restart before retry on known transport/session failures.
                         if (not str(exc)) or self._is_retryable_transport_error(exc):
@@ -609,6 +793,18 @@ class BrowserService:
 
                 await self.clear_cancel(sid, rid)
                 await self.clear_cancel(sid, None)
+                page_url = str(last_failure_page.get("url", "")) if isinstance(last_failure_page, dict) else ""
+                page_title = str(last_failure_page.get("title", "")) if isinstance(last_failure_page, dict) else ""
+                failure_summary = self._build_failure_summary(
+                    task=base_task,
+                    error=last_error or "unknown browser execution error",
+                    page_url=page_url,
+                    page_title=page_title,
+                    final=last_failure_final,
+                    screenshot=last_failure_screenshot,
+                    attempt=min(attempt_idx, max_attempts),
+                )
+                self._failure_context_by_session[sid] = failure_summary
                 return {
                     "ok": False,
                     "session_id": sid,
@@ -617,7 +813,8 @@ class BrowserService:
                     "page": {"url": "", "title": ""},
                     "screenshot": None,
                     "error": last_error or "unknown browser execution error",
-                    "attempt": attempts,
+                    "attempt": min(attempt_idx, max_attempts),
+                    "failure_summary": failure_summary,
                 }
             finally:
                 if current_task is not None:
