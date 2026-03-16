@@ -71,7 +71,7 @@ Set up heartbeat tasks with your to-do items, and JiuwenClaw will wake up on sch
 
 | Document                                             | Description                                              |
 | :--------------------------------------------------- | :------------------------------------------------------- |
-| [📖 Quick Start](docs/quickstart.md)                  | Get up and running with JiuwenClaw in 5 minutes          |
+| [📖 Quick Start](docs/Quickstart.md)                  | Get up and running with JiuwenClaw in 5 minutes          |
 | [⚙️ Configuration & Workspace](docs/配置信息.md) | Environment setup and workspace management               |
 | [📁 Workspace Structure](docs/智能体.md)               | workspace directory layout, presets, and dynamic content |
 | [🛠️ Skill System](docs/技能.md)                     | Guide to developing custom skills                        |
