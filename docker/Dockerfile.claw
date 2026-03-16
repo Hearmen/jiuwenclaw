@@ -1,4 +1,4 @@
-ARG BASE_IMAGE
+ARG BASE_IMAGE=python:3.11.4-slim-bookworm
 FROM ${BASE_IMAGE}
 
 # Create app user and set up working directory
@@ -6,8 +6,7 @@ RUN useradd --create-home --shell /bin/bash app
 RUN mkdir -p /app
 
 # Copy project files
-COPY . /app/jiuwenclaw/
-RUN chown -R app:app /app
+COPY --chown=app:app . /app/jiuwenclaw/
 
 USER app
 
@@ -18,13 +17,14 @@ RUN npm run build
 
 # Install server dependencies
 WORKDIR /app/jiuwenclaw
-RUN sed -i '/--host/ s/default="localhost"/default="0.0.0.0"/' /app/jiuwenclaw/jiuwenclaw/app_web.py
-RUN pip install -e ".[all]" --no-cache-dir
-
 ENV PATH=$PATH:/home/app/.local/bin
+RUN sed -i '/--host/ s/default="localhost"/default="0.0.0.0"/' /app/jiuwenclaw/jiuwenclaw/app_web.py
+RUN pip install -i https://pypi.tuna.tsinghua.edu.cn/simple -e ".[all]" --no-cache-dir
+
+
 
 # Initialize claw configuration (skip language selection with empty input)
-RUN jiuwenclaw-init
+RUN printf 'yes\n' | jiuwenclaw-init
 
 # Start claw app
 EXPOSE 5173
