@@ -84,7 +84,7 @@ export function SkillNetSearchModal({
         success: boolean;
         detail?: string;
         skills?: SkillNetItem[];
-      }>("skills.skillnet.search", withSession({ q, limit: 8 }));
+      }>("skills.skillnet.search", withSession({ q, limit: 50 }));
       if (!data.success) {
         throw new Error(data.detail || t("skills.errors.skillNetSearchFailed"));
       }

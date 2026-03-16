@@ -305,9 +305,7 @@ export function SkillPanel({ sessionId }: SkillPanelProps) {
         setMessage(t('skills.messages.uninstalled', { pluginName }));
         setMessageType("success");
         await fetchSkills();
-        if (selectedSkill) {
-          await fetchSkillDetail(selectedSkill.name);
-        }
+        handleBackToList();
       } catch (error) {
         console.error(error);
         setMessage(t('skills.errors.uninstallFailedHint'));
@@ -316,7 +314,7 @@ export function SkillPanel({ sessionId }: SkillPanelProps) {
         setActionTarget(null);
       }
     },
-    [fetchSkills, fetchSkillDetail, selectedSkill, t, withSession]
+    [fetchSkills, handleBackToList, t, withSession]
   );
 
   const renderActionButton = (skill: SkillItem) => {
