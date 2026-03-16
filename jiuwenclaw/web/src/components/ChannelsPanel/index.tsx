@@ -14,7 +14,7 @@ type ChannelItem = {
 };
 
 type LoadState = 'idle' | 'loading' | 'success' | 'error';
-type SupportedChannelId = 'web' | 'xiaoyi' | 'feishu' | 'dingtalk';
+type SupportedChannelId = 'web' | 'xiaoyi' | 'feishu' | 'dingtalk' | 'telegram';
 const ADAPTING_CHANNEL_IDS = new Set<SupportedChannelId>([]);
 
 type FeishuConfig = {
@@ -67,6 +67,22 @@ type DingTalkDraft = {
   allow_from: string;
 };
 
+type TelegramConfig = {
+  enabled: boolean;
+  bot_token: string;
+  allow_from: string[];
+  parse_mode: string;
+  group_chat_mode: string;
+};
+
+type TelegramDraft = {
+  enabled: boolean;
+  bot_token: string;
+  allow_from: string;
+  parse_mode: string;
+  group_chat_mode: string;
+};
+
 const DEFAULT_FEISHU_CONF: FeishuConfig = {
   enabled: false,
   app_id: '',
@@ -92,11 +108,20 @@ const DEFAULT_DINGTALK_CONF: DingTalkConfig = {
   allow_from: [],
 };
 
+const DEFAULT_TELEGRAM_CONF: TelegramConfig = {
+  enabled: false,
+  bot_token: '',
+  allow_from: [],
+  parse_mode: 'Markdown',
+  group_chat_mode: 'mention',
+};
+
 const SUPPORTED_CHANNELS: Array<{ channel_id: SupportedChannelId; logo_src: string | null }> = [
   { channel_id: 'web', logo_src: null },
   { channel_id: 'xiaoyi', logo_src: '/xiaoyi.webp' },
   { channel_id: 'feishu', logo_src: '/feishu.webp' },
   { channel_id: 'dingtalk', logo_src: '/dingtalk.png' },
+  { channel_id: 'telegram', logo_src: '/telegram.webp' },
 ];
 
 
@@ -271,6 +296,44 @@ function buildDingtalkPayload(draft: DingTalkDraft): Record<string, unknown> {
   };
 }
 
+function normalizeTelegramConfig(input: unknown): TelegramConfig {
+  if (!input || typeof input !== 'object') {
+    return DEFAULT_TELEGRAM_CONF;
+  }
+  const data = input as Record<string, unknown>;
+  const allowFromRaw = Array.isArray(data.allow_from) ? data.allow_from : [];
+  const allowFrom = allowFromRaw
+    .map((item) => String(item ?? '').trim())
+    .filter((item) => item.length > 0);
+  return {
+    enabled: Boolean(data.enabled),
+    bot_token: String(data.bot_token ?? '').trim(),
+    allow_from: allowFrom,
+    parse_mode: String(data.parse_mode ?? 'Markdown').trim(),
+    group_chat_mode: String(data.group_chat_mode ?? 'mention').trim(),
+  };
+}
+
+function draftFromTelegramConfig(conf: TelegramConfig): TelegramDraft {
+  return {
+    enabled: conf.enabled,
+    bot_token: conf.bot_token,
+    allow_from: conf.allow_from.join('\n'),
+    parse_mode: conf.parse_mode,
+    group_chat_mode: conf.group_chat_mode,
+  };
+}
+
+function buildTelegramPayload(draft: TelegramDraft): Record<string, unknown> {
+  return {
+    enabled: draft.enabled,
+    bot_token: draft.bot_token.trim(),
+    allow_from: normalizeAllowFromText(draft.allow_from),
+    parse_mode: draft.parse_mode.trim(),
+    group_chat_mode: draft.group_chat_mode.trim(),
+  };
+}
+
 function VisibilityIcon({ visible }: { visible: boolean }) {
   return visible ? (
     <svg className="channels-panel__icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8}>
@@ -358,6 +421,13 @@ export function ChannelsPanel({ isConnected }: ChannelsPanelProps) {
   const [dingtalkSaving, setDingtalkSaving] = useState(false);
   const [dingtalkSaveError, setDingtalkSaveError] = useState<string | null>(null);
   const [dingtalkSuccess, setDingtalkSuccess] = useState<string | null>(null);
+  const [telegramConfig, setTelegramConfig] = useState<TelegramConfig>(DEFAULT_TELEGRAM_CONF);
+  const [telegramDraft, setTelegramDraft] = useState<TelegramDraft>(draftFromTelegramConfig(DEFAULT_TELEGRAM_CONF));
+  const [telegramVisibleFields, setTelegramVisibleFields] = useState<Record<string, boolean>>({});
+  const [telegramLoading, setTelegramLoading] = useState(false);
+  const [telegramSaving, setTelegramSaving] = useState(false);
+  const [telegramSaveError, setTelegramSaveError] = useState<string | null>(null);
+  const [telegramSuccess, setTelegramSuccess] = useState<string | null>(null);
 
   const fetchChannels = useCallback(async () => {
     setLoadState('loading');
@@ -429,6 +499,23 @@ export function ChannelsPanel({ isConnected }: ChannelsPanelProps) {
     }
   }, [t]);
 
+  const fetchTelegramConfig = useCallback(async () => {
+    setTelegramLoading(true);
+    setTelegramSaveError(null);
+    setTelegramSuccess(null);
+    try {
+      const payload = await webRequest<{ config?: unknown }>('channel.telegram.get_conf');
+      const normalized = normalizeTelegramConfig(payload?.config);
+      setTelegramConfig(normalized);
+      setTelegramDraft(draftFromTelegramConfig(normalized));
+      setTelegramVisibleFields({});
+    } catch (err) {
+      setTelegramSaveError(err instanceof Error ? err.message : t('channels.errors.loadTelegram'));
+    } finally {
+      setTelegramLoading(false);
+    }
+  }, [t]);
+
   const handleSelectChannel = useCallback(
     (channelId: SupportedChannelId) => {
       if (ADAPTING_CHANNEL_IDS.has(channelId)) {
@@ -450,8 +537,12 @@ export function ChannelsPanel({ isConnected }: ChannelsPanelProps) {
     }
     if (activeChannelId === 'dingtalk') {
       void fetchDingtalkConfig();
+      return;
     }
-  }, [activeChannelId, fetchDingtalkConfig, fetchFeishuConfig, fetchXiaoyiConfig]);
+    if (activeChannelId === 'telegram') {
+      void fetchTelegramConfig();
+    }
+  }, [activeChannelId, fetchDingtalkConfig, fetchFeishuConfig, fetchTelegramConfig, fetchXiaoyiConfig]);
 
   const statusText = useMemo(() => {
     const enabledCount = channels.filter((channel) => channel.enabled).length;
@@ -496,6 +587,16 @@ export function ChannelsPanel({ isConnected }: ChannelsPanelProps) {
     );
   }, [dingtalkConfig, dingtalkDraft]);
 
+  const hasTelegramConfigChanges = useMemo(() => {
+    const baseDraft = draftFromTelegramConfig(telegramConfig);
+    return (
+      baseDraft.enabled !== telegramDraft.enabled ||
+      baseDraft.bot_token !== telegramDraft.bot_token ||
+      normalizeAllowFromText(baseDraft.allow_from).join('\n') !== normalizeAllowFromText(telegramDraft.allow_from).join('\n') ||
+      baseDraft.parse_mode !== telegramDraft.parse_mode ||
+      baseDraft.group_chat_mode !== telegramDraft.group_chat_mode
+    );
+  }, [telegramConfig, telegramDraft]);
   const handleFieldChange = <K extends keyof FeishuDraft>(key: K, value: FeishuDraft[K]) => {
     setDraft((prev) => ({ ...prev, [key]: value }));
     if (saveError) {
@@ -559,6 +660,27 @@ export function ChannelsPanel({ isConnected }: ChannelsPanelProps) {
     setDingtalkVisibleFields((prev) => ({ ...prev, [field]: !prev[field] }));
   };
 
+  const handleTelegramFieldChange = <K extends keyof TelegramDraft>(key: K, value: TelegramDraft[K]) => {
+    setTelegramDraft((prev) => ({ ...prev, [key]: value }));
+    if (telegramSaveError) {
+      setTelegramSaveError(null);
+    }
+    if (telegramSuccess) {
+      setTelegramSuccess(null);
+    }
+  };
+
+  const handleCancelTelegramConfig = () => {
+    if (!hasTelegramConfigChanges) return;
+    setTelegramDraft(draftFromTelegramConfig(telegramConfig));
+    setTelegramSaveError(null);
+    setTelegramSuccess(null);
+  };
+
+  const toggleTelegramFieldVisible = (field: keyof TelegramDraft) => {
+    setTelegramVisibleFields((prev) => ({ ...prev, [field]: !prev[field] }));
+  };
+
   const handleSaveConfig = async () => {
     if (!hasConfigChanges || saving) return;
     setSaving(true);
@@ -616,12 +738,35 @@ export function ChannelsPanel({ isConnected }: ChannelsPanelProps) {
     }
   };
 
-  const isConfigRefreshing = feishuLoading || xiaoyiLoading || dingtalkLoading;
+  const handleSaveTelegramConfig = async () => {
+    if (!hasTelegramConfigChanges || telegramSaving) return;
+    setTelegramSaving(true);
+    setTelegramSaveError(null);
+    try {
+      const payload = buildTelegramPayload(telegramDraft);
+      const result = await webRequest<{ config?: unknown }>('channel.telegram.set_conf', payload);
+      const normalized = normalizeTelegramConfig(result?.config);
+      setTelegramConfig(normalized);
+      setTelegramDraft(draftFromTelegramConfig(normalized));
+      setTelegramSuccess(t('channels.saved.telegram'));
+    } catch (saveErr) {
+      const message = saveErr instanceof Error ? saveErr.message : t('channels.errors.saveGeneric');
+      setTelegramSaveError(message);
+    } finally {
+      setTelegramSaving(false);
+    }
+  };
+
+  const isConfigRefreshing = feishuLoading || xiaoyiLoading || dingtalkLoading || telegramLoading;
   const configErrorNotice = useMemo(() => {
     return Array.from(
-      new Set([saveError, xiaoyiSaveError, dingtalkSaveError].filter((message): message is string => Boolean(message))),
+      new Set(
+        [saveError, xiaoyiSaveError, dingtalkSaveError, telegramSaveError].filter(
+          (message): message is string => Boolean(message),
+        ),
+      ),
     ).join(t('common.and'));
-  }, [dingtalkSaveError, saveError, t, xiaoyiSaveError]);
+  }, [dingtalkSaveError, saveError, t, telegramSaveError, xiaoyiSaveError]);
   useEffect(() => {
     if (!configErrorNotice) {
       return;
@@ -630,6 +775,7 @@ export function ChannelsPanel({ isConnected }: ChannelsPanelProps) {
       setSaveError(null);
       setXiaoyiSaveError(null);
       setDingtalkSaveError(null);
+      setTelegramSaveError(null);
     }, 2000);
     return () => {
       window.clearTimeout(timer);
@@ -1101,6 +1247,149 @@ export function ChannelsPanel({ isConnected }: ChannelsPanelProps) {
                                   rows={4}
                                   className="w-full rounded-md border border-border bg-bg px-3 py-2 text-[13px] outline-none focus:border-accent resize-y"
                                 />
+                              </td>
+                            </tr>
+                          </tbody>
+                        </table>
+                      )}
+                    </div>
+                  </div>
+                ) : null}
+
+                {activeChannelId === 'telegram' ? (
+                  <div className="w-full h-full rounded-xl border border-border bg-card/70 backdrop-blur-sm overflow-hidden shadow-sm flex flex-col">
+                    <div className="px-4 py-3 bg-secondary/30 border-b border-border">
+                      <div className="flex items-center justify-between gap-4">
+                        <div className="flex items-center gap-3">
+                          <ChannelHeaderLogo channelId="telegram" label="Telegram" />
+                          <div>
+                            <h4 className="text-sm font-medium text-text">Telegram 频道参数配置</h4>
+                            <p className="text-xs text-text-muted mt-1">配置 Telegram Bot 服务相关参数</p>
+                          </div>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <button
+                            type="button"
+                            onClick={() => void fetchTelegramConfig()}
+                            disabled={telegramSaving || isConfigRefreshing}
+                            className="btn !px-3 !py-1.5 disabled:opacity-50 disabled:cursor-not-allowed"
+                          >
+                            {telegramLoading ? '刷新中...' : '刷新'}
+                          </button>
+                          <button
+                            type="button"
+                            onClick={handleCancelTelegramConfig}
+                            disabled={!hasTelegramConfigChanges || telegramSaving}
+                            className="btn !px-3 !py-1.5 disabled:opacity-50 disabled:cursor-not-allowed"
+                          >
+                            取消
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => void handleSaveTelegramConfig()}
+                            disabled={!hasTelegramConfigChanges || telegramSaving || !isConnected}
+                            className="btn primary !px-3 !py-1.5 disabled:opacity-50 disabled:cursor-not-allowed"
+                          >
+                            {telegramSaving ? '保存中...' : '保存'}
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+
+                    {telegramSuccess ? (
+                      <div className="mx-4 mt-4 rounded-md border border-[var(--border-ok)] bg-ok-subtle px-3 py-2 text-sm text-ok">
+                        {telegramSuccess}
+                      </div>
+                    ) : null}
+
+                    <div className="p-4 pt-3 flex-1 overflow-auto">
+                      {telegramLoading ? (
+                        <div className="text-sm text-text-muted">正在加载 Telegram 配置...</div>
+                      ) : (
+                        <table className="w-full text-sm">
+                          <tbody>
+                            <tr className="border-t border-border first:border-t-0 even:bg-secondary/10">
+                              <td className="px-4 py-2.5 align-middle mono text-xs text-text-muted w-[32%]">enabled</td>
+                              <td className="px-4 py-2.5 align-middle">
+                                <button
+                                  type="button"
+                                  role="switch"
+                                  aria-checked={telegramDraft.enabled}
+                                  onClick={() => handleTelegramFieldChange('enabled', !telegramDraft.enabled)}
+                                  className={`relative inline-flex h-5 w-9 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 focus:outline-none ${
+                                    telegramDraft.enabled ? 'bg-ok' : 'bg-secondary'
+                                  }`}
+                                >
+                                  <span
+                                    className={`pointer-events-none inline-block h-4 w-4 transform rounded-full bg-white shadow transition duration-200 ${
+                                      telegramDraft.enabled ? 'translate-x-4' : 'translate-x-0'
+                                    }`}
+                                  />
+                                </button>
+                              </td>
+                            </tr>
+                            <tr className="border-t border-border first:border-t-0 even:bg-secondary/10">
+                              <td className="px-4 py-2.5 align-middle mono text-xs text-text-muted w-[32%]">bot_token</td>
+                              <td className="px-4 py-2.5 break-all text-[13px] align-middle">
+                                <div className="relative">
+                                  <input
+                                    type={telegramVisibleFields['bot_token'] ? 'text' : 'password'}
+                                    value={telegramDraft.bot_token}
+                                    onChange={(e) => handleTelegramFieldChange('bot_token', e.target.value)}
+                                    placeholder="请输入 Bot Token（从 @BotFather 获取）"
+                                    className="w-full rounded-md border border-border bg-bg px-3 py-2 text-[13px] outline-none focus:border-accent pr-10"
+                                  />
+                                  <button
+                                    type="button"
+                                    onClick={() => toggleTelegramFieldVisible('bot_token')}
+                                    className="channels-panel__visibility-toggle"
+                                    aria-label={telegramVisibleFields['bot_token'] ? '隐藏明文' : '显示明文'}
+                                    title={telegramVisibleFields['bot_token'] ? '隐藏明文' : '显示明文'}
+                                  >
+                                    <VisibilityIcon visible={Boolean(telegramVisibleFields['bot_token'])} />
+                                  </button>
+                                </div>
+                              </td>
+                            </tr>
+                            <tr className="border-t border-border first:border-t-0 even:bg-secondary/10">
+                              <td className="px-4 py-2.5 align-top mono text-xs text-text-muted w-[32%]">allow_from</td>
+                              <td className="px-4 py-2.5 break-all text-[13px] align-middle">
+                                <textarea
+                                  value={telegramDraft.allow_from}
+                                  onChange={(e) => handleTelegramFieldChange('allow_from', e.target.value)}
+                                  placeholder="每行一个 Telegram user_id（也支持逗号分隔）"
+                                  rows={4}
+                                  className="w-full rounded-md border border-border bg-bg px-3 py-2 text-[13px] outline-none focus:border-accent resize-y"
+                                />
+                              </td>
+                            </tr>
+                            <tr className="border-t border-border first:border-t-0 even:bg-secondary/10">
+                              <td className="px-4 py-2.5 align-middle mono text-xs text-text-muted w-[32%]">parse_mode</td>
+                              <td className="px-4 py-2.5 break-all text-[13px] align-middle">
+                                <select
+                                  value={telegramDraft.parse_mode}
+                                  onChange={(e) => handleTelegramFieldChange('parse_mode', e.target.value)}
+                                  className="w-full rounded-md border border-border bg-bg px-3 py-2 text-[13px] outline-none focus:border-accent"
+                                >
+                                  <option value="Markdown">Markdown</option>
+                                  <option value="HTML">HTML</option>
+                                  <option value="None">None</option>
+                                </select>
+                              </td>
+                            </tr>
+                            <tr className="border-t border-border first:border-t-0 even:bg-secondary/10">
+                              <td className="px-4 py-2.5 align-middle mono text-xs text-text-muted w-[32%]">group_chat_mode</td>
+                              <td className="px-4 py-2.5 break-all text-[13px] align-middle">
+                                <select
+                                  value={telegramDraft.group_chat_mode}
+                                  onChange={(e) => handleTelegramFieldChange('group_chat_mode', e.target.value)}
+                                  className="w-full rounded-md border border-border bg-bg px-3 py-2 text-[13px] outline-none focus:border-accent"
+                                >
+                                  <option value="mention">仅响应 @提及 (mention)</option>
+                                  <option value="reply">仅响应回复 (reply)</option>
+                                  <option value="all">响应所有消息 (all)</option>
+                                  <option value="off">禁用群聊 (off)</option>
+                                </select>
                               </td>
                             </tr>
                           </tbody>

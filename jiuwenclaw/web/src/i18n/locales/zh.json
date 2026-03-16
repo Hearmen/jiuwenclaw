@@ -232,7 +232,8 @@
       "web": "网页",
       "xiaoyi": "小艺",
       "feishu": "飞书",
-      "dingtalk": "钉钉"
+      "dingtalk": "钉钉",
+      "telegram": "Telegram"
     },
     "status": {
       "loadFailed": "加载失败",
@@ -255,7 +256,8 @@
     "loading": {
       "xiaoyi": "正在加载小艺配置...",
       "dingtalk": "正在加载钉钉配置...",
-      "feishu": "正在加载飞书配置..."
+      "feishu": "正在加载飞书配置...",
+      "telegram": "正在加载 Telegram 配置..."
     },
     "placeholders": {
       "configValue": "请输入配置值",
@@ -268,13 +270,15 @@
     "saved": {
       "feishu": "飞书配置已保存",
       "xiaoyi": "小艺配置已保存",
-      "dingtalk": "钉钉配置已保存"
+      "dingtalk": "钉钉配置已保存",
+      "telegram": "Telegram 配置已保存"
     },
     "errors": {
       "loadChannels": "获取 channels 失败",
       "loadFeishu": "获取飞书配置失败",
       "loadXiaoyi": "获取小艺配置失败",
       "loadDingtalk": "获取钉钉配置失败",
+      "loadTelegram": "获取 Telegram 配置失败",
       "saveGeneric": "保存失败，请稍后重试"
     }
   },

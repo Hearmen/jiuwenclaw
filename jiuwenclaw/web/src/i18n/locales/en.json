@@ -232,7 +232,8 @@
       "web": "Web",
       "xiaoyi": "Xiaoyi",
       "feishu": "Lark",
-      "dingtalk": "DingTalk"
+      "dingtalk": "DingTalk",
+      "telegram": "Telegram"
     },
     "status": {
       "loadFailed": "Load failed",
@@ -255,7 +256,8 @@
     "loading": {
       "xiaoyi": "Loading Xiaoyi settings...",
       "dingtalk": "Loading DingTalk settings...",
-      "feishu": "Loading Lark settings..."
+      "feishu": "Loading Lark settings...",
+      "telegram": "Loading Telegram settings..."
     },
     "placeholders": {
       "configValue": "Enter a configuration value",
@@ -268,13 +270,15 @@
     "saved": {
       "feishu": "Lark settings saved",
       "xiaoyi": "Xiaoyi settings saved",
-      "dingtalk": "DingTalk settings saved"
+      "dingtalk": "DingTalk settings saved",
+      "telegram": "Telegram settings saved"
     },
     "errors": {
       "loadChannels": "Failed to load channels",
       "loadFeishu": "Failed to load Lark settings",
       "loadXiaoyi": "Failed to load Xiaoyi settings",
       "loadDingtalk": "Failed to load DingTalk settings",
+      "loadTelegram": "Failed to load Telegram settings",
       "saveGeneric": "Save failed, please try again later"
     }
   },

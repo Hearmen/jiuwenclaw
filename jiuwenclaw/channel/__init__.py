@@ -5,9 +5,9 @@
 from jiuwenclaw.channel.base import BaseChannel, ChannelMetadata
 from jiuwenclaw.channel.web_channel import WebChannel
 from jiuwenclaw.channel.xiaoyi_channel import XiaoyiChannel, XiaoyiChannelConfig
+from jiuwenclaw.channel.telegram_channel import TelegramChannel, TelegramChannelConfig
 from jiuwenclaw.channel.dingding import DingTalkChannel, DingTalkConfig
 from jiuwenclaw.channel.whatsapp_channel import WhatsAppChannel, WhatsAppChannelConfig
-
 
 __all__ = [
     "BaseChannel",
@@ -15,6 +15,8 @@ __all__ = [
     "WebChannel",
     "XiaoyiChannel",
     "XiaoyiChannelConfig",
+    "TelegramChannel",
+    "TelegramChannelConfig",
     "DingTalkChannel",
     "DingTalkConfig",
     "WhatsAppChannel",

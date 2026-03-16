@@ -52,6 +52,8 @@ class ReqMethod(Enum):
     CHANNEL_XIAOYI_GET_CONF = "channel.xiaoyi.get_conf"
     CHANNEL_XIAOYI_SET_CONF = "channel.xiaoyi.set_conf"
 
+    CHANNEL_TELEGRAM_GET_CONF = "channel.telegram.get_conf"
+    CHANNEL_TELEGRAM_SET_CONF = "channel.telegram.set_conf"
     CHANNEL_DINGTALK_GET_CONF = "channel.dingtalk.get_conf"
     CHANNEL_DINGTALK_SET_CONF = "channel.dingtalk.set_conf"
 

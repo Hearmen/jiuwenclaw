@@ -649,6 +649,68 @@ def _register_web_handlers(
             logger.exception("[channel.xiaoyi.set_conf] %s", e)
             await channel.send_response(ws, req_id, ok=False, error=str(e), code="INTERNAL_ERROR")
 
+    async def _channel_telegram_get_conf(ws, req_id, params, session_id):
+        """返回 TelegramChannel 的当前配置（由 ChannelManager 管理）。"""
+    async def _channel_dingtalk_get_conf(ws, req_id, params, session_id):
+        cm = _resolve(channel_manager)
+        if cm is None:
+            await channel.send_response(
+                ws,
+                req_id,
+                ok=False,
+                error="channel manager not available",
+                code="SERVICE_UNAVAILABLE",
+            )
+            return
+        try:
+            conf = cm.get_conf("telegram")
+            await channel.send_response(ws, req_id, ok=True, payload={"config": conf})
+        except Exception as e:  # noqa: BLE001
+            logger.exception("[channel.telegram.get_conf] %s", e)
+            await channel.send_response(ws, req_id, ok=False, error=str(e), code="INTERNAL_ERROR")
+
+    async def _channel_telegram_set_conf(ws, req_id, params, session_id):
+        """更新 TelegramChannel 的配置，并按新配置重新实例化通道。"""
+        try:
+            conf = cm.get_conf("dingtalk")
+            await channel.send_response(ws, req_id, ok=True, payload={"config": conf})
+        except Exception as e:  # noqa: BLE001
+            logger.exception("[channel.dingtalk.get_conf] %s", e)
+            await channel.send_response(ws, req_id, ok=False, error=str(e), code="INTERNAL_ERROR")
+
+    async def _channel_dingtalk_set_conf(ws, req_id, params, session_id):
+        cm = _resolve(channel_manager)
+        if cm is None:
+            await channel.send_response(
+                ws,
+                req_id,
+                ok=False,
+                error="channel manager not available",
+                code="SERVICE_UNAVAILABLE",
+            )
+            return
+        if not isinstance(params, dict):
+            await channel.send_response(
+                ws,
+                req_id,
+                ok=False,
+                error="params must be object",
+                code="BAD_REQUEST",
+            )
+            return
+        try:
+            await cm.set_conf("telegram", params)
+            conf = cm.get_conf("telegram")
+            try:
+                update_channel_in_config("telegram", conf)
+                _clear_agent_config_cache()
+            except Exception as e:  # noqa: BLE001
+                logger.warning("[channel.telegram.set_conf] 写回 config.yaml 失败: %s", e)
+            await channel.send_response(ws, req_id, ok=True, payload={"config": conf})
+        except Exception as e:  # noqa: BLE001
+            logger.exception("[channel.telegram.set_conf] %s", e)
+            await channel.send_response(ws, req_id, ok=False, error=str(e), code="INTERNAL_ERROR")
+
     async def _channel_dingtalk_get_conf(ws, req_id, params, session_id):
         cm = _resolve(channel_manager)
         if cm is None:
@@ -699,7 +761,6 @@ def _register_web_handlers(
         except Exception as e:  # noqa: BLE001
             logger.exception("[channel.dingtalk.set_conf] %s", e)
             await channel.send_response(ws, req_id, ok=False, error=str(e), code="INTERNAL_ERROR")
-
     async def _channel_whatsapp_get_conf(ws, req_id, params, session_id):
         cm = _resolve(channel_manager)
         if cm is None:
@@ -750,7 +811,6 @@ def _register_web_handlers(
         except Exception as e:  # noqa: BLE001
             logger.exception("[channel.whatsapp.set_conf] %s", e)
             await channel.send_response(ws, req_id, ok=False, error=str(e), code="INTERNAL_ERROR")
-
     # ----- cron jobs -----
 
     def _get_cron():
@@ -925,6 +985,8 @@ def _register_web_handlers(
     channel.register_method("channel.feishu.set_conf", _channel_feishu_set_conf)
     channel.register_method("channel.xiaoyi.get_conf", _channel_xiaoyi_get_conf)
     channel.register_method("channel.xiaoyi.set_conf", _channel_xiaoyi_set_conf)
+    channel.register_method("channel.telegram.get_conf", _channel_telegram_get_conf)
+    channel.register_method("channel.telegram.set_conf", _channel_telegram_set_conf)
     channel.register_method("channel.dingtalk.get_conf", _channel_dingtalk_get_conf)
     channel.register_method("channel.dingtalk.set_conf", _channel_dingtalk_set_conf)
     channel.register_method("channel.whatsapp.get_conf", _channel_whatsapp_get_conf)
@@ -944,6 +1006,7 @@ async def _run() -> None:
     from jiuwenclaw.channel.feishu import FeishuChannel, FeishuConfig
     from jiuwenclaw.channel.web_channel import WebChannel, WebChannelConfig
     from jiuwenclaw.channel.xiaoyi_channel import XiaoyiChannel, XiaoyiChannelConfig
+    from jiuwenclaw.channel.telegram_channel import TelegramChannel, TelegramChannelConfig
     from jiuwenclaw.gateway import (
         AgentWebSocketServer,
         GatewayHeartbeatService,
@@ -1113,39 +1176,25 @@ async def _run() -> None:
     xiaoyi_task = None
     dingtalk_channel = None
     dingtalk_task = None
+    telegram_channel = None
+    telegram_task = None
     whatsapp_channel = None
     whatsapp_task = None
 
     _last_channels_conf = {}  # Store previous config to detect changes
 
     def _should_restart_channel(channel_name: str, old_conf: dict, new_conf: dict) -> bool:
-        """Check if a channel configuration changed enough to require restart."""
         old_channel_conf = old_conf.get(channel_name) if isinstance(old_conf, dict) else None
         new_channel_conf = new_conf.get(channel_name) if isinstance(new_conf, dict) else None
-
-        # If one exists and the other doesn't, changed
         if (old_channel_conf is None) != (new_channel_conf is None):
             return True
-
-        # If both are None, not changed
         if old_channel_conf is None:
             return False
-
-        # Compare all config fields (including nested structures)
         return old_channel_conf != new_channel_conf
 
     async def _stop_channel(channel, task, channel_name: str, background_wait: bool = False) -> None:
-        """Stop a channel and its task.
-
-        Args:
-            channel: The channel instance to stop
-            task: The async task to cancel
-            channel_name: Name of the channel for logging
-            background_wait: If True, wait for task cancellation in background (like DingtalkChannel)
-        """
         if task is not None:
             task.cancel()
-
             if background_wait:
                 async def wait_cancel():
                     try:
@@ -1171,25 +1220,27 @@ async def _run() -> None:
             channel_manager.unregister_channel(channel.channel_id)
 
     def _is_channel_enabled(conf: dict | None, required_fields: list[str]) -> tuple[bool, str]:
-        """Check if a channel should be enabled based on config. Returns (enabled, reason_log)."""
         if conf is None:
             return False, "未配置或格式错误"
         enabled_raw = conf.get("enabled", None)
         if enabled_raw is None:
-            # Auto-enable if all required fields are present
             all_fields_present = all(conf.get(f) for f in required_fields)
             return all_fields_present, f"缺少 {','.join(required_fields)}" if not all_fields_present else ""
         return bool(enabled_raw), "enabled = false" if not enabled_raw else ""
 
     async def _apply_channel_config(conf: dict) -> None:
-        """根据最新 Channel 配置重新实例化各 Channel"""
-        nonlocal feishu_channel, feishu_task, xiaoyi_channel, xiaoyi_task, dingtalk_channel, dingtalk_task, _last_channels_conf, whatsapp_channel, whatsapp_task
-        # Detect which channels changed
-        changed_channels = [c for c in ["feishu", "xiaoyi", "dingtalk", "whatsapp"]
-                           if _should_restart_channel(c, _last_channels_conf, conf)]
+        """根据最新 Channel 配置重新实例化各 Channel。"""
+        nonlocal feishu_channel, feishu_task, xiaoyi_channel, xiaoyi_task
+        nonlocal dingtalk_channel, dingtalk_task, telegram_channel, telegram_task
+        nonlocal whatsapp_channel, whatsapp_task, _last_channels_conf
+
+        changed_channels = [
+            c
+            for c in ["feishu", "xiaoyi", "dingtalk", "telegram", "whatsapp"]
+            if _should_restart_channel(c, _last_channels_conf, conf)
+        ]
         _last_channels_conf = dict(conf or {})
 
-        # ----- FeishuChannel -----
         if "feishu" in changed_channels:
             feishu_conf = conf.get("feishu") if isinstance(conf, dict) else None
             await _stop_channel(feishu_channel, feishu_task, "feishu")
@@ -1216,7 +1267,6 @@ async def _run() -> None:
             else:
                 logger.info("[App] channels.feishu 未配置或格式错误，FeishuChannel 不启用")
 
-        # ----- XiaoyiChannel -----
         if "xiaoyi" in changed_channels:
             xiaoyi_conf = conf.get("xiaoyi") if isinstance(conf, dict) else None
             await _stop_channel(xiaoyi_channel, xiaoyi_task, "xiaoyi")
@@ -1243,7 +1293,6 @@ async def _run() -> None:
             else:
                 logger.info("[App] channels.xiaoyi 未配置或格式错误，XiaoyiChannel 不启用")
 
-        # ----- DingtalkChannel -----
         if "dingtalk" in changed_channels:
             dingtalk_conf = conf.get("dingtalk") if isinstance(conf, dict) else None
             await _stop_channel(dingtalk_channel, dingtalk_task, "dingtalk", background_wait=True)
@@ -1267,6 +1316,29 @@ async def _run() -> None:
             else:
                 logger.info("[App] channels.dingtalk 未配置或格式错误，DingtalkChannel 不启用")
 
+        if "telegram" in changed_channels:
+            telegram_conf = conf.get("telegram") if isinstance(conf, dict) else None
+            await _stop_channel(telegram_channel, telegram_task, "telegram")
+            telegram_channel, telegram_task = None, None
+
+            if isinstance(telegram_conf, dict):
+                enabled, reason = _is_channel_enabled(telegram_conf, ["bot_token"])
+                if not enabled:
+                    logger.info("[App] channels.telegram.%s，TelegramChannel 未启用", reason)
+                else:
+                    telegram_config = TelegramChannelConfig(
+                        enabled=True,
+                        bot_token=str(telegram_conf.get("bot_token") or "").strip(),
+                        allow_from=telegram_conf.get("allow_from") or [],
+                        parse_mode=str(telegram_conf.get("parse_mode") or "Markdown").strip(),
+                        group_chat_mode=str(telegram_conf.get("group_chat_mode") or "mention").strip(),
+                    )
+                    telegram_channel = TelegramChannel(telegram_config, _DummyBus())
+                    channel_manager.register_channel(telegram_channel)
+                    telegram_task = asyncio.create_task(telegram_channel.start(), name="telegram")
+                    logger.info("[App] 已按 config.yaml.channels.telegram 注册 TelegramChannel")
+            else:
+                logger.info("[App] channels.telegram 未配置或格式错误，TelegramChannel 不启用")
         # ----- WhatsAppChannel -----
         if "whatsapp" in changed_channels:
             whatsapp_conf = conf.get("whatsapp") if isinstance(conf, dict) else None
@@ -1327,7 +1399,7 @@ async def _run() -> None:
     )
 
     # 主循环仅以 WebChannel 的生命周期为准：
-    # Feishu/Xiaoyi/Dingtalk/WhatsApp 等 Channel 的 start/stop 由 _apply_channel_config 动态管理，
+    # Feishu/Xiaoyi/Dingtalk/Telegram/WhatsApp 等 Channel 的 start/stop 由 _apply_channel_config 动态管理，
     # 不再将其任务纳入这里的 gather，以避免在热更新（如关闭 Feishu）时取消任务导致整个 E2E 提前退出。
     try:
         await web_task
@@ -1363,6 +1435,13 @@ async def _run() -> None:
             except (TypeError, asyncio.CancelledError):
                 pass
             await dingtalk_channel.stop()
+        if telegram_channel is not None and telegram_task is not None:
+            telegram_task.cancel()
+            try:
+                await telegram_task
+            except asyncio.CancelledError:
+                pass
+            await telegram_channel.stop()
         if whatsapp_channel is not None and whatsapp_task is not None:
             whatsapp_task.cancel()
             try:
