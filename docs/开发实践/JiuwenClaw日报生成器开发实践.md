@@ -428,13 +428,13 @@ heartbeat:
 from collectors import DataAggregator
 
 aggregator = DataAggregator(
-   workspace_dir="../workspace",
-   git_repo="path/to/repo",
-   email_config={
-      "address": "xxx@163.com",
-      "auth_code": "xxx",
-      "provider": "163"
-   }
+    workspace_dir="workspace",
+    git_repo="path/to/repo",
+    email_config={
+        "address": "xxx@163.com",
+        "auth_code": "xxx",
+        "provider": "163"
+    }
 )
 
 # 采集今日数据
