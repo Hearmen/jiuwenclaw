@@ -448,6 +448,20 @@
     "noMatches": "暂无匹配的技能",
     "detailLoading": "加载详情中...",
     "detailError": "加载详情失败",
+    "skillNet": {
+      "title": "SkillNet 在线搜索",
+      "search": "搜索",
+      "collapse": "收起",
+      "expand": "展开",
+      "searchPlaceholder": "输入关键词（例如 小红书）",
+      "noResults": "暂无 SkillNet 结果",
+      "installFromResult": "安装",
+      "meta": "作者 {{author}} · ⭐ {{stars}}",
+      "showDetail": "点击展开详情",
+      "hideDetail": "点击收起详情",
+      "category": "分类",
+      "url": "地址"
+    },
     "marketplacesAvailable": "可用 marketplace: {{names}}",
     "marketplacesDefault": "默认 marketplace: anthropics",
     "installPrompt": "请输入插件规格 (plugin@marketplace)",
@@ -456,11 +470,16 @@
     "messages": {
       "installed": "已安装：{{spec}}",
       "imported": "已导入：{{name}}",
-      "uninstalled": "已卸载：{{pluginName}}"
+      "uninstalled": "已卸载：{{pluginName}}",
+      "skillNetInstalled": "已从 SkillNet 安装：{{name}}"
     },
     "errors": {
       "installFailed": "安装失败",
       "installFailedHint": "安装失败，请检查插件规格或网络",
+      "skillNetSearchFailed": "SkillNet 搜索失败",
+      "skillNetSearchFailedHint": "SkillNet 搜索失败，请检查网络或后端日志",
+      "skillNetInstallFailed": "SkillNet 安装失败",
+      "skillNetInstallFailedHint": "SkillNet 安装失败，请检查 skill URL 或依赖",
       "importFailed": "导入失败",
       "importFailedHint": "导入失败，请检查路径或权限",
       "uninstallFailed": "卸载失败",

@@ -88,6 +88,8 @@ _SKILL_ROUTES: dict[ReqMethod, str] = {
     ReqMethod.SKILLS_MARKETPLACE_ADD: "handle_skills_marketplace_add",
     ReqMethod.SKILLS_MARKETPLACE_REMOVE: "handle_skills_marketplace_remove",
     ReqMethod.SKILLS_MARKETPLACE_TOGGLE: "handle_skills_marketplace_toggle",
+    ReqMethod.SKILLS_SKILLNET_SEARCH: "handle_skills_skillnet_search",
+    ReqMethod.SKILLS_SKILLNET_INSTALL: "handle_skills_skillnet_install",
 }
 
 
@@ -397,7 +399,7 @@ class JiuWenClaw:
                 elif tool.name.startswith("cron_"):
                     self._instance.ability_manager.remove(tool.name)
 
-        # 定时工具
+        # 定时工具：按 channel 注册；仅当 resource_mgr 中尚未存在时 add_tool，避免重复添加触发 "resource already exist"
         channel = session_id.split('_')[0]
         if channel not in ["heartbeat", "cron"]:
             cron_controller = CronController.get_instance()
@@ -408,7 +410,8 @@ class JiuWenClaw:
                 cron_controller.set_target_channel(CronTargetChannel.WEB)
 
             for cron_tool in cron_controller.get_tools():
-                Runner.resource_mgr.add_tool(cron_tool)
+                if not Runner.resource_mgr.get_tool(cron_tool.card.id):
+                    Runner.resource_mgr.add_tool(cron_tool)
                 self._instance.ability_manager.add(cron_tool.card)
 
         effective_session_id = session_id or "default"
@@ -747,7 +750,12 @@ class JiuWenClaw:
             handler = getattr(self._skill_manager, handler_name)
             try:
                 payload = await handler(request.params)
-                if handler_name in ["handle_skills_install", "handle_skills_uninstall", "handle_skills_import_local"]:
+                if handler_name in [
+                    "handle_skills_install",
+                    "handle_skills_uninstall",
+                    "handle_skills_import_local",
+                    "handle_skills_skillnet_install",
+                ]:
                     await self.create_instance()
             except Exception as exc:
                 logger.error("[JiuWenClaw] skills 请求处理失败: %s", exc)

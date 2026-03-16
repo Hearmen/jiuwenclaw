@@ -42,6 +42,8 @@ class ReqMethod(Enum):
     SKILLS_MARKETPLACE_REMOVE = "skills.marketplace.remove"
     SKILLS_MARKETPLACE_TOGGLE = "skills.marketplace.toggle"
     SKILLS_UNINSTALL = "skills.uninstall"
+    SKILLS_SKILLNET_SEARCH = "skills.skillnet.search"
+    SKILLS_SKILLNET_INSTALL = "skills.skillnet.install"
 
     HEARTBEAT_GET_CONF = "heartbeat.get_conf"
     HEARTBEAT_SET_CONF = "heartbeat.set_conf"

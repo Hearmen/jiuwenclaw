@@ -448,6 +448,20 @@
     "noMatches": "No matching skills",
     "detailLoading": "Loading details...",
     "detailError": "Failed to load details",
+    "skillNet": {
+      "title": "SkillNet Online Search",
+      "search": "Search",
+      "collapse": "Collapse",
+      "expand": "Expand",
+      "searchPlaceholder": "Enter keywords (e.g. pdf)",
+      "noResults": "No SkillNet results",
+      "installFromResult": "Install",
+      "meta": "Author {{author}} · ⭐ {{stars}}",
+      "showDetail": "Click to expand details",
+      "hideDetail": "Click to collapse details",
+      "category": "Category",
+      "url": "URL"
+    },
     "marketplacesAvailable": "Available marketplaces: {{names}}",
     "marketplacesDefault": "Default marketplace: anthropics",
     "installPrompt": "Enter plugin spec (plugin@marketplace)",
@@ -456,11 +470,16 @@
     "messages": {
       "installed": "Installed: {{spec}}",
       "imported": "Imported: {{name}}",
-      "uninstalled": "Uninstalled: {{pluginName}}"
+      "uninstalled": "Uninstalled: {{pluginName}}",
+      "skillNetInstalled": "Installed from SkillNet: {{name}}"
     },
     "errors": {
       "installFailed": "Install failed",
       "installFailedHint": "Install failed. Check the plugin spec or network.",
+      "skillNetSearchFailed": "SkillNet search failed",
+      "skillNetSearchFailedHint": "SkillNet search failed. Check network or backend logs.",
+      "skillNetInstallFailed": "SkillNet install failed",
+      "skillNetInstallFailedHint": "SkillNet install failed. Check the skill URL or dependencies.",
       "importFailed": "Import failed",
       "importFailedHint": "Import failed. Check the path or permissions.",
       "uninstallFailed": "Uninstall failed",

@@ -7,6 +7,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { useTranslation } from 'react-i18next';
 import { webRequest } from "../../services/webClient";
 import { SourceManagerModal } from "../../features/SourceManagerModal";
+import { SkillNetSearchModal } from "../../features/SkillNetSearchModal";
 
 type SkillItem = {
   name: string;
@@ -66,6 +67,7 @@ export function SkillPanel({ sessionId }: SkillPanelProps) {
   const [message, setMessage] = useState<string | null>(null);
   const [messageType, setMessageType] = useState<"success" | "error" | null>(null);
   const [sourceModalOpen, setSourceModalOpen] = useState(false);
+  const [skillNetModalOpen, setSkillNetModalOpen] = useState(false);
   const withSession = useCallback(
     (params?: Record<string, unknown>) => ({
       ...(params || {}),
@@ -101,6 +103,22 @@ export function SkillPanel({ sessionId }: SkillPanelProps) {
       return haystack.includes(keyword);
     });
   }, [skills, search]);
+
+  const visibleSkills = useMemo(() => {
+    return [...filteredSkills].sort((a, b) => {
+      const aInstalled = installedSkillMap.has(a.name) ? 1 : 0;
+      const bInstalled = installedSkillMap.has(b.name) ? 1 : 0;
+      if (aInstalled !== bInstalled) {
+        return bInstalled - aInstalled;
+      }
+      const aSkillNet = a.source === "skillnet" ? 1 : 0;
+      const bSkillNet = b.source === "skillnet" ? 1 : 0;
+      if (aSkillNet !== bSkillNet) {
+        return bSkillNet - aSkillNet;
+      }
+      return a.name.localeCompare(b.name);
+    });
+  }, [filteredSkills, installedSkillMap]);
 
   const fetchMarketplaces = useCallback(async () => {
     try {
@@ -400,10 +418,8 @@ export function SkillPanel({ sessionId }: SkillPanelProps) {
           </div>
         </div>
 
-        {message && (
-          <div className={`mt-3 px-3 py-2 rounded-md bg-secondary text-sm ${
-            messageType === "error" ? "text-danger" : "text-text"
-          }`}>
+        {message && messageType === "error" && (
+          <div className="mt-3 px-3 py-2 rounded-md bg-secondary text-sm text-danger">
             {message}
           </div>
         )}
@@ -482,6 +498,15 @@ export function SkillPanel({ sessionId }: SkillPanelProps) {
           </div>
         ) : (
           <div className="mt-4 flex flex-col flex-1 min-h-0">
+            <div className="mb-3 flex-shrink-0">
+              <button
+                type="button"
+                onClick={() => setSkillNetModalOpen(true)}
+                className="px-3 py-2 rounded-md text-sm bg-accent text-white hover:bg-accent-hover transition-colors"
+              >
+                {t('skills.skillNet.title')}
+              </button>
+            </div>
             <div className="flex items-center gap-3 flex-shrink-0">
               <div className="flex-1 min-w-0">
                 <input
@@ -492,7 +517,7 @@ export function SkillPanel({ sessionId }: SkillPanelProps) {
                 />
               </div>
               <div className="text-xs text-text-muted flex-shrink-0">
-                {t('skills.totalCount', { count: filteredSkills.length })}
+                {t('skills.totalCount', { count: visibleSkills.length })}
               </div>
             </div>
 
@@ -505,11 +530,11 @@ export function SkillPanel({ sessionId }: SkillPanelProps) {
                   {t('skills.listError')}
                 </div>
               )}
-              {listState === "success" && filteredSkills.length === 0 && (
+              {listState === "success" && visibleSkills.length === 0 && (
                 <div className="text-sm text-text-muted">{t('skills.noMatches')}</div>
               )}
                 {listState === "success" &&
-                filteredSkills.map((skill) => (
+                visibleSkills.map((skill) => (
                   <button
                     key={skill.name}
                     onClick={() => handleOpenSkill(skill.name)}
@@ -547,6 +572,14 @@ export function SkillPanel({ sessionId }: SkillPanelProps) {
         sessionId={sessionId}
         onClose={() => setSourceModalOpen(false)}
         onUpdated={async () => {
+          await fetchSkills();
+        }}
+      />
+      <SkillNetSearchModal
+        open={skillNetModalOpen}
+        sessionId={sessionId}
+        onClose={() => setSkillNetModalOpen(false)}
+        onInstalled={async () => {
           await fetchSkills();
         }}
       />

@@ -8,6 +8,8 @@ import asyncio
 import json
 import re
 import shutil
+import tempfile
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -207,8 +209,144 @@ class SkillManager:
             "source": marketplace_name,
             "installed_at": datetime.now(timezone.utc).isoformat(),
         })
+        self._refresh_agent_data_indexes()
 
         return {"success": True}
+
+    async def handle_skills_skillnet_search(self, params: dict) -> dict:
+        """在线搜索 SkillNet 技能."""
+        query = str(params.get("q", "")).strip()
+        if not query:
+            return {"success": False, "detail": "缺少参数: q"}
+
+        # 尽量与 SkillNet API 对齐，便于前端透传。
+        search_kwargs: dict[str, Any] = {"q": query}
+        if params.get("mode"):
+            search_kwargs["mode"] = params.get("mode")
+        if params.get("category"):
+            search_kwargs["category"] = params.get("category")
+        if params.get("limit") is not None:
+            try:
+                search_kwargs["limit"] = int(params.get("limit"))
+            except Exception:
+                return {"success": False, "detail": "参数 limit 必须是整数"}
+        if params.get("page") is not None:
+            try:
+                search_kwargs["page"] = int(params.get("page"))
+            except Exception:
+                return {"success": False, "detail": "参数 page 必须是整数"}
+        if params.get("min_stars") is not None:
+            try:
+                search_kwargs["min_stars"] = int(params.get("min_stars"))
+            except Exception:
+                return {"success": False, "detail": "参数 min_stars 必须是整数"}
+        if params.get("sort_by"):
+            search_kwargs["sort_by"] = params.get("sort_by")
+        if params.get("threshold") is not None:
+            try:
+                search_kwargs["threshold"] = float(params.get("threshold"))
+            except Exception:
+                return {"success": False, "detail": "参数 threshold 必须是数字"}
+
+        try:
+            raw_results = await asyncio.to_thread(self._skillnet_search_sync, search_kwargs)
+        except Exception as exc:
+            logger.error("SkillNet 搜索失败: %s", exc)
+            return {"success": False, "detail": f"SkillNet 搜索失败: {exc}"}
+
+        normalized: list[dict[str, Any]] = []
+        for item in raw_results:
+            if hasattr(item, "dict"):
+                try:
+                    item = item.dict()
+                except Exception:
+                    item = vars(item)
+            elif not isinstance(item, dict):
+                item = vars(item)
+
+            normalized.append({
+                "skill_name": item.get("skill_name", item.get("name", "")),
+                "skill_description": item.get("skill_description", item.get("description", "")),
+                "author": item.get("author", ""),
+                "stars": item.get("stars", 0),
+                "skill_url": item.get("skill_url", item.get("url", "")),
+                "category": item.get("category", ""),
+            })
+
+        return {
+            "success": True,
+            "query": query,
+            "count": len(normalized),
+            "skills": normalized,
+        }
+
+    async def handle_skills_skillnet_install(self, params: dict) -> dict:
+        """从 SkillNet URL 下载并安装技能到本地 skills 目录."""
+        skill_url = str(params.get("url", "")).strip()
+        force = bool(params.get("force", False))
+        if not skill_url:
+            return {"success": False, "detail": "缺少参数: url"}
+
+        with tempfile.TemporaryDirectory(prefix="jiuwenclaw_skillnet_") as tmpdir:
+            tmp_path = Path(tmpdir)
+            try:
+                download_path_str = await asyncio.to_thread(
+                    self._skillnet_download_sync,
+                    skill_url,
+                    str(tmp_path),
+                )
+            except Exception as exc:
+                logger.error("SkillNet 下载失败: %s", exc)
+                return {"success": False, "detail": f"SkillNet 下载失败: {exc}"}
+
+            download_path = Path(download_path_str).resolve()
+            if not download_path.exists():
+                return {"success": False, "detail": f"下载结果不存在: {download_path}"}
+
+            skill_dir = self._locate_skill_dir(download_path)
+            if skill_dir is None:
+                return {"success": False, "detail": "下载内容中未找到 SKILL.md"}
+
+            md = self._try_find_skill_file(skill_dir)
+            meta = self._parse_skill_md(md) if md else None
+            if meta is None:
+                return {"success": False, "detail": "无法解析下载的技能文件"}
+
+            skill_name = str(meta.get("name", skill_dir.name)).strip() or skill_dir.name
+            dest = _SKILLS_DIR / skill_name
+            if dest.exists():
+                if not force:
+                    return {"success": False, "detail": f"skill {skill_name} 已存在，使用 force=true 覆盖"}
+                shutil.rmtree(dest)
+
+            # 拷贝完整目录，保持 skill 的资源文件结构。
+            shutil.copytree(skill_dir, dest)
+            # 兼容：同步写入源码工作区，便于在项目目录下直接查看和扫描。
+            for mirror_root in self._get_mirror_skills_dirs():
+                mirror_dest = mirror_root / skill_name
+                if mirror_dest.exists():
+                    if not force:
+                        continue
+                    shutil.rmtree(mirror_dest)
+                mirror_root.mkdir(parents=True, exist_ok=True)
+                shutil.copytree(skill_dir, mirror_dest)
+
+        self._add_local_skill({
+            "name": skill_name,
+            "origin": skill_url,
+            "source": "skillnet",
+            "installed_at": datetime.now(timezone.utc).isoformat(),
+        })
+        self._add_installed_plugin({
+            "name": skill_name,
+            "marketplace": "skillnet",
+            "version": meta.get("version", ""),
+            "commit": "",
+            "source": "skillnet",
+            "installed_at": datetime.now(timezone.utc).isoformat(),
+        })
+        self._refresh_agent_data_indexes()
+        return {"success": True, "skill": {"name": skill_name, "source": "skillnet"}}
 
     async def handle_skills_uninstall(self, params: dict) -> dict:
         """卸载已安装的 skill.
@@ -223,8 +361,13 @@ class SkillManager:
         dest = _SKILLS_DIR / name
         if dest.exists() and dest.is_dir():
             shutil.rmtree(dest)
+        for mirror_root in self._get_mirror_skills_dirs():
+            mirror_dest = mirror_root / name
+            if mirror_dest.exists() and mirror_dest.is_dir():
+                shutil.rmtree(mirror_dest)
 
         self._remove_installed_plugin(name)
+        self._refresh_agent_data_indexes()
         return {"success": True}
 
     async def handle_skills_import_local(self, params: dict) -> dict:
@@ -272,6 +415,7 @@ class SkillManager:
             return {"success": False, "detail": f"不支持的路径类型: {raw_path}"}
 
         self._add_local_skill({"name": skill_name, "origin": raw_path, "source": "local"})
+        self._refresh_agent_data_indexes()
         return {"success": True, "skill": {"name": skill_name}}
 
     async def handle_skills_marketplace_add(self, params: dict) -> dict:
@@ -500,7 +644,7 @@ class SkillManager:
             # 检查是否通过 import_local 导入
             for ls in self._state.get("local_skills", []):
                 if ls.get("name") == meta.get("name"):
-                    source = "local"
+                    source = ls.get("source", "local") if isinstance(ls, dict) else "local"
                     break
 
             meta["source"] = source
@@ -587,6 +731,117 @@ class SkillManager:
                 results.append(meta)
 
         return results
+
+    @staticmethod
+    def _get_mirror_skills_dirs() -> list[Path]:
+        """返回需要镜像同步的 skills 目录（不包含当前运行目录）."""
+        mirrors: list[Path] = []
+        try:
+            source_repo_root = Path(__file__).resolve().parents[2]
+            source_skills_dir = source_repo_root / "workspace" / "agent" / "skills"
+            if source_skills_dir.resolve() != _SKILLS_DIR.resolve():
+                mirrors.append(source_skills_dir)
+        except Exception:
+            return []
+        return mirrors
+
+    @staticmethod
+    def _generate_agent_data_for_workspace(workspace_root: Path) -> None:
+        """Generate workspace/agent-data.json from workspace/agent tree."""
+        agent_root = (workspace_root / "agent").resolve()
+        output_path = (workspace_root / "agent-data.json").resolve()
+        root_folder_key = "__root__"
+
+        if not agent_root.exists() or not agent_root.is_dir():
+            return
+
+        folder_data: dict[str, list[dict[str, str | bool]]] = {}
+        for entry in sorted(agent_root.rglob("*")):
+            if not entry.is_file():
+                continue
+            relative_file_path = entry.relative_to(agent_root).as_posix()
+            relative_folder_path = entry.parent.relative_to(agent_root).as_posix()
+            folder_key = root_folder_key if relative_folder_path == "." else relative_folder_path
+            folder_data.setdefault(folder_key, []).append(
+                {
+                    "name": entry.name,
+                    "path": f"workspace/agent/{relative_file_path}",
+                    "isMarkdown": entry.suffix.lower() in {".md", ".mdx"},
+                }
+            )
+
+        sorted_folder_data = {
+            folder_key: sorted(files, key=lambda item: item["path"])
+            for folder_key, files in sorted(folder_data.items(), key=lambda item: item[0])
+        }
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        output_path.write_text(
+            json.dumps(sorted_folder_data, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+
+    def _refresh_agent_data_indexes(self) -> None:
+        """Refresh agent-data.json for runtime and mirror workspaces."""
+        workspace_roots: set[Path] = set()
+        workspace_roots.add(_WORKSPACE.resolve())
+        for mirror_root in self._get_mirror_skills_dirs():
+            try:
+                workspace_roots.add(mirror_root.parent.parent.resolve())
+            except Exception:
+                continue
+        for workspace_root in workspace_roots:
+            try:
+                self._generate_agent_data_for_workspace(workspace_root)
+            except Exception as exc:
+                logger.warning("重建 agent-data.json 失败: workspace=%s error=%s", workspace_root, exc)
+
+    @staticmethod
+    def _locate_skill_dir(path: Path) -> Path | None:
+        """定位包含 SKILL.md 的目录（优先当前目录，再向下递归）."""
+        if path.is_file() and path.name.lower() == "skill.md":
+            return path.parent
+        if path.is_dir():
+            direct = path / "SKILL.md"
+            if direct.is_file():
+                return path
+            for md in path.rglob("SKILL.md"):
+                if md.is_file():
+                    return md.parent
+        return None
+
+    @staticmethod
+    def _skillnet_search_sync(search_kwargs: dict[str, Any]) -> list[Any]:
+        """同步调用 skillnet-ai search，供 asyncio.to_thread 使用."""
+        try:
+            from skillnet_ai import SkillNetClient
+        except Exception as exc:
+            raise RuntimeError(
+                "未安装 skillnet-ai，请先安装依赖: pip install skillnet-ai"
+            ) from exc
+
+        client = SkillNetClient()
+        results = client.search(**search_kwargs)
+        if results is None:
+            return []
+        if isinstance(results, list):
+            return results
+        return list(results)
+
+    @staticmethod
+    def _skillnet_download_sync(skill_url: str, target_dir: str) -> str:
+        """同步调用 skillnet-ai download，供 asyncio.to_thread 使用."""
+        try:
+            from skillnet_ai import SkillNetClient
+        except Exception as exc:
+            raise RuntimeError(
+                "未安装 skillnet-ai，请先安装依赖: pip install skillnet-ai"
+            ) from exc
+
+        client = SkillNetClient()
+        local_path = client.download(url=skill_url, target_dir=target_dir)
+        if not local_path:
+            raise RuntimeError("SkillNet 返回空下载路径")
+        return str(local_path)
 
     # -----------------------------------------------------------------------
     # Git 操作
