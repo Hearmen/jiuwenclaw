@@ -129,7 +129,7 @@ Input:
     def clean_and_deduplicate(self, data: dict) -> dict:
 
         prompt = f"""
-Given a tool description JSON, go throught the content sentence 
+Given a tool description JSON, go through the content sentence 
 by sentence and perform the following cleaning tasks:
 
 1. Remove usage example in the main tool description

@@ -512,7 +512,7 @@ Return JSON following this exact schema structure (modify only description texts
         max_num_examples = self.config['num_examples_for_desc']
 
         if os.path.exists(examples_path):
-            # load from privided path
+            # load from provided path
             with open(examples_path, 'r', encoding='utf-8') as f:
                 all_outputs = json.load(f)
         else:

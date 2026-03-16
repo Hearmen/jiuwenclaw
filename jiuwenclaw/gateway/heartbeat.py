@@ -21,7 +21,7 @@ HEARTBEAT_CHANNEL_ID = "__heartbeat__"
 HEARTBEAT_OK = "HEARTBEAT_OK"
 
 # 探活请求发送的 content，AgentServer 可识别为心跳
-HEARTBEAT_PROMPT = "如果你的workspace目录存在HEARBEAT.md文件, 读取文件内容并且根据文件内容执行任务. 如果没有HEARBEAT.md文件, 仅回复HEARTBEAT_OK"
+HEARTBEAT_PROMPT = "如果你的workspace目录存在HEARTBEAT.md文件, 读取文件内容并且根据文件内容执行任务. 如果没有HEARTBEAT.md文件, 仅回复HEARTBEAT_OK"
 
 
 def normalize_active_hours(active_hours: dict[str, str] | None) -> dict[str, str] | None:

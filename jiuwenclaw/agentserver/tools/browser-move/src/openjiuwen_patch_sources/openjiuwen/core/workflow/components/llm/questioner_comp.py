@@ -209,7 +209,7 @@ class QuestionerEndState(QuestionerState):
 
     def handle_event(self, event: QuestionerEvent):
         if event == QuestionerEvent.START_EVENT:
-            return QuestionerState().handle_event(event)  # loop back to STRAT state
+            return QuestionerState().handle_event(event)  # loop back to START state
         return self
 
 

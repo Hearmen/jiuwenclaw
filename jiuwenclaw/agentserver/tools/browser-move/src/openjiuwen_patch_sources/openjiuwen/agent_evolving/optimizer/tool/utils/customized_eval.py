@@ -409,7 +409,7 @@ Please evaluate on a scale of 0-100 how well the function execution result addre
 2. Is the result accurate and complete?
 3. Does it align with the expected answer?
 
-Respond with only a number between 0 and 100. Do not include explainations.
+Respond with only a number between 0 and 100. Do not include explanations.
 """
         
         try:
