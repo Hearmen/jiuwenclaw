@@ -655,7 +655,6 @@ def _register_web_handlers(
 
     async def _channel_telegram_get_conf(ws, req_id, params, session_id):
         """返回 TelegramChannel 的当前配置（由 ChannelManager 管理）。"""
-    async def _channel_dingtalk_get_conf(ws, req_id, params, session_id):
         cm = _resolve(channel_manager)
         if cm is None:
             await channel.send_response(
@@ -675,14 +674,6 @@ def _register_web_handlers(
 
     async def _channel_telegram_set_conf(ws, req_id, params, session_id):
         """更新 TelegramChannel 的配置，并按新配置重新实例化通道。"""
-        try:
-            conf = cm.get_conf("dingtalk")
-            await channel.send_response(ws, req_id, ok=True, payload={"config": conf})
-        except Exception as e:  # noqa: BLE001
-            logger.exception("[channel.dingtalk.get_conf] %s", e)
-            await channel.send_response(ws, req_id, ok=False, error=str(e), code="INTERNAL_ERROR")
-
-    async def _channel_dingtalk_set_conf(ws, req_id, params, session_id):
         cm = _resolve(channel_manager)
         if cm is None:
             await channel.send_response(
