@@ -28,7 +28,6 @@ from openjiuwen.core.session.stream.base import StreamMode
 from openjiuwen.core.single_agent import AgentCard, ReActAgent
 
 from jiuwenclaw.agentserver.tools.todo_toolkits import TodoToolkit
-from jiuwenclaw.agentserver.prompt_builder import build_system_prompt
 from jiuwenclaw.evolution.service import EvolutionService
 from jiuwenclaw.utils import logger, USER_WORKSPACE_DIR
 from jiuwenclaw.config import get_config

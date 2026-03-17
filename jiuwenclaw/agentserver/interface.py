@@ -364,6 +364,7 @@ class JiuWenClaw:
 
         # 定时工具：按 channel 注册；仅当 resource_mgr 中尚未存在时 add_tool，避免重复添加触发 "resource already exist"
         channel = session_id.split('_')[0]
+        logger.info(f"[JiuwenClaw] update tool and prompt for channel {channel}")
         if channel not in ["heartbeat", "cron"]:
             cron_controller = CronController.get_instance()
 
@@ -411,7 +412,11 @@ class JiuWenClaw:
         config_base = get_config()
         self._instance._config.prompt_template = [{
             "role": "system",
-            "content": build_system_prompt(mode=mode, language=config_base.get("preferred_language", "zh")),
+            "content": build_system_prompt(
+                mode=mode,
+                language=config_base.get("preferred_language", "zh"),
+                channel=channel
+            ),
         }]
 
     async def process_interrupt(self, request: AgentRequest) -> AgentResponse:

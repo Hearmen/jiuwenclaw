@@ -353,12 +353,24 @@ def _time_prompt(language: str) -> str:
 """
 
 
-def build_system_prompt(mode: str, language: str) -> str:
+def _cron_prompt(language: str) -> str:
+    if language == "zh":
+        return """# 定时任务
+用户会给你遗留一些定时任务，你需要在执行完所有的工具后，通过回复直接通知用户结果。
+"""
+    else:
+        return """# Cron Jobs
+User may leave you some cron jobs, after finishing all tool calls, just reply and inform user about the job results.
+"""
+
+
+def build_system_prompt(mode: str, language: str, channel: str) -> str:
     """Build system prompt for the agent.
 
     Args:
         mode: plan or agent
         language: language for system prompt
+        channel: channel
 
     Returns:
         System prompt string
@@ -371,9 +383,12 @@ def build_system_prompt(mode: str, language: str) -> str:
 
     system_prompt += _context_prompt(language) + '\n'
     system_prompt += _personality_prompt(language) + '\n'
-    system_prompt += _memory_prompt(language) + '\n'
     if mode == "plan":
         system_prompt += _todo_prompt(language) + '\n'
+    if channel == "cron":
+        system_prompt += _cron_prompt(language) + '\n'
+    else:
+        system_prompt += _memory_prompt(language) + '\n'
     # system_prompt += _tool_prompt(mode, language) + '\n'
     # system_prompt += _skills_prompt(language) + '\n'
     system_prompt += _workspace_prompt(language) + '\n'
