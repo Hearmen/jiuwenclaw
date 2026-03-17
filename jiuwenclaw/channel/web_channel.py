@@ -320,7 +320,7 @@ class WebChannel(BaseChannel):
             async for raw in ws:
                 await self._handle_raw_message(ws, raw, query)
         except Exception as e:  # pragma: no cover - 连接生命周期容错
-            logger.warning("WebChannel 连接异常: {}", e)
+            logger.warning("WebChannel 连接异常: %s", e)
         finally:
             self._clients.discard(ws)
             logger.info(f"WebChannel 连接关闭: remote={remote}")

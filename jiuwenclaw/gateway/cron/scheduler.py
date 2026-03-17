@@ -163,6 +163,9 @@ class CronSchedulerService:
         self._seq += 1
         ev = _Event(at_ts=at_ts, seq=self._seq, kind=kind, job_id=job_id, run_id=run_id)
         heapq.heappush(self._events, (ev.at_ts, ev.seq, ev))
+        # 若事件已在 1 秒内到期（如 push_update 补发），需唤醒主循环，否则会等到 timeout（可能 10 分钟）
+        if at_ts <= self._now_fn() + 1.0:
+            self._reload_event.set()
 
     def _compute_next_run(self, job: CronJob, *, now_ts: float) -> tuple[datetime, datetime, str]:
         tz = ZoneInfo(job.timezone)
@@ -286,11 +289,25 @@ class CronSchedulerService:
                 state.finished_at = self._now_fn()
                 # if placeholder already sent, push update immediately
                 if state.placeholder_sent and not state.pushed_final and state.result_text:
+                    logger.info(
+                        "[Cron] scheduling immediate push_update after agent finished "
+                        "job=%s run_id=%s text_len=%d",
+                        job.id,
+                        run_id,
+                        len(state.result_text or ""),
+                    )
                     self._schedule_event(datetime.fromtimestamp(self._now_fn(), tz=ZoneInfo(job.timezone)), "push_update", job.id, run_id)
                 # if push time already passed, also try to push update
                 try:
                     push_dt = datetime.fromisoformat(state.push_at_iso)
                     if push_dt.timestamp() <= self._now_fn() and not state.pushed_final and state.result_text:
+                        logger.info(
+                            "[Cron] scheduling late push_update because push_at<=now "
+                            "job=%s run_id=%s text_len=%d",
+                            job.id,
+                            run_id,
+                            len(state.result_text or ""),
+                        )
                         self._schedule_event(datetime.fromtimestamp(self._now_fn(), tz=ZoneInfo(job.timezone)), "push_update", job.id, run_id)
                 except Exception:
                     pass
@@ -331,14 +348,35 @@ class CronSchedulerService:
 
     async def _on_push_update(self, job: CronJob, run_id: str) -> None:
         state = self._runs.get(run_id)
-        if state is None or state.pushed_final:
+        if state is None:
+            logger.info("[Cron] push_update skipped: no state job=%s run_id=%s", job.id, run_id)
+            return
+        if state.pushed_final:
+            logger.info("[Cron] push_update skipped: already pushed_final job=%s run_id=%s", job.id, run_id)
             return
         if not state.result_text:
+            logger.info("[Cron] push_update skipped: empty result_text job=%s run_id=%s", job.id, run_id)
             return
+        logger.info(
+            "[Cron] push_update start job=%s run_id=%s text_len=%d",
+            job.id,
+            run_id,
+            len(state.result_text or ""),
+        )
         await self._push_to_targets(job, state, text=state.result_text, is_placeholder=False)
         state.pushed_final = True
+        logger.info("[Cron] push_update done job=%s run_id=%s", job.id, run_id)
 
     async def _push_to_targets(self, job: CronJob, state: CronRunState, *, text: str, is_placeholder: bool) -> None:
+        logger.info(
+            "[Cron] push_to_targets job=%s run_id=%s channel=%s is_placeholder=%s text_len=%d status=%s",
+            job.id,
+            state.run_id,
+            (job.targets or "").strip(),
+            bool(is_placeholder),
+            len(text or ""),
+            state.status,
+        )
         payload_extra = {
             "content": text,
             "cron": {

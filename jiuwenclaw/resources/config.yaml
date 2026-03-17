@@ -88,7 +88,7 @@ channels:
     auto_start_bridge: false
     bridge_command: node scripts/whatsapp-bridge.js
     bridge_workdir:
-    enabled: true
+    enabled: false
 
 browser:
   # chrome_path can be a string or per-OS map.
