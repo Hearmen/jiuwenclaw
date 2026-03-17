@@ -20,6 +20,8 @@ class ChannelType(str, Enum):
     FEISHU = "feishu"
     XIAOYI = "xiaoyi"
     DINGTALK = "dingtalk"
+    TELEGRAM = "telegram"
+    DISCORD = "discord"
     WHATSAPP = "whatsapp"
 
 

@@ -25,6 +25,7 @@ dependencies = [
     "aiosqlite>=0.22.1",
     "croniter>=2.0.0",
     "python-telegram-bot>=20.0",
+    "discord.py>=2.4.0",
     "dingtalk-stream>=0.24.3",
     "python-socks>=2.8.1",
     "greenlet>=3.3.2",

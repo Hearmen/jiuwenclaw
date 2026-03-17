@@ -14,7 +14,7 @@ type ChannelItem = {
 };
 
 type LoadState = 'idle' | 'loading' | 'success' | 'error';
-type SupportedChannelId = 'web' | 'xiaoyi' | 'feishu' | 'dingtalk' | 'telegram';
+type SupportedChannelId = 'web' | 'xiaoyi' | 'feishu' | 'dingtalk' | 'telegram' | 'discord';
 const ADAPTING_CHANNEL_IDS = new Set<SupportedChannelId>([]);
 
 type FeishuConfig = {
@@ -83,6 +83,24 @@ type TelegramDraft = {
   group_chat_mode: string;
 };
 
+type DiscordConfig = {
+  enabled: boolean;
+  bot_token: string;
+  application_id: string;
+  guild_id: string;
+  channel_id: string;
+  allow_from: string[];
+};
+
+type DiscordDraft = {
+  enabled: boolean;
+  bot_token: string;
+  application_id: string;
+  guild_id: string;
+  channel_id: string;
+  allow_from: string;
+};
+
 const DEFAULT_FEISHU_CONF: FeishuConfig = {
   enabled: false,
   app_id: '',
@@ -116,12 +134,22 @@ const DEFAULT_TELEGRAM_CONF: TelegramConfig = {
   group_chat_mode: 'mention',
 };
 
+const DEFAULT_DISCORD_CONF: DiscordConfig = {
+  enabled: false,
+  bot_token: '',
+  application_id: '',
+  guild_id: '',
+  channel_id: '',
+  allow_from: [],
+};
+
 const SUPPORTED_CHANNELS: Array<{ channel_id: SupportedChannelId; logo_src: string | null }> = [
   { channel_id: 'web', logo_src: null },
   { channel_id: 'xiaoyi', logo_src: '/xiaoyi.webp' },
   { channel_id: 'feishu', logo_src: '/feishu.webp' },
   { channel_id: 'dingtalk', logo_src: '/dingtalk.png' },
   { channel_id: 'telegram', logo_src: '/telegram.webp' },
+  { channel_id: 'discord', logo_src: '/discord.jpg' },
 ];
 
 
@@ -334,6 +362,51 @@ function buildTelegramPayload(draft: TelegramDraft): Record<string, unknown> {
   };
 }
 
+function isSensitiveDiscordField(field: keyof DiscordDraft): boolean {
+  return field === 'bot_token';
+}
+
+function normalizeDiscordConfig(input: unknown): DiscordConfig {
+  if (!input || typeof input !== 'object') {
+    return DEFAULT_DISCORD_CONF;
+  }
+  const data = input as Record<string, unknown>;
+  const allowFromRaw = Array.isArray(data.allow_from) ? data.allow_from : [];
+  const allowFrom = allowFromRaw
+    .map((item) => String(item ?? '').trim())
+    .filter((item) => item.length > 0);
+  return {
+    enabled: Boolean(data.enabled),
+    bot_token: String(data.bot_token ?? '').trim(),
+    application_id: String(data.application_id ?? '').trim(),
+    guild_id: String(data.guild_id ?? '').trim(),
+    channel_id: String(data.channel_id ?? '').trim(),
+    allow_from: allowFrom,
+  };
+}
+
+function draftFromDiscordConfig(conf: DiscordConfig): DiscordDraft {
+  return {
+    enabled: conf.enabled,
+    bot_token: conf.bot_token,
+    application_id: conf.application_id,
+    guild_id: conf.guild_id,
+    channel_id: conf.channel_id,
+    allow_from: conf.allow_from.join('\n'),
+  };
+}
+
+function buildDiscordPayload(draft: DiscordDraft): Record<string, unknown> {
+  return {
+    enabled: draft.enabled,
+    bot_token: draft.bot_token.trim(),
+    application_id: draft.application_id.trim(),
+    guild_id: draft.guild_id.trim(),
+    channel_id: draft.channel_id.trim(),
+    allow_from: normalizeAllowFromText(draft.allow_from),
+  };
+}
+
 function VisibilityIcon({ visible }: { visible: boolean }) {
   return visible ? (
     <svg className="channels-panel__icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8}>
@@ -428,6 +501,13 @@ export function ChannelsPanel({ isConnected }: ChannelsPanelProps) {
   const [telegramSaving, setTelegramSaving] = useState(false);
   const [telegramSaveError, setTelegramSaveError] = useState<string | null>(null);
   const [telegramSuccess, setTelegramSuccess] = useState<string | null>(null);
+  const [discordConfig, setDiscordConfig] = useState<DiscordConfig>(DEFAULT_DISCORD_CONF);
+  const [discordDraft, setDiscordDraft] = useState<DiscordDraft>(draftFromDiscordConfig(DEFAULT_DISCORD_CONF));
+  const [discordVisibleFields, setDiscordVisibleFields] = useState<Record<string, boolean>>({});
+  const [discordLoading, setDiscordLoading] = useState(false);
+  const [discordSaving, setDiscordSaving] = useState(false);
+  const [discordSaveError, setDiscordSaveError] = useState<string | null>(null);
+  const [discordSuccess, setDiscordSuccess] = useState<string | null>(null);
 
   const fetchChannels = useCallback(async () => {
     setLoadState('loading');
@@ -516,6 +596,23 @@ export function ChannelsPanel({ isConnected }: ChannelsPanelProps) {
     }
   }, [t]);
 
+  const fetchDiscordConfig = useCallback(async () => {
+    setDiscordLoading(true);
+    setDiscordSaveError(null);
+    setDiscordSuccess(null);
+    try {
+      const payload = await webRequest<{ config?: unknown }>('channel.discord.get_conf');
+      const normalized = normalizeDiscordConfig(payload?.config);
+      setDiscordConfig(normalized);
+      setDiscordDraft(draftFromDiscordConfig(normalized));
+      setDiscordVisibleFields({});
+    } catch (err) {
+      setDiscordSaveError(err instanceof Error ? err.message : t('channels.errors.loadDiscord'));
+    } finally {
+      setDiscordLoading(false);
+    }
+  }, [t]);
+
   const handleSelectChannel = useCallback(
     (channelId: SupportedChannelId) => {
       if (ADAPTING_CHANNEL_IDS.has(channelId)) {
@@ -541,8 +638,12 @@ export function ChannelsPanel({ isConnected }: ChannelsPanelProps) {
     }
     if (activeChannelId === 'telegram') {
       void fetchTelegramConfig();
+      return;
     }
-  }, [activeChannelId, fetchDingtalkConfig, fetchFeishuConfig, fetchTelegramConfig, fetchXiaoyiConfig]);
+    if (activeChannelId === 'discord') {
+      void fetchDiscordConfig();
+    }
+  }, [activeChannelId, fetchDiscordConfig, fetchDingtalkConfig, fetchFeishuConfig, fetchTelegramConfig, fetchXiaoyiConfig]);
 
   const statusText = useMemo(() => {
     const enabledCount = channels.filter((channel) => channel.enabled).length;
@@ -597,6 +698,17 @@ export function ChannelsPanel({ isConnected }: ChannelsPanelProps) {
       baseDraft.group_chat_mode !== telegramDraft.group_chat_mode
     );
   }, [telegramConfig, telegramDraft]);
+  const hasDiscordConfigChanges = useMemo(() => {
+    const baseDraft = draftFromDiscordConfig(discordConfig);
+    return (
+      baseDraft.enabled !== discordDraft.enabled ||
+      baseDraft.bot_token !== discordDraft.bot_token ||
+      baseDraft.application_id !== discordDraft.application_id ||
+      baseDraft.guild_id !== discordDraft.guild_id ||
+      baseDraft.channel_id !== discordDraft.channel_id ||
+      normalizeAllowFromText(baseDraft.allow_from).join('\n') !== normalizeAllowFromText(discordDraft.allow_from).join('\n')
+    );
+  }, [discordConfig, discordDraft]);
   const handleFieldChange = <K extends keyof FeishuDraft>(key: K, value: FeishuDraft[K]) => {
     setDraft((prev) => ({ ...prev, [key]: value }));
     if (saveError) {
@@ -681,6 +793,27 @@ export function ChannelsPanel({ isConnected }: ChannelsPanelProps) {
     setTelegramVisibleFields((prev) => ({ ...prev, [field]: !prev[field] }));
   };
 
+  const handleDiscordFieldChange = <K extends keyof DiscordDraft>(key: K, value: DiscordDraft[K]) => {
+    setDiscordDraft((prev) => ({ ...prev, [key]: value }));
+    if (discordSaveError) {
+      setDiscordSaveError(null);
+    }
+    if (discordSuccess) {
+      setDiscordSuccess(null);
+    }
+  };
+
+  const handleCancelDiscordConfig = () => {
+    if (!hasDiscordConfigChanges) return;
+    setDiscordDraft(draftFromDiscordConfig(discordConfig));
+    setDiscordSaveError(null);
+    setDiscordSuccess(null);
+  };
+
+  const toggleDiscordFieldVisible = (field: keyof DiscordDraft) => {
+    setDiscordVisibleFields((prev) => ({ ...prev, [field]: !prev[field] }));
+  };
+
   const handleSaveConfig = async () => {
     if (!hasConfigChanges || saving) return;
     setSaving(true);
@@ -757,16 +890,35 @@ export function ChannelsPanel({ isConnected }: ChannelsPanelProps) {
     }
   };
 
-  const isConfigRefreshing = feishuLoading || xiaoyiLoading || dingtalkLoading || telegramLoading;
+  const handleSaveDiscordConfig = async () => {
+    if (!hasDiscordConfigChanges || discordSaving) return;
+    setDiscordSaving(true);
+    setDiscordSaveError(null);
+    try {
+      const payload = buildDiscordPayload(discordDraft);
+      const result = await webRequest<{ config?: unknown }>('channel.discord.set_conf', payload);
+      const normalized = normalizeDiscordConfig(result?.config);
+      setDiscordConfig(normalized);
+      setDiscordDraft(draftFromDiscordConfig(normalized));
+      setDiscordSuccess(t('channels.saved.discord'));
+    } catch (saveErr) {
+      const message = saveErr instanceof Error ? saveErr.message : t('channels.errors.saveGeneric');
+      setDiscordSaveError(message);
+    } finally {
+      setDiscordSaving(false);
+    }
+  };
+
+  const isConfigRefreshing = feishuLoading || xiaoyiLoading || dingtalkLoading || telegramLoading || discordLoading;
   const configErrorNotice = useMemo(() => {
     return Array.from(
       new Set(
-        [saveError, xiaoyiSaveError, dingtalkSaveError, telegramSaveError].filter(
+        [saveError, xiaoyiSaveError, dingtalkSaveError, telegramSaveError, discordSaveError].filter(
           (message): message is string => Boolean(message),
         ),
       ),
     ).join(t('common.and'));
-  }, [dingtalkSaveError, saveError, t, telegramSaveError, xiaoyiSaveError]);
+  }, [discordSaveError, dingtalkSaveError, saveError, t, telegramSaveError, xiaoyiSaveError]);
   useEffect(() => {
     if (!configErrorNotice) {
       return;
@@ -776,6 +928,7 @@ export function ChannelsPanel({ isConnected }: ChannelsPanelProps) {
       setXiaoyiSaveError(null);
       setDingtalkSaveError(null);
       setTelegramSaveError(null);
+      setDiscordSaveError(null);
     }, 2000);
     return () => {
       window.clearTimeout(timer);
@@ -1394,6 +1547,136 @@ export function ChannelsPanel({ isConnected }: ChannelsPanelProps) {
                             </tr>
                           </tbody>
                         </table>
+                      )}
+                    </div>
+                  </div>
+                ) : null}
+
+                {activeChannelId === 'discord' ? (
+                  <div className="w-full h-full rounded-xl border border-border bg-card/70 backdrop-blur-sm overflow-hidden shadow-sm flex flex-col">
+                    <div className="px-4 py-3 bg-secondary/30 border-b border-border">
+                      <div className="flex items-center justify-between gap-4">
+                        <div className="flex items-center gap-3">
+                          <ChannelHeaderLogo channelId="discord" label={getChannelLabel(t, 'discord')} />
+                          <div>
+                            <h4 className="text-sm font-medium text-text">{t('channels.config.discordTitle')}</h4>
+                            <p className="text-xs text-text-muted mt-1">{t('channels.config.discordSubtitle')}</p>
+                          </div>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <button
+                            type="button"
+                            onClick={() => void fetchDiscordConfig()}
+                            disabled={discordSaving || isConfigRefreshing}
+                            className="btn !px-3 !py-1.5 disabled:opacity-50 disabled:cursor-not-allowed"
+                          >
+                            {discordLoading ? t('common.refreshing') : t('common.refresh')}
+                          </button>
+                          <button
+                            type="button"
+                            onClick={handleCancelDiscordConfig}
+                            disabled={!hasDiscordConfigChanges || discordSaving}
+                            className="btn !px-3 !py-1.5 disabled:opacity-50 disabled:cursor-not-allowed"
+                          >
+                            {t('common.cancel')}
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => void handleSaveDiscordConfig()}
+                            disabled={
+                              !hasDiscordConfigChanges ||
+                              discordSaving ||
+                              !isConnected ||
+                              !discordDraft.bot_token.trim()
+                            }
+                            className="btn primary !px-3 !py-1.5 disabled:opacity-50 disabled:cursor-not-allowed"
+                          >
+                            {discordSaving ? t('common.saving') : t('common.save')}
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+
+                    {discordSuccess ? (
+                      <div className="mx-4 mt-4 rounded-md border border-[var(--border-ok)] bg-ok-subtle px-3 py-2 text-sm text-ok">
+                        {discordSuccess}
+                      </div>
+                    ) : null}
+
+                    <div className="p-4 pt-3 flex-1 overflow-auto">
+                      {discordLoading ? (
+                        <div className="text-sm text-text-muted">{t('channels.loading.discord')}</div>
+                      ) : (
+                        <>
+                          <div className="mb-3 rounded-md border border-border bg-secondary/20 px-3 py-2 text-xs text-text-muted">
+                            {t('channels.config.discordHint')}
+                          </div>
+                          <table className="w-full text-sm">
+                            <tbody>
+                              <tr className="border-t border-border first:border-t-0 even:bg-secondary/10">
+                                <td className="px-4 py-2.5 align-middle mono text-xs text-text-muted w-[32%]">enabled</td>
+                                <td className="px-4 py-2.5 align-middle">
+                                  <button
+                                    type="button"
+                                    role="switch"
+                                    aria-checked={discordDraft.enabled}
+                                    onClick={() => handleDiscordFieldChange('enabled', !discordDraft.enabled)}
+                                    className={`relative inline-flex h-5 w-9 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 focus:outline-none ${
+                                      discordDraft.enabled ? 'bg-ok' : 'bg-secondary'
+                                    }`}
+                                  >
+                                    <span
+                                      className={`pointer-events-none inline-block h-4 w-4 transform rounded-full bg-white shadow transition duration-200 ${
+                                        discordDraft.enabled ? 'translate-x-4' : 'translate-x-0'
+                                      }`}
+                                    />
+                                  </button>
+                                </td>
+                              </tr>
+                              {(['bot_token', 'application_id', 'guild_id', 'channel_id'] as const).map((field) => (
+                                <tr key={field} className="border-t border-border first:border-t-0 even:bg-secondary/10">
+                                  <td className="px-4 py-2.5 align-middle mono text-xs text-text-muted w-[32%]">{field}</td>
+                                  <td className="px-4 py-2.5 break-all text-[13px] align-middle">
+                                    <div className="relative">
+                                      <input
+                                        type={isSensitiveDiscordField(field) && !discordVisibleFields[field] ? 'password' : 'text'}
+                                        value={discordDraft[field]}
+                                        onChange={(e) => handleDiscordFieldChange(field, e.target.value)}
+                                        placeholder={t('channels.placeholders.configValue')}
+                                        className={`w-full rounded-md border border-border bg-bg px-3 py-2 text-[13px] outline-none focus:border-accent ${
+                                          isSensitiveDiscordField(field) ? 'pr-10' : ''
+                                        }`}
+                                      />
+                                      {isSensitiveDiscordField(field) ? (
+                                        <button
+                                          type="button"
+                                          onClick={() => toggleDiscordFieldVisible(field)}
+                                          className="channels-panel__visibility-toggle"
+                                          aria-label={discordVisibleFields[field] ? t('channels.hideValue') : t('channels.showValue')}
+                                          title={discordVisibleFields[field] ? t('channels.hideValue') : t('channels.showValue')}
+                                        >
+                                          <VisibilityIcon visible={Boolean(discordVisibleFields[field])} />
+                                        </button>
+                                      ) : null}
+                                    </div>
+                                  </td>
+                                </tr>
+                              ))}
+                              <tr className="border-t border-border first:border-t-0 even:bg-secondary/10">
+                                <td className="px-4 py-2.5 align-top mono text-xs text-text-muted w-[32%]">allow_from</td>
+                                <td className="px-4 py-2.5 break-all text-[13px] align-middle">
+                                  <textarea
+                                    value={discordDraft.allow_from}
+                                    onChange={(e) => handleDiscordFieldChange('allow_from', e.target.value)}
+                                    placeholder={t('channels.placeholders.ids')}
+                                    rows={4}
+                                    className="w-full rounded-md border border-border bg-bg px-3 py-2 text-[13px] outline-none focus:border-accent resize-y"
+                                  />
+                                </td>
+                              </tr>
+                            </tbody>
+                          </table>
+                        </>
                       )}
                     </div>
                   </div>

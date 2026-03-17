@@ -233,7 +233,8 @@
       "xiaoyi": "Xiaoyi",
       "feishu": "Lark",
       "dingtalk": "DingTalk",
-      "telegram": "Telegram"
+      "telegram": "Telegram",
+      "discord": "Discord"
     },
     "status": {
       "loadFailed": "Load failed",
@@ -251,13 +252,17 @@
       "dingtalkTitle": "DingTalk Channel Configuration",
       "dingtalkSubtitle": "Configure DingTalk channel service settings",
       "feishuTitle": "Lark Channel Configuration",
-      "feishuSubtitle": "Configure Lark channel service settings"
+      "feishuSubtitle": "Configure Lark channel service settings",
+      "discordTitle": "Discord Channel Configuration",
+      "discordSubtitle": "Configure Discord bot service settings",
+      "discordHint": "Discord Bot messaging is supported. Enable Message Content Intent in Developer Portal and set the target channel."
     },
     "loading": {
       "xiaoyi": "Loading Xiaoyi settings...",
       "dingtalk": "Loading DingTalk settings...",
       "feishu": "Loading Lark settings...",
-      "telegram": "Loading Telegram settings..."
+      "telegram": "Loading Telegram settings...",
+      "discord": "Loading Discord settings..."
     },
     "placeholders": {
       "configValue": "Enter a configuration value",
@@ -271,7 +276,8 @@
       "feishu": "Lark settings saved",
       "xiaoyi": "Xiaoyi settings saved",
       "dingtalk": "DingTalk settings saved",
-      "telegram": "Telegram settings saved"
+      "telegram": "Telegram settings saved",
+      "discord": "Discord settings saved"
     },
     "errors": {
       "loadChannels": "Failed to load channels",
@@ -279,6 +285,7 @@
       "loadXiaoyi": "Failed to load Xiaoyi settings",
       "loadDingtalk": "Failed to load DingTalk settings",
       "loadTelegram": "Failed to load Telegram settings",
+      "loadDiscord": "Failed to load Discord settings",
       "saveGeneric": "Save failed, please try again later"
     }
   },

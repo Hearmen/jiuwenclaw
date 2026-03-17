@@ -79,6 +79,19 @@ channels:
     # 群聊模式: mention(仅响应@提及), reply(仅响应回复), all(响应所有), off(禁用群聊)
     group_chat_mode: mention
     enabled: false
+  discord:
+    # Discord Bot 配置（当前版本仅支持参数管理）
+    # Bot Token（Discord Developer Portal -> Bot）
+    bot_token:
+    # Application ID（Discord Developer Portal -> General Information）
+    application_id:
+    # 目标服务器 ID（Guild ID）
+    guild_id:
+    # 目标频道 ID（Channel ID）
+    channel_id:
+    # 用户白名单（Discord user_id），为空则允许所有用户
+    allow_from: []
+    enabled: false
   whatsapp:
     # WhatsApp 配置（通过本地 Baileys bridge）
     bridge_ws_url: ws://127.0.0.1:19600/ws

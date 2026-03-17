@@ -806,6 +806,57 @@ def _register_web_handlers(
         except Exception as e:  # noqa: BLE001
             logger.exception("[channel.whatsapp.set_conf] %s", e)
             await channel.send_response(ws, req_id, ok=False, error=str(e), code="INTERNAL_ERROR")
+
+    async def _channel_discord_get_conf(ws, req_id, params, session_id):
+        cm = _resolve(channel_manager)
+        if cm is None:
+            await channel.send_response(
+                ws,
+                req_id,
+                ok=False,
+                error="channel manager not available",
+                code="SERVICE_UNAVAILABLE",
+            )
+            return
+        try:
+            conf = cm.get_conf("discord")
+            await channel.send_response(ws, req_id, ok=True, payload={"config": conf})
+        except Exception as e:  # noqa: BLE001
+            logger.exception("[channel.discord.get_conf] %s", e)
+            await channel.send_response(ws, req_id, ok=False, error=str(e), code="INTERNAL_ERROR")
+
+    async def _channel_discord_set_conf(ws, req_id, params, session_id):
+        cm = _resolve(channel_manager)
+        if cm is None:
+            await channel.send_response(
+                ws,
+                req_id,
+                ok=False,
+                error="channel manager not available",
+                code="SERVICE_UNAVAILABLE",
+            )
+            return
+        if not isinstance(params, dict):
+            await channel.send_response(
+                ws,
+                req_id,
+                ok=False,
+                error="params must be object",
+                code="BAD_REQUEST",
+            )
+            return
+        try:
+            await cm.set_conf("discord", params)
+            conf = cm.get_conf("discord")
+            try:
+                update_channel_in_config("discord", conf)
+                _clear_agent_config_cache()
+            except Exception as e:  # noqa: BLE001
+                logger.warning("[channel.discord.set_conf] 写回 config.yaml 失败: %s", e)
+            await channel.send_response(ws, req_id, ok=True, payload={"config": conf})
+        except Exception as e:  # noqa: BLE001
+            logger.exception("[channel.discord.set_conf] %s", e)
+            await channel.send_response(ws, req_id, ok=False, error=str(e), code="INTERNAL_ERROR")
     # ----- cron jobs -----
 
     def _get_cron():
@@ -986,6 +1037,8 @@ def _register_web_handlers(
     channel.register_method("channel.dingtalk.set_conf", _channel_dingtalk_set_conf)
     channel.register_method("channel.whatsapp.get_conf", _channel_whatsapp_get_conf)
     channel.register_method("channel.whatsapp.set_conf", _channel_whatsapp_set_conf)
+    channel.register_method("channel.discord.get_conf", _channel_discord_get_conf)
+    channel.register_method("channel.discord.set_conf", _channel_discord_set_conf)
     channel.register_method("cron.job.list", _cron_job_list)
     channel.register_method("cron.job.get", _cron_job_get)
     channel.register_method("cron.job.create", _cron_job_create)
@@ -1002,6 +1055,7 @@ async def _run() -> None:
     from jiuwenclaw.channel.web_channel import WebChannel, WebChannelConfig
     from jiuwenclaw.channel.xiaoyi_channel import XiaoyiChannel, XiaoyiChannelConfig
     from jiuwenclaw.channel.telegram_channel import TelegramChannel, TelegramChannelConfig
+    from jiuwenclaw.channel.discord_channel import DiscordChannel, DiscordChannelConfig
     from jiuwenclaw.gateway import (
         AgentWebSocketServer,
         GatewayHeartbeatService,
@@ -1173,6 +1227,8 @@ async def _run() -> None:
     dingtalk_task = None
     telegram_channel = None
     telegram_task = None
+    discord_channel = None
+    discord_task = None
     whatsapp_channel = None
     whatsapp_task = None
 
@@ -1196,6 +1252,8 @@ async def _run() -> None:
                         await task
                     except (TypeError, asyncio.CancelledError):
                         logger.info("[App] 取消旧 %sChannel 任务成功", channel_name.capitalize())
+                    except Exception as e:  # noqa: BLE001
+                        logger.warning("[App] 等待旧 %sChannel 任务结束时忽略异常: %s", channel_name.capitalize(), e)
                 asyncio.create_task(wait_cancel(), name=f"wait_{channel_name}_cancel")
             else:
                 try:
@@ -1204,6 +1262,8 @@ async def _run() -> None:
                     logger.warning("[App] 等待 %sChannel 任务取消超时", channel_name.capitalize())
                 except asyncio.CancelledError:
                     pass
+                except Exception as e:  # noqa: BLE001
+                    logger.warning("[App] 等待旧 %sChannel 任务结束时忽略异常: %s", channel_name.capitalize(), e)
 
         if channel is not None:
             try:
@@ -1227,11 +1287,12 @@ async def _run() -> None:
         """根据最新 Channel 配置重新实例化各 Channel。"""
         nonlocal feishu_channel, feishu_task, xiaoyi_channel, xiaoyi_task
         nonlocal dingtalk_channel, dingtalk_task, telegram_channel, telegram_task
+        nonlocal discord_channel, discord_task
         nonlocal whatsapp_channel, whatsapp_task, _last_channels_conf
 
         changed_channels = [
             c
-            for c in ["feishu", "xiaoyi", "dingtalk", "telegram", "whatsapp"]
+            for c in ["feishu", "xiaoyi", "dingtalk", "telegram", "whatsapp", "discord"]
             if _should_restart_channel(c, _last_channels_conf, conf)
         ]
         _last_channels_conf = dict(conf or {})
@@ -1334,6 +1395,32 @@ async def _run() -> None:
                     logger.info("[App] 已按 config.yaml.channels.telegram 注册 TelegramChannel")
             else:
                 logger.info("[App] channels.telegram 未配置或格式错误，TelegramChannel 不启用")
+
+        if "discord" in changed_channels:
+            discord_conf = conf.get("discord") if isinstance(conf, dict) else None
+            await _stop_channel(discord_channel, discord_task, "discord")
+            discord_channel, discord_task = None, None
+
+            if isinstance(discord_conf, dict):
+                enabled, reason = _is_channel_enabled(discord_conf, ["bot_token"])
+                if not enabled:
+                    logger.info("[App] channels.discord.%s，DiscordChannel 未启用", reason)
+                else:
+                    discord_config = DiscordChannelConfig(
+                        enabled=True,
+                        bot_token=str(discord_conf.get("bot_token") or "").strip(),
+                        application_id=str(discord_conf.get("application_id") or "").strip(),
+                        guild_id=str(discord_conf.get("guild_id") or "").strip(),
+                        channel_id=str(discord_conf.get("channel_id") or "").strip(),
+                        allow_from=discord_conf.get("allow_from") or [],
+                    )
+                    discord_channel = DiscordChannel(discord_config, _DummyBus())
+                    channel_manager.register_channel(discord_channel)
+                    discord_task = asyncio.create_task(discord_channel.start(), name="discord")
+                    logger.info("[App] 已按 config.yaml.channels.discord 注册 DiscordChannel")
+            else:
+                logger.info("[App] channels.discord 未配置或格式错误，DiscordChannel 不启用")
+
         # ----- WhatsAppChannel -----
         if "whatsapp" in changed_channels:
             whatsapp_conf = conf.get("whatsapp") if isinstance(conf, dict) else None
@@ -1437,6 +1524,13 @@ async def _run() -> None:
             except asyncio.CancelledError:
                 pass
             await telegram_channel.stop()
+        if discord_channel is not None and discord_task is not None:
+            discord_task.cancel()
+            try:
+                await discord_task
+            except asyncio.CancelledError:
+                pass
+            await discord_channel.stop()
         if whatsapp_channel is not None and whatsapp_task is not None:
             whatsapp_task.cancel()
             try:
