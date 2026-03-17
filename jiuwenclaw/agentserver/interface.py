@@ -39,7 +39,7 @@ from jiuwenclaw.agentserver.memory.config import clear_config_cache
 from jiuwenclaw.agentserver.memory import clear_memory_manager_cache
 from jiuwenclaw.agentserver.skill_manager import SkillManager, _SKILLS_DIR
 from jiuwenclaw.agentserver.prompt_builder import DEFAULT_WORKSPACE_DIR
-from jiuwenclaw.evolution.skill_optimizer import SkillOptimizer
+from jiuwenclaw.evolution.service import EvolutionService
 from jiuwenclaw.schema.agent import AgentRequest, AgentResponse, AgentResponseChunk
 from jiuwenclaw.agentserver.memory import get_memory_manager
 from jiuwenclaw.schema.message import ReqMethod
@@ -239,7 +239,7 @@ class JiuWenClaw:
             except Exception as exc:
                 logger.warning("[JiuWenClaw] register_skill failed, continue without skills: %s", exc)
 
-            # Register SkillOptimizer (enable evolution feature)
+            # Register EvolutionService (enable evolution feature)
             evolution_cfg: dict = config.pop("evolution", {})
             evolution_enabled: bool = evolution_cfg.get("enabled", False)
 
@@ -263,13 +263,13 @@ class JiuWenClaw:
                     evolution_auto_scan: bool = _env_auto_scan.lower() in ("true", "1", "yes")
                 else:
                     evolution_auto_scan = evolution_cfg.get("auto_scan", False)
-                optimizer = SkillOptimizer(
+                evo_service = EvolutionService(
                     llm=self._instance._get_llm(),
                     model=agent_config.model_name,
                     skills_base_dir=str(_SKILLS_DIR),
                     auto_scan=evolution_auto_scan,
                 )
-                self._instance.register_online_optimizer(optimizer)
+                self._instance.set_evolution_service(evo_service)
                 logger.info("[JiuWenClaw] Evolution has been enabled: auto_scan=%s", evolution_auto_scan)
             elif evolution_enabled and not has_valid_model_config:
                 logger.warning("[JiuWenClaw] Evolution is enabled but skipped: no valid model API key configured")
@@ -338,52 +338,15 @@ class JiuWenClaw:
         if hasattr(self._instance, "_llm"):
             self._instance._llm = None
         self._instance.configure(agent_config)
-        # 使 evolution 热更新生效：刷新 SkillOptimizer 的 LLM / model / auto_scan
-        _env_auto_scan = os.getenv("EVOLUTION_AUTO_SCAN")
-        if _env_auto_scan is not None:
-            auto_scan_val = _env_auto_scan.lower() in ("true", "1", "yes")
-        else:
-            auto_scan_val = None
-        new_llm = self._instance._get_llm()
-        new_model = agent_config.model_name
-        for opt in getattr(self._instance, "_online_optimizers", []):
-            if auto_scan_val is not None and hasattr(opt, "auto_scan"):
-                opt.auto_scan = auto_scan_val
-            if isinstance(opt, SkillOptimizer):
-                opt._llm = new_llm
-                opt._model = new_model
-                if hasattr(opt, "_manager"):
-                    opt._manager._llm = new_llm
-                    opt._manager._model = new_model
-        # 使 evolution 热更新生效：刷新 SkillOptimizer 的 LLM / model / auto_scan
-        # 检查是否有有效的模型配置
-        has_valid_model_config = False
-        if isinstance(config.get("model_client_config"), dict):
-            mcc = config["model_client_config"]
-            api_key = mcc.get("api_key", "")
-            if api_key or os.getenv("API_KEY"):
-                has_valid_model_config = True
-        if not has_valid_model_config:
-            if os.getenv("API_KEY"):
-                has_valid_model_config = True
-
-        if has_valid_model_config:
-            _env_auto_scan = os.getenv("EVOLUTION_AUTO_SCAN")
-            if _env_auto_scan is not None:
-                auto_scan_val = _env_auto_scan.lower() in ("true", "1", "yes")
-            else:
-                auto_scan_val = None
+        # Hot-update evolution service
+        evo_svc = getattr(self._instance, "_evolution_service", None)
+        if evo_svc is not None:
             new_llm = self._instance._get_llm()
             new_model = agent_config.model_name
-            for opt in getattr(self._instance, "_online_optimizers", []):
-                if auto_scan_val is not None and hasattr(opt, "auto_scan"):
-                    opt.auto_scan = auto_scan_val
-                if isinstance(opt, SkillOptimizer):
-                    opt._llm = new_llm
-                    opt._model = new_model
-                    if hasattr(opt, "_manager"):
-                        opt._manager._llm = new_llm
-                        opt._manager._model = new_model
+            evo_svc.update_llm(new_llm, new_model)
+            _env_auto_scan = os.getenv("EVOLUTION_AUTO_SCAN")
+            if _env_auto_scan is not None:
+                evo_svc.auto_scan = _env_auto_scan.lower() in ("true", "1", "yes")
         logger.info("[JiuWenClaw] 配置已热更新，未重启进程")
 
     async def _register_runtime_tools(self, session_id: str | None, mode="plan") -> None:

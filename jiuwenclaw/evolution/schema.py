@@ -6,25 +6,37 @@ from __future__ import annotations
 import uuid
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
+from enum import Enum
 from typing import List, Optional
 
 VALID_SECTIONS = {"Instructions", "Examples", "Troubleshooting"}
 
 
+class EvolutionType(str, Enum):
+    """Evolution type that determines which handler processes the signal."""
+
+    SKILL_EXPERIENCE = "skill_experience"
+    NEW_SKILL = "new_skill"
+
+
 @dataclass
 class EvolutionChange:
     section: str    # "Instructions" | "Examples" | "Troubleshooting"
-    action: str     # Fixed to "append"
+    action: str     # "append" | "skip"
     content: str    # Markdown content to append
-    relevant: bool = True  # Whether the signal is relevant to the Skill
+    relevant: bool = True
+    merge_target: Optional[str] = None  # existing entry id to replace (dedup merge)
 
     def to_dict(self) -> dict:
-        return {
+        d = {
             "section": self.section,
             "action": self.action,
             "content": self.content,
             "relevant": self.relevant,
         }
+        if self.merge_target:
+            d["merge_target"] = self.merge_target
+        return d
 
     @classmethod
     def from_dict(cls, d: dict) -> "EvolutionChange":
@@ -33,6 +45,7 @@ class EvolutionChange:
             action=d.get("action", "append"),
             content=d.get("content", ""),
             relevant=d.get("relevant", True),
+            merge_target=d.get("merge_target"),
         )
 
 
@@ -125,6 +138,7 @@ class EvolutionFile:
 @dataclass
 class EvolutionSignal:
     type: str                      # "execution_failure" | "user_correction" | "repeated_failure"
+    evolution_type: EvolutionType  # determines which handler processes this signal
     section: str                   # Recommended SKILL.md section
     excerpt: str                   # Original content summary
     tool_name: Optional[str] = None
@@ -133,6 +147,7 @@ class EvolutionSignal:
     def to_dict(self) -> dict:
         return {
             "type": self.type,
+            "evolution_type": self.evolution_type.value,
             "section": self.section,
             "excerpt": self.excerpt,
             "tool_name": self.tool_name,

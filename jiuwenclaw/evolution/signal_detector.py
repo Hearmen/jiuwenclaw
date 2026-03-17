@@ -1,14 +1,12 @@
 # Copyright (c) Huawei Technologies Co., Ltd. 2025. All rights reserved.
 
-"""Signal Detector - Rules-based signal extraction from conversation messages."""
+"""SignalDetector - Rules-based signal extraction from conversation messages."""
 from __future__ import annotations
 
 import re
-from collections import defaultdict
-from pathlib import Path
 from typing import Dict, List, Optional
 
-from jiuwenclaw.evolution.schema import EvolutionSignal
+from jiuwenclaw.evolution.schema import EvolutionSignal, EvolutionType
 
 
 def _extract_around_match(
@@ -58,7 +56,11 @@ _TOOL_SCHEMA_PATTERN = re.compile(r"^---\nname:\s*\w+\ndescription:", re.MULTILI
 
 
 class SignalDetector:
-    """从会话消息里抽取演进相关信号。"""
+    """Extract evolution signals from conversation messages.
+
+    Returns all deduplicated signals (no truncation -- caller decides).
+    Each signal carries an ``evolution_type`` for downstream routing.
+    """
 
     def __init__(
         self,
@@ -67,16 +69,8 @@ class SignalDetector:
         self._skill_dir_map = skill_dir_map or {}
 
     def detect(self, messages: List[dict]) -> List[EvolutionSignal]:
-        """Scan messages, return deduplicated evolution signal list.
-
-        Args:
-            messages: Conversation message list.
-
-        Returns:
-            List of EvolutionSignal.
-        """
+        """Scan messages and return deduplicated evolution signals."""
         signals: List[EvolutionSignal] = []
-        tool_failure_counts: dict[str, int] = defaultdict(int)
         active_skill: Optional[str] = None
 
         for msg in messages:
@@ -90,37 +84,47 @@ class SignalDetector:
                 )
 
             if role in ("tool", "function"):
-                if _FAILURE_KEYWORDS.search(content):
-                    tool_name = msg.get("name") or msg.get("tool_name")
+                match = _FAILURE_KEYWORDS.search(content)
+                if match:
                     if _TOOL_SCHEMA_PATTERN.match(content):
                         continue
-                    tool_failure_counts[tool_name or "unknown"] += 1
-
-                    match = _FAILURE_KEYWORDS.search(content)
-                    excerpt = _extract_around_match(content, match) if match else content[:500]
-                    sig = EvolutionSignal(
+                    tool_name = msg.get("name") or msg.get("tool_name")
+                    excerpt = _extract_around_match(content, match)
+                    signals.append(EvolutionSignal(
                         type="execution_failure",
+                        evolution_type=self._classify_type(active_skill),
                         section="Troubleshooting",
                         excerpt=excerpt,
                         tool_name=tool_name,
                         skill_name=active_skill,
-                    )
-                    signals.append(sig)
+                    ))
 
             elif role == "user":
                 match = _CORRECTION_PATTERN.search(content)
                 if match:
                     excerpt = _extract_around_match(content, match)
-                    sig = EvolutionSignal(
+                    signals.append(EvolutionSignal(
                         type="user_correction",
+                        evolution_type=self._classify_type(active_skill),
                         section="Examples",
                         excerpt=excerpt,
-                        tool_name=None,
                         skill_name=active_skill,
-                    )
-                    signals.append(sig)
+                    ))
 
         return self._deduplicate(signals)
+
+    # ------------------------------------------------------------------
+    # Internal helpers
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _classify_type(skill_name: Optional[str]) -> EvolutionType:
+        """Classify the evolution type for a signal.
+
+        Currently all signals map to SKILL_EXPERIENCE.
+        TODO: route signals without skill attribution to NEW_SKILL when implemented.
+        """
+        return EvolutionType.SKILL_EXPERIENCE
 
     def _detect_skill_from_tool_calls(
         self,

@@ -10,9 +10,6 @@ from __future__ import annotations
 import asyncio
 import importlib.util
 import sys
-import uuid
-from dataclasses import dataclass, field
-from pathlib import Path
 from typing import Any, AsyncIterator, Dict, List, Optional
 
 import tiktoken
@@ -32,8 +29,7 @@ from openjiuwen.core.single_agent import AgentCard, ReActAgent
 
 from jiuwenclaw.agentserver.tools.todo_toolkits import TodoToolkit
 from jiuwenclaw.agentserver.prompt_builder import build_system_prompt
-from jiuwenclaw.evolution.skill_call_operator import SkillCallOperator
-from jiuwenclaw.evolution.skill_optimizer import SkillOptimizer
+from jiuwenclaw.evolution.service import EvolutionService
 from jiuwenclaw.utils import logger, USER_WORKSPACE_DIR
 from jiuwenclaw.config import get_config
 
@@ -49,15 +45,6 @@ _TODO_TOOL_NAMES = frozenset(
 )
 _CMD_EVOLVE = "/evolve"
 _CMD_SOLIDIFY = "/solidify"
-
-_EVOLUTION_APPROVAL_TIMEOUT = 300  # Auto-keep after 5 minute timeout
-
-
-@dataclass
-class _InvokeEvolutionContext:
-    """Context passed from invoke() to stream() for auto-scan."""
-    history_snapshot: List[Any] = field(default_factory=list)
-    should_auto_scan: bool = False
 
 
 def _deduplicate_tools_by_name(tools: List[Any]) -> List[Any]:
@@ -119,9 +106,8 @@ class JiuClawReActAgent(ReActAgent):
     """Inherits ReActAgent, overrides invoke/stream to support todo.updated events."""
 
     def __init__(self, card: AgentCard) -> None:
-        self._online_optimizers: List[Any] = []
-        self._pending_approvals: Dict[str, asyncio.Future] = {}  # request_id -> Future[bool]
-        self._pending_evolution_context: Optional[_InvokeEvolutionContext] = None
+        self._evolution_service: Optional[EvolutionService] = None
+        self._pending_auto_evolution_history: Optional[List[Any]] = None
         super().__init__(card)
         self._stream_tasks: set[asyncio.Task] = set()
         self._pause_events: dict[str, asyncio.Event] = {}  # task_key -> event
@@ -288,15 +274,10 @@ class JiuClawReActAgent(ReActAgent):
         for event in self._pause_events.values():
             event.set()
 
-    def register_online_optimizer(self, optimizer: Any) -> "JiuClawReActAgent":
-        """Register online evolution Optimizer (chainable).
-
-        Args:
-            optimizer: SkillOptimizer instance.
-        """
-        self._online_optimizers.append(optimizer)
-        logger.info("register optimizer: %s", type(optimizer).__name__)
-        return self
+    def set_evolution_service(self, service: Any) -> None:
+        """Set the EvolutionService instance for online evolution."""
+        self._evolution_service = service
+        logger.info("[ReActAgent] evolution service set")
 
     async def invoke(
         self,
@@ -325,9 +306,14 @@ class JiuClawReActAgent(ReActAgent):
         stripped = user_input.strip()
         # Intercept slash commands (skip ReAct reasoning loop to save tokens)
         if stripped.startswith(_CMD_EVOLVE):
-            return await self._handle_evolve_command(stripped, session)
+            if self._evolution_service is None:
+                return {"output": "演进功能未启用。", "result_type": "error"}
+            messages = await self._get_session_messages(session)
+            return await self._evolution_service.handle_evolve_command(stripped, session, messages)
         if stripped.startswith(_CMD_SOLIDIFY):
-            return await self._handle_solidify_command(stripped)
+            if self._evolution_service is None:
+                return {"output": "演进功能未启用。", "result_type": "error"}
+            return self._evolution_service.handle_solidify_command(stripped)
 
         # Initialize context
         context = await self._init_context(session)
@@ -464,14 +450,12 @@ class JiuClawReActAgent(ReActAgent):
                 await context.add_messages(ai_msg_for_context)
 
                 # Store auto-scan context for stream() to handle
-                has_auto_scan = any(
-                    getattr(opt, "auto_scan", False) for opt in self._online_optimizers
-                )
-                if has_auto_scan and history_snapshot:
-                    self._pending_evolution_context = _InvokeEvolutionContext(
-                        history_snapshot=list(history_snapshot),
-                        should_auto_scan=True,
-                    )
+                if (
+                    self._evolution_service is not None
+                    and self._evolution_service.auto_scan
+                    and history_snapshot
+                ):
+                    self._pending_auto_evolution_history = list(history_snapshot)
 
                 return {
                     "output": ai_message.content,
@@ -511,7 +495,7 @@ class JiuClawReActAgent(ReActAgent):
 
         async def stream_process() -> None:
             try:
-                self._pending_evolution_context = None
+                self._pending_auto_evolution_history = None
                 final_result = await self.invoke(inputs, session, _pause_event=pause_event)
 
                 if session is not None:
@@ -586,14 +570,14 @@ class JiuClawReActAgent(ReActAgent):
                             )
                         )
 
-                # Handle auto-scan approval after answer
-                ctx = self._pending_evolution_context
-                if ctx is not None and ctx.should_auto_scan and session is not None:
+                # Handle auto-scan evolution after answer
+                history = self._pending_auto_evolution_history
+                if history is not None and self._evolution_service is not None and session is not None:
                     try:
-                        await self._run_auto_evolution_with_approval(session, ctx)
+                        await self._evolution_service.run_auto_evolution(session, history)
                     except Exception as e:
-                        logger.warning("[ReActAgent] auto_scan approval error: %s", e)
-                self._pending_evolution_context = None
+                        logger.warning("[ReActAgent] auto evolution error: %s", e)
+                self._pending_auto_evolution_history = None
             except asyncio.CancelledError:
                 logger.info("stream_process cancelled")
             except Exception as e:
@@ -626,21 +610,6 @@ class JiuClawReActAgent(ReActAgent):
             self._stream_tasks.discard(task)
             self._pause_events.pop(task_key, None)
             
-    def get_operators(self) -> Dict[str, SkillCallOperator]:
-        """Returns single SkillCallOperator (aligned with ToolCallOperator pattern: one manages all Skills).
-
-        Returns:
-            { "skill_call": SkillCallOperator } or {} (when no optimizer registered).
-        """
-        opt = self._get_skill_optimizer()
-        if opt is None or not opt.skills_base_dir:
-            return {}
-        op = SkillCallOperator(
-            skills_base_dir=opt.skills_base_dir,
-            evolution_manager=opt.evolution_manager,
-        )
-        return {op.operator_id: op}
-
     async def _emit_tool_call(self, session: Session, tool_call: Any) -> None:
         """Emit tool_call OutputSchema, notify frontend of tool call start."""
         try:
@@ -830,158 +799,11 @@ class JiuClawReActAgent(ReActAgent):
         except Exception as e:
             logger.warning("Failed to fix incomplete tool context: %s", e)
 
-    async def _request_evolution_approval(
-        self,
-        session: Session,
-        skill_name: str,
-        entry: Any,
-    ) -> bool:
-        """Request user approval via chat.ask_user_question.
-
-        Returns:
-            True = keep, False = discard.
-            Timeout (5 min) auto-returns True.
-        """
-        request_id = f"evolve_approve_{uuid.uuid4().hex[:8]}"
-        loop = asyncio.get_event_loop()
-        future: asyncio.Future = loop.create_future()
-        self._pending_approvals[request_id] = future
-
-        content_preview = getattr(getattr(entry, "change", None), "content", "")[:1000]
-        section = getattr(getattr(entry, "change", None), "section", "")
-
-        try:
-            await session.write_stream(
-                OutputSchema(
-                    type="chat.ask_user_question",
-                    index=0,
-                    payload={
-                        "request_id": request_id,
-                        "questions": [
-                            {
-                                "question": (
-                                    f"**Skill '{skill_name}' 演进生成了新内容：**\n\n"
-                                    f"{content_preview}"
-                                ),
-                                "header": "演进审批",
-                                "options": [
-                                    {"label": "接收", "description": "保留此演进经验"},
-                                    {"label": "拒绝", "description": "丢弃此演进经验"},
-                                ],
-                                "multi_select": False,
-                            }
-                        ],
-                    },
-                )
-            )
-        except Exception:
-            logger.debug("_request_evolution_approval: popup send failed", exc_info=True)
-            self._pending_approvals.pop(request_id, None)
-            return True  # Default keep on send failure
-
-        try:
-            return await asyncio.wait_for(future, timeout=_EVOLUTION_APPROVAL_TIMEOUT)
-        except asyncio.TimeoutError:
-            logger.info(
-                "[ReActAgent] Evolution approval timeout (skill=%s, id=%s), auto-keeping",
-                skill_name,
-                request_id,
-            )
-            return True  # Auto-keep on timeout
-        finally:
-            self._pending_approvals.pop(request_id, None)
-
     def resolve_evolution_approval(self, request_id: str, answers: list) -> bool:
-        """Parse user answer and resolve corresponding Future.
-
-        Called by interface.py when receiving chat.user_answer.
-
-        Returns:
-            True = successfully resolved, False = request not found or already completed.
-        """
-        future = self._pending_approvals.get(request_id)
-        if future is None or future.done():
+        """Delegate to EvolutionService."""
+        if self._evolution_service is None:
             return False
-
-        keep = (
-            "接收" in answers[0].get("selected_options", [])
-            if answers and isinstance(answers[0], dict)
-            else False
-        )
-        future.set_result(keep)
-        logger.info(
-            "[ReActAgent] Evolution approval resolved: request_id=%s 接收=%s",
-            request_id,
-            keep,
-        )
-        return True
-
-    async def _run_auto_evolution_with_approval(
-        self,
-        session: Session,
-        ctx: _InvokeEvolutionContext,
-    ) -> None:
-        """Execute auto-scan + generate + approval flow in stream()."""
-        skill_ops = self.get_operators()
-        if not skill_ops:
-            logger.info("[ReActAgent] _run_auto_evolution_with_approval: no skill_ops, skip")
-            return
-
-        messages = self._parse_messages(ctx.history_snapshot)
-        skill_names = self._get_skill_names()
-
-        for opt in self._online_optimizers:
-            auto_scan = getattr(opt, "auto_scan", False)
-            if not auto_scan or not callable(getattr(opt, "auto_scan_generate", None)):
-                continue
-
-            try:
-                entries = await opt.auto_scan_generate(messages, skill_ops, skill_names)
-            except Exception as exc:
-                logger.warning("[ReActAgent] auto_scan_generate error: %s", exc)
-                continue
-
-            for skill_name, entry in entries.items():
-                try:
-                    keep = await self._request_evolution_approval(session, skill_name, entry)
-                    if keep:
-                        opt.evolution_manager.append_entry(skill_name, entry)
-                        logger.info(
-                            "[ReActAgent] Evolution kept: skill=%s id=%s",
-                            skill_name,
-                            entry.id,
-                        )
-                    else:
-                        logger.info(
-                            "[ReActAgent] Evolution discarded: skill=%s id=%s",
-                            skill_name,
-                            entry.id,
-                        )
-                except Exception as exc:
-                    logger.warning(
-                        "[ReActAgent] Approval flow error (skill=%s): %s", skill_name, exc
-                    )
-
-    def _get_skill_optimizer(self) -> Optional[SkillOptimizer]:
-        """Returns first registered SkillOptimizer (with signal_backward method)."""
-        for opt in self._online_optimizers:
-            if callable(getattr(opt, "signal_backward", None)):
-                return opt
-        return None
-
-    def _get_skill_names(self) -> List[str]:
-        """Dynamically scan existing Skill names from optimizer.skills_base_dir.
-
-        No manual registration needed - optimizer automatically senses all subdirs under skills_base_dir.
-        Skills created at runtime via new_skill are also automatically included.
-        """
-        opt = self._get_skill_optimizer()
-        if opt is None:
-            return []
-        base = Path(opt.skills_base_dir)
-        if not base.exists():
-            return []
-        return [d.name for d in base.iterdir() if d.is_dir() and not d.name.startswith("_")]
+        return self._evolution_service.resolve_approval(request_id, answers)
 
     def _get_skill_messages(self) -> List[SystemMessage]:
         """Build Skill summary SystemMessage list.
@@ -995,7 +817,6 @@ class JiuClawReActAgent(ReActAgent):
         # 1. skill_prompt (skill list description)
         if self._skill_util is not None and self._skill_util.has_skill():
             skill_info = self._skill_util.get_skill_prompt()
-            # skill 列表在 prompt 最后一段（双换行后）
             lines = skill_info.split("\n\n")[-1].strip().split("\n")
             skill_lines = [line for line in lines[1:-1] if line.strip()]
 
@@ -1010,10 +831,10 @@ class JiuClawReActAgent(ReActAgent):
                 prompt_parts.append(header + "\n".join(f"- {line}" for line in skill_lines))
 
         # 2. Skill evolution summary
-        skill_ops = self.get_operators()
-        op = skill_ops.get(SkillCallOperator.OPERATOR_ID)
-        if op is not None:
-            summaries = op.get_all_evolution_summaries(self._get_skill_names())
+        if self._evolution_service is not None:
+            store = self._evolution_service.store
+            skill_names = store.list_skill_names()
+            summaries = store.get_all_evolution_summaries(skill_names)
             if summaries:
                 prompt_parts.append(summaries)
 
@@ -1022,155 +843,20 @@ class JiuClawReActAgent(ReActAgent):
 
         return [SystemMessage(content="\n\n".join(prompt_parts))]
 
-    async def _get_session_messages(self, session: Optional[Any]) -> List[dict]:
-        """Get historical message list from session (safely compatible with different Session implementations).
+    async def _get_session_messages(self, session: Optional[Any]) -> List[Any]:
+        """Get raw historical message list from session.
 
-        Retrieves via context_window with fallback.
+        Returns unprocessed BaseMessage objects.
         """
         if session is None:
             return []
         try:
-            # Prefer: get context window via context_engine
             context = await self._init_context(session)
-            cw = await context.get_context_window(system_messages=[], tools=None)
-            msgs = cw.get_messages() if hasattr(cw, "get_messages") else []
-            return self._parse_messages(msgs)
+            context_window = await context.get_context_window(system_messages=[], tools=None)
+            return list(context_window.get_messages()) if hasattr(context_window, "get_messages") else []
         except Exception as exc:
-            logger.warning(" Failed to get session messages: %s", exc)
+            logger.warning("Failed to get session messages: %s", exc)
             return []
-
-    @staticmethod
-    def _parse_messages(messages: List[BaseMessage]) -> List[dict]:
-        result = []
-        for msg in messages:
-            if isinstance(msg, dict):
-                result.append(msg)
-            elif hasattr(msg, "role"):
-                d: dict = {
-                    "role": getattr(msg, "role", ""),
-                    "content": str(getattr(msg, "content", "") or ""),
-                }
-                if tool_calls := getattr(msg, "tool_calls", None):
-                    d["tool_calls"] = [
-                        {
-                            "id": getattr(tc, "id", ""),
-                            "name": getattr(tc, "name", ""),
-                            "arguments": getattr(tc, "arguments", ""),
-                        }
-                        for tc in tool_calls
-                    ]
-                if name := getattr(msg, "name", None):
-                    d["name"] = name
-                result.append(d)
-        return result
-
-    async def _handle_evolve_command(
-        self,
-        query: str,
-        session: Optional[Any],
-    ) -> Dict[str, Any]:
-        """/evolve [list | <skill_name>] command handler."""
-        skill_opt = self._get_skill_optimizer()
-        if skill_opt is None:
-            return {
-                "output": (
-                    "SkillOptimizer not registered, cannot execute online evolution.\n"
-                    "Please set `evolution.enabled: true` in config.yaml and restart service,\n"
-                    "or call agent.register_online_optimizer(SkillOptimizer(...))."
-                ),
-                "result_type": "error",
-            }
-
-        skill_names = self._get_skill_names()
-
-        # Parse arguments
-        parts = query.split(maxsplit=1)
-        skill_arg = parts[1].strip() if len(parts) > 1 else ""
-
-        # /evolve or /evolve list -> list all Skill evolution records
-        if not skill_arg or skill_arg == "list":
-            if not skill_names:
-                return {
-                    "output": "当前 skills_base_dir 下未找到任何 Skill 目录。",
-                    "result_type": "answer",
-                }
-            summary = skill_opt.list_summary(skill_names)
-            return {
-                "output": f"**Skills 演进记录：**\n\n{summary}",
-                "result_type": "answer",
-            }
-
-        # /evolve <skill_name>
-        skill_name = skill_arg
-        if skill_name not in skill_names:
-            available = "、".join(skill_names) or "（无可用 Skill）"
-            return {
-                "output": (
-                    f"在 skills_base_dir 下未找到 Skill '{skill_name}'。\n"
-                    f"当前可用 Skill：{available}\n"
-                    f"可使用 /evolve list 查看所有记录。"
-                ),
-                "result_type": "error",
-            }
-
-        messages = await self._get_session_messages(session)
-        entry = await skill_opt.evolve_generate(skill_name, messages)
-
-        if entry is None:
-            return {
-                "output": (
-                    f"当前对话未发现明确的演进信号（无工具执行失败、无用户纠正）。\n"
-                ),
-                "result_type": "answer",
-            }
-
-        if session is not None:
-            # Request user approval via popup
-            keep = await self._request_evolution_approval(session, skill_name, entry)
-            if keep:
-                skill_opt.evolution_manager.append_entry(skill_name, entry)
-                return {
-                    "output": (
-                        f"✓ 已记录演进经验到 Skill '{skill_name}'：\n"
-                        f"  **[{entry.change.section}]** {entry.change.content[:200]}\n\n"
-                        f"（evolutions.json 已更新，自动生效；"
-                        f"可使用 `/solidify {skill_name}` 将经验固化到 SKILL.md 本体）"
-                    ),
-                    "result_type": "answer",
-                }
-            else:
-                return {
-                    "output": f"已丢弃 Skill '{skill_name}' 的演进内容，evolutions.json 未变更。",
-                    "result_type": "answer",
-                }
-        else:
-            # Fallback for no session (non-streaming call): save directly
-            skill_opt.evolution_manager.append_entry(skill_name, entry)
-            return {
-                "output": (
-                    f"✓ 已记录演进经验到 Skill '{skill_name}'：\n"
-                    f"  **[{entry.change.section}]** {entry.change.content[:200]}"
-                ),
-                "result_type": "answer",
-            }
-
-    async def _handle_solidify_command(self, query: str) -> Dict[str, Any]:
-        """/solidify <skill_name> command handler."""
-        skill_opt = self._get_skill_optimizer()
-        if skill_opt is None:
-            return {
-                "output": "演进功能未启用，无法执行 solidify。",
-                "result_type": "error",
-            }
-        parts = query.split(maxsplit=1)
-        skill_name = parts[1].strip() if len(parts) > 1 else ""
-        if not skill_name:
-            return {
-                "output": "请指定 Skill 名称：`/solidify <skill_name>`",
-                "result_type": "error",
-            }
-        result_msg = skill_opt.solidify(skill_name)
-        return {"output": result_msg, "result_type": "answer"}
 
     def _build_system_messages(self, session_id: str) -> List[SystemMessage]:
         """Build system messages: prompt_template + workspace + memory + skill summary.
