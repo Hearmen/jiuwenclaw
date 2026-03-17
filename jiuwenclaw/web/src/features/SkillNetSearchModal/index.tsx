@@ -111,7 +111,7 @@ export function SkillNetSearchModal({
           skill?: { name?: string };
         }>("skills.skillnet.install", withSession({
           url: item.skill_url,
-          force: false,
+          force: true,
         }));
         if (!data.success) {
           throw new Error(data.detail || t("skills.errors.skillNetInstallFailed"));
@@ -125,7 +125,11 @@ export function SkillNetSearchModal({
         await onInstalled?.(name);
       } catch (err) {
         console.error(err);
-        setErrorMessage(t("skills.errors.skillNetInstallFailedHint"));
+        const message =
+          err instanceof Error && err.message
+            ? err.message
+            : t("skills.errors.skillNetInstallFailedHint");
+        setErrorMessage(message);
       } finally {
         setActionTarget(null);
       }
@@ -198,6 +202,7 @@ export function SkillNetSearchModal({
               ) : (
                 results.map((item) => {
                   const isInstalling = actionTarget === item.skill_url;
+                  const anyInstalling = actionTarget !== null;
                   const isExpanded = expandedUrl === item.skill_url;
                   return (
                     <div
@@ -253,9 +258,9 @@ export function SkillNetSearchModal({
                           e.stopPropagation();
                           handleInstall(item);
                         }}
-                        disabled={isInstalling}
+                        disabled={anyInstalling}
                         className={`px-3 py-1.5 rounded-md text-xs whitespace-nowrap transition-colors flex-shrink-0 ${
-                          isInstalling
+                          anyInstalling
                             ? "bg-secondary text-text-muted cursor-not-allowed"
                             : "bg-accent text-white hover:bg-accent-hover"
                         }`}

@@ -193,7 +193,7 @@ class SkillManager:
         dest = _SKILLS_DIR / plugin_name
         if dest.exists():
             if not force:
-                return {"success": False, "detail": f"skill {plugin_name} 已存在，使用 force=true 覆盖"}
+                return {"success": False, "detail": f"skill {plugin_name} 已存在"}
             shutil.rmtree(dest)
         shutil.copytree(plugin_src, dest)
 
@@ -316,7 +316,7 @@ class SkillManager:
             dest = _SKILLS_DIR / skill_name
             if dest.exists():
                 if not force:
-                    return {"success": False, "detail": f"skill {skill_name} 已存在，使用 force=true 覆盖"}
+                    return {"success": False, "detail": f"skill {skill_name} 已存在"}
                 shutil.rmtree(dest)
 
             # 拷贝完整目录，保持 skill 的资源文件结构。
@@ -395,7 +395,7 @@ class SkillManager:
             dest = _SKILLS_DIR / skill_name
             if dest.exists():
                 if not force:
-                    return {"success": False, "detail": f"skill {skill_name} 已存在，使用 force=true 覆盖"}
+                    return {"success": False, "detail": f"skill {skill_name} 已存在"}
                 shutil.rmtree(dest)
             dest.mkdir(parents=True, exist_ok=True)
             shutil.copy2(src, dest / src.name)
@@ -408,7 +408,7 @@ class SkillManager:
             dest = _SKILLS_DIR / skill_name
             if dest.exists():
                 if not force:
-                    return {"success": False, "detail": f"skill {skill_name} 已存在，使用 force=true 覆盖"}
+                    return {"success": False, "detail": f"skill {skill_name} 已存在"}
                 shutil.rmtree(dest)
             shutil.copytree(src, dest)
         else:
