@@ -3,7 +3,7 @@
 # 2. 构建 wheel 包（包含前端 dist）
 
 $ErrorActionPreference = "Stop"
-$ProjectRoot = $PSScriptRoot
+$ProjectRoot = Split-Path $PSScriptRoot -Parent
 
 Write-Host "[build] 项目根目录: $ProjectRoot" -ForegroundColor Cyan
 

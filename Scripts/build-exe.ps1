@@ -2,6 +2,7 @@
 # 用法: .\Scripts\build-exe.ps1  或  pwsh -File Scripts\build-exe.ps1
 
 $ErrorActionPreference = "Stop"
+
 $ProjectRoot = Split-Path -Parent (Split-Path -Parent $MyInvocation.MyCommand.Path)
 Set-Location $ProjectRoot
 

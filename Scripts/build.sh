@@ -4,7 +4,7 @@
 # 2. 构建 wheel 包（包含前端 dist）
 
 set -e
-PROJECT_ROOT="$(cd "$(dirname "$0")" && pwd)"
+PROJECT_ROOT="$(cd "$(dirname "$(dirname "$0")")" && pwd)"
 
 echo "[build] 项目根目录: $PROJECT_ROOT"
 
