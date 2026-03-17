@@ -180,8 +180,8 @@ class CronController:
         cron_expr: str,
         timezone: str,
         targets: str,
+        description: str,
         enabled: bool = True,
-        description: str = "",
         wake_offset_seconds: int | None = None,
     ) -> dict[str, Any]:
         params: dict[str, Any] = {
@@ -267,10 +267,10 @@ class CronController:
             make_tool(
                 name="cron_create_job",
                 description=(
-                    "创建定时任务。当用户说「每天/每周/每月某时间做某事」时使用。"
-                    "cron_expr 为 5 段：分 时 日 月 周。例：每天 9 点 = '0 9 * * *'，每天 11 点 58 分 = '58 11 * * *'，每周一 9 点 = '0 9 * * 1'。"
-                    "description 只填任务内容，不要包含时间、频率等，时间由 cron_expr 表达。"
-                    "timezone 默认 Asia/Shanghai。"
+                    "创建定时任务。cron_expr 为 5 段（分 时 日 月 周）。"
+                    "周期任务：每天 9 点='0 9 * * *'，每周一 9 点='0 9 * * 1'。"
+                    "单次任务：cron 也能表达具体日期，如今天 17 点（假设 3 月 10 日）='0 17 10 3 *'，明天 15 点（3 月 11 日）='0 15 11 3 *'。根据用户当前日期推算。"
+                    "description 只填任务内容，不要包含时间/频率。timezone 默认 Asia/Shanghai。"
                 ),
                 input_params={
                     "type": "object",
@@ -278,7 +278,7 @@ class CronController:
                         "name": {"type": "string", "description": "任务名称"},
                         "cron_expr": {
                             "type": "string",
-                            "description": "Cron 表达式，如每天9点10分用 '10 9 * * *'",
+                            "description": "Cron 表达式（分 时 日 月 周）。周期用通配符如'0 9 * * *'；单次用具体日期如'0 17 10 3 *'表示3月10日17点",
                         },
                         "timezone": {
                             "type": "string",
@@ -291,14 +291,14 @@ class CronController:
                             "description": "推送频道：web=网页, feishu=飞书, whatsapp=WhatsApp",
                             "default": self._target_channel.value,
                         },
-                         "enabled": {
+                        "enabled": {
                             "type": "boolean",
                             "description": "是否启用",
                             "default": True,
                         },
                         "description": {
                             "type": "string",
-                            "description": "具体任务名称，到点执行时发给助手，不能为空。不要包含时间/频率，例如填「搜索美国总统年龄」而非「每天上午11点58分搜索美国总统年龄」",
+                            "description": "具体任务内容，到点执行时发给助手。不要包含时间/频率",
                         },
                         "wake_offset_seconds": {
                             "type": "integer",
