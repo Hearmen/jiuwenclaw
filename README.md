@@ -61,7 +61,7 @@ jiuwenclaw-start
 | ------------------ | ------------------------------------------------------------ |
 | **Web Frontend**   | After starting the service, visit `http://localhost:5173` to chat directly in your browser |
 | **Xiaoyi Channel** | Huawei phone users can invoke Xiaoyi to talk with JiuwenClaw directly |
-| **Feishu Channel** | Once configured, chat with JiuwenClaw seamlessly inside Feishu |
+| **Lark Channel** | Once configured, chat with JiuwenClaw seamlessly inside Lark |
 
 #### 2️⃣ Scheduled Tasks
 
