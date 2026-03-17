@@ -149,7 +149,7 @@ const SUPPORTED_CHANNELS: Array<{ channel_id: SupportedChannelId; logo_src: stri
   { channel_id: 'feishu', logo_src: '/feishu.webp' },
   { channel_id: 'dingtalk', logo_src: '/dingtalk.png' },
   { channel_id: 'telegram', logo_src: '/telegram.webp' },
-  { channel_id: 'discord', logo_src: '/discord.jpg' },
+  { channel_id: 'discord', logo_src: '/discord.webp' },
 ];
 
 
