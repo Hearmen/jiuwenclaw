@@ -880,19 +880,6 @@ class JiuClawReActAgent(ReActAgent):
         # Build append content
         content_parts: List[str] = []
 
-        # 2. workspace_prompt
-        workspace = self._workspace_dir
-        content_parts.append(f"# Workspace\nYour temporal working directory is: {workspace}\n"
-                             "Write or save all files under this dir.")
-
-        # 3. memory_prompt
-        memory_prompt = build_system_prompt(
-            workspace_dir=str(self._memory_dir),
-            agent_id=self._agent_id,
-        )
-        if memory_prompt:
-            content_parts.append(memory_prompt)
-
         # 4. skill_prompt + evolution summary
         skill_msgs = self._get_skill_messages()
         if skill_msgs:

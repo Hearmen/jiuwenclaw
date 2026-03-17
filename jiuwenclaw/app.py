@@ -40,7 +40,13 @@ for logger in LogManager.get_all_loggers().values():
 from openjiuwen.core.foundation.llm import ProviderType
 
 from jiuwenclaw.utils import get_config_file, get_root_dir, is_package_installation, logger
-from jiuwenclaw.config import get_config, update_heartbeat_in_config, update_channel_in_config, update_browser_in_config
+from jiuwenclaw.config import (
+    get_config,
+    update_heartbeat_in_config,
+    update_channel_in_config,
+    update_browser_in_config,
+    update_preferred_language_in_config,
+)
 
 _PROJECT_ROOT = get_root_dir()
 _ENV_FILE = _PROJECT_ROOT / ".env"
@@ -494,6 +500,51 @@ def _register_web_handlers(
         if isinstance(request_id, str) and request_id:
             payload["request_id"] = request_id
         await channel.send_response(ws, req_id, ok=True, payload=payload)
+
+    async def _locale_get_conf(ws, req_id, params, session_id):
+        """返回当前 preferred_language 配置（zh / en）。"""
+        try:
+            cfg = get_config()
+            lang = str(cfg.get("preferred_language") or "zh").strip().lower()
+            if lang not in ("zh", "en"):
+                lang = "zh"
+            await channel.send_response(
+                ws,
+                req_id,
+                ok=True,
+                payload={"preferred_language": lang}
+            )
+        except Exception as e:
+            logger.exception("[locale.get_conf] %s", e)
+            await channel.send_response(ws, req_id, ok=False, error=str(e), code="INTERNAL_ERROR")
+
+    async def _locale_set_conf(ws, req_id, params, session_id):
+        """更新 preferred_language 并写回 config.yaml。"""
+        if not isinstance(params, dict):
+            await channel.send_response(ws, req_id, ok=False, error="params must be object", code="BAD_REQUEST")
+            return
+        lang_raw = params.get("preferred_language")
+        if not isinstance(lang_raw, str):
+            await channel.send_response(
+                ws, req_id, ok=False, error="preferred_language must be string", code="BAD_REQUEST"
+            )
+            return
+        lang = lang_raw.strip().lower()
+        if lang not in ("zh", "en"):
+            await channel.send_response(
+                ws,
+                req_id,
+                ok=False,
+                error="preferred_language must be zh or en",
+                code="BAD_REQUEST"
+            )
+            return
+        try:
+            update_preferred_language_in_config(lang)
+            await channel.send_response(ws, req_id, ok=True, payload={"preferred_language": lang})
+        except Exception as e:
+            logger.warning("[locale.set_conf] 写回 config.yaml 失败: %s", e)
+            await channel.send_response(ws, req_id, ok=False, error=str(e), code="INTERNAL_ERROR")
 
     async def _heartbeat_get_conf(ws, req_id, params, session_id):
         """返回当前心跳配置（every / target / active_hours）。"""
@@ -1025,6 +1076,8 @@ def _register_web_handlers(
     channel.register_method("chat.resume", _chat_resume)
     channel.register_method("chat.interrupt", _chat_interrupt)
     channel.register_method("chat.user_answer", _chat_user_answer)
+    channel.register_method("locale.get_conf", _locale_get_conf)
+    channel.register_method("locale.set_conf", _locale_set_conf)
     channel.register_method("heartbeat.get_conf", _heartbeat_get_conf)
     channel.register_method("heartbeat.set_conf", _heartbeat_set_conf)
     channel.register_method("channel.feishu.get_conf", _channel_feishu_get_conf)

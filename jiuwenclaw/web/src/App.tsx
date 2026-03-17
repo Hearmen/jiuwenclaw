@@ -20,9 +20,11 @@ import { BrowserPanel } from './components/BrowserPanel';
 import { StatusBar } from './components/StatusBar';
 import { HeartbeatMessageModal } from './features/HeartbeatMessageModal';
 import { useWebSocket } from './hooks';
+import { webRequest } from './services/webClient';
 import { AgentMode } from './types';
 import { useSessionStore, useChatStore, useTodoStore } from './stores';
 import { useTranslation } from 'react-i18next';
+import i18n from './i18n';
 import './App.css';
 
 type MainNavKey = 'chat' | 'skills' | 'agents' | 'sessions' | 'heartbeat' | 'cron' | 'channels' | 'configpanel' | 'logspanel' | 'browserpanel';
@@ -83,22 +85,28 @@ function ErrorFallback({ error }: { error: Error | null }) {
   );
 }
 
-// 语言切换组件
+// 语言切换组件（与 config.yaml preferred_language 同步）
 function LanguageSwitcher() {
   const { i18n } = useTranslation();
   const isZh = i18n.language.startsWith('zh');
+  const handleChange = (lang: 'zh' | 'en') => {
+    i18n.changeLanguage(lang);
+    void webRequest('locale.set_conf', { preferred_language: lang }).catch(() => {
+      // 写回 config 失败时静默忽略，本地切换仍生效
+    });
+  };
   return (
     <div className="flex items-center gap-1 rounded-lg bg-secondary/60 px-2 py-1">
       <button
         type="button"
-        onClick={() => i18n.changeLanguage('zh')}
+        onClick={() => handleChange('zh')}
         className={`text-xs px-2 py-1 rounded ${isZh ? 'bg-accent text-white font-medium' : 'text-text-muted hover:text-text'}`}
       >
         中
       </button>
       <button
         type="button"
-        onClick={() => i18n.changeLanguage('en')}
+        onClick={() => handleChange('en')}
         className={`text-xs px-2 py-1 rounded ${!isZh ? 'bg-accent text-white font-medium' : 'text-text-muted hover:text-text'}`}
       >
         En
@@ -411,6 +419,19 @@ function AppContent() {
       setInitialDataLoaded(true);
     })();
   }, [fetchConfig, fetchSessions, initialDataLoaded, isConnected]);
+
+  // 连接成功后从 config.yaml 同步 preferred_language 到前端显示
+  useEffect(() => {
+    if (!isConnected) return;
+    void webRequest<{ preferred_language?: string }>('locale.get_conf')
+      .then((payload) => {
+        const lang = payload?.preferred_language;
+        if (lang === 'zh' || lang === 'en') {
+          i18n.changeLanguage(lang);
+        }
+      })
+      .catch(() => {});
+  }, [isConnected]);
 
   // 新建会话：立即生成可用的 session_id，避免停留在 'new' 导致无法发送消息
   const handleNewSession = useCallback(async () => {

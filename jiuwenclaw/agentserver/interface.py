@@ -19,6 +19,7 @@ from openjiuwen.core.session.checkpointer import CheckpointerFactory
 from openjiuwen.core.session.checkpointer.checkpointer import CheckpointerConfig
 from openjiuwen.core.session.checkpointer.persistence import PersistenceCheckpointerProvider
 
+from jiuwenclaw.agentserver.prompt_builder import build_system_prompt
 from jiuwenclaw.gateway.cron import CronController, CronTargetChannel
 from jiuwenclaw.utils import get_root_dir, logger, USER_WORKSPACE_DIR
 from jiuwenclaw.config import get_config
@@ -38,7 +39,6 @@ from jiuwenclaw.agentserver.memory.compaction import ContextCompactionManager
 from jiuwenclaw.agentserver.memory.config import clear_config_cache
 from jiuwenclaw.agentserver.memory import clear_memory_manager_cache
 from jiuwenclaw.agentserver.skill_manager import SkillManager, _SKILLS_DIR
-from jiuwenclaw.agentserver.prompt_builder import DEFAULT_WORKSPACE_DIR
 from jiuwenclaw.evolution.service import EvolutionService
 from jiuwenclaw.schema.agent import AgentRequest, AgentResponse, AgentResponseChunk
 from jiuwenclaw.agentserver.memory import get_memory_manager
@@ -103,7 +103,7 @@ class JiuWenClaw:
         self._session_priorities: dict[str, int] = {}  # session_id -> 优先级计数器（用于先进后出）
         self._session_queues: dict[str, asyncio.PriorityQueue] = {}  # session_id -> 优先队列
         self._session_processors: dict[str, asyncio.Task] = {}  # session_id -> processor_task
-        self._workspace_dir: str = DEFAULT_WORKSPACE_DIR
+        self._workspace_dir: str = USER_WORKSPACE_DIR / "workspace" / "agent"
         self._agent_name: str = "main_agent"
         self._compaction_manager: ContextCompactionManager | None = None
         self._browser_mcp_registered: bool = False
@@ -379,10 +379,6 @@ class JiuWenClaw:
 
         effective_session_id = session_id or "default"
         if mode == "plan":
-            self._instance._config.prompt_template = [{
-                "role": "system",
-                "content": SYSTEM_PROMPT + TODO_PROMPT,
-            }]
             # if effective_session_id not in self._todo_tool_sessions_registered:
             todo_toolkit = TodoToolkit(session_id=effective_session_id)
             for tool in todo_toolkit.get_tools():
@@ -390,10 +386,6 @@ class JiuWenClaw:
                 self._instance.ability_manager.add(tool.card)
             self._todo_tool_sessions_registered.add(effective_session_id)
         else:
-            self._instance._config.prompt_template = [{
-                "role": "system",
-                "content": SYSTEM_PROMPT,
-            }]
             tool_list = self._instance.ability_manager.list()
             for tool in tool_list:
                 if isinstance(tool, ToolCard):
@@ -415,6 +407,12 @@ class JiuWenClaw:
                 Runner.resource_mgr.add_tool(mcp_tool)
                 self._instance.ability_manager.add(mcp_tool.card)
             self._mcp_tools_registered = True
+
+        config_base = get_config()
+        self._instance._config.prompt_template = [{
+            "role": "system",
+            "content": build_system_prompt(mode=mode, language=config_base.get("preferred_language", "zh")),
+        }]
 
     async def process_interrupt(self, request: AgentRequest) -> AgentResponse:
         """处理 interrupt 请求.

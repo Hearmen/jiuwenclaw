@@ -122,6 +122,13 @@ def update_channel_in_config(channel_id: str, conf: dict[str, Any]) -> None:
     _dump_yaml_round_trip(_CONFIG_YAML_PATH, data)
 
 
+def update_preferred_language_in_config(lang: str) -> None:
+    """只更新顶层 preferred_language 并写回。"""
+    data = _load_yaml_round_trip(_CONFIG_YAML_PATH)
+    data["preferred_language"] = lang
+    _dump_yaml_round_trip(_CONFIG_YAML_PATH, data)
+
+
 def update_browser_in_config(updates: dict[str, Any]) -> None:
     """只更新 browser 段（如 chrome_path）并写回。"""
     data = _load_yaml_round_trip(_CONFIG_YAML_PATH)

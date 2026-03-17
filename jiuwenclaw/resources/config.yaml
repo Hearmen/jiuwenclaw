@@ -1,3 +1,6 @@
+# 前端显示语言：zh（中文）/ en（英文），与 Web 界面语言切换同步
+preferred_language: zh
+
 react:
   agent_name: main_agent
   max_iterations: 100
