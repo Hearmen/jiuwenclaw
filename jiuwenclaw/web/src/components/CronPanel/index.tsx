@@ -267,7 +267,7 @@ export default function CronPanel() {
             onClick={() => setIsCreating(!isCreating)}
             className="btn primary !px-4 !py-2"
           >
-            {isCreating ? t('cron.cancelCreate') : t('cron.create')}
+            {isCreating ? t('cron.cancelCreate') : t('cron.createJob')}
           </button>
         </div>
 
@@ -294,13 +294,13 @@ export default function CronPanel() {
                     <th className="px-4 py-3 text-left text-sm font-medium text-text-muted w-[120px]">{t('cron.columns.wakeOffset')}</th>
                     <th className="px-4 py-3 text-left text-sm font-medium text-text-muted">{t('cron.columns.timezone')}</th>
                     <th className="px-4 py-3 text-left text-sm font-medium text-text-muted">{t('cron.columns.target')}</th>
-                    <th className="px-4 py-3 text-right text-sm font-medium text-text-muted">{t('cron.columns.actions')}</th>
+                    <th className="px-4 py-3 text-left text-sm font-medium text-text-muted">{t('cron.columns.actions')}</th>
                   </tr>
                 </thead>
                 <tbody>
                   {/* 创建任务行 */}
                   {isCreating && (
-                    <tr className="border-b border-border bg-secondary/10">
+                    <tr className="border-b border-border bg-secondary/10 sticky top-[41px] z-5">
                       <td className="px-4 py-3">
                         <input
                           type="text"
@@ -379,7 +379,7 @@ export default function CronPanel() {
                         </select>
                       </td>
                       <td className="px-4 py-3 text-right">
-                        <div className="flex items-center justify-end gap-2">
+                        <div className="flex items-enter gap-2">
                           <button
                             onClick={() => {
                               setIsCreating(false);
@@ -393,13 +393,13 @@ export default function CronPanel() {
                                 targets: 'web'
                               });
                             }}
-                            className="px-2 py-1 text-sm border border-gray-300 bg-white text-gray-600 rounded hover:bg-gray-50"
+                            className="btn !px-3 !py-1.5"
                           >
                             {t('common.cancel')}
                           </button>
                           <button
                             onClick={handleCreateJob}
-                            className="px-2 py-1 text-sm bg-blue-500 text-white rounded hover:bg-blue-600"
+                            className="btn primary !px-3 !py-1.5"
                           >
                             {t('cron.create')}
                           </button>
@@ -410,7 +410,7 @@ export default function CronPanel() {
 
                   {/* 编辑任务行 */}
                   {editingJobId && editJob && (
-                    <tr className="border-b border-border bg-secondary/10">
+                    <tr className="border-b border-border bg-secondary/10 sticky top-[41px] z-5">
                       <td className="px-4 py-3">
                         <input
                           type="text"
@@ -495,13 +495,13 @@ export default function CronPanel() {
                               setEditingJobId(null);
                               setEditJob(null);
                             }}
-                            className="px-2 py-1 text-sm border border-gray-300 bg-white text-gray-600 rounded hover:bg-gray-50"
+                            className="btn !px-3 !py-1.5"
                           >
                             {t('common.cancel')}
                           </button>
                           <button
                             onClick={handleSubmitUpdate}
-                            className="px-2 py-1 text-sm bg-blue-500 text-white rounded hover:bg-blue-600"
+                            className="btn primary !px-3 !py-1.5"
                           >
                             {t('cron.update')}
                           </button>
@@ -545,26 +545,26 @@ export default function CronPanel() {
                         <td className="px-4 py-3 text-sm text-text-muted">
                           {job.targets || '-'}
                         </td>
-                        <td className="px-4 py-3 text-right">
-                          <div className="flex items-center justify-end gap-2">
-                            <button
+                        <td className="px-4 py-3 text-left">
+                          <div className="flex items-center gap-4">
+                            <span
                               onClick={() => handleToggleJob(job.id, job.enabled)}
-                              className={`px-2 py-1 text-sm rounded hover:bg-opacity-90 ${job.enabled ? 'bg-red-500 text-white hover:bg-red-600' : 'bg-blue-500 text-white'}`}
+                              className={`cursor-pointer text-sm ${job.enabled ? 'text-danger' : 'text-accent'}`}
                             >
                               {job.enabled ? t('cron.disable') : t('cron.enable')}
-                            </button>
-                            <button
+                            </span>
+                            <span
                               onClick={() => handleUpdateJob(job.id)}
-                              className="px-2 py-1 text-sm bg-blue-500 text-white rounded hover:bg-blue-600"
+                              className="cursor-pointer text-sm text-accent"
                             >
                               {t('cron.update')}
-                            </button>
-                            <button
+                            </span>
+                            <span
                               onClick={() => handleDeleteJob(job.id)}
-                              className="px-2 py-1 text-sm bg-blue-500 text-white rounded hover:bg-blue-600"
+                              className="cursor-pointer text-sm text-accent"
                             >
                               {t('cron.delete')}
-                            </button>
+                            </span>
                           </div>
                         </td>
                       </tr>

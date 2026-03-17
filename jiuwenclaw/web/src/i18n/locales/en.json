@@ -312,6 +312,7 @@
     "title": "Scheduled Task Management",
     "subtitle": "Manage scheduled tasks with cron expressions, including creating, enabling, and deleting tasks",
     "create": "Create",
+    "createJob": "createJob",
     "cancelCreate": "Cancel Create",
     "update": "Update",
     "delete": "Delete",

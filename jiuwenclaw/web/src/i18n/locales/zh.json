@@ -311,7 +311,8 @@
   "cron": {
     "title": "定时任务管理",
     "subtitle": "使用 cron 表达式管理定时任务，支持添加、启用和删除操作",
-    "create": "创建任务",
+    "createJob": "创建任务",
+    "create": "创建",
     "cancelCreate": "取消创建",
     "update": "更新",
     "delete": "删除",
