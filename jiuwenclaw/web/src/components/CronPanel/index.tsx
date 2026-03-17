@@ -47,7 +47,7 @@ export default function CronPanel() {
     enabled: true,
     cron_expr: '',
     timezone: 'Asia/Shanghai',
-    wake_offset_seconds: 0,
+    wake_offset_seconds: 60,
     description: '',
     targets: 'web'
   });
@@ -141,7 +141,7 @@ export default function CronPanel() {
         enabled: true,
         cron_expr: '',
         timezone: 'Asia/Shanghai',
-        wake_offset_seconds: 0,
+        wake_offset_seconds: 60,
         description: '',
         targets: 'web'
       });
@@ -294,7 +294,7 @@ export default function CronPanel() {
                     <th className="px-4 py-3 text-left text-sm font-medium text-text-muted w-[120px]">{t('cron.columns.wakeOffset')}</th>
                     <th className="px-4 py-3 text-left text-sm font-medium text-text-muted">{t('cron.columns.timezone')}</th>
                     <th className="px-4 py-3 text-left text-sm font-medium text-text-muted">{t('cron.columns.target')}</th>
-                    <th className="px-4 py-3 text-left text-sm font-medium text-text-muted">{t('cron.columns.actions')}</th>
+                    <th className="px-4 py-3 text-left text-sm font-medium text-text-muted w-[160px]">{t('cron.columns.actions')}</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -489,7 +489,7 @@ export default function CronPanel() {
                         </select>
                       </td>
                       <td className="px-4 py-3 text-right">
-                        <div className="flex items-center justify-end gap-2">
+                        <div className="flex items-center gap-2">
                           <button
                             onClick={() => {
                               setEditingJobId(null);
