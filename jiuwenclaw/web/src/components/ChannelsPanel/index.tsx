@@ -1414,10 +1414,10 @@ export function ChannelsPanel({ isConnected }: ChannelsPanelProps) {
                     <div className="px-4 py-3 bg-secondary/30 border-b border-border">
                       <div className="flex items-center justify-between gap-4">
                         <div className="flex items-center gap-3">
-                          <ChannelHeaderLogo channelId="telegram" label="Telegram" />
+                          <ChannelHeaderLogo channelId="telegram" label={getChannelLabel(t, 'telegram')} />
                           <div>
-                            <h4 className="text-sm font-medium text-text">Telegram 频道参数配置</h4>
-                            <p className="text-xs text-text-muted mt-1">配置 Telegram Bot 服务相关参数</p>
+                            <h4 className="text-sm font-medium text-text">{t('channels.config.telegramTitle')}</h4>
+                            <p className="text-xs text-text-muted mt-1">{t('channels.config.telegramSubtitle')}</p>
                           </div>
                         </div>
                         <div className="flex items-center gap-2">
@@ -1427,7 +1427,7 @@ export function ChannelsPanel({ isConnected }: ChannelsPanelProps) {
                             disabled={telegramSaving || isConfigRefreshing}
                             className="btn !px-3 !py-1.5 disabled:opacity-50 disabled:cursor-not-allowed"
                           >
-                            {telegramLoading ? '刷新中...' : '刷新'}
+                            {telegramLoading ? t('common.refreshing') : t('common.refresh')}
                           </button>
                           <button
                             type="button"
@@ -1435,7 +1435,7 @@ export function ChannelsPanel({ isConnected }: ChannelsPanelProps) {
                             disabled={!hasTelegramConfigChanges || telegramSaving}
                             className="btn !px-3 !py-1.5 disabled:opacity-50 disabled:cursor-not-allowed"
                           >
-                            取消
+                            {t('common.cancel')}
                           </button>
                           <button
                             type="button"
@@ -1443,7 +1443,7 @@ export function ChannelsPanel({ isConnected }: ChannelsPanelProps) {
                             disabled={!hasTelegramConfigChanges || telegramSaving || !isConnected}
                             className="btn primary !px-3 !py-1.5 disabled:opacity-50 disabled:cursor-not-allowed"
                           >
-                            {telegramSaving ? '保存中...' : '保存'}
+                            {telegramSaving ? t('common.saving') : t('common.save')}
                           </button>
                         </div>
                       </div>
@@ -1457,7 +1457,7 @@ export function ChannelsPanel({ isConnected }: ChannelsPanelProps) {
 
                     <div className="p-4 pt-3 flex-1 overflow-auto">
                       {telegramLoading ? (
-                        <div className="text-sm text-text-muted">正在加载 Telegram 配置...</div>
+                        <div className="text-sm text-text-muted">{t('channels.loading.telegram')}</div>
                       ) : (
                         <table className="w-full text-sm">
                           <tbody>
@@ -1489,15 +1489,15 @@ export function ChannelsPanel({ isConnected }: ChannelsPanelProps) {
                                     type={telegramVisibleFields['bot_token'] ? 'text' : 'password'}
                                     value={telegramDraft.bot_token}
                                     onChange={(e) => handleTelegramFieldChange('bot_token', e.target.value)}
-                                    placeholder="请输入 Bot Token（从 @BotFather 获取）"
+                                    placeholder={t('channels.placeholders.telegramBotToken')}
                                     className="w-full rounded-md border border-border bg-bg px-3 py-2 text-[13px] outline-none focus:border-accent pr-10"
                                   />
                                   <button
                                     type="button"
                                     onClick={() => toggleTelegramFieldVisible('bot_token')}
                                     className="channels-panel__visibility-toggle"
-                                    aria-label={telegramVisibleFields['bot_token'] ? '隐藏明文' : '显示明文'}
-                                    title={telegramVisibleFields['bot_token'] ? '隐藏明文' : '显示明文'}
+                                    aria-label={telegramVisibleFields['bot_token'] ? t('channels.hideValue') : t('channels.showValue')}
+                                    title={telegramVisibleFields['bot_token'] ? t('channels.hideValue') : t('channels.showValue')}
                                   >
                                     <VisibilityIcon visible={Boolean(telegramVisibleFields['bot_token'])} />
                                   </button>
@@ -1510,7 +1510,7 @@ export function ChannelsPanel({ isConnected }: ChannelsPanelProps) {
                                 <textarea
                                   value={telegramDraft.allow_from}
                                   onChange={(e) => handleTelegramFieldChange('allow_from', e.target.value)}
-                                  placeholder="每行一个 Telegram user_id（也支持逗号分隔）"
+                                  placeholder={t('channels.placeholders.telegramUserIds')}
                                   rows={4}
                                   className="w-full rounded-md border border-border bg-bg px-3 py-2 text-[13px] outline-none focus:border-accent resize-y"
                                 />
@@ -1538,10 +1538,10 @@ export function ChannelsPanel({ isConnected }: ChannelsPanelProps) {
                                   onChange={(e) => handleTelegramFieldChange('group_chat_mode', e.target.value)}
                                   className="w-full rounded-md border border-border bg-bg px-3 py-2 text-[13px] outline-none focus:border-accent"
                                 >
-                                  <option value="mention">仅响应 @提及 (mention)</option>
-                                  <option value="reply">仅响应回复 (reply)</option>
-                                  <option value="all">响应所有消息 (all)</option>
-                                  <option value="off">禁用群聊 (off)</option>
+                                  <option value="mention">Only respond to @mentions (mention)</option>
+                                  <option value="reply">Only respond to replies (reply)</option>
+                                  <option value="all">Respond to all messages (all)</option>
+                                  <option value="off">Disable group chat (off)</option>
                                 </select>
                               </td>
                             </tr>

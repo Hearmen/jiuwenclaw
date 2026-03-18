@@ -255,7 +255,9 @@
       "feishuSubtitle": "Configure Lark channel service settings",
       "discordTitle": "Discord Channel Configuration",
       "discordSubtitle": "Configure Discord bot service settings",
-      "discordHint": "Discord Bot messaging is supported. Enable Message Content Intent in Developer Portal and set the target channel."
+      "discordHint": "Discord Bot messaging is supported. Enable Message Content Intent in Developer Portal and set the target channel.",
+      "telegramTitle": "Telegram Channel Configuration",
+      "telegramSubtitle": "Configure Telegram Bot service settings"
     },
     "loading": {
       "xiaoyi": "Loading Xiaoyi settings...",
@@ -270,7 +272,9 @@
       "appSecret": "Enter the app secret",
       "employeeIds": "One employee ID per line (comma-separated is also supported)",
       "chatId": "Enter the chat ID",
-      "ids": "One ID per line (comma-separated is also supported)"
+      "ids": "One ID per line (comma-separated is also supported)",
+      "telegramBotToken": "Enter Bot Token (from @BotFather)",
+      "telegramUserIds": "One Telegram user_id per line (comma-separated is also supported)"
     },
     "saved": {
       "feishu": "Lark settings saved",

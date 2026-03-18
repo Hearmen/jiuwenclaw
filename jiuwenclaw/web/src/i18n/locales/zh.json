@@ -255,7 +255,9 @@
       "feishuSubtitle": "配置飞书频道服务相关参数",
       "discordTitle": "Discord 频道参数配置",
       "discordSubtitle": "配置 Discord Bot 服务相关参数",
-      "discordHint": "支持 Discord Bot 消息收发，请确保已在开发者后台开启 Message Content Intent 并配置目标频道。"
+      "discordHint": "支持 Discord Bot 消息收发，请确保已在开发者后台开启 Message Content Intent 并配置目标频道。",
+      "telegramTitle": "Telegram 频道参数配置",
+      "telegramSubtitle": "配置 Telegram Bot 服务相关参数"
     },
     "loading": {
       "xiaoyi": "正在加载小艺配置...",
@@ -270,7 +272,9 @@
       "appSecret": "请输入应用密钥",
       "employeeIds": "每行一个员工 ID（也支持逗号分隔）",
       "chatId": "请输入聊天 ID",
-      "ids": "每行一个 ID（也支持逗号分隔）"
+      "ids": "每行一个 ID（也支持逗号分隔）",
+      "telegramBotToken": "请输入 Bot Token（从 @BotFather 获取）",
+      "telegramUserIds": "每行一个 Telegram user_id（也支持逗号分隔）"
     },
     "saved": {
       "feishu": "飞书配置已保存",
