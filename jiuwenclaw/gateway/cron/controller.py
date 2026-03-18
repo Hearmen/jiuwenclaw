@@ -302,8 +302,8 @@ class CronController:
                         },
                         "wake_offset_seconds": {
                             "type": "integer",
-                            "description": "提前多少秒执行，默认 300",
-                            "default": 300,
+                            "description": "提前多少秒执行，默认 60",
+                            "default": 60,
                         },
                     },
                     "required": ["name", "cron_expr", "timezone", "description"],
