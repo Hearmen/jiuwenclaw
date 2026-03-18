@@ -52,8 +52,7 @@ export default function CronPanel() {
     targets: 'web'
   });
   const [isCreating, setIsCreating] = useState(false);
-  const [editingJobId, setEditingJobId] = useState<string | null>(null);
-  const [editJob, setEditJob] = useState<UpdateCronJob | null>(null);
+  const [editingJobs, setEditingJobs] = useState<Record<string, UpdateCronJob>>({});
 
   // 时区选项
   const timezoneOptions = [
@@ -187,8 +186,10 @@ export default function CronPanel() {
   const handleUpdateJob = async (id: string) => {
     try {
       const payload = await webRequest<{ job: CronJob }>('cron.job.get', { id });
-      setEditJob(payload.job as UpdateCronJob);
-      setEditingJobId(id);
+      setEditingJobs(prev => ({
+        ...prev,
+        [id]: payload.job as UpdateCronJob
+      }));
     } catch (viewError) {
       const message = viewError instanceof Error ? viewError.message : t('cron.errors.loadDetailFailed');
       setError(message);
@@ -196,7 +197,8 @@ export default function CronPanel() {
   };
 
   // 执行更新任务
-  const handleSubmitUpdate = async () => {
+  const handleSubmitUpdate = async (jobId: string) => {
+    const editJob = editingJobs[jobId];
     if (!editJob) return;
 
     // 检查必填字段
@@ -238,8 +240,11 @@ export default function CronPanel() {
       
       await webRequest<{ job: CronJob }>('cron.job.update', updateData);
       setSuccess(t('cron.success.updated'));
-      setEditingJobId(null);
-      setEditJob(null);
+      setEditingJobs(prev => {
+        const newEditingJobs = { ...prev };
+        delete newEditingJobs[jobId];
+        return newEditingJobs;
+      });
       await loadJobs();
     } catch (updateError) {
       const message = updateError instanceof Error ? updateError.message : t('cron.errors.updateFailed');
@@ -287,8 +292,8 @@ export default function CronPanel() {
               <table className="w-full border-collapse">
                 <thead>
                   <tr className="border-b border-border sticky top-0 bg-bg">
-                    <th className="px-4 py-3 text-left text-sm font-medium text-text-muted w-[120px]">{t('cron.columns.name')}</th>
-                    <th className="px-4 py-3 text-left text-sm font-medium text-text-muted w-[400px]">{t('cron.columns.cron')}</th>
+                    <th className="px-4 py-3 text-left text-sm font-medium text-text-muted w-[160px]">{t('cron.columns.name')}</th>
+                    <th className="px-4 py-3 text-left text-sm font-medium text-text-muted w-[200px]">{t('cron.columns.cron')}</th>
                     <th className="px-4 py-3 text-left text-sm font-medium text-text-muted">{t('cron.columns.status')}</th>
                     <th className="px-4 py-3 text-left text-sm font-medium text-text-muted w-[300px]">{t('cron.columns.description')}</th>
                     <th className="px-4 py-3 text-left text-sm font-medium text-text-muted w-[120px]">{t('cron.columns.wakeOffset')}</th>
@@ -311,17 +316,28 @@ export default function CronPanel() {
                         />
                       </td>
                       <td className="px-4 py-3">
-                        <input
-                          type="text"
-                          value={newJob.cron_expr}
-                          onChange={(e) => setNewJob({ ...newJob, cron_expr: e.target.value })}
-                          className="w-full rounded-md border border-border bg-bg px-3 py-2 text-[13px] text-text outline-none focus:border-accent"
-                          placeholder={t('cron.placeholders.cron')}
-                        />
+                        <div className="relative">
+                          <input
+                            type="text"
+                            value={newJob.cron_expr}
+                            onChange={(e) => setNewJob({ ...newJob, cron_expr: e.target.value })}
+                            className="w-full rounded-md border border-border bg-bg px-3 py-2 text-[13px] text-text outline-none focus:border-accent pr-8"
+                            placeholder={t('cron.placeholders.cronShort')}
+                          />
+                          <span
+                            className="absolute right-2 top-1/2 -translate-y-1/2 text-text-muted hover:text-text cursor-help"
+                            title={t('cron.placeholders.cron')}
+                          >
+                            <svg width="16" height="16" viewBox="0 0 40 40" xmlns="http://www.w3.org/2000/svg">
+                              <circle cx="20" cy="20" r="18" fill="transparent" stroke="currentColor" stroke-width="2" />
+                              <text x="20" y="22" font-family="Arial, sans-serif" font-size="24" fill="currentColor" text-anchor="middle" dominant-baseline="middle">?</text>
+                            </svg>
+                          </span>
+                        </div>
                       </td>
                       <td className="px-4 py-3">
-                        <div className="flex items-center justify-between">
-                          <span className="text-sm">{newJob.enabled ? t('cron.status.enabled') : t('cron.status.disabled')}</span>
+                        <div className="flex items-center">
+                          <span className="text-sm mr-2">{newJob.enabled ? t('cron.status.enabled') : t('cron.status.disabled')}</span>
                           <div 
                             className="relative inline-block w-10 h-6 align-middle select-none rounded-full cursor-pointer"
                             onClick={() => setNewJob({ ...newJob, enabled: !newJob.enabled })}
@@ -408,108 +424,6 @@ export default function CronPanel() {
                     </tr>
                   )}
 
-                  {/* 编辑任务行 */}
-                  {editingJobId && editJob && (
-                    <tr className="border-b border-border bg-secondary/10 sticky top-[41px] z-5">
-                      <td className="px-4 py-3">
-                        <input
-                          type="text"
-                          value={editJob.name}
-                          onChange={(e) => setEditJob({ ...editJob, name: e.target.value })}
-                          className="w-full rounded-md border border-border bg-bg px-3 py-2 text-[13px] text-text outline-none focus:border-accent"
-                          placeholder={t('cron.placeholders.name')}
-                        />
-                      </td>
-                      <td className="px-4 py-3">
-                        <input
-                          type="text"
-                          value={editJob.cron_expr}
-                          onChange={(e) => setEditJob({ ...editJob, cron_expr: e.target.value })}
-                          className="w-full rounded-md border border-border bg-bg px-3 py-2 text-[13px] text-text outline-none focus:border-accent"
-                          placeholder={t('cron.placeholders.cronShort')}
-                        />
-                      </td>
-                      <td className="px-4 py-3">
-                        <div className="flex items-center justify-between">
-                          <span className="text-sm">{editJob.enabled ? t('cron.status.enabled') : t('cron.status.disabled')}</span>
-                          <div 
-                            className="relative inline-block w-10 h-6 align-middle select-none rounded-full cursor-pointer"
-                            onClick={() => setEditJob({ ...editJob, enabled: !editJob.enabled })}
-                            style={{ backgroundColor: editJob.enabled ? '#10b981' : '#d1d5db' }}
-                          >
-                            <div 
-                              className="absolute left-1 top-1 h-4 w-4 rounded-full bg-white transition-transform"
-                              style={{ transform: editJob.enabled ? 'translateX(16px)' : 'none' }}
-                            ></div>
-                          </div>
-                        </div>
-                      </td>
-                      <td className="px-4 py-3">
-                        <input
-                          type="text"
-                          value={editJob.description || ''}
-                          onChange={(e) => setEditJob({ ...editJob, description: e.target.value })}
-                          className="w-full rounded-md border border-border bg-bg px-3 py-2 text-[13px] text-text outline-none focus:border-accent"
-                          placeholder={t('cron.placeholders.description')}
-                        />
-                      </td>
-                      <td className="px-4 py-3">
-                        <input
-                          type="number"
-                          value={editJob.wake_offset_seconds}
-                          onChange={(e) => setEditJob({ ...editJob, wake_offset_seconds: parseInt(e.target.value) || 0 })}
-                          className="w-full rounded-md border border-border bg-bg px-3 py-2 text-[13px] text-text outline-none focus:border-accent"
-                          placeholder={t('cron.placeholders.wakeOffset')}
-                        />
-                      </td>
-                      <td className="px-4 py-3">
-                        <select
-                          value={editJob.timezone}
-                          onChange={(e) => setEditJob({ ...editJob, timezone: e.target.value })}
-                          className="w-full rounded-md border border-border bg-bg px-3 py-2 text-[13px] text-text outline-none focus:border-accent"
-                        >
-                          {timezoneOptions.map(option => (
-                            <option key={option.value} value={option.value}>
-                              {option.label}
-                            </option>
-                          ))}
-                        </select>
-                      </td>
-                      <td className="px-4 py-3">
-                        <select
-                          value={editJob.targets}
-                          onChange={(e) => setEditJob({ ...editJob, targets: e.target.value })}
-                          className="w-full rounded-md border border-border bg-bg px-3 py-2 text-[13px] text-text outline-none focus:border-accent"
-                        >
-                          {targetOptions.map(option => (
-                            <option key={option.value} value={option.value} disabled={option.disabled} style={option.style}>
-                              {option.label}
-                            </option>
-                          ))}
-                        </select>
-                      </td>
-                      <td className="px-4 py-3 text-right">
-                        <div className="flex items-center gap-2">
-                          <button
-                            onClick={() => {
-                              setEditingJobId(null);
-                              setEditJob(null);
-                            }}
-                            className="btn !px-3 !py-1.5"
-                          >
-                            {t('common.cancel')}
-                          </button>
-                          <button
-                            onClick={handleSubmitUpdate}
-                            className="btn primary !px-3 !py-1.5"
-                          >
-                            {t('cron.update')}
-                          </button>
-                        </div>
-                      </td>
-                    </tr>
-                  )}
-
                   {/* 任务列表 */}
                   {cronJobs.length === 0 ? (
                     <tr>
@@ -518,58 +432,195 @@ export default function CronPanel() {
                       </td>
                     </tr>
                   ) : (
-                    cronJobs.map(job => (
-                      <tr key={job.id} className="border-b border-border hover:bg-secondary/10">
-                        <td className="px-4 py-3 text-sm">
-                          <div className="max-w-[100px] overflow-hidden text-ellipsis whitespace-nowrap" title={job.name}>
-                            {job.name}
-                          </div>
-                        </td>
-                        <td className="px-4 py-3 text-sm mono">{job.cron_expr}</td>
-                        <td className="px-4 py-3">
-                          <span className={`inline-flex items-center px-2 py-1 rounded-full text-xs font-medium ${job.enabled ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-700'}`}>
-                            {job.enabled ? t('cron.status.enabled') : t('cron.status.disabled')}
-                          </span>
-                        </td>
-                        <td className="px-4 py-3 text-sm text-text-muted">
-                          <div className="max-w-[300px] overflow-hidden text-ellipsis whitespace-nowrap" title={job.description || '-'}>
-                            {job.description || '-'}
-                          </div>
-                        </td>
-                        <td className="px-4 py-3 text-sm text-text-muted">
-                          {job.wake_offset_seconds}
-                        </td>
-                        <td className="px-4 py-3 text-sm text-text-muted">
-                          {job.timezone}
-                        </td>
-                        <td className="px-4 py-3 text-sm text-text-muted">
-                          {job.targets || '-'}
-                        </td>
-                        <td className="px-4 py-3 text-left">
-                          <div className="flex items-center gap-4">
-                            <span
-                              onClick={() => handleToggleJob(job.id, job.enabled)}
-                              className={`cursor-pointer text-sm ${job.enabled ? 'text-danger' : 'text-accent'}`}
+                    cronJobs.map(job => {
+                      const isEditing = editingJobs[job.id] !== undefined;
+                      const editJob = editingJobs[job.id];
+                      
+                      return isEditing && editJob ? (
+                        <tr key={job.id} className="border-b border-border bg-secondary/10">
+                          <td className="px-4 py-3">
+                            <input
+                              type="text"
+                              value={editJob.name}
+                              onChange={(e) => setEditingJobs(prev => ({
+                                ...prev,
+                                [job.id]: { ...prev[job.id], name: e.target.value }
+                              }))}
+                              className="w-full rounded-md border border-border bg-bg px-3 py-2 text-[13px] text-text outline-none focus:border-accent"
+                              placeholder={t('cron.placeholders.name')}
+                            />
+                          </td>
+                          <td className="px-4 py-3">
+                            <div className="relative">
+                              <input
+                                type="text"
+                                value={editJob.cron_expr}
+                                onChange={(e) => setEditingJobs(prev => ({
+                                  ...prev,
+                                  [job.id]: { ...prev[job.id], cron_expr: e.target.value }
+                                }))}
+                                className="w-full rounded-md border border-border bg-bg px-3 py-2 text-[13px] text-text outline-none focus:border-accent pr-8"
+                                placeholder={t('cron.placeholders.cronShort')}
+                              />
+                              <span
+                                className="absolute right-2 top-1/2 -translate-y-1/2 text-text-muted hover:text-text cursor-help"
+                                title={t('cron.placeholders.cron')}
+                              >
+                                <svg width="16" height="16" viewBox="0 0 40 40" xmlns="http://www.w3.org/2000/svg">
+                                  <circle cx="20" cy="20" r="18" fill="transparent" stroke="currentColor" stroke-width="2" />
+                                  <text x="20" y="22" font-family="Arial, sans-serif" font-size="24" fill="currentColor" text-anchor="middle" dominant-baseline="middle">?</text>
+                                </svg>
+                              </span>
+                            </div>
+                          </td>
+                          <td className="px-4 py-3">
+                            <div className="flex items-center">
+                              <span className="text-sm mr-2">{editJob.enabled ? t('cron.status.enabled') : t('cron.status.disabled')}</span>
+                              <div 
+                                className="relative inline-block w-10 h-6 align-middle select-none rounded-full cursor-pointer"
+                                onClick={() => setEditingJobs(prev => ({
+                                  ...prev,
+                                  [job.id]: { ...prev[job.id], enabled: !prev[job.id].enabled }
+                                }))}
+                                style={{ backgroundColor: editJob.enabled ? '#10b981' : '#d1d5db' }}
+                              >
+                                <div 
+                                  className="absolute left-1 top-1 h-4 w-4 rounded-full bg-white transition-transform"
+                                  style={{ transform: editJob.enabled ? 'translateX(16px)' : 'none' }}
+                                ></div>
+                              </div>
+                            </div>
+                          </td>
+                          <td className="px-4 py-3">
+                            <input
+                              type="text"
+                              value={editJob.description || ''}
+                              onChange={(e) => setEditingJobs(prev => ({
+                                ...prev,
+                                [job.id]: { ...prev[job.id], description: e.target.value }
+                              }))}
+                              className="w-full rounded-md border border-border bg-bg px-3 py-2 text-[13px] text-text outline-none focus:border-accent"
+                              placeholder={t('cron.placeholders.description')}
+                            />
+                          </td>
+                          <td className="px-4 py-3">
+                            <input
+                              type="number"
+                              value={editJob.wake_offset_seconds}
+                              onChange={(e) => setEditingJobs(prev => ({
+                                ...prev,
+                                [job.id]: { ...prev[job.id], wake_offset_seconds: parseInt(e.target.value) || 0 }
+                              }))}
+                              className="w-full rounded-md border border-border bg-bg px-3 py-2 text-[13px] text-text outline-none focus:border-accent"
+                              placeholder={t('cron.placeholders.wakeOffset')}
+                            />
+                          </td>
+                          <td className="px-4 py-3">
+                            <select
+                              value={editJob.timezone}
+                              onChange={(e) => setEditingJobs(prev => ({
+                                ...prev,
+                                [job.id]: { ...prev[job.id], timezone: e.target.value }
+                              }))}
+                              className="w-full rounded-md border border-border bg-bg px-3 py-2 text-[13px] text-text outline-none focus:border-accent"
                             >
-                              {job.enabled ? t('cron.disable') : t('cron.enable')}
-                            </span>
-                            <span
-                              onClick={() => handleUpdateJob(job.id)}
-                              className="cursor-pointer text-sm text-accent"
+                              {timezoneOptions.map(option => (
+                                <option key={option.value} value={option.value}>
+                                  {option.label}
+                                </option>
+                              ))}
+                            </select>
+                          </td>
+                          <td className="px-4 py-3">
+                            <select
+                              value={editJob.targets}
+                              onChange={(e) => setEditingJobs(prev => ({
+                                ...prev,
+                                [job.id]: { ...prev[job.id], targets: e.target.value }
+                              }))}
+                              className="w-full rounded-md border border-border bg-bg px-3 py-2 text-[13px] text-text outline-none focus:border-accent"
                             >
-                              {t('cron.update')}
+                              {targetOptions.map(option => (
+                                <option key={option.value} value={option.value} disabled={option.disabled} style={option.style}>
+                                  {option.label}
+                                </option>
+                              ))}
+                            </select>
+                          </td>
+                          <td className="px-4 py-3 text-left">
+                            <div className="flex items-center gap-2">
+                              <button
+                                onClick={() => setEditingJobs(prev => {
+                                  const newEditingJobs = { ...prev };
+                                  delete newEditingJobs[job.id];
+                                  return newEditingJobs;
+                                })}
+                                className="btn !px-3 !py-1.5"
+                              >
+                                {t('common.cancel')}
+                              </button>
+                              <button
+                                onClick={() => handleSubmitUpdate(job.id)}
+                                className="btn primary !px-3 !py-1.5"
+                              >
+                                {t('cron.update')}
+                              </button>
+                            </div>
+                          </td>
+                        </tr>
+                      ) : (
+                        <tr key={job.id} className="border-b border-border hover:bg-secondary/10">
+                          <td className="px-4 py-3 text-sm">
+                            <div className="max-w-[100px] overflow-hidden text-ellipsis whitespace-nowrap" title={job.name}>
+                              {job.name}
+                            </div>
+                          </td>
+                          <td className="px-4 py-3 text-sm mono">{job.cron_expr}</td>
+                          <td className="px-4 py-3">
+                            <span className={`inline-flex items-center px-2 py-1 rounded-full text-xs font-medium ${job.enabled ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-700'}`}>
+                              {job.enabled ? t('cron.status.enabled') : t('cron.status.disabled')}
                             </span>
-                            <span
-                              onClick={() => handleDeleteJob(job.id)}
-                              className="cursor-pointer text-sm text-accent"
-                            >
-                              {t('cron.delete')}
-                            </span>
-                          </div>
-                        </td>
-                      </tr>
-                    ))
-                  )}
+                          </td>
+                          <td className="px-4 py-3 text-sm text-text-muted">
+                            <div className="max-w-[300px] overflow-hidden text-ellipsis whitespace-nowrap" title={job.description || '-'}>
+                              {job.description || '-'}
+                            </div>
+                          </td>
+                          <td className="px-4 py-3 text-sm text-text-muted">
+                            {job.wake_offset_seconds}
+                          </td>
+                          <td className="px-4 py-3 text-sm text-text-muted">
+                            {job.timezone}
+                          </td>
+                          <td className="px-4 py-3 text-sm text-text-muted">
+                            {job.targets || '-'}
+                          </td>
+                          <td className="px-4 py-3 text-left">
+                            <div className="flex items-center gap-4">
+                              <span
+                                onClick={() => handleToggleJob(job.id, job.enabled)}
+                                className={`cursor-pointer text-sm ${job.enabled ? 'text-danger' : 'text-accent'}`}
+                              >
+                                {job.enabled ? t('cron.disable') : t('cron.enable')}
+                              </span>
+                              <span
+                                onClick={() => handleUpdateJob(job.id)}
+                                className="cursor-pointer text-sm text-accent"
+                              >
+                                {t('cron.update')}
+                              </span>
+                              <span
+                                onClick={() => handleDeleteJob(job.id)}
+                                className="cursor-pointer text-sm text-accent"
+                              >
+                                {t('cron.delete')}
+                              </span>
+                            </div>
+                          </td>
+                        </tr>
+                      );
+                    }))
+                  }
                 </tbody>
               </table>
             </div>

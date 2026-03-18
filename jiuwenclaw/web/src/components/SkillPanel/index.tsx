@@ -413,6 +413,12 @@ export function SkillPanel({ sessionId }: SkillPanelProps) {
             >
               {t('skills.actions.sourceManager')}
             </button>
+            <button
+              onClick={() => setSkillNetModalOpen(true)}
+              className="px-3 py-1.5 rounded-md text-sm bg-accent text-white hover:bg-accent-hover"
+            >
+              {t('skills.skillNet.title')}
+            </button>
           </div>
         </div>
 
@@ -496,15 +502,6 @@ export function SkillPanel({ sessionId }: SkillPanelProps) {
           </div>
         ) : (
           <div className="mt-4 flex flex-col flex-1 min-h-0">
-            <div className="mb-3 flex-shrink-0">
-              <button
-                type="button"
-                onClick={() => setSkillNetModalOpen(true)}
-                className="px-3 py-2 rounded-md text-sm bg-accent text-white hover:bg-accent-hover transition-colors"
-              >
-                {t('skills.skillNet.title')}
-              </button>
-            </div>
             <div className="flex items-center gap-3 flex-shrink-0">
               <div className="flex-1 min-w-0">
                 <input

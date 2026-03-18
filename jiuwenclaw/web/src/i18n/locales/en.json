@@ -355,8 +355,8 @@
     },
     "placeholders": {
       "name": "Enter task name",
-      "cron": "Five fields: min hour day month weekday. Example: every Monday 11:58 = '58 11 * * 1'",
-      "cronShort": "Example: 58 11 * * 1",
+      "cron": "Five fields: min hour day month weekday. Example: every day at 9 AM = '0 9 * * *'; every Monday at 11:58 AM = '58 11 * * 1'",
+      "cronShort": "Five fields: min hour day month weekday.",
       "description": "Enter description",
       "wakeOffset": "Wake offset in seconds"
     },
