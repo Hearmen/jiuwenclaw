@@ -14,7 +14,7 @@ type ChannelItem = {
 };
 
 type LoadState = 'idle' | 'loading' | 'success' | 'error';
-type SupportedChannelId = 'web' | 'xiaoyi' | 'feishu' | 'dingtalk' | 'telegram' | 'discord';
+type SupportedChannelId = 'web' | 'xiaoyi' | 'feishu' | 'dingtalk' | 'telegram' | 'discord' | 'whatsapp';
 const ADAPTING_CHANNEL_IDS = new Set<SupportedChannelId>([]);
 
 type FeishuConfig = {
@@ -101,6 +101,28 @@ type DiscordDraft = {
   allow_from: string;
 };
 
+type WhatsAppConfig = {
+  enabled: boolean;
+  bridge_ws_url: string;
+  default_jid: string;
+  allow_from: string[];
+  enable_streaming: boolean;
+  auto_start_bridge: boolean;
+  bridge_command: string;
+  bridge_workdir: string;
+};
+
+type WhatsAppDraft = {
+  enabled: boolean;
+  bridge_ws_url: string;
+  default_jid: string;
+  allow_from: string;
+  enable_streaming: boolean;
+  auto_start_bridge: boolean;
+  bridge_command: string;
+  bridge_workdir: string;
+};
+
 const DEFAULT_FEISHU_CONF: FeishuConfig = {
   enabled: false,
   app_id: '',
@@ -143,6 +165,17 @@ const DEFAULT_DISCORD_CONF: DiscordConfig = {
   allow_from: [],
 };
 
+const DEFAULT_WHATSAPP_CONF: WhatsAppConfig = {
+  enabled: false,
+  bridge_ws_url: 'ws://127.0.0.1:19600/ws',
+  default_jid: '',
+  allow_from: [],
+  enable_streaming: true,
+  auto_start_bridge: false,
+  bridge_command: 'node scripts/whatsapp-bridge.js',
+  bridge_workdir: '',
+};
+
 const SUPPORTED_CHANNELS: Array<{ channel_id: SupportedChannelId; logo_src: string | null }> = [
   { channel_id: 'web', logo_src: null },
   { channel_id: 'xiaoyi', logo_src: '/xiaoyi.webp' },
@@ -150,6 +183,7 @@ const SUPPORTED_CHANNELS: Array<{ channel_id: SupportedChannelId; logo_src: stri
   { channel_id: 'dingtalk', logo_src: '/dingtalk.png' },
   { channel_id: 'telegram', logo_src: '/telegram.webp' },
   { channel_id: 'discord', logo_src: '/discord.webp' },
+  { channel_id: 'whatsapp', logo_src: '/whatsapp.png' },
 ];
 
 
@@ -407,6 +441,53 @@ function buildDiscordPayload(draft: DiscordDraft): Record<string, unknown> {
   };
 }
 
+function normalizeWhatsAppConfig(input: unknown): WhatsAppConfig {
+  if (!input || typeof input !== 'object') {
+    return DEFAULT_WHATSAPP_CONF;
+  }
+  const data = input as Record<string, unknown>;
+  const allowFromRaw = Array.isArray(data.allow_from) ? data.allow_from : [];
+  const allowFrom = allowFromRaw
+    .map((item) => String(item ?? '').trim())
+    .filter((item) => item.length > 0);
+  return {
+    enabled: Boolean(data.enabled),
+    bridge_ws_url: String(data.bridge_ws_url ?? 'ws://127.0.0.1:19600/ws').trim(),
+    default_jid: String(data.default_jid ?? '').trim(),
+    allow_from: allowFrom,
+    enable_streaming: data.enable_streaming === undefined ? true : Boolean(data.enable_streaming),
+    auto_start_bridge: Boolean(data.auto_start_bridge),
+    bridge_command: String(data.bridge_command ?? '').trim(),
+    bridge_workdir: String(data.bridge_workdir ?? '').trim(),
+  };
+}
+
+function draftFromWhatsAppConfig(conf: WhatsAppConfig): WhatsAppDraft {
+  return {
+    enabled: conf.enabled,
+    bridge_ws_url: conf.bridge_ws_url,
+    default_jid: conf.default_jid,
+    allow_from: conf.allow_from.join('\n'),
+    enable_streaming: conf.enable_streaming,
+    auto_start_bridge: conf.auto_start_bridge,
+    bridge_command: conf.bridge_command,
+    bridge_workdir: conf.bridge_workdir,
+  };
+}
+
+function buildWhatsAppPayload(draft: WhatsAppDraft): Record<string, unknown> {
+  return {
+    enabled: draft.enabled,
+    bridge_ws_url: draft.bridge_ws_url.trim(),
+    default_jid: draft.default_jid.trim(),
+    allow_from: normalizeAllowFromText(draft.allow_from),
+    enable_streaming: draft.enable_streaming,
+    auto_start_bridge: draft.auto_start_bridge,
+    bridge_command: draft.bridge_command.trim(),
+    bridge_workdir: draft.bridge_workdir.trim(),
+  };
+}
+
 function VisibilityIcon({ visible }: { visible: boolean }) {
   return visible ? (
     <svg className="channels-panel__icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8}>
@@ -508,6 +589,12 @@ export function ChannelsPanel({ isConnected }: ChannelsPanelProps) {
   const [discordSaving, setDiscordSaving] = useState(false);
   const [discordSaveError, setDiscordSaveError] = useState<string | null>(null);
   const [discordSuccess, setDiscordSuccess] = useState<string | null>(null);
+  const [whatsappConfig, setWhatsappConfig] = useState<WhatsAppConfig>(DEFAULT_WHATSAPP_CONF);
+  const [whatsappDraft, setWhatsappDraft] = useState<WhatsAppDraft>(draftFromWhatsAppConfig(DEFAULT_WHATSAPP_CONF));
+  const [whatsappLoading, setWhatsappLoading] = useState(false);
+  const [whatsappSaving, setWhatsappSaving] = useState(false);
+  const [whatsappSaveError, setWhatsappSaveError] = useState<string | null>(null);
+  const [whatsappSuccess, setWhatsappSuccess] = useState<string | null>(null);
 
   const fetchChannels = useCallback(async () => {
     setLoadState('loading');
@@ -613,6 +700,22 @@ export function ChannelsPanel({ isConnected }: ChannelsPanelProps) {
     }
   }, [t]);
 
+  const fetchWhatsAppConfig = useCallback(async () => {
+    setWhatsappLoading(true);
+    setWhatsappSaveError(null);
+    setWhatsappSuccess(null);
+    try {
+      const payload = await webRequest<{ config?: unknown }>('channel.whatsapp.get_conf');
+      const normalized = normalizeWhatsAppConfig(payload?.config);
+      setWhatsappConfig(normalized);
+      setWhatsappDraft(draftFromWhatsAppConfig(normalized));
+    } catch (err) {
+      setWhatsappSaveError(err instanceof Error ? err.message : t('channels.errors.loadWhatsApp'));
+    } finally {
+      setWhatsappLoading(false);
+    }
+  }, [t]);
+
   const handleSelectChannel = useCallback(
     (channelId: SupportedChannelId) => {
       if (ADAPTING_CHANNEL_IDS.has(channelId)) {
@@ -642,8 +745,12 @@ export function ChannelsPanel({ isConnected }: ChannelsPanelProps) {
     }
     if (activeChannelId === 'discord') {
       void fetchDiscordConfig();
+      return;
     }
-  }, [activeChannelId, fetchDiscordConfig, fetchDingtalkConfig, fetchFeishuConfig, fetchTelegramConfig, fetchXiaoyiConfig]);
+    if (activeChannelId === 'whatsapp') {
+      void fetchWhatsAppConfig();
+    }
+  }, [activeChannelId, fetchDiscordConfig, fetchDingtalkConfig, fetchFeishuConfig, fetchTelegramConfig, fetchWhatsAppConfig, fetchXiaoyiConfig]);
 
   const statusText = useMemo(() => {
     const enabledCount = channels.filter((channel) => channel.enabled).length;
@@ -709,6 +816,19 @@ export function ChannelsPanel({ isConnected }: ChannelsPanelProps) {
       normalizeAllowFromText(baseDraft.allow_from).join('\n') !== normalizeAllowFromText(discordDraft.allow_from).join('\n')
     );
   }, [discordConfig, discordDraft]);
+  const hasWhatsAppConfigChanges = useMemo(() => {
+    const baseDraft = draftFromWhatsAppConfig(whatsappConfig);
+    return (
+      baseDraft.enabled !== whatsappDraft.enabled ||
+      baseDraft.bridge_ws_url !== whatsappDraft.bridge_ws_url ||
+      baseDraft.default_jid !== whatsappDraft.default_jid ||
+      normalizeAllowFromText(baseDraft.allow_from).join('\n') !== normalizeAllowFromText(whatsappDraft.allow_from).join('\n') ||
+      baseDraft.enable_streaming !== whatsappDraft.enable_streaming ||
+      baseDraft.auto_start_bridge !== whatsappDraft.auto_start_bridge ||
+      baseDraft.bridge_command !== whatsappDraft.bridge_command ||
+      baseDraft.bridge_workdir !== whatsappDraft.bridge_workdir
+    );
+  }, [whatsappConfig, whatsappDraft]);
   const handleFieldChange = <K extends keyof FeishuDraft>(key: K, value: FeishuDraft[K]) => {
     setDraft((prev) => ({ ...prev, [key]: value }));
     if (saveError) {
@@ -814,6 +934,38 @@ export function ChannelsPanel({ isConnected }: ChannelsPanelProps) {
     setDiscordVisibleFields((prev) => ({ ...prev, [field]: !prev[field] }));
   };
 
+  const handleWhatsAppFieldChange = <K extends keyof WhatsAppDraft>(key: K, value: WhatsAppDraft[K]) => {
+    setWhatsappDraft((prev) => ({ ...prev, [key]: value }));
+    if (whatsappSaveError) setWhatsappSaveError(null);
+    if (whatsappSuccess) setWhatsappSuccess(null);
+  };
+
+  const handleCancelWhatsAppConfig = () => {
+    if (!hasWhatsAppConfigChanges) return;
+    setWhatsappDraft(draftFromWhatsAppConfig(whatsappConfig));
+    setWhatsappSaveError(null);
+    setWhatsappSuccess(null);
+  };
+
+  const handleSaveWhatsAppConfig = async () => {
+    if (!hasWhatsAppConfigChanges || whatsappSaving) return;
+    setWhatsappSaving(true);
+    setWhatsappSaveError(null);
+    try {
+      const payload = buildWhatsAppPayload(whatsappDraft);
+      const result = await webRequest<{ config?: unknown }>('channel.whatsapp.set_conf', payload);
+      const normalized = normalizeWhatsAppConfig(result?.config);
+      setWhatsappConfig(normalized);
+      setWhatsappDraft(draftFromWhatsAppConfig(normalized));
+      setWhatsappSuccess(t('channels.saved.whatsapp'));
+    } catch (saveErr) {
+      const message = saveErr instanceof Error ? saveErr.message : t('channels.errors.saveGeneric');
+      setWhatsappSaveError(message);
+    } finally {
+      setWhatsappSaving(false);
+    }
+  };
+
   const handleSaveConfig = async () => {
     if (!hasConfigChanges || saving) return;
     setSaving(true);
@@ -909,16 +1061,16 @@ export function ChannelsPanel({ isConnected }: ChannelsPanelProps) {
     }
   };
 
-  const isConfigRefreshing = feishuLoading || xiaoyiLoading || dingtalkLoading || telegramLoading || discordLoading;
+  const isConfigRefreshing = feishuLoading || xiaoyiLoading || dingtalkLoading || telegramLoading || discordLoading || whatsappLoading;
   const configErrorNotice = useMemo(() => {
     return Array.from(
       new Set(
-        [saveError, xiaoyiSaveError, dingtalkSaveError, telegramSaveError, discordSaveError].filter(
+        [saveError, xiaoyiSaveError, dingtalkSaveError, telegramSaveError, discordSaveError, whatsappSaveError].filter(
           (message): message is string => Boolean(message),
         ),
       ),
     ).join(t('common.and'));
-  }, [discordSaveError, dingtalkSaveError, saveError, t, telegramSaveError, xiaoyiSaveError]);
+  }, [discordSaveError, dingtalkSaveError, saveError, t, telegramSaveError, whatsappSaveError, xiaoyiSaveError]);
   useEffect(() => {
     if (!configErrorNotice) {
       return;
@@ -929,6 +1081,7 @@ export function ChannelsPanel({ isConnected }: ChannelsPanelProps) {
       setDingtalkSaveError(null);
       setTelegramSaveError(null);
       setDiscordSaveError(null);
+      setWhatsappSaveError(null);
     }, 2000);
     return () => {
       window.clearTimeout(timer);
@@ -1677,6 +1830,151 @@ export function ChannelsPanel({ isConnected }: ChannelsPanelProps) {
                             </tbody>
                           </table>
                         </>
+                      )}
+                    </div>
+                  </div>
+                ) : null}
+
+                {activeChannelId === 'whatsapp' ? (
+                  <div className="w-full h-full rounded-xl border border-border bg-card/70 backdrop-blur-sm overflow-hidden shadow-sm flex flex-col">
+                    <div className="px-4 py-3 bg-secondary/30 border-b border-border">
+                      <div className="flex items-center justify-between gap-4">
+                        <div className="flex items-center gap-3">
+                          <ChannelHeaderLogo channelId="whatsapp" label={getChannelLabel(t, 'whatsapp')} />
+                          <div>
+                            <h4 className="text-sm font-medium text-text">{t('channels.config.whatsappTitle')}</h4>
+                            <p className="text-xs text-text-muted mt-1">{t('channels.config.whatsappSubtitle')}</p>
+                          </div>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <button
+                            type="button"
+                            onClick={() => void fetchWhatsAppConfig()}
+                            disabled={whatsappSaving || isConfigRefreshing}
+                            className="btn !px-3 !py-1.5 disabled:opacity-50 disabled:cursor-not-allowed"
+                          >
+                            {whatsappLoading ? t('common.refreshing') : t('common.refresh')}
+                          </button>
+                          <button
+                            type="button"
+                            onClick={handleCancelWhatsAppConfig}
+                            disabled={!hasWhatsAppConfigChanges || whatsappSaving}
+                            className="btn !px-3 !py-1.5 disabled:opacity-50 disabled:cursor-not-allowed"
+                          >
+                            {t('common.cancel')}
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => void handleSaveWhatsAppConfig()}
+                            disabled={!hasWhatsAppConfigChanges || whatsappSaving || !isConnected}
+                            className="btn primary !px-3 !py-1.5 disabled:opacity-50 disabled:cursor-not-allowed"
+                          >
+                            {whatsappSaving ? t('common.saving') : t('common.save')}
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+
+                    {whatsappSuccess ? (
+                      <div className="mx-4 mt-4 rounded-md border border-[var(--border-ok)] bg-ok-subtle px-3 py-2 text-sm text-ok">
+                        {whatsappSuccess}
+                      </div>
+                    ) : null}
+
+                    <div className="p-4 pt-3 flex-1 overflow-auto">
+                      {whatsappLoading ? (
+                        <div className="text-sm text-text-muted">{t('channels.loading.whatsapp')}</div>
+                      ) : (
+                        <table className="w-full text-sm">
+                          <tbody>
+                            <tr className="border-t border-border first:border-t-0 even:bg-secondary/10">
+                              <td className="px-4 py-2.5 align-middle mono text-xs text-text-muted w-[32%]">enabled</td>
+                              <td className="px-4 py-2.5 align-middle">
+                                <button
+                                  type="button"
+                                  role="switch"
+                                  aria-checked={whatsappDraft.enabled}
+                                  onClick={() => handleWhatsAppFieldChange('enabled', !whatsappDraft.enabled)}
+                                  className={`relative inline-flex h-5 w-9 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 focus:outline-none ${
+                                    whatsappDraft.enabled ? 'bg-ok' : 'bg-secondary'
+                                  }`}
+                                >
+                                  <span
+                                    className={`pointer-events-none inline-block h-4 w-4 transform rounded-full bg-white shadow transition duration-200 ${
+                                      whatsappDraft.enabled ? 'translate-x-4' : 'translate-x-0'
+                                    }`}
+                                  />
+                                </button>
+                              </td>
+                            </tr>
+                            {(['bridge_ws_url', 'default_jid', 'bridge_command', 'bridge_workdir'] as const).map((field) => (
+                              <tr key={field} className="border-t border-border first:border-t-0 even:bg-secondary/10">
+                                <td className="px-4 py-2.5 align-middle mono text-xs text-text-muted w-[32%]">{field}</td>
+                                <td className="px-4 py-2.5 break-all text-[13px] align-middle">
+                                  <input
+                                    type="text"
+                                    value={whatsappDraft[field]}
+                                    onChange={(e) => handleWhatsAppFieldChange(field, e.target.value)}
+                                    placeholder={t('channels.placeholders.configValue')}
+                                    className="w-full rounded-md border border-border bg-bg px-3 py-2 text-[13px] outline-none focus:border-accent"
+                                  />
+                                </td>
+                              </tr>
+                            ))}
+                            <tr className="border-t border-border first:border-t-0 even:bg-secondary/10">
+                              <td className="px-4 py-2.5 align-top mono text-xs text-text-muted w-[32%]">allow_from</td>
+                              <td className="px-4 py-2.5 break-all text-[13px] align-middle">
+                                <textarea
+                                  value={whatsappDraft.allow_from}
+                                  onChange={(e) => handleWhatsAppFieldChange('allow_from', e.target.value)}
+                                  placeholder={t('channels.placeholders.whatsappJids')}
+                                  rows={4}
+                                  className="w-full rounded-md border border-border bg-bg px-3 py-2 text-[13px] outline-none focus:border-accent resize-y"
+                                />
+                              </td>
+                            </tr>
+                            <tr className="border-t border-border first:border-t-0 even:bg-secondary/10">
+                              <td className="px-4 py-2.5 align-middle mono text-xs text-text-muted w-[32%]">enable_streaming</td>
+                              <td className="px-4 py-2.5 align-middle">
+                                <button
+                                  type="button"
+                                  role="switch"
+                                  aria-checked={whatsappDraft.enable_streaming}
+                                  onClick={() => handleWhatsAppFieldChange('enable_streaming', !whatsappDraft.enable_streaming)}
+                                  className={`relative inline-flex h-5 w-9 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 focus:outline-none ${
+                                    whatsappDraft.enable_streaming ? 'bg-ok' : 'bg-secondary'
+                                  }`}
+                                >
+                                  <span
+                                    className={`pointer-events-none inline-block h-4 w-4 transform rounded-full bg-white shadow transition duration-200 ${
+                                      whatsappDraft.enable_streaming ? 'translate-x-4' : 'translate-x-0'
+                                    }`}
+                                  />
+                                </button>
+                              </td>
+                            </tr>
+                            <tr className="border-t border-border first:border-t-0 even:bg-secondary/10">
+                              <td className="px-4 py-2.5 align-middle mono text-xs text-text-muted w-[32%]">auto_start_bridge</td>
+                              <td className="px-4 py-2.5 align-middle">
+                                <button
+                                  type="button"
+                                  role="switch"
+                                  aria-checked={whatsappDraft.auto_start_bridge}
+                                  onClick={() => handleWhatsAppFieldChange('auto_start_bridge', !whatsappDraft.auto_start_bridge)}
+                                  className={`relative inline-flex h-5 w-9 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 focus:outline-none ${
+                                    whatsappDraft.auto_start_bridge ? 'bg-ok' : 'bg-secondary'
+                                  }`}
+                                >
+                                  <span
+                                    className={`pointer-events-none inline-block h-4 w-4 transform rounded-full bg-white shadow transition duration-200 ${
+                                      whatsappDraft.auto_start_bridge ? 'translate-x-4' : 'translate-x-0'
+                                    }`}
+                                  />
+                                </button>
+                              </td>
+                            </tr>
+                          </tbody>
+                        </table>
                       )}
                     </div>
                   </div>

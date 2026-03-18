@@ -234,7 +234,8 @@
       "feishu": "Lark",
       "dingtalk": "DingTalk",
       "telegram": "Telegram",
-      "discord": "Discord"
+      "discord": "Discord",
+      "whatsapp": "WhatsApp"
     },
     "status": {
       "loadFailed": "Load failed",
@@ -257,14 +258,17 @@
       "discordSubtitle": "Configure Discord bot service settings",
       "discordHint": "Discord Bot messaging is supported. Enable Message Content Intent in Developer Portal and set the target channel.",
       "telegramTitle": "Telegram Channel Configuration",
-      "telegramSubtitle": "Configure Telegram Bot service settings"
+      "telegramSubtitle": "Configure Telegram Bot service settings",
+      "whatsappTitle": "WhatsApp Channel Configuration",
+      "whatsappSubtitle": "Configure WhatsApp Baileys Bridge service settings"
     },
     "loading": {
       "xiaoyi": "Loading Xiaoyi settings...",
       "dingtalk": "Loading DingTalk settings...",
       "feishu": "Loading Lark settings...",
       "telegram": "Loading Telegram settings...",
-      "discord": "Loading Discord settings..."
+      "discord": "Loading Discord settings...",
+      "whatsapp": "Loading WhatsApp settings..."
     },
     "placeholders": {
       "configValue": "Enter a configuration value",
@@ -274,14 +278,16 @@
       "chatId": "Enter the chat ID",
       "ids": "One ID per line (comma-separated is also supported)",
       "telegramBotToken": "Enter Bot Token (from @BotFather)",
-      "telegramUserIds": "One Telegram user_id per line (comma-separated is also supported)"
+      "telegramUserIds": "One Telegram user_id per line (comma-separated is also supported)",
+      "whatsappJids": "One WhatsApp JID per line (comma-separated is also supported)"
     },
     "saved": {
       "feishu": "Lark settings saved",
       "xiaoyi": "Xiaoyi settings saved",
       "dingtalk": "DingTalk settings saved",
       "telegram": "Telegram settings saved",
-      "discord": "Discord settings saved"
+      "discord": "Discord settings saved",
+      "whatsapp": "WhatsApp settings saved"
     },
     "errors": {
       "loadChannels": "Failed to load channels",
@@ -290,6 +296,7 @@
       "loadDingtalk": "Failed to load DingTalk settings",
       "loadTelegram": "Failed to load Telegram settings",
       "loadDiscord": "Failed to load Discord settings",
+      "loadWhatsApp": "Failed to load WhatsApp settings",
       "saveGeneric": "Save failed, please try again later"
     }
   },

@@ -234,7 +234,8 @@
       "feishu": "飞书",
       "dingtalk": "钉钉",
       "telegram": "Telegram",
-      "discord": "Discord"
+      "discord": "Discord",
+      "whatsapp": "WhatsApp"
     },
     "status": {
       "loadFailed": "加载失败",
@@ -257,14 +258,17 @@
       "discordSubtitle": "配置 Discord Bot 服务相关参数",
       "discordHint": "支持 Discord Bot 消息收发，请确保已在开发者后台开启 Message Content Intent 并配置目标频道。",
       "telegramTitle": "Telegram 频道参数配置",
-      "telegramSubtitle": "配置 Telegram Bot 服务相关参数"
+      "telegramSubtitle": "配置 Telegram Bot 服务相关参数",
+      "whatsappTitle": "WhatsApp 频道参数配置",
+      "whatsappSubtitle": "配置 WhatsApp Baileys Bridge 服务相关参数"
     },
     "loading": {
       "xiaoyi": "正在加载小艺配置...",
       "dingtalk": "正在加载钉钉配置...",
       "feishu": "正在加载飞书配置...",
       "telegram": "正在加载 Telegram 配置...",
-      "discord": "正在加载 Discord 配置..."
+      "discord": "正在加载 Discord 配置...",
+      "whatsapp": "正在加载 WhatsApp 配置..."
     },
     "placeholders": {
       "configValue": "请输入配置值",
@@ -274,14 +278,16 @@
       "chatId": "请输入聊天 ID",
       "ids": "每行一个 ID（也支持逗号分隔）",
       "telegramBotToken": "请输入 Bot Token（从 @BotFather 获取）",
-      "telegramUserIds": "每行一个 Telegram user_id（也支持逗号分隔）"
+      "telegramUserIds": "每行一个 Telegram user_id（也支持逗号分隔）",
+      "whatsappJids": "每行一个 WhatsApp JID（也支持逗号分隔）"
     },
     "saved": {
       "feishu": "飞书配置已保存",
       "xiaoyi": "小艺配置已保存",
       "dingtalk": "钉钉配置已保存",
       "telegram": "Telegram 配置已保存",
-      "discord": "Discord 配置已保存"
+      "discord": "Discord 配置已保存",
+      "whatsapp": "WhatsApp 配置已保存"
     },
     "errors": {
       "loadChannels": "获取 channels 失败",
@@ -290,6 +296,7 @@
       "loadDingtalk": "获取钉钉配置失败",
       "loadTelegram": "获取 Telegram 配置失败",
       "loadDiscord": "获取 Discord 配置失败",
+      "loadWhatsApp": "获取 WhatsApp 配置失败",
       "saveGeneric": "保存失败，请稍后重试"
     }
   },
