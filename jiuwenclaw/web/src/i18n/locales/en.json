@@ -479,7 +479,12 @@
       "showDetail": "Click to expand details",
       "hideDetail": "Click to collapse details",
       "category": "Category",
-      "url": "URL"
+      "url": "URL",
+      "installTimeout": "SkillNet install timed out (it may still be running). Refresh the skill list later.",
+      "usageNoticeTitle": "Notes",
+      "usageNotice1": "Installing a skill downloads files from GitHub. Ensure the machine running JiuwenClaw can reach GitHub (network / proxy).",
+      "usageNotice2": "GitHub’s API limits anonymous (unauthenticated) use to about 60 requests per hour per IP. If install fails with rate limiting, wait and retry later.",
+      "usageNotice3": "SkillNet search uses a public service; timeouts or errors may be due to network congestion or server load—try again later."
     },
     "marketplacesAvailable": "Available marketplaces: {{names}}",
     "marketplacesDefault": "Default marketplace: anthropics",

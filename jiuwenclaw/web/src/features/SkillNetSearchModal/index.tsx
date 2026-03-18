@@ -95,7 +95,12 @@ export function SkillNetSearchModal({
       console.error(err);
       setResults([]);
       setLoadState("error");
-      setErrorMessage(t("skills.errors.skillNetSearchFailedHint"));
+      const fallback = t("skills.errors.skillNetSearchFailedHint");
+      const message =
+        err instanceof Error && err.message.trim()
+          ? err.message.trim()
+          : fallback;
+      setErrorMessage(message);
     }
   }, [query, t, withSession]);
 
@@ -107,6 +112,8 @@ export function SkillNetSearchModal({
       try {
         const data = await webRequest<{
           success: boolean;
+          pending?: boolean;
+          install_id?: string;
           detail?: string;
           skill?: { name?: string };
         }>("skills.skillnet.install", withSession({
@@ -116,7 +123,41 @@ export function SkillNetSearchModal({
         if (!data.success) {
           throw new Error(data.detail || t("skills.errors.skillNetInstallFailed"));
         }
-        const name = data.skill?.name || item.skill_name;
+
+        let name: string = item.skill_name;
+        if (data.pending && data.install_id) {
+          const maxWaitMs = 15 * 60 * 1000;
+          const pollMs = 800;
+          const t0 = Date.now();
+          let finished = false;
+          while (Date.now() - t0 < maxWaitMs) {
+            const st = await webRequest<{
+              success: boolean;
+              status?: string;
+              detail?: string;
+              skill?: { name?: string };
+            }>(
+              "skills.skillnet.install_status",
+              withSession({ install_id: data.install_id })
+            );
+            if (st.status === "done" && st.success) {
+              name = st.skill?.name || item.skill_name;
+              finished = true;
+              break;
+            }
+            if (st.status === "failed" || (!st.success && st.status !== "pending")) {
+              throw new Error(
+                st.detail || t("skills.errors.skillNetInstallFailed")
+              );
+            }
+            await new Promise((r) => window.setTimeout(r, pollMs));
+          }
+          if (!finished) {
+            throw new Error(t("skills.skillNet.installTimeout"));
+          }
+        } else {
+          name = data.skill?.name || item.skill_name;
+        }
         setInstalledSuccess(name);
         if (installedSuccessTimerRef.current !== null) {
           window.clearTimeout(installedSuccessTimerRef.current);
@@ -167,6 +208,16 @@ export function SkillNetSearchModal({
               {t("skills.messages.skillNetInstalled", { name: installedSuccess })}
             </div>
           )}
+          <div className="mb-4 rounded-md border border-border bg-secondary/50 px-3 py-2.5 text-xs text-text-muted leading-relaxed">
+            <div className="font-medium text-text mb-1.5">
+              {t("skills.skillNet.usageNoticeTitle")}
+            </div>
+            <ul className="list-disc pl-4 space-y-1">
+              <li>{t("skills.skillNet.usageNotice3")}</li>
+              <li>{t("skills.skillNet.usageNotice1")}</li>
+              <li>{t("skills.skillNet.usageNotice2")}</li>
+            </ul>
+          </div>
           <div className="flex items-center gap-2">
             <input
               value={query}
@@ -190,7 +241,7 @@ export function SkillNetSearchModal({
           </div>
 
           {errorMessage && (
-            <div className="mt-3 px-3 py-2 rounded-md bg-secondary text-sm text-danger">
+            <div className="mt-3 px-3 py-2 rounded-md bg-secondary text-sm text-danger break-words whitespace-pre-wrap max-h-32 overflow-y-auto">
               {errorMessage}
             </div>
           )}

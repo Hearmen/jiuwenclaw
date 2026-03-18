@@ -96,6 +96,7 @@ _FORWARD_REQ_METHODS = frozenset({
     "skills.uninstall",
     "skills.skillnet.search",
     "skills.skillnet.install",
+    "skills.skillnet.install_status",
 })
 
 _FORWARD_NO_LOCAL_HANDLER_METHODS = frozenset({
@@ -111,6 +112,7 @@ _FORWARD_NO_LOCAL_HANDLER_METHODS = frozenset({
     "skills.uninstall",
     "skills.skillnet.search",
     "skills.skillnet.install",
+    "skills.skillnet.install_status",
 })
 
 # 配置信息：config.get 返回、config.set 可修改的键（前端 param 名 -> 环境变量名）

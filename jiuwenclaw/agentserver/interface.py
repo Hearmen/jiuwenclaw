@@ -90,6 +90,7 @@ _SKILL_ROUTES: dict[ReqMethod, str] = {
     ReqMethod.SKILLS_MARKETPLACE_TOGGLE: "handle_skills_marketplace_toggle",
     ReqMethod.SKILLS_SKILLNET_SEARCH: "handle_skills_skillnet_search",
     ReqMethod.SKILLS_SKILLNET_INSTALL: "handle_skills_skillnet_install",
+    ReqMethod.SKILLS_SKILLNET_INSTALL_STATUS: "handle_skills_skillnet_install_status",
 }
 
 
@@ -99,6 +100,7 @@ class JiuWenClaw:
     def __init__(self) -> None:
         self._instance: JiuClawReActAgent | None = None
         self._skill_manager = SkillManager()
+        self._skill_manager.set_skillnet_install_complete_hook(self.create_instance)
         self._session_tasks: dict[str, asyncio.Task] = {}  # session_id -> running_task
         self._session_priorities: dict[str, int] = {}  # session_id -> 优先级计数器（用于先进后出）
         self._session_queues: dict[str, asyncio.PriorityQueue] = {}  # session_id -> 优先队列
@@ -716,12 +718,18 @@ class JiuWenClaw:
             handler = getattr(self._skill_manager, handler_name)
             try:
                 payload = await handler(request.params)
-                if handler_name in [
+                _reload_after_skills = handler_name in [
                     "handle_skills_install",
                     "handle_skills_uninstall",
                     "handle_skills_import_local",
                     "handle_skills_skillnet_install",
-                ]:
+                ]
+                if (
+                    handler_name == "handle_skills_skillnet_install"
+                    and payload.get("pending")
+                ):
+                    _reload_after_skills = False
+                if _reload_after_skills:
                     await self.create_instance()
             except Exception as exc:
                 logger.error("[JiuWenClaw] skills 请求处理失败: %s", exc)

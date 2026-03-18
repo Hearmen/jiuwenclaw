@@ -6,12 +6,14 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 import re
 import shutil
 import tempfile
+import uuid
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, Awaitable, Callable
 
 from jiuwenclaw.utils import get_workspace_dir, logger
 
@@ -30,6 +32,15 @@ class SkillManager:
     def __init__(self) -> None:
         _SKILLS_DIR.mkdir(parents=True, exist_ok=True)
         self._state: dict[str, Any] = self._load_state()
+        # SkillNet 异步安装：install 立即返回 install_id，后台下载；完成后调用 hook 重载 Agent
+        self._skillnet_install_jobs: dict[str, dict[str, Any]] = {}
+        self._skillnet_install_complete_hook: Callable[[], Awaitable[None]] | None = None
+
+    def set_skillnet_install_complete_hook(
+        self, hook: Callable[[], Awaitable[None]] | None
+    ) -> None:
+        """安装成功落盘后回调（通常为重载 Agent 实例）."""
+        self._skillnet_install_complete_hook = hook
 
     # -----------------------------------------------------------------------
     # 公开 handler
@@ -281,72 +292,169 @@ class SkillManager:
         }
 
     async def handle_skills_skillnet_install(self, params: dict) -> dict:
-        """从 SkillNet URL 下载并安装技能到本地 skills 目录."""
+        """从 SkillNet URL 异步安装：立即返回 install_id，不阻塞网关队列.
+
+        前端应轮询 skills.skillnet.install_status 直至 status 为 done/failed。
+        """
         skill_url = str(params.get("url", "")).strip()
         force = bool(params.get("force", False))
         if not skill_url:
             return {"success": False, "detail": "缺少参数: url"}
 
-        with tempfile.TemporaryDirectory(prefix="jiuwenclaw_skillnet_") as tmpdir:
-            tmp_path = Path(tmpdir)
+        install_id = uuid.uuid4().hex
+        self._skillnet_install_jobs[install_id] = {"status": "pending"}
+        asyncio.create_task(
+            self._skillnet_install_background(install_id, skill_url, force),
+            name=f"skillnet_install_{install_id[:8]}",
+        )
+        return {
+            "success": True,
+            "pending": True,
+            "install_id": install_id,
+        }
+
+    async def handle_skills_skillnet_install_status(self, params: dict) -> dict:
+        """查询 SkillNet 异步安装状态."""
+        install_id = str(params.get("install_id", "")).strip()
+        if not install_id:
+            return {"success": False, "detail": "缺少参数: install_id"}
+        job = self._skillnet_install_jobs.get(install_id)
+        if job is None:
+            return {"success": False, "detail": "无效或已过期的 install_id"}
+
+        status = job.get("status", "pending")
+        if status == "pending":
+            return {"success": True, "status": "pending"}
+        if status == "failed":
+            return {
+                "success": False,
+                "status": "failed",
+                "detail": job.get("detail", "安装失败"),
+            }
+        # done
+        return {
+            "success": True,
+            "status": "done",
+            "skill": job.get("skill"),
+        }
+
+    async def _skillnet_install_background(
+        self, install_id: str, skill_url: str, force: bool
+    ) -> None:
+        try:
+            result = await asyncio.to_thread(
+                self._skillnet_install_files_sync, skill_url, force
+            )
+        except Exception as exc:
+            logger.error("SkillNet 后台安装异常: %s", exc)
+            self._skillnet_install_jobs[install_id] = {
+                "status": "failed",
+                "detail": str(exc),
+            }
+            return
+
+        if not result.get("ok"):
+            self._skillnet_install_jobs[install_id] = {
+                "status": "failed",
+                "detail": result.get("detail", "安装失败"),
+            }
+            return
+
+        skill_name = result["skill_name"]
+        meta = result["meta"]
+        skill_url_stored = result["skill_url"]
+        try:
+            self._add_local_skill({
+                "name": skill_name,
+                "origin": skill_url_stored,
+                "source": "skillnet",
+                "installed_at": datetime.now(timezone.utc).isoformat(),
+            })
+            self._add_installed_plugin({
+                "name": skill_name,
+                "marketplace": "skillnet",
+                "version": meta.get("version", ""),
+                "commit": "",
+                "source": "skillnet",
+                "installed_at": datetime.now(timezone.utc).isoformat(),
+            })
+            self._refresh_agent_data_indexes()
+        except Exception as exc:
+            logger.error("SkillNet 写入状态失败: %s", exc)
+            self._skillnet_install_jobs[install_id] = {
+                "status": "failed",
+                "detail": str(exc),
+            }
+            return
+
+        hook = self._skillnet_install_complete_hook
+        if hook is not None:
             try:
-                download_path_str = await asyncio.to_thread(
-                    self._skillnet_download_sync,
-                    skill_url,
-                    str(tmp_path),
-                )
+                await hook()
             except Exception as exc:
-                logger.error("SkillNet 下载失败: %s", exc)
-                return {"success": False, "detail": f"SkillNet 下载失败: {exc}"}
+                logger.error("SkillNet 安装完成后 hook 失败: %s", exc)
+                self._skillnet_install_jobs[install_id] = {
+                    "status": "failed",
+                    "detail": f"重载 Agent 失败: {exc}",
+                }
+                return
 
-            download_path = Path(download_path_str).resolve()
-            if not download_path.exists():
-                return {"success": False, "detail": f"下载结果不存在: {download_path}"}
+        self._skillnet_install_jobs[install_id] = {
+            "status": "done",
+            "skill": {"name": skill_name, "source": "skillnet"},
+        }
 
-            skill_dir = self._locate_skill_dir(download_path)
-            if skill_dir is None:
-                return {"success": False, "detail": "下载内容中未找到 SKILL.md"}
+    def _skillnet_install_files_sync(self, skill_url: str, force: bool) -> dict[str, Any]:
+        """在工作线程中下载并拷贝到 skills 目录；返回 ok / skill_name / meta / skill_url."""
+        try:
+            with tempfile.TemporaryDirectory(prefix="jiuwenclaw_skillnet_") as tmpdir:
+                tmp_path = Path(tmpdir)
+                download_path_str = self._skillnet_download_sync(skill_url, str(tmp_path))
+                download_path = Path(download_path_str).resolve()
+                if not download_path.exists():
+                    return {
+                        "ok": False,
+                        "detail": f"下载结果不存在: {download_path}",
+                    }
 
-            md = self._try_find_skill_file(skill_dir)
-            meta = self._parse_skill_md(md) if md else None
-            if meta is None:
-                return {"success": False, "detail": "无法解析下载的技能文件"}
+                skill_dir = self._locate_skill_dir(download_path)
+                if skill_dir is None:
+                    return {"ok": False, "detail": "下载内容中未找到 SKILL.md"}
 
-            skill_name = str(meta.get("name", skill_dir.name)).strip() or skill_dir.name
-            dest = _SKILLS_DIR / skill_name
-            if dest.exists():
-                if not force:
-                    return {"success": False, "detail": f"skill {skill_name} 已存在"}
-                shutil.rmtree(dest)
+                md = self._try_find_skill_file(skill_dir)
+                meta = self._parse_skill_md(md) if md else None
+                if meta is None:
+                    return {"ok": False, "detail": "无法解析下载的技能文件"}
 
-            # 拷贝完整目录，保持 skill 的资源文件结构。
-            shutil.copytree(skill_dir, dest)
-            # 兼容：同步写入源码工作区，便于在项目目录下直接查看和扫描。
-            for mirror_root in self._get_mirror_skills_dirs():
-                mirror_dest = mirror_root / skill_name
-                if mirror_dest.exists():
+                skill_name = str(meta.get("name", skill_dir.name)).strip() or skill_dir.name
+                dest = _SKILLS_DIR / skill_name
+                if dest.exists():
                     if not force:
-                        continue
-                    shutil.rmtree(mirror_dest)
-                mirror_root.mkdir(parents=True, exist_ok=True)
-                shutil.copytree(skill_dir, mirror_dest)
+                        return {
+                            "ok": False,
+                            "detail": f"skill {skill_name} 已存在",
+                        }
+                    shutil.rmtree(dest)
 
-        self._add_local_skill({
-            "name": skill_name,
-            "origin": skill_url,
-            "source": "skillnet",
-            "installed_at": datetime.now(timezone.utc).isoformat(),
-        })
-        self._add_installed_plugin({
-            "name": skill_name,
-            "marketplace": "skillnet",
-            "version": meta.get("version", ""),
-            "commit": "",
-            "source": "skillnet",
-            "installed_at": datetime.now(timezone.utc).isoformat(),
-        })
-        self._refresh_agent_data_indexes()
-        return {"success": True, "skill": {"name": skill_name, "source": "skillnet"}}
+                shutil.copytree(skill_dir, dest)
+                for mirror_root in self._get_mirror_skills_dirs():
+                    mirror_dest = mirror_root / skill_name
+                    if mirror_dest.exists():
+                        if not force:
+                            continue
+                        shutil.rmtree(mirror_dest)
+                    mirror_root.mkdir(parents=True, exist_ok=True)
+                    shutil.copytree(skill_dir, mirror_dest)
+
+                return {
+                    "ok": True,
+                    "skill_name": skill_name,
+                    "meta": meta,
+                    "skill_url": skill_url,
+                }
+        except Exception as exc:
+            logger.error("SkillNet 下载失败: %s", exc)
+            return {"ok": False, "detail": f"SkillNet 下载失败: {exc}"}
 
     async def handle_skills_uninstall(self, params: dict) -> dict:
         """卸载已安装的 skill.
@@ -828,8 +936,72 @@ class SkillManager:
         return list(results)
 
     @staticmethod
+    def _github_skillnet_install_error_context(skill_url: str) -> str:
+        """下载失败时拉 GitHub Contents 与 rate_limit，把官方 message 等拼给前端."""
+        try:
+            from skillnet_ai.downloader import SkillDownloader
+        except ImportError:
+            return ""
+
+        token = (os.getenv("GITHUB_TOKEN") or "").strip() or None
+        dl = SkillDownloader(api_token=token)
+        parsed = dl._parse_github_url(skill_url)
+        if not parsed:
+            return ""
+
+        owner, repo, ref, dir_path, _ = parsed
+        api = f"https://api.github.com/repos/{owner}/{repo}/contents/{dir_path}?ref={ref}"
+        try:
+            r = dl.session.get(api, timeout=25)
+        except Exception as exc:
+            logger.debug(
+                "SkillNet 安装错误上下文: GitHub Contents 请求失败: %s", exc
+            )
+            return ""
+
+        parts: list[str] = []
+        if r.status_code != 200:
+            try:
+                body = r.json()
+                msg = body.get("message")
+                if isinstance(msg, str) and msg.strip():
+                    parts.append(msg.strip()[:800])
+                else:
+                    raw = (r.text or "").strip()[:500]
+                    if raw:
+                        parts.append(f"HTTP {r.status_code}: {raw}")
+            except Exception as exc:
+                logger.debug(
+                    "SkillNet 安装错误上下文: 解析 GitHub 错误 JSON 失败: %s", exc
+                )
+                raw = (r.text or "").strip()[:500]
+                if raw:
+                    parts.append(f"HTTP {r.status_code}: {raw}")
+
+            if r.status_code == 403 or any(
+                "rate limit" in p.lower() for p in parts
+            ):
+                try:
+                    rl = dl.session.get("https://api.github.com/rate_limit", timeout=12)
+                    if rl.status_code == 200:
+                        core = rl.json().get("resources", {}).get("core") or {}
+                        rem, lim = core.get("remaining"), core.get("limit")
+                        if rem is not None and lim is not None:
+                            parts.append(
+                                f"GitHub 核心 API 剩余 {rem}/{lim}，"
+                                "可配置环境变量 GITHUB_TOKEN 提高额度"
+                            )
+                except Exception as exc:
+                    logger.debug(
+                        "SkillNet 安装错误上下文: GitHub rate_limit 请求失败: %s",
+                        exc,
+                    )
+
+        return " | ".join(parts) if parts else ""
+
+    @staticmethod
     def _skillnet_download_sync(skill_url: str, target_dir: str) -> str:
-        """同步调用 skillnet-ai download，供 asyncio.to_thread 使用."""
+        """同步调用 skillnet-ai download；失败时附带 GitHub API 返回说明（如前端的限流文案）。"""
         try:
             from skillnet_ai import SkillNetClient
         except Exception as exc:
@@ -838,8 +1010,17 @@ class SkillManager:
             ) from exc
 
         client = SkillNetClient()
-        local_path = client.download(url=skill_url, target_dir=target_dir)
+        try:
+            local_path = client.download(url=skill_url, target_dir=target_dir)
+        except Exception as exc:
+            ctx = SkillManager._github_skillnet_install_error_context(skill_url)
+            if ctx:
+                raise RuntimeError(f"{exc} | {ctx}") from exc
+            raise
         if not local_path:
+            ctx = SkillManager._github_skillnet_install_error_context(skill_url)
+            if ctx:
+                raise RuntimeError(f"SkillNet 返回空下载路径 | {ctx}")
             raise RuntimeError("SkillNet 返回空下载路径")
         return str(local_path)
 
