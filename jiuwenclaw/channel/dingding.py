@@ -136,6 +136,7 @@ class DingTalkChannel(BaseChannel):
         self._background_tasks: set[asyncio.Task] = set()
 
         self._gateway_callback: Callable[[Message], None] | None = None
+        self._stream_task: asyncio.Task | None = None  # 用于跟踪 SDK start() 任务
 
     @property
     def channel_id(self) -> str:
@@ -225,17 +226,6 @@ class DingTalkChannel(BaseChannel):
 
         logger.info("钉钉机器人已启动（Stream模式）")
 
-    async def _run_stream_with_reconnect(self) -> None:
-        """运行流连接并在断开时重连"""
-        while self._running:
-            try:
-                await self._client.start()
-            except Exception as e:
-                logger.warning(f"钉钉流连接错误: {e}")
-            if self._running:
-                logger.info("5秒后重新连接钉钉流...")
-                await asyncio.sleep(5)
-
     async def start(self) -> None:
         """启动钉钉机器人（Stream模式）"""
         try:
@@ -247,8 +237,16 @@ class DingTalkChannel(BaseChannel):
 
             self._initialize_stream_client()
 
-            # 重连循环：如果SDK退出或崩溃则重启流
-            await self._run_stream_with_reconnect()
+            # 将 SDK start() 作为独立任务运行，便于在 stop() 时取消
+            self._stream_task = asyncio.create_task(self._client.start(), name="dingtalk-sdk-start")
+
+            # 等待任务完成（当 _running=False 时，任务会被取消）
+            try:
+                await self._stream_task
+            except asyncio.CancelledError:
+                logger.info("钉钉 Stream 任务已被取消")
+            except Exception as e:
+                logger.warning(f"钉钉 Stream 任务异常退出: {e}")
 
         except Exception as e:
             logger.exception(f"启动钉钉通道失败: {e}")
@@ -256,6 +254,43 @@ class DingTalkChannel(BaseChannel):
     async def stop(self) -> None:
         """停止钉钉机器人"""
         self._running = False
+
+        # 取消 SDK start() 任务
+        if self._stream_task and not self._stream_task.done():
+            self._stream_task.cancel()
+            try:
+                await asyncio.wait_for(self._stream_task, timeout=5.0)
+            except asyncio.TimeoutError:
+                logger.warning("等待钉钉 Stream 任务取消超时")
+            except asyncio.CancelledError:
+                pass
+            except Exception as e:
+                logger.warning(f"等待钉钉 Stream 任务取消时出错: {e}")
+        self._stream_task = None
+
+        # 关闭 WebSocket 连接
+        if self._client and hasattr(self._client, 'websocket') and self._client.websocket:
+            try:
+                await self._client.websocket.close()
+            except Exception as e:
+                logger.warning(f"关闭 WebSocket 连接时出错: {e}")
+
+        # 清理客户端
+        if self._client:
+            try:
+                # 检查 SDK 是否提供 stop 方法
+                if hasattr(self._client, 'stop'):
+                    await self._client.stop()
+                # 检查 SDK 是否提供 close 方法
+                elif hasattr(self._client, 'close'):
+                    await self._client.close()
+                # 检查 SDK 是否提供 shutdown 方法
+                elif hasattr(self._client, 'shutdown'):
+                    await self._client.shutdown()
+            except Exception as e:
+                logger.warning(f"停止 DingTalkStreamClient 时出错: {e}")
+            finally:
+                self._client = None
 
         # 关闭共享HTTP客户端
         if self._http:
