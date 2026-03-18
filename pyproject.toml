@@ -29,7 +29,7 @@ dependencies = [
     "dingtalk-stream>=0.24.3",
     "python-socks>=2.8.1",
     "greenlet>=3.3.2",
-    "skillnet-ai>=0.0.13",
+    "skillnet-ai>=0.0.14",
 ]
 
 [project.scripts]
