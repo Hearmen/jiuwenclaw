@@ -18,6 +18,18 @@ from typing import Any, Awaitable, Callable
 from jiuwenclaw.utils import get_workspace_dir, logger
 
 # ---------------------------------------------------------------------------
+# SkillNet download timeout / retry configuration (overridable via env vars)
+# ---------------------------------------------------------------------------
+# Per-request timeout for individual GitHub API / raw content HTTP calls (seconds).
+_SKILLNET_REQUEST_TIMEOUT: int = int(os.environ.get("SKILLNET_REQUEST_TIMEOUT", "30"))
+
+# Overall timeout for the entire download-and-install pipeline (seconds).
+_SKILLNET_DOWNLOAD_TIMEOUT: int = int(os.environ.get("SKILLNET_DOWNLOAD_TIMEOUT", "300"))
+
+# Number of retries for transient HTTP failures (429, 5xx).
+_SKILLNET_MAX_RETRIES: int = int(os.environ.get("SKILLNET_MAX_RETRIES", "3"))
+
+# ---------------------------------------------------------------------------
 # 默认路径
 # ---------------------------------------------------------------------------
 _WORKSPACE = get_workspace_dir()
@@ -349,9 +361,27 @@ class SkillManager:
         self, install_id: str, skill_url: str, force: bool
     ) -> None:
         try:
-            result = await asyncio.to_thread(
-                self._skillnet_install_files_sync, skill_url, force
+            result = await asyncio.wait_for(
+                asyncio.to_thread(
+                    self._skillnet_install_files_sync, skill_url, force
+                ),
+                timeout=_SKILLNET_DOWNLOAD_TIMEOUT,
             )
+        except asyncio.TimeoutError:
+            logger.error(
+                "SkillNet 后台安装超时 (>%ds): %s",
+                _SKILLNET_DOWNLOAD_TIMEOUT,
+                skill_url,
+            )
+            self._skillnet_install_jobs[install_id] = {
+                "status": "failed",
+                "detail": (
+                    f"下载超时 (>{_SKILLNET_DOWNLOAD_TIMEOUT}s)，可能因网络延迟较高。"
+                    "可设置环境变量 SKILLNET_DOWNLOAD_TIMEOUT 调整超时时间，"
+                    "或使用 VPN 改善网络连接。"
+                ),
+            }
+            return
         except Exception as exc:
             logger.error("SkillNet 后台安装异常: %s", exc)
             self._skillnet_install_jobs[install_id] = {
@@ -925,6 +955,14 @@ class SkillManager:
         return None
 
     @staticmethod
+    def _skillnet_client_kwargs() -> dict[str, Any]:
+        """If GITHUB_TOKEN is configured when SkillNet accesses GitHub, it will be used to increase API rate limits."""
+        token = (os.getenv("GITHUB_TOKEN") or "").strip()
+        if token:
+            return {"github_token": token}
+        return {}
+
+    @staticmethod
     def _skillnet_search_sync(search_kwargs: dict[str, Any]) -> list[Any]:
         """同步调用 skillnet-ai search，供 asyncio.to_thread 使用."""
         try:
@@ -934,7 +972,7 @@ class SkillManager:
                 "未安装 skillnet-ai，请先安装依赖: pip install skillnet-ai"
             ) from exc
 
-        client = SkillNetClient()
+        client = SkillNetClient(**SkillManager._skillnet_client_kwargs())
         results = client.search(**search_kwargs)
         if results is None:
             return []
@@ -959,7 +997,7 @@ class SkillManager:
         owner, repo, ref, dir_path, _ = parsed
         api = f"https://api.github.com/repos/{owner}/{repo}/contents/{dir_path}?ref={ref}"
         try:
-            r = dl.session.get(api, timeout=25)
+            r = dl.session.get(api, timeout=_SKILLNET_REQUEST_TIMEOUT)
         except Exception as exc:
             logger.debug(
                 "SkillNet 安装错误上下文: GitHub Contents 请求失败: %s", exc
@@ -996,7 +1034,7 @@ class SkillManager:
                         if rem is not None and lim is not None:
                             parts.append(
                                 f"GitHub 核心 API 剩余 {rem}/{lim}，"
-                                "可配置环境变量 GITHUB_TOKEN 提高额度"
+                                "可在配置页「第三方服务」填写 github_token（GITHUB_TOKEN）提高额度"
                             )
                 except Exception as exc:
                     logger.debug(
@@ -1007,18 +1045,53 @@ class SkillManager:
         return " | ".join(parts) if parts else ""
 
     @staticmethod
+    def _apply_session_timeout_and_retry(session: Any) -> None:
+        """Patch a requests.Session to enforce per-request timeouts and retry."""
+        import requests
+        from requests.adapters import HTTPAdapter
+        from urllib3.util.retry import Retry
+
+        retry_strategy = Retry(
+            total=_SKILLNET_MAX_RETRIES,
+            backoff_factor=1,
+            status_forcelist=[429, 500, 502, 503, 504],
+            allowed_methods=["GET"],
+        )
+        adapter = HTTPAdapter(max_retries=retry_strategy)
+        session.mount("https://", adapter)
+        session.mount("http://", adapter)
+
+        original_request = session.request
+
+        def _request_with_timeout(*args: Any, **kwargs: Any) -> requests.Response:
+            kwargs.setdefault("timeout", _SKILLNET_REQUEST_TIMEOUT)
+            return original_request(*args, **kwargs)
+
+        session.request = _request_with_timeout
+
+    @staticmethod
     def _skillnet_download_sync(skill_url: str, target_dir: str) -> str:
         """同步调用 skillnet-ai download；失败时附带 GitHub API 返回说明（如前端的限流文案）。"""
         try:
-            from skillnet_ai import SkillNetClient
+            from skillnet_ai.downloader import SkillDownloader
         except Exception as exc:
             raise RuntimeError(
                 "未安装 skillnet-ai，请先安装依赖: pip install skillnet-ai"
             ) from exc
 
-        client = SkillNetClient()
+        token = (os.getenv("GITHUB_TOKEN") or "").strip() or None
+        downloader = SkillDownloader(api_token=token)
+        SkillManager._apply_session_timeout_and_retry(downloader.session)
+
+        logger.info(
+            "SkillNet 下载开始: url=%s request_timeout=%ds retries=%d",
+            skill_url,
+            _SKILLNET_REQUEST_TIMEOUT,
+            _SKILLNET_MAX_RETRIES,
+        )
+
         try:
-            local_path = client.download(url=skill_url, target_dir=target_dir)
+            local_path = downloader.download(folder_url=skill_url, target_dir=target_dir)
         except Exception as exc:
             ctx = SkillManager._github_skillnet_install_error_context(skill_url)
             if ctx:

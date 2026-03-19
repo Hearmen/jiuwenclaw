@@ -129,6 +129,7 @@ _CONFIG_SET_ENV_MAP = {
     "jina_api_key": "JINA_API_KEY",
     "serper_api_key": "SERPER_API_KEY",
     "perplexity_api_key": "PERPLEXITY_API_KEY",
+    "github_token": "GITHUB_TOKEN",
     "evolution_auto_scan": "EVOLUTION_AUTO_SCAN",
 }
 # 配置项键名列表，用于日志等说明

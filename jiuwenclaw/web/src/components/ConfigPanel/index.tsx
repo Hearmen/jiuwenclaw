@@ -17,7 +17,12 @@ interface ConfigGroup {
 const MODEL_KEYS = new Set(["api_base", "api_key", "model", "model_provider"]);
 const EMBED_KEYS = new Set(["embed_api_base", "embed_api_key", "embed_model"]);
 const EMAIL_KEYS = new Set(["email_address", "email_token"]);
-const THIRD_PARTY_API_KEYS = new Set(["jina_api_key", "perplexity_api_key", "serper_api_key"]);
+const THIRD_PARTY_API_KEYS = new Set([
+  "jina_api_key",
+  "perplexity_api_key",
+  "serper_api_key",
+  "github_token",
+]);
 const REQUIRED_MODEL_FIELDS = ["api_base", "api_key", "model", "model_provider"] as const;
 const REQUIRED_MODEL_FIELD_SET = new Set<string>(REQUIRED_MODEL_FIELDS);
 const EVOLUTION_KEYS = new Set(["evolution_auto_scan"]);
