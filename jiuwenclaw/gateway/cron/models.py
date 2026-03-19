@@ -11,6 +11,7 @@ class CronTargetChannel(str, Enum):
     WEB = "web"
     FEISHU = "feishu"
     WHATSAPP = "whatsapp"
+    WECOM = "wecom"
     # XIAOYI = "xiaoyi"
     # DINGTALK = "dingtalk"
 

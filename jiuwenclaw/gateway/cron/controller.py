@@ -288,7 +288,7 @@ class CronController:
                         "targets": {
                             "type": "string",
                             "enum": [e.value for e in CronTargetChannel],
-                            "description": "推送频道：web=网页, feishu=飞书, whatsapp=WhatsApp",
+                            "description": "推送频道：web=网页, feishu=飞书, whatsapp=WhatsApp, wecom=企业微信。不传则使用当前请求来源频道",
                             "default": self._target_channel.value,
                         },
                         "enabled": {

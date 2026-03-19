@@ -423,6 +423,12 @@ class CronSchedulerService:
                     metadata = {
                         "whatsapp_jid": last_jid,
                     }
+            elif channel_id == "wecom":
+                last_chat_id = str(ch_cfg.get("last_chat_id") or "").strip()
+                if last_chat_id:
+                    metadata = {
+                        "wecom_chat_id": last_chat_id,
+                    }
         except Exception:
             metadata = None
 

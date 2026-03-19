@@ -1365,6 +1365,7 @@ dependencies = [
     { name = "ruamel-yaml" },
     { name = "skillnet-ai" },
     { name = "websockets" },
+    { name = "wecom-aibot-sdk" },
 ]
 
 [package.optional-dependencies]
@@ -1392,6 +1393,7 @@ requires-dist = [
     { name = "ruamel-yaml", specifier = ">=0.18.0" },
     { name = "skillnet-ai", specifier = ">=0.0.14" },
     { name = "websockets", specifier = ">=12.0" },
+    { name = "wecom-aibot-sdk", specifier = ">=1.0.0" },
 ]
 provides-extras = ["dev"]
 
@@ -4068,6 +4070,20 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/a5/8f/aea9c71cc92bf9b6cc0f7f70df8f0b420636b6c96ef4feee1e16f80f75dd/websockets-16.0-pp311-pypy311_pp73-manylinux2014_aarch64.manylinux_2_17_aarch64.manylinux_2_28_aarch64.whl", hash = "sha256:0298d07ee155e2e9fda5be8a9042200dd2e3bb0b8a38482156576f863a9d457c", size = 176968, upload-time = "2026-01-10T09:23:41.031Z" },
     { url = "https://files.pythonhosted.org/packages/9a/3f/f70e03f40ffc9a30d817eef7da1be72ee4956ba8d7255c399a01b135902a/websockets-16.0-pp311-pypy311_pp73-win_amd64.whl", hash = "sha256:a653aea902e0324b52f1613332ddf50b00c06fdaf7e92624fbf8c77c78fa5767", size = 178735, upload-time = "2026-01-10T09:23:42.259Z" },
     { url = "https://files.pythonhosted.org/packages/6f/28/258ebab549c2bf3e64d2b0217b973467394a9cea8c42f70418ca2c5d0d2e/websockets-16.0-py3-none-any.whl", hash = "sha256:1637db62fad1dc833276dded54215f2c7fa46912301a24bd94d45d46a011ceec", size = 171598, upload-time = "2026-01-10T09:23:45.395Z" },
+]
+
+[[package]]
+name = "wecom-aibot-sdk"
+version = "1.0.3"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "cryptography" },
+    { name = "httpx" },
+    { name = "websockets" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/aa/57/08f0f012a585a1e34b4d903376e9f7610f965dadec995202371883834d1f/wecom_aibot_sdk-1.0.3.tar.gz", hash = "sha256:5f81394c85e7f1d7c8de33aecf705768800509a12d3a0e571c2e7d97bf1961ad", size = 39777, upload-time = "2026-03-16T11:07:11.032Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/2e/1e/686df5a8e689c5c9af5dc9b1f50cfbb51aa26c2e75ad535cc530e121db97/wecom_aibot_sdk-1.0.3-py3-none-any.whl", hash = "sha256:cd1724307c342bab8c5c652b04b3ab743d1b6542831f8847e8a893eb29db8cab", size = 21512, upload-time = "2026-03-16T11:07:09.365Z" },
 ]
 
 [[package]]

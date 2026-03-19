@@ -105,6 +105,15 @@ channels:
     bridge_command: node scripts/whatsapp-bridge.js
     bridge_workdir:
     enabled: false
+  wecom:
+    # 企业微信 AI 机器人配置
+    bot_id:
+    secret:
+    ws_url: wss://openws.work.weixin.qq.com
+    allow_from: []
+    enable_streaming: true
+    send_thinking_message: false
+    enabled: false
 
 browser:
   # chrome_path can be a string or per-OS map.

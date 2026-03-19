@@ -911,6 +911,57 @@ def _register_web_handlers(
         except Exception as e:  # noqa: BLE001
             logger.exception("[channel.discord.set_conf] %s", e)
             await channel.send_response(ws, req_id, ok=False, error=str(e), code="INTERNAL_ERROR")
+
+    async def _channel_wecom_get_conf(ws, req_id, params, session_id):
+        cm = _resolve(channel_manager)
+        if cm is None:
+            await channel.send_response(
+                ws,
+                req_id,
+                ok=False,
+                error="channel manager not available",
+                code="SERVICE_UNAVAILABLE",
+            )
+            return
+        try:
+            conf = cm.get_conf("wecom")
+            await channel.send_response(ws, req_id, ok=True, payload={"config": conf})
+        except Exception as e:  # noqa: BLE001
+            logger.exception("[channel.wecom.get_conf] %s", e)
+            await channel.send_response(ws, req_id, ok=False, error=str(e), code="INTERNAL_ERROR")
+
+    async def _channel_wecom_set_conf(ws, req_id, params, session_id):
+        cm = _resolve(channel_manager)
+        if cm is None:
+            await channel.send_response(
+                ws,
+                req_id,
+                ok=False,
+                error="channel manager not available",
+                code="SERVICE_UNAVAILABLE",
+            )
+            return
+        if not isinstance(params, dict):
+            await channel.send_response(
+                ws,
+                req_id,
+                ok=False,
+                error="params must be object",
+                code="BAD_REQUEST",
+            )
+            return
+        try:
+            await cm.set_conf("wecom", params)
+            conf = cm.get_conf("wecom")
+            try:
+                update_channel_in_config("wecom", conf)
+                _clear_agent_config_cache()
+            except Exception as e:  # noqa: BLE001
+                logger.warning("[channel.wecom.set_conf] 写回 config.yaml 失败: %s", e)
+            await channel.send_response(ws, req_id, ok=True, payload={"config": conf})
+        except Exception as e:  # noqa: BLE001
+            logger.exception("[channel.wecom.set_conf] %s", e)
+            await channel.send_response(ws, req_id, ok=False, error=str(e), code="INTERNAL_ERROR")
     # ----- cron jobs -----
 
     def _get_cron():
@@ -1095,6 +1146,8 @@ def _register_web_handlers(
     channel.register_method("channel.whatsapp.set_conf", _channel_whatsapp_set_conf)
     channel.register_method("channel.discord.get_conf", _channel_discord_get_conf)
     channel.register_method("channel.discord.set_conf", _channel_discord_set_conf)
+    channel.register_method("channel.wecom.get_conf", _channel_wecom_get_conf)
+    channel.register_method("channel.wecom.set_conf", _channel_wecom_set_conf)
     channel.register_method("cron.job.list", _cron_job_list)
     channel.register_method("cron.job.get", _cron_job_get)
     channel.register_method("cron.job.create", _cron_job_create)
@@ -1112,6 +1165,7 @@ async def _run() -> None:
     from jiuwenclaw.channel.xiaoyi_channel import XiaoyiChannel, XiaoyiChannelConfig
     from jiuwenclaw.channel.telegram_channel import TelegramChannel, TelegramChannelConfig
     from jiuwenclaw.channel.discord_channel import DiscordChannel, DiscordChannelConfig
+    from jiuwenclaw.channel.wecom_channel import WecomChannel, WecomConfig
     from jiuwenclaw.gateway import (
         AgentWebSocketServer,
         GatewayHeartbeatService,
@@ -1287,6 +1341,8 @@ async def _run() -> None:
     discord_task = None
     whatsapp_channel = None
     whatsapp_task = None
+    wecom_channel = None
+    wecom_task = None
 
     _last_channels_conf = {}  # Store previous config to detect changes
 
@@ -1344,11 +1400,12 @@ async def _run() -> None:
         nonlocal feishu_channel, feishu_task, xiaoyi_channel, xiaoyi_task
         nonlocal dingtalk_channel, dingtalk_task, telegram_channel, telegram_task
         nonlocal discord_channel, discord_task
-        nonlocal whatsapp_channel, whatsapp_task, _last_channels_conf
+        nonlocal whatsapp_channel, whatsapp_task
+        nonlocal wecom_channel, wecom_task, _last_channels_conf
 
         changed_channels = [
             c
-            for c in ["feishu", "xiaoyi", "dingtalk", "telegram", "whatsapp", "discord"]
+            for c in ["feishu", "xiaoyi", "dingtalk", "telegram", "whatsapp", "discord", "wecom"]
             if _should_restart_channel(c, _last_channels_conf, conf)
         ]
         _last_channels_conf = dict(conf or {})
@@ -1523,6 +1580,33 @@ async def _run() -> None:
             else:
                 logger.info("[App] channels.whatsapp 未配置或格式错误，WhatsAppChannel 不启用")
 
+        # ----- WecomChannel -----
+        if "wecom" in changed_channels:
+            wecom_conf = conf.get("wecom") if isinstance(conf, dict) else None
+            await _stop_channel(wecom_channel, wecom_task, "wecom")
+            wecom_channel, wecom_task = None, None
+
+            if isinstance(wecom_conf, dict):
+                enabled, reason = _is_channel_enabled(wecom_conf, ["bot_id", "secret"])
+                if not enabled:
+                    logger.info("[App] channels.wecom.%s，WecomChannel 未启用", reason)
+                else:
+                    wecom_config = WecomConfig(
+                        enabled=True,
+                        bot_id=str(wecom_conf.get("bot_id") or "").strip(),
+                        secret=str(wecom_conf.get("secret") or "").strip(),
+                        ws_url=str(wecom_conf.get("ws_url") or "wss://openws.work.weixin.qq.com").strip(),
+                        allow_from=wecom_conf.get("allow_from") or [],
+                        enable_streaming=bool(wecom_conf.get("enable_streaming", True)),
+                        send_thinking_message=bool(wecom_conf.get("send_thinking_message", True)),
+                    )
+                    wecom_channel = WecomChannel(wecom_config, _DummyBus())
+                    channel_manager.register_channel(wecom_channel)
+                    wecom_task = asyncio.create_task(wecom_channel.start(), name="wecom")
+                    logger.info("[App] 已按 config.yaml.channels.wecom 注册 WecomChannel")
+            else:
+                logger.info("[App] channels.wecom 未配置或格式错误，WecomChannel 不启用")
+
     # 将「配置更新时如何重新实例化 Channel」逻辑注册到 ChannelManager
     channel_manager.set_config_callback(_apply_channel_config)
     # 使用初始配置实例化一次（启动时，针对动态管理的各 Channel）
@@ -1594,6 +1678,13 @@ async def _run() -> None:
             except asyncio.CancelledError:
                 pass
             await whatsapp_channel.stop()
+        if wecom_channel is not None and wecom_task is not None:
+            wecom_task.cancel()
+            try:
+                await wecom_task
+            except asyncio.CancelledError:
+                pass
+            await wecom_channel.stop()
         await cron_scheduler.stop()
         await channel_manager.stop_dispatch()
         await heartbeat_service.stop()

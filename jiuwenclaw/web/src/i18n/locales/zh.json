@@ -103,6 +103,7 @@
       "feishu": "飞书",
       "xiaoyi": "小艺",
       "dingtalk": "钉钉",
+      "wecom": "企业微信",
       "heartbeat": "心跳",
       "unknown": "未知"
     },
@@ -142,6 +143,7 @@
     "channels": {
       "web": "网页 (web)",
       "feishu": "飞书 (feishu)",
+      "wecom": "企业微信 (wecom)",
       "xiaoyi": "小艺 (xiaoyi)",
       "dingtalk": "钉钉 (dingtalk)"
     },
@@ -235,7 +237,8 @@
       "dingtalk": "钉钉",
       "telegram": "Telegram",
       "discord": "Discord",
-      "whatsapp": "WhatsApp"
+      "whatsapp": "WhatsApp",
+      "wecom": "企业微信"
     },
     "status": {
       "loadFailed": "加载失败",
@@ -260,7 +263,9 @@
       "telegramTitle": "Telegram 频道参数配置",
       "telegramSubtitle": "配置 Telegram Bot 服务相关参数",
       "whatsappTitle": "WhatsApp 频道参数配置",
-      "whatsappSubtitle": "配置 WhatsApp Baileys Bridge 服务相关参数"
+      "whatsappSubtitle": "配置 WhatsApp Baileys Bridge 服务相关参数",
+      "wecomTitle": "企业微信频道参数配置",
+      "wecomSubtitle": "配置企业微信频道相关参数"
     },
     "loading": {
       "xiaoyi": "正在加载小艺配置...",
@@ -268,7 +273,8 @@
       "feishu": "正在加载飞书配置...",
       "telegram": "正在加载 Telegram 配置...",
       "discord": "正在加载 Discord 配置...",
-      "whatsapp": "正在加载 WhatsApp 配置..."
+      "whatsapp": "正在加载 WhatsApp 配置...",
+      "wecom": "正在加载企业微信配置..."
     },
     "placeholders": {
       "configValue": "请输入配置值",
@@ -279,7 +285,9 @@
       "ids": "每行一个 ID（也支持逗号分隔）",
       "telegramBotToken": "请输入 Bot Token（从 @BotFather 获取）",
       "telegramUserIds": "每行一个 Telegram user_id（也支持逗号分隔）",
-      "whatsappJids": "每行一个 WhatsApp JID（也支持逗号分隔）"
+      "whatsappJids": "每行一个 WhatsApp JID（也支持逗号分隔）",
+      "wecomDefaultChatId": "userid 或 chatid（群聊）",
+      "wecomDefaultChatIdHint": "心跳/定时推送目标。不填则自动使用最近一次聊天的 chatid"
     },
     "saved": {
       "feishu": "飞书配置已保存",
@@ -287,7 +295,8 @@
       "dingtalk": "钉钉配置已保存",
       "telegram": "Telegram 配置已保存",
       "discord": "Discord 配置已保存",
-      "whatsapp": "WhatsApp 配置已保存"
+      "whatsapp": "WhatsApp 配置已保存",
+      "wecom": "企业微信配置已保存"
     },
     "errors": {
       "loadChannels": "获取 channels 失败",
@@ -297,6 +306,7 @@
       "loadTelegram": "获取 Telegram 配置失败",
       "loadDiscord": "获取 Discord 配置失败",
       "loadWhatsApp": "获取 WhatsApp 配置失败",
+      "loadWecom": "获取企业微信配置失败",
       "saveGeneric": "保存失败，请稍后重试"
     }
   },
@@ -363,6 +373,7 @@
     "targets": {
       "web": "网页 (web)",
       "feishu": "飞书 (feishu)",
+      "wecom": "企业微信 (wecom)",
       "xiaoyi": "小艺 (xiaoyi)",
       "dingtalk": "钉钉 (dingtalk)"
     },

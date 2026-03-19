@@ -103,6 +103,7 @@
       "feishu": "Lark",
       "xiaoyi": "Xiaoyi",
       "dingtalk": "DingTalk",
+      "wecom": "WeCom",
       "heartbeat": "Heartbeat",
       "unknown": "Unknown"
     },
@@ -142,6 +143,7 @@
     "channels": {
       "web": "Web (web)",
       "feishu": "Lark (feishu)",
+      "wecom": "WeCom (wecom)",
       "xiaoyi": "Xiaoyi (xiaoyi)",
       "dingtalk": "DingTalk (dingtalk)"
     },
@@ -235,7 +237,8 @@
       "dingtalk": "DingTalk",
       "telegram": "Telegram",
       "discord": "Discord",
-      "whatsapp": "WhatsApp"
+      "whatsapp": "WhatsApp",
+      "wecom": "WeCom"
     },
     "status": {
       "loadFailed": "Load failed",
@@ -260,7 +263,9 @@
       "telegramTitle": "Telegram Channel Configuration",
       "telegramSubtitle": "Configure Telegram Bot service settings",
       "whatsappTitle": "WhatsApp Channel Configuration",
-      "whatsappSubtitle": "Configure WhatsApp Baileys Bridge service settings"
+      "whatsappSubtitle": "Configure WhatsApp Baileys Bridge service settings",
+      "wecomTitle": "WeCom Channel Configuration",
+      "wecomSubtitle": "Configure WeCom channel service settings"
     },
     "loading": {
       "xiaoyi": "Loading Xiaoyi settings...",
@@ -268,7 +273,8 @@
       "feishu": "Loading Lark settings...",
       "telegram": "Loading Telegram settings...",
       "discord": "Loading Discord settings...",
-      "whatsapp": "Loading WhatsApp settings..."
+      "whatsapp": "Loading WhatsApp settings...",
+      "wecom": "Loading WeCom settings..."
     },
     "placeholders": {
       "configValue": "Enter a configuration value",
@@ -279,7 +285,9 @@
       "ids": "One ID per line (comma-separated is also supported)",
       "telegramBotToken": "Enter Bot Token (from @BotFather)",
       "telegramUserIds": "One Telegram user_id per line (comma-separated is also supported)",
-      "whatsappJids": "One WhatsApp JID per line (comma-separated is also supported)"
+      "whatsappJids": "One WhatsApp JID per line (comma-separated is also supported)",
+      "wecomDefaultChatId": "userid or chatid (group)",
+      "wecomDefaultChatIdHint": "Target for heartbeat/scheduled push. Leave empty to use last chatid"
     },
     "saved": {
       "feishu": "Lark settings saved",
@@ -287,7 +295,8 @@
       "dingtalk": "DingTalk settings saved",
       "telegram": "Telegram settings saved",
       "discord": "Discord settings saved",
-      "whatsapp": "WhatsApp settings saved"
+      "whatsapp": "WhatsApp settings saved",
+      "wecom": "WeCom settings saved"
     },
     "errors": {
       "loadChannels": "Failed to load channels",
@@ -297,6 +306,7 @@
       "loadTelegram": "Failed to load Telegram settings",
       "loadDiscord": "Failed to load Discord settings",
       "loadWhatsApp": "Failed to load WhatsApp settings",
+      "loadWecom": "Failed to load WeCom settings",
       "saveGeneric": "Save failed, please try again later"
     }
   },
@@ -363,6 +373,7 @@
     "targets": {
       "web": "Web (web)",
       "feishu": "Lark (feishu)",
+      "wecom": "WeCom (wecom)",
       "xiaoyi": "Xiaoyi (xiaoyi)",
       "dingtalk": "DingTalk (dingtalk)"
     },

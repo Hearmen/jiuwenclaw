@@ -14,7 +14,7 @@ type ChannelItem = {
 };
 
 type LoadState = 'idle' | 'loading' | 'success' | 'error';
-type SupportedChannelId = 'web' | 'xiaoyi' | 'feishu' | 'dingtalk' | 'telegram' | 'discord' | 'whatsapp';
+type SupportedChannelId = 'web' | 'xiaoyi' | 'feishu' | 'dingtalk' | 'telegram' | 'discord' | 'whatsapp'| 'wecom';
 const ADAPTING_CHANNEL_IDS = new Set<SupportedChannelId>([]);
 
 type FeishuConfig = {
@@ -123,6 +123,29 @@ type WhatsAppDraft = {
   bridge_workdir: string;
 };
 
+type WecomConfig = {
+  enabled: boolean;
+  bot_id: string;
+  secret: string;
+  ws_url: string;
+  allow_from: string[];
+  enable_streaming: boolean;
+  send_thinking_message: boolean;
+  /** 心跳/定时推送目标 chatid，不填则用最近一次聊天的 last_chat_id */
+  default_chat_id: string;
+};
+
+type WecomDraft = {
+  enabled: boolean;
+  bot_id: string;
+  secret: string;
+  ws_url: string;
+  allow_from: string;
+  enable_streaming: boolean;
+  send_thinking_message: boolean;
+  default_chat_id: string;
+};
+
 const DEFAULT_FEISHU_CONF: FeishuConfig = {
   enabled: false,
   app_id: '',
@@ -176,6 +199,17 @@ const DEFAULT_WHATSAPP_CONF: WhatsAppConfig = {
   bridge_workdir: '',
 };
 
+const DEFAULT_WECOM_CONF: WecomConfig = {
+  enabled: false,
+  bot_id: '',
+  secret: '',
+  ws_url: 'wss://openws.work.weixin.qq.com',
+  allow_from: [],
+  enable_streaming: true,
+  send_thinking_message: false,
+  default_chat_id: '',
+};
+
 const SUPPORTED_CHANNELS: Array<{ channel_id: SupportedChannelId; logo_src: string | null }> = [
   { channel_id: 'web', logo_src: null },
   { channel_id: 'xiaoyi', logo_src: '/xiaoyi.webp' },
@@ -184,6 +218,7 @@ const SUPPORTED_CHANNELS: Array<{ channel_id: SupportedChannelId; logo_src: stri
   { channel_id: 'telegram', logo_src: '/telegram.webp' },
   { channel_id: 'discord', logo_src: '/discord.webp' },
   { channel_id: 'whatsapp', logo_src: '/whatsapp.png' },
+  { channel_id: 'wecom', logo_src: '/wecom.webp' },
 ];
 
 
@@ -488,6 +523,53 @@ function buildWhatsAppPayload(draft: WhatsAppDraft): Record<string, unknown> {
   };
 }
 
+function normalizeWecomConfig(input: unknown): WecomConfig {
+  if (!input || typeof input !== 'object') {
+    return DEFAULT_WECOM_CONF;
+  }
+  const data = input as Record<string, unknown>;
+  const allowFromRaw = Array.isArray(data.allow_from) ? data.allow_from : [];
+  const allowFrom = allowFromRaw
+    .map((item) => String(item ?? '').trim())
+    .filter((item) => item.length > 0);
+  return {
+    enabled: Boolean(data.enabled),
+    bot_id: String(data.bot_id ?? '').trim(),
+    secret: String(data.secret ?? '').trim(),
+    ws_url: String(data.ws_url ?? 'wss://openws.work.weixin.qq.com').trim(),
+    allow_from: allowFrom,
+    enable_streaming: data.enable_streaming === undefined ? true : Boolean(data.enable_streaming),
+    send_thinking_message: data.send_thinking_message === undefined ? true : Boolean(data.send_thinking_message),
+    default_chat_id: String(data.default_chat_id ?? data.last_chat_id ?? '').trim(),
+  };
+}
+
+function draftFromWecomConfig(conf: WecomConfig): WecomDraft {
+  return {
+    enabled: conf.enabled,
+    bot_id: conf.bot_id,
+    secret: conf.secret,
+    ws_url: conf.ws_url,
+    allow_from: conf.allow_from.join('\n'),
+    enable_streaming: conf.enable_streaming,
+    send_thinking_message: conf.send_thinking_message,
+    default_chat_id: conf.default_chat_id,
+  };
+}
+
+function buildWecomPayload(draft: WecomDraft): Record<string, unknown> {
+  return {
+    enabled: draft.enabled,
+    bot_id: draft.bot_id.trim(),
+    secret: draft.secret.trim(),
+    allow_from: normalizeAllowFromText(draft.allow_from),
+    default_chat_id: draft.default_chat_id.trim(),
+  };
+}
+
+function isSensitiveWecomField(field: keyof WecomDraft): boolean {
+  return field === 'secret';
+}
 function VisibilityIcon({ visible }: { visible: boolean }) {
   return visible ? (
     <svg className="channels-panel__icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8}>
@@ -595,6 +677,13 @@ export function ChannelsPanel({ isConnected }: ChannelsPanelProps) {
   const [whatsappSaving, setWhatsappSaving] = useState(false);
   const [whatsappSaveError, setWhatsappSaveError] = useState<string | null>(null);
   const [whatsappSuccess, setWhatsappSuccess] = useState<string | null>(null);
+  const [wecomConfig, setWecomConfig] = useState<WecomConfig>(DEFAULT_WECOM_CONF);
+  const [wecomDraft, setWecomDraft] = useState<WecomDraft>(draftFromWecomConfig(DEFAULT_WECOM_CONF));
+  const [wecomVisibleFields, setWecomVisibleFields] = useState<Record<string, boolean>>({});
+  const [wecomLoading, setWecomLoading] = useState(false);
+  const [wecomSaving, setWecomSaving] = useState(false);
+  const [wecomSaveError, setWecomSaveError] = useState<string | null>(null);
+  const [wecomSuccess, setWecomSuccess] = useState<string | null>(null);
 
   const fetchChannels = useCallback(async () => {
     setLoadState('loading');
@@ -715,6 +804,23 @@ export function ChannelsPanel({ isConnected }: ChannelsPanelProps) {
       setWhatsappLoading(false);
     }
   }, [t]);
+  
+  const fetchWecomConfig = useCallback(async () => {
+    setWecomLoading(true);
+    setWecomSaveError(null);
+    setWecomSuccess(null);
+    try {
+      const payload = await webRequest<{ config?: unknown }>('channel.wecom.get_conf');
+      const normalized = normalizeWecomConfig(payload?.config);
+      setWecomConfig(normalized);
+      setWecomDraft(draftFromWecomConfig(normalized));
+      setWecomVisibleFields({});
+    } catch (err) {
+      setWecomSaveError(err instanceof Error ? err.message : t('channels.errors.loadWecom'));
+    } finally {
+      setWecomLoading(false);
+    }
+  }, [t]);
 
   const handleSelectChannel = useCallback(
     (channelId: SupportedChannelId) => {
@@ -750,7 +856,10 @@ export function ChannelsPanel({ isConnected }: ChannelsPanelProps) {
     if (activeChannelId === 'whatsapp') {
       void fetchWhatsAppConfig();
     }
-  }, [activeChannelId, fetchDiscordConfig, fetchDingtalkConfig, fetchFeishuConfig, fetchTelegramConfig, fetchWhatsAppConfig, fetchXiaoyiConfig]);
+    if (activeChannelId === 'wecom') {
+      void fetchWecomConfig();
+    }
+  }, [activeChannelId, fetchDiscordConfig, fetchDingtalkConfig, fetchFeishuConfig, fetchTelegramConfig, fetchWhatsAppConfig,fetchXiaoyiConfig, fetchWecomConfig]);
 
   const statusText = useMemo(() => {
     const enabledCount = channels.filter((channel) => channel.enabled).length;
@@ -829,6 +938,16 @@ export function ChannelsPanel({ isConnected }: ChannelsPanelProps) {
       baseDraft.bridge_workdir !== whatsappDraft.bridge_workdir
     );
   }, [whatsappConfig, whatsappDraft]);
+  const hasWecomConfigChanges = useMemo(() => {
+    const baseDraft = draftFromWecomConfig(wecomConfig);
+    return (
+      baseDraft.enabled !== wecomDraft.enabled ||
+      baseDraft.bot_id !== wecomDraft.bot_id ||
+      baseDraft.secret !== wecomDraft.secret ||
+      baseDraft.default_chat_id !== wecomDraft.default_chat_id ||
+      normalizeAllowFromText(baseDraft.allow_from).join('\n') !== normalizeAllowFromText(wecomDraft.allow_from).join('\n')
+    );
+  }, [wecomConfig, wecomDraft]);
   const handleFieldChange = <K extends keyof FeishuDraft>(key: K, value: FeishuDraft[K]) => {
     setDraft((prev) => ({ ...prev, [key]: value }));
     if (saveError) {
@@ -966,6 +1085,27 @@ export function ChannelsPanel({ isConnected }: ChannelsPanelProps) {
     }
   };
 
+  const handleWecomFieldChange = <K extends keyof WecomDraft>(key: K, value: WecomDraft[K]) => {
+    setWecomDraft((prev) => ({ ...prev, [key]: value }));
+    if (wecomSaveError) {
+      setWecomSaveError(null);
+    }
+    if (wecomSuccess) {
+      setWecomSuccess(null);
+    }
+  };
+
+  const handleCancelWecomConfig = () => {
+    if (!hasWecomConfigChanges) return;
+    setWecomDraft(draftFromWecomConfig(wecomConfig));
+    setWecomSaveError(null);
+    setWecomSuccess(null);
+  };
+
+  const toggleWecomFieldVisible = (field: keyof WecomDraft) => {
+    setWecomVisibleFields((prev) => ({ ...prev, [field]: !prev[field] }));
+  };
+
   const handleSaveConfig = async () => {
     if (!hasConfigChanges || saving) return;
     setSaving(true);
@@ -1061,16 +1201,35 @@ export function ChannelsPanel({ isConnected }: ChannelsPanelProps) {
     }
   };
 
-  const isConfigRefreshing = feishuLoading || xiaoyiLoading || dingtalkLoading || telegramLoading || discordLoading || whatsappLoading;
+  const handleSaveWecomConfig = async () => {
+    if (!hasWecomConfigChanges || wecomSaving) return;
+    setWecomSaving(true);
+    setWecomSaveError(null);
+    try {
+      const payload = buildWecomPayload(wecomDraft);
+      const result = await webRequest<{ config?: unknown }>('channel.wecom.set_conf', payload);
+      const normalized = normalizeWecomConfig(result?.config);
+      setWecomConfig(normalized);
+      setWecomDraft(draftFromWecomConfig(normalized));
+      setWecomSuccess(t('channels.saved.wecom'));
+    } catch (saveErr) {
+      const message = saveErr instanceof Error ? saveErr.message : t('channels.errors.saveGeneric');
+      setWecomSaveError(message);
+    } finally {
+      setWecomSaving(false);
+    }
+  };
+
+  const isConfigRefreshing = feishuLoading || xiaoyiLoading || dingtalkLoading || telegramLoading || discordLoading || whatsappLoading || wecomLoading;
   const configErrorNotice = useMemo(() => {
     return Array.from(
       new Set(
-        [saveError, xiaoyiSaveError, dingtalkSaveError, telegramSaveError, discordSaveError, whatsappSaveError].filter(
+        [saveError, xiaoyiSaveError, dingtalkSaveError, telegramSaveError, discordSaveError, whatsappSaveError, wecomSaveError].filter(
           (message): message is string => Boolean(message),
         ),
       ),
     ).join(t('common.and'));
-  }, [discordSaveError, dingtalkSaveError, saveError, t, telegramSaveError, whatsappSaveError, xiaoyiSaveError]);
+  }, [discordSaveError, dingtalkSaveError, saveError, t, telegramSaveError, whatsappSaveError, wecomSaveError, xiaoyiSaveError]);
   useEffect(() => {
     if (!configErrorNotice) {
       return;
@@ -1082,6 +1241,7 @@ export function ChannelsPanel({ isConnected }: ChannelsPanelProps) {
       setTelegramSaveError(null);
       setDiscordSaveError(null);
       setWhatsappSaveError(null);
+      setWecomSaveError(null);
     }, 2000);
     return () => {
       window.clearTimeout(timer);
@@ -1971,6 +2131,145 @@ export function ChannelsPanel({ isConnected }: ChannelsPanelProps) {
                                     }`}
                                   />
                                 </button>
+                              </td>
+                            </tr>
+                          </tbody>
+                        </table>
+                      )}
+                    </div>
+                  </div>
+                ) : null}
+
+                {activeChannelId === 'wecom' ? (
+                  <div className="w-full h-full rounded-xl border border-border bg-card/70 backdrop-blur-sm overflow-hidden shadow-sm flex flex-col">
+                    <div className="px-4 py-3 bg-secondary/30 border-b border-border">
+                      <div className="flex items-center justify-between gap-4">
+                        <div className="flex items-center gap-3">
+                          <ChannelHeaderLogo channelId="wecom" label={getChannelLabel(t, 'wecom')} />
+                          <div>
+                            <h4 className="text-sm font-medium text-text">{t('channels.config.wecomTitle')}</h4>
+                            <p className="text-xs text-text-muted mt-1">{t('channels.config.wecomSubtitle')}</p>
+                          </div>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <button
+                            type="button"
+                            onClick={() => void fetchWecomConfig()}
+                            disabled={wecomSaving || isConfigRefreshing}
+                            className="btn !px-3 !py-1.5 disabled:opacity-50 disabled:cursor-not-allowed"
+                          >
+                            {wecomLoading ? t('common.refreshing') : t('common.refresh')}
+                          </button>
+                          <button
+                            type="button"
+                            onClick={handleCancelWecomConfig}
+                            disabled={!hasWecomConfigChanges || wecomSaving}
+                            className="btn !px-3 !py-1.5 disabled:opacity-50 disabled:cursor-not-allowed"
+                          >
+                            {t('common.cancel')}
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => void handleSaveWecomConfig()}
+                            disabled={
+                              !hasWecomConfigChanges ||
+                              wecomSaving ||
+                              !isConnected ||
+                              !wecomDraft.bot_id.trim() ||
+                              !wecomDraft.secret.trim()
+                            }
+                            className="btn primary !px-3 !py-1.5 disabled:opacity-50 disabled:cursor-not-allowed"
+                          >
+                            {wecomSaving ? t('common.saving') : t('common.save')}
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+
+                    {wecomSuccess ? (
+                      <div className="mx-4 mt-4 rounded-md border border-[var(--border-ok)] bg-ok-subtle px-3 py-2 text-sm text-ok">
+                        {wecomSuccess}
+                      </div>
+                    ) : null}
+
+                    <div className="p-4 pt-3 flex-1 overflow-auto">
+                      {wecomLoading ? (
+                        <div className="text-sm text-text-muted">{t('channels.loading.wecom')}</div>
+                      ) : (
+                        <table className="w-full text-sm">
+                          <tbody>
+                            <tr className="border-t border-border first:border-t-0 even:bg-secondary/10">
+                              <td className="px-4 py-2.5 align-middle mono text-xs text-text-muted w-[32%]">enabled</td>
+                              <td className="px-4 py-2.5 align-middle">
+                                <button
+                                  type="button"
+                                  role="switch"
+                                  aria-checked={wecomDraft.enabled}
+                                  onClick={() => handleWecomFieldChange('enabled', !wecomDraft.enabled)}
+                                  className={`relative inline-flex h-5 w-9 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 focus:outline-none ${
+                                    wecomDraft.enabled ? 'bg-ok' : 'bg-secondary'
+                                  }`}
+                                >
+                                  <span
+                                    className={`pointer-events-none inline-block h-4 w-4 transform rounded-full bg-white shadow transition duration-200 ${
+                                      wecomDraft.enabled ? 'translate-x-4' : 'translate-x-0'
+                                    }`}
+                                  />
+                                </button>
+                              </td>
+                            </tr>
+                            {(['bot_id', 'secret'] as const).map((field) => (
+                              <tr key={field} className="border-t border-border first:border-t-0 even:bg-secondary/10">
+                                <td className="px-4 py-2.5 align-middle mono text-xs text-text-muted w-[32%]">{field}</td>
+                                <td className="px-4 py-2.5 break-all text-[13px] align-middle">
+                                  <div className="relative">
+                                    <input
+                                      type={isSensitiveWecomField(field) && !wecomVisibleFields[field] ? 'password' : 'text'}
+                                      value={wecomDraft[field]}
+                                      onChange={(e) => handleWecomFieldChange(field, e.target.value)}
+                                      placeholder={t('channels.placeholders.configValue')}
+                                      className={`w-full rounded-md border border-border bg-bg px-3 py-2 text-[13px] outline-none focus:border-accent ${
+                                        isSensitiveWecomField(field) ? 'pr-10' : ''
+                                      }`}
+                                    />
+                                    {isSensitiveWecomField(field) ? (
+                                      <button
+                                        type="button"
+                                        onClick={() => toggleWecomFieldVisible(field)}
+                                        className="channels-panel__visibility-toggle"
+                                        aria-label={wecomVisibleFields[field] ? t('channels.hideValue') : t('channels.showValue')}
+                                        title={wecomVisibleFields[field] ? t('channels.hideValue') : t('channels.showValue')}
+                                      >
+                                        <VisibilityIcon visible={Boolean(wecomVisibleFields[field])} />
+                                      </button>
+                                    ) : null}
+                                  </div>
+                                </td>
+                              </tr>
+                            ))}
+                            <tr className="border-t border-border first:border-t-0 even:bg-secondary/10">
+                              <td className="px-4 py-2.5 align-top mono text-xs text-text-muted w-[32%]">default_chat_id</td>
+                              <td className="px-4 py-2.5 break-all text-[13px] align-middle">
+                                <input
+                                  type="text"
+                                  value={wecomDraft.default_chat_id}
+                                  onChange={(e) => handleWecomFieldChange('default_chat_id', e.target.value)}
+                                  placeholder={t('channels.placeholders.wecomDefaultChatId')}
+                                  className="w-full rounded-md border border-border bg-bg px-3 py-2 text-[13px] outline-none focus:border-accent"
+                                />
+                                <p className="mt-1 text-xs text-text-muted">{t('channels.placeholders.wecomDefaultChatIdHint')}</p>
+                              </td>
+                            </tr>
+                            <tr className="border-t border-border first:border-t-0 even:bg-secondary/10">
+                              <td className="px-4 py-2.5 align-top mono text-xs text-text-muted w-[32%]">allow_from</td>
+                              <td className="px-4 py-2.5 break-all text-[13px] align-middle">
+                                <textarea
+                                  value={wecomDraft.allow_from}
+                                  onChange={(e) => handleWecomFieldChange('allow_from', e.target.value)}
+                                  placeholder={t('channels.placeholders.ids')}
+                                  rows={4}
+                                  className="w-full rounded-md border border-border bg-bg px-3 py-2 text-[13px] outline-none focus:border-accent resize-y"
+                                />
                               </td>
                             </tr>
                           </tbody>

@@ -351,7 +351,9 @@ class JiuWenClaw:
                 evo_svc.auto_scan = _env_auto_scan.lower() in ("true", "1", "yes")
         logger.info("[JiuWenClaw] 配置已热更新，未重启进程")
 
-    async def _register_runtime_tools(self, session_id: str | None, mode="plan") -> None:
+    async def _register_runtime_tools(
+        self, session_id: str | None, mode="plan", channel_id: str | None = None
+    ) -> None:
         """Register per-request tools for current agent execution."""
         if self._instance is None:
             raise RuntimeError("JiuWenClaw 未初始化，请先调用 create_instance()")
@@ -364,15 +366,19 @@ class JiuWenClaw:
                 elif tool.name.startswith("cron_"):
                     self._instance.ability_manager.remove(tool.name)
 
-        # 定时工具：按 channel 注册；仅当 resource_mgr 中尚未存在时 add_tool，避免重复添加触发 "resource already exist"
-        channel = session_id.split('_')[0]
+        # 定时工具：按 channel 注册；优先用 channel_id，否则从 session_id 前缀推断
+        channel = (channel_id or "").strip() or (
+            (session_id or "").split("_")[0] if session_id else ""
+        )
         logger.info(f"[JiuwenClaw] update tool and prompt for channel {channel}")
         if channel not in ["heartbeat", "cron"]:
             cron_controller = CronController.get_instance()
 
             if channel == "feishu":
                 cron_controller.set_target_channel(CronTargetChannel.FEISHU)
-            if channel == "sess":
+            elif channel == "wecom":
+                cron_controller.set_target_channel(CronTargetChannel.WECOM)
+            elif channel in ("web", "sess"):
                 cron_controller.set_target_channel(CronTargetChannel.WEB)
 
             for cron_tool in cron_controller.get_tools():
@@ -793,7 +799,11 @@ class JiuWenClaw:
 
         async def run_agent_task():
             try:
-                await self._register_runtime_tools(request.session_id, request.params.get("mode", "plan"))
+                await self._register_runtime_tools(
+                    request.session_id,
+                    request.params.get("mode", "plan"),
+                    channel_id=request.channel_id,
+                )
                 return await Runner.run_agent(agent=self._instance, inputs=inputs)
             except asyncio.CancelledError:
                 logger.info("[JiuWenClaw] Agent 任务被取消: request_id=%s session_id=%s", request.request_id, session_id)
@@ -930,7 +940,11 @@ class JiuWenClaw:
         async def run_stream_task():
             """执行流式任务，将产生的 chunk 放入队列."""
             try:
-                await self._register_runtime_tools(request.session_id, request.params.get("mode", "plan"))
+                await self._register_runtime_tools(
+                    request.session_id,
+                    request.params.get("mode", "plan"),
+                    channel_id=request.channel_id,
+                )
                 async for chunk in Runner.run_agent_streaming(self._instance, inputs):
                     parsed = self._parse_stream_chunk(chunk)
                     if parsed is None:
@@ -1037,9 +1051,9 @@ class JiuWenClaw:
                             if isinstance(output, dict)
                             else str(output)
                         )
-                        # Check if this is a chunked answer (first chunk)
+                        # Check if this is a chunked/partial answer (streaming)
                         is_chunked = (
-                            output.get("chunked", False)
+                            output.get("chunked", False) or output.get("partial", False)
                             if isinstance(output, dict)
                             else False
                         )
@@ -1095,6 +1109,14 @@ class JiuWenClaw:
                     return {"event_type": "chat.error", "error": error_msg}
 
                 if chunk_type == "thinking":
+                    return {
+                        "event_type": "chat.processing_status",
+                        "is_processing": True,
+                        "current_task": "thinking",
+                    }
+
+                # llm_reasoning：模型推理/思考内容，不转为 chat.delta，避免发到企业微信
+                if chunk_type == "llm_reasoning":
                     return {
                         "event_type": "chat.processing_status",
                         "is_processing": True,

@@ -15,7 +15,7 @@ if TYPE_CHECKING:
 
 
 class ChannelType(str, Enum):
-    """<UNK>"""
+    """Channel 类型枚举."""
     WEB = "web"
     FEISHU = "feishu"
     XIAOYI = "xiaoyi"
@@ -23,6 +23,7 @@ class ChannelType(str, Enum):
     TELEGRAM = "telegram"
     DISCORD = "discord"
     WHATSAPP = "whatsapp"
+    WECOM = "wecom"
 
 
 @dataclass

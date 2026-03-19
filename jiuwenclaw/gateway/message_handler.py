@@ -48,8 +48,8 @@ class MessageHandler(ABC):
         self._stream_tasks: dict[str, asyncio.Task] = {}  # request_id -> task
         self._stream_sessions: dict[str, str | None] = {}  # request_id -> session_id
 
-        # per-channel 控制状态：支持 \new_session / \mode 指令（feishu/xiaoyi/dingding/whatsapp）
-        self._control_channels = {"feishu", "xiaoyi", "dingtalk", "whatsapp"}
+        # per-channel 控制状态：支持 \new_session / \mode 指令（feishu/xiaoyi/dingding/whatsapp/wecom）
+        self._control_channels = {"feishu", "xiaoyi", "dingtalk", "whatsapp", "wecom"}
         self._channel_states: Dict[str, ChannelControlState] = {}
 
         # 直接使用 jiuwenclaw.config 的 get_config_raw/set_config/update_channel_in_config

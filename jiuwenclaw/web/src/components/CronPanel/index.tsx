@@ -72,6 +72,7 @@ export default function CronPanel() {
   const targetOptions = [
     { value: 'web', label: t('cron.targets.web') },
     { value: 'feishu', label: t('cron.targets.feishu') },
+    { value: 'wecom', label: t('cron.targets.wecom') },
     { value: 'xiaoyi', label: t('cron.targets.xiaoyi'), disabled: true, style: { color: '#8c8c96ff' } },
     { value: 'dingtalk', label: t('cron.targets.dingtalk'), disabled: true, style: { color: '#8c8c96ff' } }
   ];
