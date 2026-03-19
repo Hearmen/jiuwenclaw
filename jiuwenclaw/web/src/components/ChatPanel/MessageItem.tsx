@@ -198,7 +198,21 @@ export function MessageItem({ message, autoSpeak = false }: MessageItemProps) {
                 {isUser ? (
                   <span className="whitespace-pre-wrap">{content}</span>
                 ) : (
-                  <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                  <ReactMarkdown 
+                    remarkPlugins={[remarkGfm]}
+                    components={{
+                      a: ({ node, href, children, ...props }) => (
+                        <a 
+                          href={href} 
+                          target="_blank" 
+                          rel="noopener noreferrer"
+                          {...props}
+                        >
+                          {children}
+                        </a>
+                      )
+                    }}
+                  >
                     {content}
                   </ReactMarkdown>
                 )}
