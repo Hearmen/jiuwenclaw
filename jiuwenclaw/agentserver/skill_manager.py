@@ -282,7 +282,14 @@ class SkillManager:
             raw_results = await asyncio.to_thread(self._skillnet_search_sync, search_kwargs)
         except Exception as exc:
             logger.error("SkillNet 搜索失败: %s", exc)
-            return {"success": False, "detail": f"SkillNet 搜索失败: {exc}"}
+            raw = str(exc).strip()
+            if raw:
+                return {"success": False, "detail": raw}
+            return {
+                "success": False,
+                "detail": "搜索失败，请稍后重试。",
+                "detail_key": "skills.skillNet.errors.searchFailedFallback",
+            }
 
         normalized: list[dict[str, Any]] = []
         for item in raw_results:
@@ -339,17 +346,26 @@ class SkillManager:
             return {"success": False, "detail": "缺少参数: install_id"}
         job = self._skillnet_install_jobs.get(install_id)
         if job is None:
-            return {"success": False, "detail": "无效或已过期的 install_id"}
+            return {
+                "success": False,
+                "detail": "安装会话已过期，请重新点击安装。",
+                "detail_key": "skills.skillNet.errors.sessionExpired",
+            }
 
         status = job.get("status", "pending")
         if status == "pending":
             return {"success": True, "status": "pending"}
         if status == "failed":
-            return {
+            out: dict[str, Any] = {
                 "success": False,
                 "status": "failed",
                 "detail": job.get("detail", "安装失败"),
             }
+            if "detail_key" in job:
+                out["detail_key"] = job["detail_key"]
+            if "detail_params" in job:
+                out["detail_params"] = job["detail_params"]
+            return out
         # done
         return {
             "success": True,
@@ -376,25 +392,39 @@ class SkillManager:
             self._skillnet_install_jobs[install_id] = {
                 "status": "failed",
                 "detail": (
-                    f"下载超时 (>{_SKILLNET_DOWNLOAD_TIMEOUT}s)，可能因网络延迟较高。"
-                    "可设置环境变量 SKILLNET_DOWNLOAD_TIMEOUT 调整超时时间，"
-                    "或使用 VPN 改善网络连接。"
+                    f"下载超时（超过 {_SKILLNET_DOWNLOAD_TIMEOUT} 秒），请稍后重试。"
+                    "若网络较慢，可稍后在技能列表中查看是否已安装成功。"
                 ),
+                "detail_key": "skills.skillNet.errors.downloadTimeout",
+                "detail_params": {"seconds": _SKILLNET_DOWNLOAD_TIMEOUT},
             }
             return
         except Exception as exc:
             logger.error("SkillNet 后台安装异常: %s", exc)
+            raw = str(exc).strip()
             self._skillnet_install_jobs[install_id] = {
                 "status": "failed",
-                "detail": str(exc),
+                "detail": raw or "安装失败，请重试。",
+                **(
+                    {}
+                    if raw
+                    else {
+                        "detail_key": "skills.skillNet.errors.installFailedFallback",
+                    }
+                ),
             }
             return
 
         if not result.get("ok"):
-            self._skillnet_install_jobs[install_id] = {
+            job_entry: dict[str, Any] = {
                 "status": "failed",
-                "detail": result.get("detail", "安装失败"),
+                "detail": result.get("detail", "安装失败，请重试。"),
             }
+            if result.get("detail_key"):
+                job_entry["detail_key"] = result["detail_key"]
+            if result.get("detail_params") is not None:
+                job_entry["detail_params"] = result["detail_params"]
+            self._skillnet_install_jobs[install_id] = job_entry
             return
 
         skill_name = result["skill_name"]
@@ -420,7 +450,8 @@ class SkillManager:
             logger.error("SkillNet 写入状态失败: %s", exc)
             self._skillnet_install_jobs[install_id] = {
                 "status": "failed",
-                "detail": str(exc),
+                "detail": "安装完成但保存配置失败，请刷新页面重试。",
+                "detail_key": "skills.skillNet.errors.saveConfigFailed",
             }
             return
 
@@ -432,7 +463,8 @@ class SkillManager:
                 logger.error("SkillNet 安装完成后 hook 失败: %s", exc)
                 self._skillnet_install_jobs[install_id] = {
                     "status": "failed",
-                    "detail": f"重载 Agent 失败: {exc}",
+                    "detail": "技能已安装，请手动刷新页面生效。",
+                    "detail_key": "skills.skillNet.errors.reloadRequired",
                 }
                 return
 
@@ -451,17 +483,27 @@ class SkillManager:
                 if not download_path.exists():
                     return {
                         "ok": False,
-                        "detail": f"下载结果不存在: {download_path}",
+                        "detail": "下载失败，请重试。",
+                        "detail_key": "skills.skillNet.errors.downloadFailed",
                     }
 
+                # 库在部分文件下载失败时仍会返回路径，只有找到 SKILL.md 才视为下载完整，才继续后续逻辑
                 skill_dir = self._locate_skill_dir(download_path)
                 if skill_dir is None:
-                    return {"ok": False, "detail": "下载内容中未找到 SKILL.md"}
+                    return {
+                        "ok": False,
+                        "detail": "下载未完成或内容不完整，未找到 SKILL.md，请重试。",
+                        "detail_key": "skills.skillNet.errors.skillMdNotFound",
+                    }
 
                 md = self._try_find_skill_file(skill_dir)
                 meta = self._parse_skill_md(md) if md else None
                 if meta is None:
-                    return {"ok": False, "detail": "无法解析下载的技能文件"}
+                    return {
+                        "ok": False,
+                        "detail": "无法解析下载的技能文件",
+                        "detail_key": "skills.skillNet.errors.parseSkillFailed",
+                    }
 
                 skill_name = str(meta.get("name", skill_dir.name)).strip() or skill_dir.name
                 dest = _SKILLS_DIR / skill_name
@@ -469,7 +511,8 @@ class SkillManager:
                     if not force:
                         return {
                             "ok": False,
-                            "detail": f"skill {skill_name} 已存在",
+                            "detail": "该技能已安装。",
+                            "detail_key": "skills.skillNet.errors.skillAlreadyInstalled",
                         }
                     shutil.rmtree(dest)
 
@@ -491,7 +534,12 @@ class SkillManager:
                 }
         except Exception as exc:
             logger.error("SkillNet 下载失败: %s", exc)
-            return {"ok": False, "detail": f"SkillNet 下载失败: {exc}"}
+            raw = str(exc).strip()
+            detail = raw or "安装失败，请重试。"
+            extra: dict[str, Any] = {}
+            if not raw:
+                extra["detail_key"] = "skills.skillNet.errors.installFailedFallback"
+            return {"ok": False, "detail": detail, **extra}
 
     async def handle_skills_uninstall(self, params: dict) -> dict:
         """卸载已安装的 skill.
@@ -942,7 +990,7 @@ class SkillManager:
 
     @staticmethod
     def _locate_skill_dir(path: Path) -> Path | None:
-        """定位包含 SKILL.md 的目录（优先当前目录，再向下递归）."""
+        """定位包含 SKILL.md 的目录（优先当前目录，再向下递归）；文件名大小写不敏感."""
         if path.is_file() and path.name.lower() == "skill.md":
             return path.parent
         if path.is_dir():
@@ -951,6 +999,10 @@ class SkillManager:
                 return path
             for md in path.rglob("SKILL.md"):
                 if md.is_file():
+                    return md.parent
+            # 兼容小写 skill.md（如 Linux 下仓库命名）
+            for md in path.rglob("*.md"):
+                if md.is_file() and md.name.lower() == "skill.md":
                     return md.parent
         return None
 
@@ -1073,7 +1125,7 @@ class SkillManager:
     def _skillnet_download_sync(skill_url: str, target_dir: str) -> str:
         """同步调用 skillnet-ai download；失败时附带 GitHub API 返回说明（如前端的限流文案）。"""
         try:
-            from skillnet_ai.downloader import SkillDownloader
+            from skillnet_ai.downloader import SkillDownloader, GitHubAPIError
         except Exception as exc:
             raise RuntimeError(
                 "未安装 skillnet-ai，请先安装依赖: pip install skillnet-ai"
@@ -1092,6 +1144,8 @@ class SkillManager:
 
         try:
             local_path = downloader.download(folder_url=skill_url, target_dir=target_dir)
+        except GitHubAPIError:
+            raise
         except Exception as exc:
             ctx = SkillManager._github_skillnet_install_error_context(skill_url)
             if ctx:
@@ -1103,10 +1157,6 @@ class SkillManager:
                 raise RuntimeError(f"SkillNet 返回空下载路径 | {ctx}")
             raise RuntimeError("SkillNet 返回空下载路径")
         return str(local_path)
-
-    # -----------------------------------------------------------------------
-    # Git 操作
-    # -----------------------------------------------------------------------
 
     async def _git_clone(self, url: str, dest: Path) -> str | None:
         """浅克隆 git 仓库，返回 commit hash 或 None."""

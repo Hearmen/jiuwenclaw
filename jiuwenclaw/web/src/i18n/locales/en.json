@@ -495,7 +495,19 @@
       "usageNoticeTitle": "Notes",
       "usageNotice1": "Installing a skill downloads files from GitHub. Ensure the machine running JiuwenClaw can reach GitHub (network / proxy).",
       "usageNotice2": "GitHub’s API limits anonymous (unauthenticated) use to about 60 requests per hour per IP. If install fails with rate limiting, wait and retry later. For increased rate limits, configure github_token in the configuration page.",
-      "usageNotice3": "SkillNet search uses a public service; timeouts or errors may be due to network congestion or server load—try again later."
+      "usageNotice3": "SkillNet search uses a public service; timeouts or errors may be due to network congestion or server load—try again later.",
+      "errors": {
+        "searchFailedFallback": "Search failed. Please try again later.",
+        "sessionExpired": "Install session expired. Please click Install again.",
+        "downloadTimeout": "Download timed out (over {{seconds}}s). Please try again later. If the network is slow, check the skill list later to see if it was installed.",
+        "installFailedFallback": "Install failed. Please try again.",
+        "saveConfigFailed": "Install completed but saving config failed. Please refresh the page and retry.",
+        "reloadRequired": "Skill installed. Please refresh the page to take effect.",
+        "downloadFailed": "Download failed. Please try again.",
+        "skillMdNotFound": "Download incomplete or missing SKILL.md. Please retry.",
+        "parseSkillFailed": "Could not parse the downloaded skill file.",
+        "skillAlreadyInstalled": "This skill is already installed."
+      }
     },
     "marketplacesAvailable": "Available marketplaces: {{names}}",
     "marketplacesDefault": "Default marketplace: anthropics",

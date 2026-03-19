@@ -83,10 +83,15 @@ export function SkillNetSearchModal({
       const data = await webRequest<{
         success: boolean;
         detail?: string;
+        detail_key?: string;
+        detail_params?: Record<string, unknown>;
         skills?: SkillNetItem[];
       }>("skills.skillnet.search", withSession({ q, limit: 50 }));
       if (!data.success) {
-        throw new Error(data.detail || t("skills.errors.skillNetSearchFailed"));
+        const message = data.detail_key
+          ? t(data.detail_key, data.detail_params as Record<string, string> | undefined)
+          : (data.detail || t("skills.errors.skillNetSearchFailed"));
+        throw new Error(message);
       }
       setResults(data.skills || []);
       setLoadState("success");
@@ -135,6 +140,8 @@ export function SkillNetSearchModal({
               success: boolean;
               status?: string;
               detail?: string;
+              detail_key?: string;
+              detail_params?: Record<string, unknown>;
               skill?: { name?: string };
             }>(
               "skills.skillnet.install_status",
@@ -146,9 +153,10 @@ export function SkillNetSearchModal({
               break;
             }
             if (st.status === "failed" || (!st.success && st.status !== "pending")) {
-              throw new Error(
-                st.detail || t("skills.errors.skillNetInstallFailed")
-              );
+              const message = st.detail_key
+                ? t(st.detail_key, st.detail_params as Record<string, string> | undefined)
+                : (st.detail || t("skills.errors.skillNetInstallFailed"));
+              throw new Error(message);
             }
             await new Promise((r) => window.setTimeout(r, pollMs));
           }
@@ -204,7 +212,7 @@ export function SkillNetSearchModal({
 
         <div className="p-5 overflow-auto flex-1 min-h-0">
           {installedSuccess && (
-            <div className="mb-3 px-3 py-2 rounded-md bg-green-500/15 text-green-700 dark:text-green-400 text-sm">
+            <div className="mb-3 px-3 py-2.5 rounded-lg text-sm leading-snug border border-[color:var(--border-ok)] bg-ok-subtle text-ok">
               {t("skills.messages.skillNetInstalled", { name: installedSuccess })}
             </div>
           )}
@@ -241,7 +249,7 @@ export function SkillNetSearchModal({
           </div>
 
           {errorMessage && (
-            <div className="mt-3 px-3 py-2 rounded-md bg-secondary text-sm text-danger break-words whitespace-pre-wrap max-h-32 overflow-y-auto">
+            <div className="mt-3 px-3 py-2 rounded-md bg-secondary text-sm text-danger break-words whitespace-pre-wrap max-h-48 overflow-y-auto">
               {errorMessage}
             </div>
           )}

@@ -30,7 +30,7 @@ dependencies = [
     "wecom-aibot-sdk>=1.0.0",
     "python-socks>=2.8.1",
     "greenlet>=3.3.2",
-    "skillnet-ai>=0.0.14",
+    "skillnet-ai==0.0.15",
 ]
 
 [project.scripts]
