@@ -6,10 +6,103 @@ from typing import Optional
 from jiuwenclaw.utils import USER_WORKSPACE_DIR, logger
 
 
-def _memory_prompt(language: str) -> str:
+def _memory_prompt(language: str, is_cron: bool = False) -> str:
     """Build system prompt for the agent.
     Args:
+        language: language for the prompt
+        is_cron: if True, use simplified prompt with only memory search/load (no memory writing)
     """
+    if is_cron:
+        if language == "zh":
+            sections = []
+            memory_prompt = """# 持久化存储体系（只读模式）
+
+## 存储层级划分
+
+- **会话日志：** `memory/YYYY-MM-DD.md`（当日交互轨迹的原始记录）
+- **用户画像：** `USER.md`（稳定的身份属性与偏好信息）
+- **知识沉淀：** `MEMORY.md`（经筛选提炼的长期背景知识）
+
+### 历史检索机制
+
+**响应任何消息前，建议执行：**
+1. 读取 `USER.md` — 确认服务对象
+2. 读取 `memory/YYYY-MM-DD.md`（当日 + 前一日）获取上下文
+3. **回答历史事件相关问题前：** 必须先调用 `memory_search` 工具检索历史记忆
+
+"""
+            sections.append(memory_prompt)
+            sections.append("")
+
+            profile_content = _read_file(USER_WORKSPACE_DIR / "workspace" / "agent" / "memory" / "USER.md")
+            if profile_content:
+                sections.append("# 当前身份与用户资料")
+                sections.append("这是你对自己和用户的了解：")
+                sections.append(profile_content)
+                sections.append("")
+
+            memory_content = _read_file(USER_WORKSPACE_DIR / "workspace" / "agent" / "memory" / "MEMORY.md")
+            if memory_content:
+                sections.append("# 长期记忆")
+                sections.append("之前会话的重要信息：")
+                sections.append(memory_content)
+                sections.append("")
+
+            beijing_tz = timezone(timedelta(hours=8))
+            today = datetime.now(tz=beijing_tz).strftime("%Y-%m-%d")
+            today_content = _read_file(USER_WORKSPACE_DIR / "workspace" / "agent" / "memory" / f"{today}.md")
+            if today_content:
+                sections.append("# 今日会话记录")
+                sections.append(today_content)
+                sections.append("")
+
+            return "\n".join(sections)
+        else:
+            sections = []
+            memory_prompt = """# Persistent Storage System (Read-Only Mode)
+
+## Storage Hierarchy
+
+- **Session Log:** `memory/YYYY-MM-DD.md` (Raw records of daily interactions)
+- **User Profile:** `USER.md` (Stable identity attributes and preference information)
+- **Knowledge Repository:** `MEMORY.md` (Filtered and refined long-term background knowledge)
+
+### History Retrieval Mechanism
+
+**Before responding to any message, it is recommended to execute:**
+1. Read `USER.md` — Confirm the user being served
+2. Read `memory/YYYY-MM-DD.md` (today + previous day) to get context
+3. **Before answering questions about historical events:** Must first call `memory_search` tool to retrieve historical memories
+
+**Note:** In cron job mode, only reading and searching memories is supported. Writing or modifying memory files is not allowed.
+"""
+            sections.append(memory_prompt)
+            sections.append("")
+
+            profile_content = _read_file(USER_WORKSPACE_DIR / "workspace" / "agent" / "memory" / "USER.md")
+            if profile_content:
+                sections.append("# Current Identity and User Profile")
+                sections.append("What you know about yourself and the user:")
+                sections.append(profile_content)
+                sections.append("")
+
+            memory_content = _read_file(USER_WORKSPACE_DIR / "workspace" / "agent" / "memory" / "MEMORY.md")
+            if memory_content:
+                sections.append("# Long-term Memory")
+                sections.append("Important information from previous sessions:")
+                sections.append(memory_content)
+                sections.append("")
+
+            beijing_tz = timezone(timedelta(hours=8))
+            today = datetime.now(tz=beijing_tz).strftime("%Y-%m-%d")
+            today_content = _read_file(USER_WORKSPACE_DIR / "workspace" / "agent" / "memory" / f"{today}.md")
+            if today_content:
+                sections.append("# Today's Session Record")
+                sections.append(today_content)
+                sections.append("")
+
+            return "\n".join(sections)
+    
     if language == "zh":
         sections = []
 
@@ -36,11 +129,11 @@ def _memory_prompt(language: str) -> str:
 
 ### 用户请求记录
 
-当用户请求记录信息时（如"帮我记一下"、"记住这个"），调用 `write_memory` 写入 `memory/YYYY-MM-DD.md`。
+当用户请求记录信息时（如"帮我记一下"、"记住这个"），调用 `write_memory`使用append=true 参数来追加内容到`memory/YYYY-MM-DD.md`，每条记录单独一行。
 
 ### 操作轨迹自动记录（写入会话日志）
 
-**每次文件操作后，必须调用 `write_memory` 记录至 `memory/YYYY-MM-DD.md`**，但是在回复用户时不需要提到进行了记录。
+**每次文件操作后，必须调用 `write_memory` 使用append=true 参数来追加记录至`memory/YYYY-MM-DD.md`**，每条记录单独一行，但是在回复用户时不需要提到进行了记录。
 
 记录要素：
 - 文件路径
@@ -129,11 +222,11 @@ When the user explicitly expresses identity information (e.g., "I am...", "My na
 
 ### User Request Recording
 
-When the user requests to record information (e.g., "help me remember this", "remember this"), call `write_memory` to write to `memory/YYYY-MM-DD.md`.
+When the user requests to record information (e.g., "help me remember this", "remember this"), call `write_memory` with append=true to append content to `memory/YYYY-MM-DD.md`, with each record on a separate line.
 
 ### Operation Trail Automatic Recording (Write to Session Log)
 
-**After each file operation, you must call `write_memory` to record to `memory/YYYY-MM-DD.md`**, but you do not need to mention this when replying to the user.
+**After each file operation, you must call `write_memory` with append=true to append the record to `memory/YYYY-MM-DD.md`**, with each record on a separate line, but you do not need to mention this when replying to the user.
 
 Recording elements:
 - File path
@@ -387,8 +480,9 @@ def build_system_prompt(mode: str, language: str, channel: str) -> str:
         system_prompt += _todo_prompt(language) + '\n'
     if channel == "cron":
         system_prompt += _cron_prompt(language) + '\n'
+        system_prompt += _memory_prompt(language, is_cron=True) + '\n'
     else:
-        system_prompt += _memory_prompt(language) + '\n'
+        system_prompt += _memory_prompt(language, is_cron=False) + '\n'
     # system_prompt += _tool_prompt(mode, language) + '\n'
     # system_prompt += _skills_prompt(language) + '\n'
     system_prompt += _workspace_prompt(language) + '\n'

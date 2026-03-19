@@ -279,6 +279,7 @@ async def write_memory(
         mode = "a" if append else "w"
         with open(full_path, mode, encoding="utf-8") as f:
             f.write(content)
+            f.write("\n")
         
         logger.info(f"{'Appended to' if append else 'Wrote'} file: {resolved_path}")
 
@@ -357,6 +358,7 @@ async def edit_memory(
         
         with open(full_path, "w", encoding="utf-8") as f:
             f.write(new_content)
+            f.write("\n")
         
         logger.info(f"Edited file: {resolved_path}")
 
