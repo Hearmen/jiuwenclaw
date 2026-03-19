@@ -52,13 +52,20 @@ class SkillManager:
         params:
             refresh_marketplaces: bool (可选, 默认 False)
                 为 True 时，先对已配置 marketplace 执行 clone/pull，再扫描列表。
+            with_installed: bool (可选, 默认 False)
+                为 True 时，同一次响应中附带 plugins（与 skills.installed 一致），
+                避免网关串行处理两次 RPC 导致列表刷新超时或排队过久。
         """
         refresh_marketplaces = bool(params.get("refresh_marketplaces", False))
         if refresh_marketplaces:
             await self._sync_marketplace_repos()
         local = self._scan_local_skills()
         marketplace = self._scan_marketplace_skills()
-        return {"skills": local + marketplace}
+        out: dict[str, Any] = {"skills": local + marketplace}
+        if bool(params.get("with_installed", False)):
+            installed = await self.handle_skills_installed(params)
+            out["plugins"] = installed.get("plugins") or []
+        return out
 
     async def handle_skills_installed(self, params: dict) -> dict:
         """返回已安装的 marketplace 插件列表.

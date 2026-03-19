@@ -9,6 +9,10 @@ import { webRequest } from "../../services/webClient";
 import { SourceManagerModal } from "../../features/SourceManagerModal";
 import { SkillNetSearchModal } from "../../features/SkillNetSearchModal";
 
+/** 刷新会 git pull marketplace，略放宽；普通进页单次 RPC 一般很快。 */
+const SKILLS_FETCH_TIMEOUT_REFRESH_MS = 60_000;
+const SKILLS_FETCH_TIMEOUT_NORMAL_MS = 30_000;
+
 type SkillItem = {
   name: string;
   description: string;
@@ -135,17 +139,23 @@ export function SkillPanel({ sessionId }: SkillPanelProps) {
   const fetchSkills = useCallback(async (refreshMarketplaces = false) => {
     setListState("loading");
     try {
-      const [skillsData, pluginsData] = await Promise.all([
-        webRequest<{ skills?: SkillItem[] }>(
-          "skills.list",
-          withSession(
-            refreshMarketplaces ? { refresh_marketplaces: true } : undefined
-          )
-        ),
-        webRequest<{ plugins?: InstalledPluginItem[] }>("skills.installed", withSession()),
-      ]);
-      setSkills(skillsData.skills || []);
-      setPlugins(pluginsData.plugins || []);
+      const data = await webRequest<{
+        skills?: SkillItem[];
+        plugins?: InstalledPluginItem[];
+      }>(
+        "skills.list",
+        withSession({
+          with_installed: true,
+          ...(refreshMarketplaces ? { refresh_marketplaces: true } : {}),
+        }),
+        {
+          timeoutMs: refreshMarketplaces
+            ? SKILLS_FETCH_TIMEOUT_REFRESH_MS
+            : SKILLS_FETCH_TIMEOUT_NORMAL_MS,
+        }
+      );
+      setSkills(data.skills || []);
+      setPlugins(data.plugins || []);
       setListState("success");
 
       fetchMarketplaces();
