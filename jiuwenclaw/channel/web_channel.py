@@ -113,7 +113,13 @@ class WebChannel(BaseChannel):
             frame["error"] = error or "request failed"
             if code:
                 frame["code"] = code
-        await ws.send(json.dumps(frame, ensure_ascii=False))
+        try:
+            await ws.send(json.dumps(frame, ensure_ascii=False))
+        except Exception as e:
+            if bool(getattr(ws, "closed", False)):
+                logger.debug("WebChannel send_response skipped on closed websocket: id={} err={}", req_id, e)
+                return
+            raise
 
     async def send_event(
         self,
@@ -130,7 +136,13 @@ class WebChannel(BaseChannel):
             frame["seq"] = seq
         if stream_id is not None:
             frame["stream_id"] = stream_id
-        await ws.send(json.dumps(frame, ensure_ascii=False))
+        try:
+            await ws.send(json.dumps(frame, ensure_ascii=False))
+        except Exception as e:
+            if bool(getattr(ws, "closed", False)):
+                logger.debug("WebChannel send_event skipped on closed websocket: event={} err={}", event, e)
+                return
+            raise
 
     async def broadcast_event(
         self,
@@ -389,11 +401,26 @@ class WebChannel(BaseChannel):
             try:
                 await handler(ws, req_id, params, session_id)
             except Exception as e:
+                # 客户端断开（如服务关闭时 code=1001）不再尝试回包，避免二次异常噪音。
+                ws_closed = bool(getattr(ws, "closed", False))
+                if ws_closed:
+                    logger.warning(
+                        "WebChannel method handler aborted on closed websocket ({}): {}",
+                        method, e,
+                    )
+                    return
+
                 logger.error("WebChannel method handler error ({}): {}", method, e)
-                await self.send_response(
-                    ws, req_id, ok=False,
-                    error=f"handler error: {e}", code="INTERNAL_ERROR",
-                )
+                try:
+                    await self.send_response(
+                        ws, req_id, ok=False,
+                        error=f"handler error: {e}", code="INTERNAL_ERROR",
+                    )
+                except Exception as send_err:
+                    logger.warning(
+                        "WebChannel failed to send handler error response ({}): {}",
+                        method, send_err,
+                    )
         else:
             await self.send_response(
                 ws, req_id, ok=False,

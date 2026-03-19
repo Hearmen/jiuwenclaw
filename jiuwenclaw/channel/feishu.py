@@ -1,6 +1,8 @@
 # Copyright (c) Huawei Technologies Co., Ltd. 2025. All rights reserved.
 
 import asyncio
+import concurrent.futures
+import types
 import json
 import re
 import threading
@@ -24,6 +26,7 @@ class FeishuConfig(BaseModel):
     encrypt_key: str = ""  # 事件订阅的加密密钥（可选）
     verification_token: str = ""  # 事件订阅的验证令牌（可选）
     allow_from: list[str] = Field(default_factory=list)  # 允许的用户的open_id列表
+    enable_streaming: bool = True  # 是否开启流式/过程消息下发
     chat_id: str = ""  # 可选：固定推送目标 chat_id（群聊 oc_xxx 或个人 open_id）
 
 
@@ -88,6 +91,9 @@ class FeishuChannel(BaseChannel):
         self._main_loop: asyncio.AbstractEventLoop | None = None  # 主线程事件循环
         self._ws_thread_loop: asyncio.AbstractEventLoop | None = None  # WebSocket线程事件循环
         self._message_callback: Callable[[Message], None] | None = None  # 网关模式回调
+        self._stopping = False
+        # 按 request_id 聚合 chat.delta，避免同一任务被拆分成多条消息发送到飞书。
+        self._stream_text_buffers: dict[str, str] = {}
 
     @property
     def channel_id(self) -> str:
@@ -123,7 +129,7 @@ class FeishuChannel(BaseChannel):
         """
         msg = Message(id=chat_id, type="req", channel_id=self.name, session_id=str(chat_id),
             params={"content": content, "query": content}, timestamp=time.time(), ok=True,
-            req_method=ReqMethod.CHAT_SEND, metadata=metadata)
+            req_method=ReqMethod.CHAT_SEND, is_stream=True, metadata=metadata)
         if self._message_callback:
             self._message_callback(msg)
         else:
@@ -221,10 +227,14 @@ class FeishuChannel(BaseChannel):
                 event_handler=event_handler,
                 log_level=lark.LogLevel.INFO,
             )
+            self._patch_ws_client_shutdown(ws_client)
             self._websocket_client = ws_client
             ws_client.start()
         except Exception as e:
-            logger.error("飞书WebSocket连接建立失败: %s", e)
+            if self._stopping or not self._running:
+                logger.info("飞书WebSocket线程退出: {}", e)
+            else:
+                logger.error("飞书WebSocket连接建立失败: {}", e)
         finally:
             self._cleanup_websocket_thread(_saved_loop, ws_client, loop)
 
@@ -244,7 +254,12 @@ class FeishuChannel(BaseChannel):
             self._websocket_client = None
 
         try:
-            loop.run_until_complete(asyncio.sleep(0.25))
+            pending = [t for t in asyncio.all_tasks(loop) if not t.done()]
+            for task in pending:
+                task.cancel()
+            if pending:
+                loop.run_until_complete(asyncio.gather(*pending, return_exceptions=True))
+            loop.run_until_complete(asyncio.sleep(0))
         except Exception:
             pass
 
@@ -265,17 +280,76 @@ class FeishuChannel(BaseChannel):
     async def stop(self) -> None:
         """停止飞书机器人。"""
         self._running = False
+        self._stopping = True
+        self._stream_text_buffers.clear()
 
-        if self._websocket_client:
+        if self._websocket_client and self._ws_thread_loop and self._ws_thread_loop.is_running():
             try:
-                self._websocket_client.stop()
+                await self._shutdown_ws_client()
             except Exception as e:
-                logger.warning("停止WebSocket客户端时发生异常: %s", e)
+                logger.warning("停止WebSocket客户端时发生异常: {}", e)
 
         if self._ws_thread_loop and self._ws_thread_loop.is_running():
             self._ws_thread_loop.call_soon_threadsafe(self._ws_thread_loop.stop)
 
+        if self._websocket_thread and self._websocket_thread.is_alive():
+            self._websocket_thread.join(timeout=2.0)
+
         logger.info("飞书机器人已停止")
+        self._stopping = False
+
+    async def _shutdown_ws_client(self) -> None:
+        """在飞书 websocket 线程中执行断连与任务清理."""
+        loop = self._ws_thread_loop
+        ws_client = self._websocket_client
+        if loop is None or ws_client is None or not loop.is_running():
+            return
+
+        async def _shutdown() -> None:
+            try:
+                setattr(ws_client, "_auto_reconnect", False)
+            except Exception:
+                pass
+
+            conn = getattr(ws_client, "_conn", None)
+            if conn is not None:
+                try:
+                    await conn.close(code=1000, reason="bye")
+                except Exception as e:
+                    logger.debug("飞书连接关闭时出现异常: {}", e)
+
+            await asyncio.sleep(0.05)
+
+        fut = asyncio.run_coroutine_threadsafe(_shutdown(), loop)
+        try:
+            await asyncio.wait_for(asyncio.wrap_future(fut), timeout=2.0)
+        except concurrent.futures.CancelledError:
+            pass
+        except asyncio.TimeoutError:
+            logger.debug("飞书客户端清理超时，继续停止事件循环")
+        except Exception as e:
+            logger.debug("飞书客户端清理任务异常: {}", e)
+
+    @staticmethod
+    def _patch_ws_client_shutdown(ws_client: Any) -> None:
+        """修复 lark_oapi 在并发关闭时可能触发的 Lock release 异常."""
+        original_disconnect = getattr(ws_client, "_disconnect", None)
+        if not callable(original_disconnect):
+            return
+        if getattr(ws_client, "_disconnect_patched", False):
+            return
+
+        async def _safe_disconnect(self):
+            try:
+                return await original_disconnect()
+            except RuntimeError as e:
+                if "Lock is not acquired" in str(e):
+                    logger.debug("忽略 lark_oapi 断连并发异常: {}", e)
+                    return None
+                raise
+
+        ws_client._disconnect = types.MethodType(_safe_disconnect, ws_client)
+        ws_client._disconnect_patched = True
 
     def _add_reaction_sync(self, message_id: str, emoji_type: str) -> None:
         """
@@ -511,9 +585,55 @@ class FeishuChannel(BaseChannel):
             return
 
         try:
-            receive_id, id_type = self._extract_receive_info(msg)
+            payload = msg.payload if isinstance(msg.payload, dict) else {}
+            event_name = getattr(msg.event_type, "value", None) or payload.get("event_type") or ""
+            stream_key = str(getattr(msg, "id", "") or "")
+            streaming_enabled = bool(self.config.enable_streaming)
 
-            # 心跳/系统事件：优先从 payload["heartbeat"] 读取内容
+            # 流式增量：先缓存，不立即发送。
+            if event_name == "chat.delta":
+                delta = self._extract_message_content(msg)
+                if delta and stream_key:
+                    self._stream_text_buffers[stream_key] = (
+                        self._stream_text_buffers.get(stream_key, "") + delta
+                    )
+                return
+
+            # 非 streaming 模式下仅下发最终结果，屏蔽执行过程类事件。
+            if (not streaming_enabled) and event_name in {"chat.tool_call", "chat.tool_result", "todo.updated"}:
+                return
+
+            # 流式结束兜底：有些场景不会携带非空 chat.final，使用 processing_status=false 冲刷缓存。
+            if event_name == "chat.processing_status":
+                is_processing = payload.get("is_processing")
+                if is_processing is not False:
+                    if not streaming_enabled:
+                        return
+                    content_str = self._extract_message_content(msg)
+                    if not content_str.strip():
+                        return
+                else:
+                    content_str = self._stream_text_buffers.pop(stream_key, "")
+                    if not content_str.strip():
+                        if not streaming_enabled:
+                            return
+                        content_str = self._extract_message_content(msg)
+                        if not content_str.strip():
+                            return
+            else:
+                buffered_text = ""
+                if event_name == "chat.final":
+                    buffered_text = self._stream_text_buffers.pop(stream_key, "")
+                elif event_name in {"chat.error", "chat.interrupt_result"}:
+                    self._stream_text_buffers.pop(stream_key, None)
+                content_str = self._extract_message_content(msg)
+                if event_name == "chat.final":
+                    content_str = self._merge_stream_and_final_content(
+                        buffered_text,
+                        content_str,
+                    )
+
+            receive_id, id_type = self._extract_receive_info(msg)
             payload = getattr(msg, "payload", None) or {}
             if (
                 msg.event_type == EventType.HEARTBEAT_RELAY
@@ -521,8 +641,6 @@ class FeishuChannel(BaseChannel):
                 and payload.get("heartbeat")
             ):
                 content_str = str(payload.get("heartbeat"))
-            else:
-                content_str = self._extract_message_content(msg)
 
             if not content_str.strip():
                 logger.warning("飞书发送：消息内容为空，跳过发送")
@@ -533,6 +651,23 @@ class FeishuChannel(BaseChannel):
 
         except Exception as e:
             logger.error(f"发送飞书消息时发生异常: {e}")
+
+    @staticmethod
+    def _merge_stream_and_final_content(stream_text: str, final_text: str) -> str:
+        """合并流式累积文本和 final 文本，优先保留信息更完整的一侧。"""
+        stream_text = stream_text or ""
+        final_text = final_text or ""
+        if not stream_text.strip():
+            return final_text
+        if not final_text.strip():
+            return stream_text
+        if stream_text == final_text:
+            return final_text
+        if final_text.startswith(stream_text):
+            return final_text
+        if stream_text.startswith(final_text):
+            return stream_text
+        return final_text if len(final_text) >= len(stream_text) else stream_text
 
     def _extract_receive_info(self, msg: Message) -> tuple[str, str]:
         """
@@ -590,18 +725,163 @@ class FeishuChannel(BaseChannel):
         Returns:
             str: 消息内容字符串
         """
-        # Gateway/Agent响应在payload.content，直接发送可能在params.content
-        content_str = (
-            (msg.params or {}).get("content")
-            or (getattr(msg, "payload") or {}).get("content")
-            or ""
-        )
+        payload = msg.payload if isinstance(msg.payload, dict) else {}
+        event_name = getattr(msg.event_type, "value", None) or payload.get("event_type") or ""
 
-        # 处理九问输出格式，确保内容为字符串
+        if event_name == "chat.tool_call":
+            tool_info = payload.get("tool_call", payload)
+            if isinstance(tool_info, dict):
+                tool_name = tool_info.get("tool_name") or tool_info.get("name") or "unknown_tool"
+                args = (
+                    tool_info.get("arguments")
+                    or tool_info.get("args")
+                    or tool_info.get("input")
+                    or tool_info.get("params")
+                )
+                args_text = self._truncate_text(self._extract_preferred_text(args), max_len=240)
+                return f"[工具调用] {tool_name}" if not args_text else f"[工具调用] {tool_name}\n参数: {args_text}"
+            tool_text = self._extract_preferred_text(tool_info)
+            tool_text = self._truncate_text(tool_text, max_len=160)
+            return f"[工具调用] {tool_text}" if tool_text else "[工具调用]"
+
+        if event_name == "chat.tool_result":
+            tool_name = payload.get("tool_name") or "unknown_tool"
+            result_text = self._extract_tool_result_text(payload.get("result"))
+            return f"[工具结果] {tool_name}" if not result_text else f"[工具结果] {tool_name}\n{result_text}"
+
+        if event_name == "todo.updated":
+            todos = payload.get("todos")
+            if not isinstance(todos, list) or not todos:
+                return "[待办更新]"
+            total = len(todos)
+            completed = 0
+            running = 0
+            pending = 0
+            cancelled = 0
+            for item in todos:
+                if not isinstance(item, dict):
+                    continue
+                status = str(item.get("status", "")).strip().lower()
+                if status == "completed":
+                    completed += 1
+                elif status == "running":
+                    running += 1
+                elif status in ("cancelled", "canceled"):
+                    cancelled += 1
+                else:
+                    # waiting/pending/unknown 统一归为待处理
+                    pending += 1
+            return (
+                f"[待办更新] 已完成 {completed}/{total}"
+                f"｜进行中 {running}"
+                f"｜待处理 {pending}"
+                f"｜已取消 {cancelled}"
+            )
+
+        if event_name == "chat.error":
+            error_text = self._extract_preferred_text(payload.get("error"))
+            return f"[错误] {error_text}" if error_text else "[错误] 未知错误"
+
+        if event_name == "chat.processing_status":
+            is_processing = payload.get("is_processing")
+            if is_processing is True:
+                return "[状态] 处理中"
+            if is_processing is False:
+                return "[状态] 已完成"
+            return ""
+
+        if event_name == "chat.interrupt_result":
+            return self._extract_preferred_text(payload.get("message")) or "[状态] 任务已中断"
+
+        if event_name == "heartbeat.relay":
+            return self._extract_preferred_text(payload.get("heartbeat"))
+
+        # Gateway/Agent 响应在 payload.content，直接发送可能在 params.content
+        content_str = (msg.params or {}).get("content") or payload.get("content") or ""
         if isinstance(content_str, dict):
-            content_str = content_str.get("output", str(content_str))
+            content_str = content_str.get("output", content_str)
+        text = self._truncate_text(self._extract_preferred_text(content_str), max_len=4000)
+        if text:
+            return text
 
-        return str(content_str)
+        # 最后仅尝试提取可读字段，不再整包透传 JSON，避免渠道侧出现原始结构化噪音。
+        return self._extract_preferred_text(payload if payload else msg.payload)
+
+    def _extract_tool_result_text(self, value: Any) -> str:
+        """提取工具结果可读摘要，限制长度，避免飞书消息过载。"""
+        if isinstance(value, dict):
+            for key in ("summary", "message", "output", "result", "content", "text", "error"):
+                if key in value:
+                    text = self._extract_preferred_text(value.get(key))
+                    if text:
+                        return self._truncate_text(text, max_len=600)
+        text = self._extract_preferred_text(value)
+        return self._truncate_text(text, max_len=600)
+
+    @staticmethod
+    def _extract_preferred_text(value: Any) -> str:
+        """从结构化数据中提取可读文本，避免直接发送 JSON."""
+        if value is None:
+            return ""
+        if isinstance(value, str):
+            text = value.strip()
+            if not text:
+                return ""
+            if (
+                (text.startswith("{") and text.endswith("}"))
+                or (text.startswith("[") and text.endswith("]"))
+            ):
+                try:
+                    parsed = json.loads(text)
+                except Exception:
+                    # 兼容 Python dict 字符串
+                    match = re.search(
+                        r"['\"](output|content|text|message|result|error|summary)['\"]\s*:\s*['\"](.+?)['\"]",
+                        text,
+                        flags=re.DOTALL,
+                    )
+                    return match.group(2).strip() if match else ""
+                extracted = FeishuChannel._extract_preferred_text(parsed)
+                return extracted or ""
+            return text
+
+        if isinstance(value, dict):
+            for key in ("output", "content", "text", "message", "result", "error", "summary"):
+                if key in value:
+                    extracted = FeishuChannel._extract_preferred_text(value.get(key))
+                    if extracted:
+                        return extracted
+            return ""
+
+        if isinstance(value, list):
+            parts: list[str] = []
+            for item in value[:3]:
+                extracted = FeishuChannel._extract_preferred_text(item)
+                if extracted:
+                    parts.append(extracted)
+            return "\n".join(parts).strip()
+
+        return str(value).strip()
+
+    @staticmethod
+    def _truncate_text(text: str, max_len: int = 240) -> str:
+        text = (text or "").strip()
+        if len(text) <= max_len:
+            return text
+        return text[:max_len].rstrip() + "..."
+
+    @staticmethod
+    def _stringify_value(value: Any) -> str:
+        if value is None:
+            return ""
+        if isinstance(value, str):
+            return value
+        if isinstance(value, (dict, list)):
+            try:
+                return json.dumps(value, ensure_ascii=False)
+            except Exception:
+                return str(value)
+        return str(value)
 
     def _build_card_content(self, content_str: str) -> str:
         """

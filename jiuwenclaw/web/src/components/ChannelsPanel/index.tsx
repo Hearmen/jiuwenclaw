@@ -19,6 +19,7 @@ const ADAPTING_CHANNEL_IDS = new Set<SupportedChannelId>([]);
 
 type FeishuConfig = {
   enabled: boolean;
+  enable_streaming: boolean;
   app_id: string;
   app_secret: string;
   encrypt_key: string;
@@ -29,6 +30,7 @@ type FeishuConfig = {
 
 type FeishuDraft = {
   enabled: boolean;
+  enable_streaming: boolean;
   app_id: string;
   app_secret: string;
   encrypt_key: string;
@@ -148,6 +150,7 @@ type WecomDraft = {
 
 const DEFAULT_FEISHU_CONF: FeishuConfig = {
   enabled: false,
+  enable_streaming: true,
   app_id: '',
   app_secret: '',
   encrypt_key: '',
@@ -284,6 +287,7 @@ function normalizeFeishuConfig(input: unknown): FeishuConfig {
     .filter((item) => item.length > 0);
   return {
     enabled: Boolean(data.enabled),
+    enable_streaming: data.enable_streaming === undefined ? true : Boolean(data.enable_streaming),
     app_id: String(data.app_id ?? '').trim(),
     app_secret: String(data.app_secret ?? '').trim(),
     encrypt_key: String(data.encrypt_key ?? '').trim(),
@@ -296,6 +300,7 @@ function normalizeFeishuConfig(input: unknown): FeishuConfig {
 function draftFromFeishuConfig(conf: FeishuConfig): FeishuDraft {
   return {
     enabled: conf.enabled,
+    enable_streaming: conf.enable_streaming,
     app_id: conf.app_id,
     app_secret: conf.app_secret,
     encrypt_key: conf.encrypt_key,
@@ -315,6 +320,7 @@ function normalizeAllowFromText(text: string): string[] {
 function buildFeishuPayload(draft: FeishuDraft): Record<string, unknown> {
   return {
     enabled: draft.enabled,
+    enable_streaming: draft.enable_streaming,
     app_id: draft.app_id.trim(),
     app_secret: draft.app_secret.trim(),
     encrypt_key: draft.encrypt_key.trim(),
@@ -876,6 +882,7 @@ export function ChannelsPanel({ isConnected }: ChannelsPanelProps) {
     const baseDraft = draftFromFeishuConfig(feishuConfig);
     return (
       baseDraft.enabled !== draft.enabled ||
+      baseDraft.enable_streaming !== draft.enable_streaming ||
       baseDraft.app_id !== draft.app_id ||
       baseDraft.app_secret !== draft.app_secret ||
       baseDraft.encrypt_key !== draft.encrypt_key ||
@@ -1440,6 +1447,26 @@ export function ChannelsPanel({ isConnected }: ChannelsPanelProps) {
                                 </button>
                               </td>
                             </tr>
+                            <tr className="border-t border-border first:border-t-0 even:bg-secondary/10">
+                              <td className="px-4 py-2.5 align-middle mono text-xs text-text-muted w-[32%]">enable_streaming</td>
+                              <td className="px-4 py-2.5 align-middle">
+                                <button
+                                  type="button"
+                                  role="switch"
+                                  aria-checked={xiaoyiDraft.enable_streaming}
+                                  onClick={() => handleXiaoyiFieldChange('enable_streaming', !xiaoyiDraft.enable_streaming)}
+                                  className={`relative inline-flex h-5 w-9 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 focus:outline-none ${
+                                    xiaoyiDraft.enable_streaming ? 'bg-ok' : 'bg-secondary'
+                                  }`}
+                                >
+                                  <span
+                                    className={`pointer-events-none inline-block h-4 w-4 transform rounded-full bg-white shadow transition duration-200 ${
+                                      xiaoyiDraft.enable_streaming ? 'translate-x-4' : 'translate-x-0'
+                                    }`}
+                                  />
+                                </button>
+                              </td>
+                            </tr>
                             {(['ak', 'sk', 'agent_id'] as const).map((field) => (
                               <tr key={field} className="border-t border-border first:border-t-0 even:bg-secondary/10">
                                 <td className="px-4 py-2.5 align-middle mono text-xs text-text-muted w-[32%]">{field}</td>
@@ -1669,6 +1696,26 @@ export function ChannelsPanel({ isConnected }: ChannelsPanelProps) {
                                   <span
                                     className={`pointer-events-none inline-block h-4 w-4 transform rounded-full bg-white shadow transition duration-200 ${
                                       draft.enabled ? 'translate-x-4' : 'translate-x-0'
+                                    }`}
+                                  />
+                                </button>
+                              </td>
+                            </tr>
+                            <tr className="border-t border-border first:border-t-0 even:bg-secondary/10">
+                              <td className="px-4 py-2.5 align-middle mono text-xs text-text-muted w-[32%]">enable_streaming</td>
+                              <td className="px-4 py-2.5 align-middle">
+                                <button
+                                  type="button"
+                                  role="switch"
+                                  aria-checked={draft.enable_streaming}
+                                  onClick={() => handleFieldChange('enable_streaming', !draft.enable_streaming)}
+                                  className={`relative inline-flex h-5 w-9 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 focus:outline-none ${
+                                    draft.enable_streaming ? 'bg-ok' : 'bg-secondary'
+                                  }`}
+                                >
+                                  <span
+                                    className={`pointer-events-none inline-block h-4 w-4 transform rounded-full bg-white shadow transition duration-200 ${
+                                      draft.enable_streaming ? 'translate-x-4' : 'translate-x-0'
                                     }`}
                                   />
                                 </button>

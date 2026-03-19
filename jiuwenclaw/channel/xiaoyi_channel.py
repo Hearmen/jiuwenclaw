@@ -10,6 +10,7 @@ import hmac
 import hashlib
 import inspect
 import json
+import re
 import time
 import ssl
 from dataclasses import dataclass
@@ -60,16 +61,22 @@ class XiaoyiChannel(BaseChannel):
     """小艺通道：作为客户端连接到小艺服务器，实现 A2A 协议."""
 
     name = "xiaoyi"
+    _TASK_KEEPALIVE_INTERVAL_SECONDS = 8.0
 
     def __init__(self, config: XiaoyiChannelConfig, router: RobotMessageRouter):
         super().__init__(config, router)
         self.config: XiaoyiChannelConfig = config
         self._ws_connections: dict[str, Any] = {}  # Dual channel connections
+        self._send_locks: dict[str, asyncio.Lock] = {}
         self._running = False
         self._heartbeat_tasks: dict[str, asyncio.Task] = {}  # Heartbeat tasks for each channel
         self._connect_tasks: dict[str, asyncio.Task] = {}  # Connection tasks for each channel
         self._session_task_map: dict[str, str] = {}
         self._session_heartbeat_tasks: dict[str, asyncio.Task] = {}  # Response heartbeat tasks for each session
+        self._artifact_map: dict[str, str] = {}
+        self._stream_text_buffers: dict[str, str] = {}
+        self._task_keepalive_tasks: dict[str, asyncio.Task] = {}
+        self._task_last_activity: dict[str, float] = {}
         self._on_message_cb: Callable[[Message], Any] | None = None
 
     @property
@@ -130,6 +137,10 @@ class XiaoyiChannel(BaseChannel):
         self._connect_tasks.clear()
         self._session_heartbeat_tasks.clear()
         self._ws_connections.clear()
+        self._send_locks.clear()
+        self._artifact_map.clear()
+        self._stream_text_buffers.clear()
+        await self._stop_all_task_keepalive()
         logger.info("XiaoyiChannel 已停止")
 
     def _extract_platform_receive_info(self, msg: Message) -> tuple[str, str]:
@@ -156,25 +167,213 @@ class XiaoyiChannel(BaseChannel):
         session_id, task_id = self._extract_platform_receive_info(msg)
         logger.info(f"XiaoyiChannel 发送消息: {msg}")
 
-        content = ""
-        if isinstance(msg.payload, dict):
-            content = msg.payload.get("content", "")
-            if isinstance(content, dict):
-                content = content.get("output", str(content))
-            content = str(content)
-        elif msg.payload:
-            content = str(msg.payload)
+        payload = msg.payload if isinstance(msg.payload, dict) else {}
+        event_name = getattr(msg.event_type, "value", None) or payload.get("event_type") or ""
+        stream_key = str(getattr(msg, "id", "") or "")
+        streaming_enabled = bool(self.config.enable_streaming)
+
+        if event_name == "chat.delta":
+            delta = self._extract_message_content(msg)
+            if delta and stream_key:
+                self._stream_text_buffers[stream_key] = (
+                    self._stream_text_buffers.get(stream_key, "") + delta
+                )
+            if not streaming_enabled:
+                return
+            content = delta
+            append = True
+            final = False
+        elif event_name == "chat.processing_status":
+            # 非 streaming 模式下，仅在 is_processing=false 且无 final 的场景回放一次缓存作为最终结果。
+            if payload.get("is_processing") is not False:
+                return
+            if streaming_enabled:
+                return
+            content = self._stream_text_buffers.pop(stream_key, "")
+            if not content.strip():
+                return
+            append = False
+            final = True
+        else:
+            if (not streaming_enabled) and event_name in {"chat.tool_call", "chat.tool_result", "todo.updated"}:
+                return
+            content = self._extract_message_content(msg)
+            if event_name == "chat.final":
+                buffered_text = self._stream_text_buffers.pop(stream_key, "")
+                content = self._merge_stream_and_final_content(buffered_text, content)
+            elif event_name in {"chat.error", "chat.interrupt_result"}:
+                self._stream_text_buffers.pop(stream_key, None)
+            append = event_name in {"chat.tool_call", "chat.tool_result"}
+            final = event_name in {"chat.final", "chat.error", "chat.interrupt_result"}
+
+        if not content.strip():
+            logger.debug("XiaoyiChannel 发送消息为空，跳过: id={} event={}", msg.id, getattr(msg.event_type, "value", None))
+            return
+
+        task_key = self._make_task_key(session_id, task_id)
+        self._touch_task_activity(task_key)
 
         # Send to all active connections
         for url_key, ws in self._ws_connections.items():
             if ws:
                 try:
-                    await self._send_text_response(session_id, task_id, content, url_key, is_final=True)
+                    await self._send_text_response(
+                        session_id,
+                        task_id,
+                        content,
+                        url_key,
+                        append=append,
+                        final=final,
+                    )
                 except Exception as e:
                     logger.warning(f"XiaoyiChannel 发送消息失败 ({url_key}): {e}")
 
-        if session_id:
+        if final and session_id:
             await self._stop_session_heartbeat(session_id)
+
+        if final:
+            await self._stop_task_keepalive(task_key)
+
+    @staticmethod
+    def _merge_stream_and_final_content(stream_text: str, final_text: str) -> str:
+        """合并流式累计文本与 final 文本，优先保留信息更完整的一侧。"""
+        stream_text = stream_text or ""
+        final_text = final_text or ""
+        if not stream_text.strip():
+            return final_text
+        if not final_text.strip():
+            return stream_text
+        if stream_text == final_text:
+            return final_text
+        if final_text.startswith(stream_text):
+            return final_text
+        if stream_text.startswith(final_text):
+            return stream_text
+        return final_text if len(final_text) >= len(stream_text) else stream_text
+
+    @staticmethod
+    def _stringify_value(value: Any) -> str:
+        """将任意对象转为适合外发的文本."""
+        if value is None:
+            return ""
+        if isinstance(value, str):
+            return value
+        if isinstance(value, (dict, list)):
+            try:
+                return json.dumps(value, ensure_ascii=False)
+            except Exception:
+                return str(value)
+        return str(value)
+
+    @staticmethod
+    def _extract_preferred_text(value: Any) -> str:
+        """从结构化内容中提取优先展示的自然语言文本，避免透传大段 JSON."""
+        if value is None:
+            return ""
+        if isinstance(value, str):
+            text = value.strip()
+            if not text:
+                return ""
+            # 兼容 {"output":"...","result_type":"answer"} / [...] 字符串
+            if (
+                (text.startswith("{") and text.endswith("}"))
+                or (text.startswith("[") and text.endswith("]"))
+            ):
+                try:
+                    parsed = json.loads(text)
+                    extracted = XiaoyiChannel._extract_preferred_text(parsed)
+                    if extracted:
+                        return extracted
+                    # 如果是结构化 JSON 但提取不到可读字段，直接丢弃，避免原样透传 JSON。
+                    return ""
+                except Exception:
+                    # 兼容 Python dict 字符串
+                    match = re.search(
+                        r"['\"](output|content|text|message|result|error|summary)['\"]\s*:\s*['\"](.+?)['\"]",
+                        text,
+                        flags=re.DOTALL,
+                    )
+                    if match:
+                        return match.group(2).strip()
+                    return ""
+            return text
+
+        if isinstance(value, dict):
+            for key in ("output", "content", "text", "message", "result", "error", "summary"):
+                if key in value:
+                    text = XiaoyiChannel._extract_preferred_text(value.get(key))
+                    if text:
+                        return text
+            return ""
+
+        if isinstance(value, list):
+            parts: list[str] = []
+            for item in value[:3]:
+                text = XiaoyiChannel._extract_preferred_text(item)
+                if text:
+                    parts.append(text)
+            return "\n".join(parts).strip()
+
+        return str(value).strip()
+
+    @staticmethod
+    def _truncate_text(text: str, max_len: int = 240) -> str:
+        text = (text or "").strip()
+        if len(text) <= max_len:
+            return text
+        return text[:max_len].rstrip() + "..."
+
+    def _extract_message_content(self, msg: Message) -> str:
+        """按事件类型提取适合发送到小艺的文本."""
+        payload = msg.payload if isinstance(msg.payload, dict) else {}
+        event_name = getattr(msg.event_type, "value", None) or payload.get("event_type") or ""
+
+        if event_name == "chat.tool_call":
+            tool_info = payload.get("tool_call", payload)
+            if isinstance(tool_info, dict):
+                tool_name = tool_info.get("tool_name") or tool_info.get("name") or "unknown_tool"
+                return f"[工具调用] {tool_name}"
+            return "[工具调用]"
+
+        if event_name == "chat.tool_result":
+            tool_name = payload.get("tool_name") or "unknown_tool"
+            result_text = self._extract_tool_result_text(payload.get("result"))
+            return f"[工具完成] {tool_name}" if not result_text else f"[工具完成] {tool_name}: {result_text}"
+
+        if event_name == "chat.error":
+            error_text = self._truncate_text(self._extract_preferred_text(payload.get("error")))
+            return f"[错误] {error_text}" if error_text else "[错误] 未知错误"
+
+        if event_name == "chat.processing_status":
+            # 小艺端不消费中间状态事件；下发会干扰流式 task 状态。
+            return ""
+
+        if event_name == "chat.interrupt_result":
+            return self._extract_preferred_text(payload.get("message")) or "[状态] 任务已中断"
+
+        if event_name == "heartbeat.relay":
+            return self._extract_preferred_text(payload.get("heartbeat"))
+
+        content = (msg.params or {}).get("content")
+        if not content:
+            content = payload.get("content")
+        text = self._extract_preferred_text(content)
+        if text:
+            return self._truncate_text(text, max_len=4000)
+
+        # 其他结构化状态事件默认不下发，避免输出原始格式噪音。
+        return ""
+
+    def _extract_tool_result_text(self, value: Any) -> str:
+        """提取工具结果摘要，优先 summary/message，避免外发结构化数据."""
+        if isinstance(value, dict):
+            for key in ("summary", "message", "output", "result", "content", "text", "error"):
+                if key in value:
+                    text = self._extract_preferred_text(value.get(key))
+                    if text:
+                        return self._truncate_text(text, max_len=240)
+        text = self._extract_preferred_text(value)
+        return self._truncate_text(text, max_len=240)
 
     def get_metadata(self) -> ChannelMetadata:
         return ChannelMetadata(
@@ -193,6 +392,12 @@ class XiaoyiChannel(BaseChannel):
         while self._running:
             try:
                 await self._connect(url_key, url)
+                if not self._running:
+                    break
+                # 连接被远端正常关闭时也做退避，避免瞬时重连刷屏。
+                await asyncio.sleep(5)
+            except asyncio.CancelledError:
+                break
             except Exception as e:
                 logger.warning(f"XiaoyiChannel 连接失败 ({url}): {e}")
                 await asyncio.sleep(5)
@@ -210,8 +415,16 @@ class XiaoyiChannel(BaseChannel):
             ssl_context.check_hostname = False
             ssl_context.verify_mode = ssl.CERT_NONE
 
-        async with websockets.connect(url, additional_headers=headers, ssl=ssl_context) as ws:
+        async with websockets.connect(
+            url,
+            additional_headers=headers,
+            ssl=ssl_context,
+            ping_interval=15,
+            ping_timeout=15,
+            close_timeout=5,
+        ) as ws:
             self._ws_connections[url_key] = ws
+            self._send_locks[url_key] = asyncio.Lock()
             logger.info(f"XiaoyiChannel 已连接 {url_key}: {url}")
 
             # 发送初始化消息（必须在 heartbeat 之前）
@@ -230,8 +443,12 @@ class XiaoyiChannel(BaseChannel):
                     self._heartbeat_tasks[url_key].cancel()
                     self._heartbeat_tasks[url_key] = None
                 self._ws_connections[url_key] = None
-                logger.info(f"XiaoyiChannel 连接关闭 {url_key} : {url}")
-                await asyncio.sleep(8)
+                self._send_locks.pop(url_key, None)
+                close_code = getattr(ws, "close_code", None)
+                close_reason = getattr(ws, "close_reason", None)
+                logger.info(
+                    f"XiaoyiChannel 连接关闭 {url_key}: {url} (code={close_code}, reason={close_reason})"
+                )
     async def _send_init_message(self, url_key: str) -> None:
         """发送初始化消息 (clawd_bot_init) 到指定通道."""
         ws = self._ws_connections.get(url_key)
@@ -242,7 +459,7 @@ class XiaoyiChannel(BaseChannel):
             "agentId": self.config.agent_id,
         }
         try:
-            await ws.send(json.dumps(init_message))
+            await self._safe_ws_send(url_key, init_message)
             logger.info(f"XiaoyiChannel 已发送初始化消息 ({url_key})")
         except Exception as e:
             logger.warning(f"XiaoyiChannel 发送初始化消息失败 ({url_key}): {e}")
@@ -253,11 +470,15 @@ class XiaoyiChannel(BaseChannel):
         while self._running and self._ws_connections.get(url_key):
             try:
                 heartbeat = {"msgType": "heartbeat", "agentId": self.config.agent_id}
-                ws = self._ws_connections.get(url_key)
-                if ws:
-                    await ws.send(json.dumps(heartbeat))
+                await self._safe_ws_send(url_key, heartbeat)
             except Exception as e:
                 logger.warning(f"XiaoyiChannel 心跳发送失败 ({url_key}): {e}")
+                ws = self._ws_connections.get(url_key)
+                if ws:
+                    try:
+                        await ws.close()
+                    except Exception:
+                        pass
                 break
             await asyncio.sleep(20)
 
@@ -299,6 +520,7 @@ class XiaoyiChannel(BaseChannel):
                 break
 
         self._session_task_map[session_id] = task_id
+        await self._start_task_keepalive(session_id, task_id)
 
         # 将最近一次可回发的小艺身份写入 config.yaml，供 cron 推送时使用
         try:
@@ -324,6 +546,7 @@ class XiaoyiChannel(BaseChannel):
             timestamp=time.time(),
             ok=True,
             req_method=ReqMethod.CHAT_SEND,
+            is_stream=bool(self.config.enable_streaming),
             metadata={
                 "method": "message/stream",
                 "xiaoyi_session_id": session_id,
@@ -357,9 +580,16 @@ class XiaoyiChannel(BaseChannel):
                     for url_key, ws in self._ws_connections.items():
                         if ws:
                             try:
-                                await self._send_text_response(session_id, task_id, "", url_key, is_final=False)
+                                await self._send_text_response(
+                                    session_id,
+                                    task_id,
+                                    "",
+                                    url_key,
+                                    append=True,
+                                    final=False,
+                                )
                             except Exception as e:
-                                logger.warning(f"XiaoyiChannel 发送心跳消息面败 ({url_key}): {e}")
+                                logger.warning(f"XiaoyiChannel 发送心跳消息失败 ({url_key}): {e}")
             except asyncio.CancelledError:
                 logger.info(f"XiaoyiChannel 会话心跳已停止: {session_id}")
             except Exception as e:
@@ -387,6 +617,9 @@ class XiaoyiChannel(BaseChannel):
         logger.info(f"XiaoyiChannel 清空上下文: {session_id}")
 
         self._session_task_map.pop(session_id, None)
+        for key in [k for k in self._artifact_map.keys() if k.startswith(f"{session_id}:")]:
+            self._artifact_map.pop(key, None)
+        await self._stop_task_keepalive_by_session(session_id)
 
         response = {
             "jsonrpc": "2.0",
@@ -402,6 +635,9 @@ class XiaoyiChannel(BaseChannel):
         session_id = message.get("sessionId", "")
         task_id = message.get("params", {}).get("id") or message.get("taskId", "")
         logger.info(f"XiaoyiChannel 取消任务: {session_id} {task_id}")
+        await self._stop_task_keepalive(self._make_task_key(session_id, task_id))
+        if session_id:
+            await self._stop_session_heartbeat(session_id)
 
         response = {
             "jsonrpc": "2.0",
@@ -412,30 +648,46 @@ class XiaoyiChannel(BaseChannel):
         for url_key in list(self._ws_connections.keys()):
             await self._send_agent_response(session_id, task_id, response, url_key)
 
-    async def _send_text_response(self, session_id: str, task_id: str, text: str, url_key: str, is_final: bool = True) -> None:
+    async def _send_text_response(
+        self,
+        session_id: str,
+        task_id: str,
+        text: str,
+        url_key: str,
+        *,
+        append: bool = False,
+        final: bool = True,
+    ) -> None:
         """发送文本响应（A2A 格式）到指定通道."""
+        artifact_key = f"{session_id}:{task_id}"
+        artifact_id = self._artifact_map.get(artifact_key)
+        append_flag = append
+        if not artifact_id:
+            artifact_id = f"artifact_{int(time.time() * 1000)}"
+            self._artifact_map[artifact_key] = artifact_id
+            append_flag = False
+
         response = {
             "jsonrpc": "2.0",
             "id": f"msg_{int(time.time() * 1000)}",
             "result": {
                 "taskId": task_id,
                 "kind": "artifact-update",
-                "append": False,
-                "lastChunk": is_final,
-                "final": is_final,
+                "append": append_flag,
+                "lastChunk": final,
+                "final": final,
                 "artifact": {
-                    "artifactId": f"artifact_{int(time.time() * 1000)}",
+                    "artifactId": artifact_id,
                     "parts": [{"kind": "text", "text": text}],
                 },
             },
         }
         await self._send_agent_response(session_id, task_id, response, url_key)
+        if final:
+            self._artifact_map.pop(artifact_key, None)
 
     async def _send_agent_response(self, session_id: str, task_id: str, response: dict[str, Any], url_key: str) -> None:
         """发送 agent_response 包装的消息（A2A 格式）到指定通道."""
-        ws = self._ws_connections.get(url_key)
-        if not ws:
-            return
         wrapper = {
             "msgType": "agent_response",
             "agentId": self.config.agent_id,
@@ -444,6 +696,87 @@ class XiaoyiChannel(BaseChannel):
             "msgDetail": json.dumps(response),
         }
         try:
-            await ws.send(json.dumps(wrapper))
+            await self._safe_ws_send(url_key, wrapper)
         except Exception as e:
             logger.warning(f"XiaoyiChannel 发送响应失败 ({url_key}): {e}")
+
+    async def _safe_ws_send(self, url_key: str, payload: dict[str, Any]) -> None:
+        """串行发送同一连接上的消息，避免业务消息和心跳并发发送导致连接不稳定."""
+        ws = self._ws_connections.get(url_key)
+        if not ws:
+            raise RuntimeError(f"ws connection not available: {url_key}")
+        lock = self._send_locks.get(url_key)
+        if lock is None:
+            lock = asyncio.Lock()
+            self._send_locks[url_key] = lock
+        data = json.dumps(payload, ensure_ascii=False)
+        async with lock:
+            await ws.send(data)
+
+    @staticmethod
+    def _make_task_key(session_id: str, task_id: str) -> str:
+        return f"{session_id}:{task_id}"
+
+    def _touch_task_activity(self, task_key: str) -> None:
+        self._task_last_activity[task_key] = time.time()
+
+    async def _start_task_keepalive(self, session_id: str, task_id: str) -> None:
+        """为长任务启动任务级保活，防止平台因长时间无任务更新断开。"""
+        task_key = self._make_task_key(session_id, task_id)
+        await self._stop_task_keepalive(task_key)
+        self._touch_task_activity(task_key)
+
+        async def _loop() -> None:
+            while self._running and task_key in self._task_keepalive_tasks:
+                await asyncio.sleep(self._TASK_KEEPALIVE_INTERVAL_SECONDS)
+                if task_key not in self._task_keepalive_tasks:
+                    break
+                last = self._task_last_activity.get(task_key, 0.0)
+                if (time.time() - last) < self._TASK_KEEPALIVE_INTERVAL_SECONDS:
+                    continue
+                try:
+                    await self._send_task_status(session_id, task_id, "running")
+                    self._touch_task_activity(task_key)
+                except Exception as e:
+                    logger.debug("XiaoyiChannel 任务保活发送失败: {}", e)
+
+        self._task_keepalive_tasks[task_key] = asyncio.create_task(
+            _loop(),
+            name=f"xiaoyi-task-keepalive:{task_key}",
+        )
+
+    async def _stop_task_keepalive(self, task_key: str) -> None:
+        task = self._task_keepalive_tasks.pop(task_key, None)
+        self._task_last_activity.pop(task_key, None)
+        if task is not None and not task.done():
+            task.cancel()
+            try:
+                await task
+            except asyncio.CancelledError:
+                pass
+
+    async def _stop_task_keepalive_by_session(self, session_id: str) -> None:
+        keys = [k for k in self._task_keepalive_tasks.keys() if k.startswith(f"{session_id}:")]
+        for key in keys:
+            await self._stop_task_keepalive(key)
+
+    async def _stop_all_task_keepalive(self) -> None:
+        keys = list(self._task_keepalive_tasks.keys())
+        for key in keys:
+            await self._stop_task_keepalive(key)
+
+    async def _send_task_status(self, session_id: str, task_id: str, state: str) -> None:
+        """发送任务状态更新，作为长任务保活信号."""
+        response = {
+            "jsonrpc": "2.0",
+            "id": f"status_{int(time.time() * 1000)}",
+            "result": {
+                "id": task_id,
+                "status": {"state": state},
+            },
+        }
+        for url_key in list(self._ws_connections.keys()):
+            try:
+                await self._send_agent_response(session_id, task_id, response, url_key)
+            except Exception as e:
+                logger.debug("XiaoyiChannel 发送任务状态失败 ({}): {}", url_key, e)

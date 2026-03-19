@@ -1427,6 +1427,7 @@ async def _run() -> None:
                         encrypt_key=str(feishu_conf.get("encrypt_key") or "").strip(),
                         verification_token=str(feishu_conf.get("verification_token") or "").strip(),
                         allow_from=feishu_conf.get("allow_from") or [],
+                        enable_streaming=bool(feishu_conf.get("enable_streaming", True)),
                         chat_id=str(feishu_conf.get("chat_id") or "").strip(),
                     )
                     feishu_channel = FeishuChannel(feishu_config, _DummyBus())
@@ -1624,6 +1625,8 @@ async def _run() -> None:
     # Feishu/Xiaoyi/Dingtalk/Telegram/WhatsApp 等 Channel 的 start/stop 由 _apply_channel_config 动态管理，
     # 不再将其任务纳入这里的 gather，以避免在热更新（如关闭 Feishu）时取消任务导致整个 E2E 提前退出。
     try:
+        # 仅等待 WebChannel 主任务。Feishu/Xiaoyi 任务会在配置更新时动态重建，
+        # 若把旧任务放进 gather，set_conf 取消旧任务会导致主流程提前退出。
         await web_task
     except KeyboardInterrupt:
         logger.info("收到 Ctrl+C，正在退出…")

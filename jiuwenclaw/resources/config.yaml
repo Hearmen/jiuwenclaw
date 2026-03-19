@@ -55,6 +55,7 @@ channels:
     encrypt_key:
     verification_token:
     allow_from:
+    enable_streaming: true
     enabled: false
   xiaoyi:
     # 华为小艺 A2A 配置
