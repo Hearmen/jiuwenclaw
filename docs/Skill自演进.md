@@ -193,7 +193,7 @@ User: 不对，我说的是查询上海不是北京
 
 skill 自动演进功能通过在配置信息中开启自演进配置项 `evolution_auto_scan` 开关启用。
 
-![打开自演进自动检测](../assets/images/skill演进_自动检测开关.png)
+![打开自演进自动检测](assets/images/skill演进_自动检测开关.png)
 
 ### 自动演进（无需干预）
 
@@ -201,7 +201,7 @@ skill 自动演进功能通过在配置信息中开启自演进配置项 `evolut
 
 你无需做任何操作，演进在后台静默进行。下次调用该 Skill 时，会自动加载包含演进经验的内容。
 
-![自动触发](../assets/images/skill演进_自动触发.png)
+![自动触发](assets/images/skill演进_自动触发.png)
 
 ### 手动触发演进
 
@@ -219,7 +219,7 @@ skill 自动演进功能通过在配置信息中开启自演进配置项 `evolut
 
 系统会扫描最近的对话和执行记录，为该 Skill 生成演进经验，并显示生成结果。
 
-![手动触发](../assets/images/skill演进_手动触发.png)
+![手动触发](assets/images/skill演进_手动触发.png)
 
 ### 查看演进状态
 
@@ -231,7 +231,7 @@ skill 自动演进功能通过在配置信息中开启自演进配置项 `evolut
 
 系统会列出所有包含待演进记录的 Skill 及具体内容摘要。
 
-![信息总览](../assets/images/skill演进_信息总览.png)
+![信息总览](assets/images/skill演进_信息总览.png)
 
 ### 如何管理演进经验
 
