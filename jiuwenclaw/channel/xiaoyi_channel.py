@@ -36,6 +36,13 @@ class XiaoyiChannelConfig:
     ws_url1: str = ""
     ws_url2: str = ""
     enable_streaming: bool = True
+    # Push notification configuration
+    api_id: str = ""
+    push_id: str = ""
+    # Task timeout in milliseconds (default: 1 hour)
+    task_timeout_ms: int = 3600000
+    # Session cleanup timeout in milliseconds (default: 1 hour)
+    session_cleanup_timeout_ms: int = 3600000
 
 
 def _generate_signature(sk: str, timestamp: str) -> str:
@@ -81,6 +88,14 @@ class XiaoyiChannel(BaseChannel):
         self._task_keepalive_tasks: dict[str, asyncio.Task] = {}
         self._task_last_activity: dict[str, float] = {}
         self._on_message_cb: Callable[[Message], Any] | None = None
+        # Task timeout management
+        self._session_active: set[str] = set()  # Active sessions (concurrent request detection)
+        self._task_timeout_tasks: dict[str, asyncio.Task] = {}  # 1-hour task timeout tasks
+        self._session_timeout_tasks: dict[str, asyncio.Task] = {}  # 60-second periodic timeout tasks
+        self._sessions_waiting_for_push: dict[str, str] = {}  # {session: task} waiting for push
+        # Session cleanup management
+        self._sessions_marked_for_cleanup: dict[str, dict[str, Any]] = {}  # Session cleanup state
+        self._accumulated_texts: dict[str, str] = {}  # Accumulated text per session for push notification
 
     @property
     def channel_id(self) -> str:
@@ -128,6 +143,16 @@ class XiaoyiChannel(BaseChannel):
             if self._session_heartbeat_tasks[session_id]:
                 self._session_heartbeat_tasks[session_id].cancel()
                 self._session_heartbeat_tasks[session_id] = None
+        # Cancel all task timeout tasks
+        for session_id in list(self._task_timeout_tasks.keys()):
+            if self._task_timeout_tasks[session_id]:
+                self._task_timeout_tasks[session_id].cancel()
+                self._task_timeout_tasks[session_id] = None
+        # Cancel all session timeout tasks
+        for session_id in list(self._session_timeout_tasks.keys()):
+            if self._session_timeout_tasks[session_id]:
+                self._session_timeout_tasks[session_id].cancel()
+                self._session_timeout_tasks[session_id] = None
         # Close all websocket connections
         for url_key, ws in list(self._ws_connections.items()):
             if ws:
@@ -139,11 +164,13 @@ class XiaoyiChannel(BaseChannel):
         self._heartbeat_tasks.clear()
         self._connect_tasks.clear()
         self._session_heartbeat_tasks.clear()
+        self._task_timeout_tasks.clear()
+        self._session_timeout_tasks.clear()
         self._ws_connections.clear()
-        self._send_locks.clear()
-        self._artifact_map.clear()
-        self._stream_text_buffers.clear()
-        await self._stop_all_task_keepalive()
+        self._session_active.clear()
+        self._sessions_waiting_for_push.clear()
+        self._sessions_marked_for_cleanup.clear()
+        self._accumulated_texts.clear()
         logger.info("XiaoyiChannel 已停止")
 
     def _extract_platform_receive_info(self, msg: Message) -> tuple[str, str]:
@@ -170,51 +197,47 @@ class XiaoyiChannel(BaseChannel):
         session_id, task_id = self._extract_platform_receive_info(msg)
         logger.info(f"XiaoyiChannel 发送消息: {msg}")
 
-        payload = msg.payload if isinstance(msg.payload, dict) else {}
-        event_name = getattr(msg.event_type, "value", None) or payload.get("event_type") or ""
-        stream_key = str(getattr(msg, "id", "") or "")
-        streaming_enabled = bool(self.config.enable_streaming)
+        content = ""
+        if isinstance(msg.payload, dict):
+            content = msg.payload.get("content", "\n")
+            if isinstance(content, dict):
+                content = content.get("output", str(content))
+            content = str(content)
+        elif msg.payload:
+            content = str(msg.payload)
 
-        if event_name == "chat.delta":
-            delta = self._extract_message_content(msg)
-            if delta and stream_key:
-                self._stream_text_buffers[stream_key] = (
-                    self._stream_text_buffers.get(stream_key, "") + delta
-                )
-            if not streaming_enabled:
-                return
-            content = delta
-            append = True
-            final = False
-        elif event_name == "chat.processing_status":
-            # 非 streaming 模式下，仅在 is_processing=false 且无 final 的场景回放一次缓存作为最终结果。
-            if payload.get("is_processing") is not False:
-                return
-            if streaming_enabled:
-                return
-            content = self._stream_text_buffers.pop(stream_key, "")
-            if not content.strip():
-                return
+        # 如果禁用流式，总是作为完整消息发送
+        if not self.config.enable_streaming:
             append = False
+            last_chunk = True
             final = True
         else:
-            if (not streaming_enabled) and event_name in {"chat.tool_call", "chat.tool_result", "todo.updated"}:
-                return
-            content = self._extract_message_content(msg)
-            if event_name == "chat.final":
-                buffered_text = self._stream_text_buffers.pop(stream_key, "")
-                content = self._merge_stream_and_final_content(buffered_text, content)
-            elif event_name in {"chat.error", "chat.interrupt_result"}:
-                self._stream_text_buffers.pop(stream_key, None)
-            append = event_name in {"chat.tool_call", "chat.tool_result"}
-            final = event_name in {"chat.final", "chat.error", "chat.interrupt_result"}
+            # 流式模式 - 类似 TS 版本的实现
+            # 判断事件类型
+            is_delta = msg.event_type == EventType.CHAT_DELTA
+            is_final = msg.event_type == EventType.CHAT_FINAL
 
-        if not content.strip():
-            logger.debug("XiaoyiChannel 发送消息为空，跳过: id={} event={}", msg.id, getattr(msg.event_type, "value", None))
-            return
+            # 获取之前发送的文本
+            previous_text = self._accumulated_texts.get(session_id, "")
 
-        task_key = self._make_task_key(session_id, task_id)
-        self._touch_task_activity(task_key)
+            # 累积当前文本
+            self._accumulated_texts[session_id] = content
+
+            # 计算增量文本
+            if is_delta:
+                incremental_text = content[len(previous_text):]
+            else:
+                incremental_text = content
+
+            # 在消息流中，总是使用 append=true, isFinal=false
+            append = True
+            final = False
+            last_chunk = is_final
+            final = is_final
+
+        # Get accumulated text for this session (for push notification)
+        accumulated_text = self._accumulated_texts.get(session_id, "")
+        self._accumulated_texts[session_id] = content
 
         # Send to all active connections
         for url_key, ws in self._ws_connections.items():
@@ -226,157 +249,27 @@ class XiaoyiChannel(BaseChannel):
                         content,
                         url_key,
                         append=append,
-                        final=final,
+                        last_chunk=last_chunk,
+                        is_final=final
                     )
                 except Exception as e:
                     logger.warning(f"XiaoyiChannel 发送消息失败 ({url_key}): {e}")
 
         if final and session_id:
             await self._stop_session_heartbeat(session_id)
+            # Clean up tasks and mark session as completed
+            self._clear_task_timeout(session_id)
+            self._clear_session_timeout(session_id)
+            self._mark_session_completed(session_id)
 
-        if final:
-            await self._stop_task_keepalive(task_key)
+            # Check if session was waiting for push and send notification
+            if self._is_session_waiting_for_push(session_id, task_id) and accumulated_text:
+                summary = accumulated_text[:30] + "..." if len(accumulated_text) > 30 else accumulated_text
+                await self._send_push_notification(summary, "后台任务已完成：" + summary)
+                self._clear_session_waiting_for_push(session_id, task_id)
 
-    @staticmethod
-    def _merge_stream_and_final_content(stream_text: str, final_text: str) -> str:
-        """合并流式累计文本与 final 文本，优先保留信息更完整的一侧。"""
-        stream_text = stream_text or ""
-        final_text = final_text or ""
-        if not stream_text.strip():
-            return final_text
-        if not final_text.strip():
-            return stream_text
-        if stream_text == final_text:
-            return final_text
-        if final_text.startswith(stream_text):
-            return final_text
-        if stream_text.startswith(final_text):
-            return stream_text
-        return final_text if len(final_text) >= len(stream_text) else stream_text
-
-    @staticmethod
-    def _stringify_value(value: Any) -> str:
-        """将任意对象转为适合外发的文本."""
-        if value is None:
-            return ""
-        if isinstance(value, str):
-            return value
-        if isinstance(value, (dict, list)):
-            try:
-                return json.dumps(value, ensure_ascii=False)
-            except Exception:
-                return str(value)
-        return str(value)
-
-    @staticmethod
-    def _extract_preferred_text(value: Any) -> str:
-        """从结构化内容中提取优先展示的自然语言文本，避免透传大段 JSON."""
-        if value is None:
-            return ""
-        if isinstance(value, str):
-            text = value.strip()
-            if not text:
-                return ""
-            # 兼容 {"output":"...","result_type":"answer"} / [...] 字符串
-            if (
-                (text.startswith("{") and text.endswith("}"))
-                or (text.startswith("[") and text.endswith("]"))
-            ):
-                try:
-                    parsed = json.loads(text)
-                    extracted = XiaoyiChannel._extract_preferred_text(parsed)
-                    if extracted:
-                        return extracted
-                    # 如果是结构化 JSON 但提取不到可读字段，直接丢弃，避免原样透传 JSON。
-                    return ""
-                except Exception:
-                    # 兼容 Python dict 字符串
-                    match = re.search(
-                        r"['\"](output|content|text|message|result|error|summary)['\"]\s*:\s*['\"](.+?)['\"]",
-                        text,
-                        flags=re.DOTALL,
-                    )
-                    if match:
-                        return match.group(2).strip()
-                    return ""
-            return text
-
-        if isinstance(value, dict):
-            for key in ("output", "content", "text", "message", "result", "error", "summary"):
-                if key in value:
-                    text = XiaoyiChannel._extract_preferred_text(value.get(key))
-                    if text:
-                        return text
-            return ""
-
-        if isinstance(value, list):
-            parts: list[str] = []
-            for item in value[:3]:
-                text = XiaoyiChannel._extract_preferred_text(item)
-                if text:
-                    parts.append(text)
-            return "\n".join(parts).strip()
-
-        return str(value).strip()
-
-    @staticmethod
-    def _truncate_text(text: str, max_len: int = 240) -> str:
-        text = (text or "").strip()
-        if len(text) <= max_len:
-            return text
-        return text[:max_len].rstrip() + "..."
-
-    def _extract_message_content(self, msg: Message) -> str:
-        """按事件类型提取适合发送到小艺的文本."""
-        payload = msg.payload if isinstance(msg.payload, dict) else {}
-        event_name = getattr(msg.event_type, "value", None) or payload.get("event_type") or ""
-
-        if event_name == "chat.tool_call":
-            tool_info = payload.get("tool_call", payload)
-            if isinstance(tool_info, dict):
-                tool_name = tool_info.get("tool_name") or tool_info.get("name") or "unknown_tool"
-                return f"[工具调用] {tool_name}"
-            return "[工具调用]"
-
-        if event_name == "chat.tool_result":
-            tool_name = payload.get("tool_name") or "unknown_tool"
-            result_text = self._extract_tool_result_text(payload.get("result"))
-            return f"[工具完成] {tool_name}" if not result_text else f"[工具完成] {tool_name}: {result_text}"
-
-        if event_name == "chat.error":
-            error_text = self._truncate_text(self._extract_preferred_text(payload.get("error")))
-            return f"[错误] {error_text}" if error_text else "[错误] 未知错误"
-
-        if event_name == "chat.processing_status":
-            # 小艺端不消费中间状态事件；下发会干扰流式 task 状态。
-            return ""
-
-        if event_name == "chat.interrupt_result":
-            return self._extract_preferred_text(payload.get("message")) or "[状态] 任务已中断"
-
-        if event_name == "heartbeat.relay":
-            return self._extract_preferred_text(payload.get("heartbeat"))
-
-        content = (msg.params or {}).get("content")
-        if not content:
-            content = payload.get("content")
-        text = self._extract_preferred_text(content)
-        if text:
-            return self._truncate_text(text, max_len=4000)
-
-        # 其他结构化状态事件默认不下发，避免输出原始格式噪音。
-        return ""
-
-    def _extract_tool_result_text(self, value: Any) -> str:
-        """提取工具结果摘要，优先 summary/message，避免外发结构化数据."""
-        if isinstance(value, dict):
-            for key in ("summary", "message", "output", "result", "content", "text", "error"):
-                if key in value:
-                    text = self._extract_preferred_text(value.get(key))
-                    if text:
-                        return self._truncate_text(text, max_len=240)
-        text = self._extract_preferred_text(value)
-        return self._truncate_text(text, max_len=240)
+            # Clear accumulated text
+            self._accumulated_texts.pop(session_id, None)
 
     def get_metadata(self) -> ChannelMetadata:
         return ChannelMetadata(
@@ -512,41 +405,88 @@ class XiaoyiChannel(BaseChannel):
     async def _handle_message_stream(self, message: dict[str, Any]) -> None:
         """处理 message/stream 消息，转换为 JiuwenClaw Message."""
         session_id = message.get("sessionId") or message.get("params", {}).get("sessionId", "")
-        task_id = message.get("params", {}).get("id", "")
+        task_id = message.get("params", {}).get("id",) or ""
         user_message = message.get("params", {}).get("message", {})
         parts = user_message.get("parts", [])
 
+        # ==================== CONCURRENT REQUEST DETECTION ====================
+        # Check if this session already has an active task
+        if self._is_session_active(session_id):
+            logger.info(f"[CONCURRENT] Session {session_id} has an active task, sending busy response")
+            # Send busy response and skip processing
+            for url_key in list(self._ws_connections.keys()):
+                await self._send_text_response(session_id, task_id, "上一个任务仍在处理中，请稍后再试", url_key, is_final=True)
+            return
+        # =================================================================
+
+        # Mark session as active
+        self._mark_session_active(session_id)
+        self._session_task_map[session_id] = task_id
+
+        # ==================== PROCESS PARTS (TEXT & FILES) ====================
         text = ""
         files = []
+        file_attachments: list[str] = []
+        media_files: list[dict[str, Any]] = []
+
         for part in parts:
-            if part.get("kind") == "text":
-                text = part.get("text", "")
-            elif part.get("kind") == "file":
-                file_data = part.get("file", {})
-                file_info = {
-                    "name": file_data.get("name", ""),
-                    "url": file_data.get("uri", ""),
-                    "size": file_data.get("size", 0),
-                    "type": file_data.get("mimeType", "")
-                }
+            kind = part.get("kind")
+            if kind == "text" and part.get("text"):
+                text += part.get("text", "")
+            elif kind == "file" and part.get("file"):
+                file_info = part["file"]
+                uri = file_info.get("uri")
+                mime_type = file_info.get("mimeType", "")
+                name = file_info.get("name", "")
 
-                file_url = file_info.get("url", "")
-                if file_url:
-                    file_content = await self._download_file(file_url)
-                    if file_content:
-                        workspace_dir = os.path.expanduser("~/.jiuwenclaw/workspace")
-                        file_path = os.path.join(workspace_dir, file_info["name"])
+                if not uri:
+                    logger.warning(f"XiaoYi: File part without URI, skipping: {name}")
+                    continue
+
+                try:
+                    media_files.append({"uri": uri, "mime_type": mime_type, "name": name})
+
+                    # For text-based files, extract content inline
+                    from jiuwenclaw.channel.xiaoyi_utils.media import is_text_mime_type, extract_text_from_url
+                    if is_text_mime_type(mime_type):
                         try:
-                            os.makedirs(workspace_dir, exist_ok=True)
-                            with open(file_path, 'wb') as f:
-                                f.write(file_content)
-                            file_info["path"] = file_path
-                        except Exception as e:
-                            logger.warning("XiaoyiChannel 文件保存失败: %s", e)
-                files.append(file_info)
+                            text_content = await extract_text_from_url(uri, 5_000_000, 30_000)
+                            text += f"\n\n[文件内容: {name}]\n{text_content}"
+                            file_attachments.append(f"[文件: {name}]")
+                            logger.info(f"XiaoYi: Successfully extracted text from: {name}")
+                        except Exception:
+                            logger.warning(f"XiaoYi: Text extraction failed for {name}, will download as binary")
+                            file_attachments.append(f"[文件: {name}]")
+                    else:
+                        file_attachments.append(f"[文件: {name}]")
+                except Exception as e:
+                    logger.error(f"XiaoYi: Failed to process file {name}: {e}")
+                    file_attachments.append(f"[文件处理失败: {name}]")
+        # =================================================================
 
-        self._session_task_map[session_id] = task_id
-        await self._start_task_keepalive(session_id, task_id)
+        # Log summary of processed attachments
+        if file_attachments:
+            logger.info(f"XiaoYi: Processed {len(file_attachments)} file(s): {', '.join(file_attachments)}")
+
+        # ==================== DOWNLOAD AND SAVE MEDIA FILES ====================
+        media_payload: dict[str, Any] = {}
+        if media_files:
+            logger.info(f"XiaoYi: Downloading {len(media_files)} media file(s)...")
+            from jiuwenclaw.channel.xiaoyi_utils.media import (
+                MediaFile,
+                MediaDownloadOptions,
+                download_and_save_media_list,
+                build_xiaoyi_media_payload,
+            )
+            files_to_download = [
+                MediaFile(uri=f["uri"], mime_type=f["mime_type"], name=f["name"])
+                for f in media_files
+            ]
+            options = MediaDownloadOptions(max_bytes=30_000_000, timeout_ms=60_000)
+            downloaded_media = await download_and_save_media_list(files_to_download, options)
+            logger.info(f"XiaoYi: Successfully downloaded {len(downloaded_media)}/{len(media_files)} file(s)")
+            media_payload = build_xiaoyi_media_payload(downloaded_media)
+        # =================================================================
 
         # 将最近一次可回发的小艺身份写入 config.yaml，供 cron 推送时使用
         try:
@@ -562,23 +502,68 @@ class XiaoyiChannel(BaseChannel):
         except Exception:
             pass
 
+        # ==================== BUILD MESSAGE AND ROUTE ====================
         # 平台身份写入 metadata，供回发时使用（与 session_id 解耦，\new_session 后仍可正确回发）
+        metadata = {
+            "method": "message/stream",
+            "xiaoyi_session_id": session_id,
+            "xiaoyi_task_id": task_id,
+        }
+        # Add media payload to metadata
+        params = {"query": text, "task_id": task_id}
+        if media_payload:
+            params.update(media_payload)
+            params["query"] += f"\n用户上传的文件路径为：{','.join(media_payload.get('MediaPaths', []))}"
+
         user_message = Message(
             id=message.get("id", ""),
             type="req",
             channel_id=self.channel_id,
             session_id=session_id,
-            params={"query": text, "task_id": task_id, "files": files},
+            params=params,
             timestamp=time.time(),
+            is_stream=self.config.enable_streaming,
             ok=True,
             req_method=ReqMethod.CHAT_SEND,
-            is_stream=bool(self.config.enable_streaming),
-            metadata={
-                "method": "message/stream",
-                "xiaoyi_session_id": session_id,
-                "xiaoyi_task_id": task_id,
-            },
+            metadata=metadata,
         )
+
+        # ==================== START TASK TIMEOUT PROTECTION ====================
+        # Start 1-hour task timeout timer
+        task_timeout_ms = self.config.task_timeout_ms
+        logger.info(f"[TASK TIMEOUT] Starting {task_timeout_ms}ms task timeout protection for session {session_id}")
+
+        async def task_timeout_handler():
+            """1-hour task timeout handler."""
+            try:
+                await asyncio.sleep(task_timeout_ms / 1000)
+                logger.info(f"[TASK TIMEOUT] 1-hour timeout triggered for session {session_id}")
+                # Send default message with is_final=true
+                for url_key in list(self._ws_connections.keys()):
+                    await self._send_text_response(session_id, task_id, "任务还在处理中，完成后将提醒您~", url_key, is_final=True)
+                # Mark session as waiting for push state
+                self._mark_session_waiting_for_push(session_id, task_id)
+            except asyncio.CancelledError:
+                pass
+
+        self._task_timeout_tasks[session_id] = asyncio.create_task(task_timeout_handler())
+
+        # Start 60-second periodic timeout for status updates
+        async def periodic_timeout_handler():
+            """60-second periodic timeout for status updates."""
+            try:
+                while session_id in self._session_active:
+                    await asyncio.sleep(60)
+                    # Skip if already waiting for push (1-hour timeout triggered)
+                    if self._is_session_waiting_for_push(session_id, task_id):
+                        break
+                    # Send status update
+                    await self._send_status_update(task_id, session_id, "任务正在处理中，请稍后")
+            except asyncio.CancelledError:
+                pass
+
+        self._session_timeout_tasks[session_id] = asyncio.create_task(periodic_timeout_handler())
+        # =================================================================
 
         handled = False
         if self._on_message_cb is not None:
@@ -616,6 +601,7 @@ class XiaoyiChannel(BaseChannel):
                                 )
                             except Exception as e:
                                 logger.warning(f"XiaoyiChannel 发送心跳消息失败 ({url_key}): {e}")
+                                logger.warning(f"XiaoyiChannel 发送心跳消息失败 ({url_key}): {e}")
             except asyncio.CancelledError:
                 logger.info(f"XiaoyiChannel 会话心跳已停止: {session_id}")
             except Exception as e:
@@ -637,28 +623,82 @@ class XiaoyiChannel(BaseChannel):
             self._session_heartbeat_tasks.pop(session_id, None)
             logger.info(f"XiaoyiChannel 会话心跳已停止: {session_id}")
 
-    async def _download_file(self, url: str) -> bytes | None:
-        try:
-            async with aiohttp.ClientSession() as session:
-                async with session.get(url) as response:
-                    if response.status == 200:
-                        return await response.read()
-                    else:
-                        logger.warning(f"XiaoyiChannel 文件下载失败: {url}, 状态码: {response.status}")
-                        return None
-        except Exception as e:
-            logger.warning(f"XiaoyiChannel 文件下载异常: {url}, 错误: {e}")
-            return None
+    async def _send_status_update(self, task_id: str, session_id: str, message: str) -> None:
+        """发送状态更新消息（A2A 格式）."""
+        response = {
+            "jsonrpc": "2.0",
+            "id": f"msg_{int(time.time() * 1000)}",
+            "result": {
+                "taskId": task_id,
+                "kind": "status-update",
+                "final": False,
+                "status": {
+                    "message": {
+                        "role": "agent",
+                        "parts": [{"kind": "text", "text": message}],
+                    },
+                    "state": "working",
+                },
+            },
+        }
+        # Send to all active connections
+        for url_key in list(self._ws_connections.keys()):
+            await self._send_agent_response(session_id, task_id, response, url_key)
+
+    def _is_session_active(self, session_id: str) -> bool:
+        """检查会话是否有活跃任务."""
+        return session_id in self._session_active
+
+    def _mark_session_active(self, session_id: str) -> None:
+        """标记会话为活跃状态."""
+        self._session_active.add(session_id)
+
+    def _mark_session_completed(self, session_id: str) -> None:
+        """标记会话已完成."""
+        self._session_active.discard(session_id)
+
+    def _is_session_waiting_for_push(self, session_id: str, task_id: str) -> bool:
+        """检查会话是否正在等待推送."""
+        return self._sessions_waiting_for_push.get(session_id) == task_id
+
+    def _mark_session_waiting_for_push(self, session_id: str, task_id: str) -> None:
+        """标记会话正在等待推送."""
+        self._sessions_waiting_for_push[session_id] = task_id
+
+    def _clear_session_waiting_for_push(self, session_id: str, task_id: str) -> None:
+        """清除会话的推送等待状态."""
+        if self._sessions_waiting_for_push.get(session_id) == task_id:
+            self._sessions_waiting_for_push.pop(session_id, None)
+
+    def _is_session_pending_cleanup(self, session_id: str) -> bool:
+        """检查会话是否待清理."""
+        return session_id in self._sessions_marked_for_cleanup
+
+    def _mark_session_for_cleanup(self, session_id: str, reason: str = "unknown") -> None:
+        """标记会话待清理."""
+        self._sessions_marked_for_cleanup[session_id] = {
+            "reason": reason,
+            "marked_at": time.time(),
+        }
+
+    def _force_cleanup_session(self, session_id: str) -> None:
+        """强制清理会话."""
+        self._sessions_marked_for_cleanup.pop(session_id, None)
+        self._session_task_map.pop(session_id, None)
 
     async def _handle_clear_context(self, message: dict[str, Any]) -> None:
         """处理清空上下文请求."""
         session_id = message.get("sessionId", "")
         logger.info(f"XiaoyiChannel 清空上下文: {session_id}")
 
-        self._session_task_map.pop(session_id, None)
-        for key in [k for k in self._artifact_map.keys() if k.startswith(f"{session_id}:")]:
-            self._artifact_map.pop(key, None)
-        await self._stop_task_keepalive_by_session(session_id)
+        # Check if there's an active task for this session
+        if self._is_session_active(session_id):
+            logger.info(f"[CLEAR] Active task exists for session {session_id}, will continue in background")
+            # Mark session for cleanup (delayed cleanup)
+            self._mark_session_for_cleanup(session_id, "user_cleared")
+        else:
+            logger.info(f"[CLEAR] No active task for session {session_id}, clean up immediately")
+            self._force_cleanup_session(session_id)
 
         response = {
             "jsonrpc": "2.0",
@@ -687,6 +727,12 @@ class XiaoyiChannel(BaseChannel):
         for url_key in list(self._ws_connections.keys()):
             await self._send_agent_response(session_id, task_id, response, url_key)
 
+        # 清理超时任务和推送状态
+        self._clear_task_timeout(session_id)
+        self._clear_session_timeout(session_id)
+        self._clear_session_waiting_for_push(session_id, task_id)
+        self._mark_session_completed(session_id)
+
     async def _send_text_response(
         self,
         session_id: str,
@@ -695,29 +741,26 @@ class XiaoyiChannel(BaseChannel):
         url_key: str,
         *,
         append: bool = False,
-        final: bool = True,
+        last_chunk: bool = True,
+        is_final: bool = True,
     ) -> None:
         """发送文本响应（A2A 格式）到指定通道."""
-        artifact_key = f"{session_id}:{task_id}"
-        artifact_id = self._artifact_map.get(artifact_key)
-        append_flag = append
-        if not artifact_id:
-            artifact_id = f"artifact_{int(time.time() * 1000)}"
-            self._artifact_map[artifact_key] = artifact_id
-            append_flag = False
-
+        if last_chunk:
+            data = {"kind": "text", "text": text}
+        else:
+            data = {"kind": "reasoningText", "reasoningText": text}
         response = {
             "jsonrpc": "2.0",
             "id": f"msg_{int(time.time() * 1000)}",
             "result": {
                 "taskId": task_id,
                 "kind": "artifact-update",
-                "append": append_flag,
-                "lastChunk": final,
-                "final": final,
+                "append": append,
+                "lastChunk": last_chunk,
+                "final": is_final,
                 "artifact": {
-                    "artifactId": artifact_id,
-                    "parts": [{"kind": "text", "text": text}],
+                    "artifactId": f"artifact_{int(time.time() * 1000)}",
+                    "parts": [data],
                 },
             },
         }
@@ -739,83 +782,41 @@ class XiaoyiChannel(BaseChannel):
         except Exception as e:
             logger.warning(f"XiaoyiChannel 发送响应失败 ({url_key}): {e}")
 
-    async def _safe_ws_send(self, url_key: str, payload: dict[str, Any]) -> None:
-        """串行发送同一连接上的消息，避免业务消息和心跳并发发送导致连接不稳定."""
-        ws = self._ws_connections.get(url_key)
-        if not ws:
-            raise RuntimeError(f"ws connection not available: {url_key}")
-        lock = self._send_locks.get(url_key)
-        if lock is None:
-            lock = asyncio.Lock()
-            self._send_locks[url_key] = lock
-        data = json.dumps(payload, ensure_ascii=False)
-        async with lock:
-            await ws.send(data)
+    def _clear_task_timeout(self, session_id: str) -> None:
+        """清除任务超时任务."""
+        if session_id in self._task_timeout_tasks:
+            task = self._task_timeout_tasks[session_id]
+            if task and not task.done():
+                task.cancel()
+            self._task_timeout_tasks.pop(session_id, None)
 
-    @staticmethod
-    def _make_task_key(session_id: str, task_id: str) -> str:
-        return f"{session_id}:{task_id}"
+    def _clear_session_timeout(self, session_id: str) -> None:
+        """清除会话超时任务."""
+        if session_id in self._session_timeout_tasks:
+            task = self._session_timeout_tasks[session_id]
+            if task and not task.done():
+                task.cancel()
+            self._session_timeout_tasks.pop(session_id, None)
 
-    def _touch_task_activity(self, task_key: str) -> None:
-        self._task_last_activity[task_key] = time.time()
+    async def _send_push_notification(self, text: str, push_text: str) -> bool:
+        """发送推送通知."""
+        if not (self.config.api_id and self.config.push_id and self.config.ak and self.config.sk):
+            logger.info("[PUSH] Push not configured, skipping")
+            return False
 
-    async def _start_task_keepalive(self, session_id: str, task_id: str) -> None:
-        """为长任务启动任务级保活，防止平台因长时间无任务更新断开。"""
-        task_key = self._make_task_key(session_id, task_id)
-        await self._stop_task_keepalive(task_key)
-        self._touch_task_activity(task_key)
+        try:
+            from jiuwenclaw.channel.xiaoyi_utils.push import XiaoYiPushService, PushConfig
 
-        async def _loop() -> None:
-            while self._running and task_key in self._task_keepalive_tasks:
-                await asyncio.sleep(self._TASK_KEEPALIVE_INTERVAL_SECONDS)
-                if task_key not in self._task_keepalive_tasks:
-                    break
-                last = self._task_last_activity.get(task_key, 0.0)
-                if (time.time() - last) < self._TASK_KEEPALIVE_INTERVAL_SECONDS:
-                    continue
-                try:
-                    await self._send_task_status(session_id, task_id, "running")
-                    self._touch_task_activity(task_key)
-                except Exception as e:
-                    logger.debug("XiaoyiChannel 任务保活发送失败: {}", e)
-
-        self._task_keepalive_tasks[task_key] = asyncio.create_task(
-            _loop(),
-            name=f"xiaoyi-task-keepalive:{task_key}",
-        )
-
-    async def _stop_task_keepalive(self, task_key: str) -> None:
-        task = self._task_keepalive_tasks.pop(task_key, None)
-        self._task_last_activity.pop(task_key, None)
-        if task is not None and not task.done():
-            task.cancel()
-            try:
-                await task
-            except asyncio.CancelledError:
-                pass
-
-    async def _stop_task_keepalive_by_session(self, session_id: str) -> None:
-        keys = [k for k in self._task_keepalive_tasks.keys() if k.startswith(f"{session_id}:")]
-        for key in keys:
-            await self._stop_task_keepalive(key)
-
-    async def _stop_all_task_keepalive(self) -> None:
-        keys = list(self._task_keepalive_tasks.keys())
-        for key in keys:
-            await self._stop_task_keepalive(key)
-
-    async def _send_task_status(self, session_id: str, task_id: str, state: str) -> None:
-        """发送任务状态更新，作为长任务保活信号."""
-        response = {
-            "jsonrpc": "2.0",
-            "id": f"status_{int(time.time() * 1000)}",
-            "result": {
-                "id": task_id,
-                "status": {"state": state},
-            },
-        }
-        for url_key in list(self._ws_connections.keys()):
-            try:
-                await self._send_agent_response(session_id, task_id, response, url_key)
-            except Exception as e:
-                logger.debug("XiaoyiChannel 发送任务状态失败 ({}): {}", url_key, e)
+            push_config = PushConfig(
+                api_id=self.config.api_id,
+                push_id=self.config.push_id,
+                ak=self.config.ak,
+                sk=self.config.sk,
+            )
+            push_service = XiaoYiPushService(push_config)
+            result = await push_service.send_push(text, push_text)
+            logger.info(f"[PUSH] Push notification sent: {result}")
+            return result
+        except Exception as e:
+            logger.error(f"[PUSH] Error sending push: {e}")
+            return False
