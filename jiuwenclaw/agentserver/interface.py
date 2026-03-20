@@ -42,6 +42,7 @@ from jiuwenclaw.agentserver.tools.memory_tools import (
     edit_memory,
     read_memory,
 )
+from jiuwenclaw.agentserver.tools.video_understanding import video_understanding
 from jiuwenclaw.agentserver.memory.compaction import ContextCompactionManager
 from jiuwenclaw.agentserver.memory.config import clear_config_cache
 from jiuwenclaw.agentserver.memory import clear_memory_manager_cache
@@ -122,6 +123,7 @@ class JiuWenClaw:
         self._browser_mcp_registered: bool = False
         self._memory_tools_registered: bool = False
         self._mcp_tools_registered: bool = False
+        self._video_tool_registered: bool = False
         self._todo_tool_sessions_registered: set[str] = set()
         self._sysop_card_id: str | None = None
 
@@ -300,6 +302,16 @@ class JiuWenClaw:
             self._instance.ability_manager.add(tool.card)
         self._memory_tools_registered = True
 
+        # add video_understanding tool
+        try:
+            if not Runner.resource_mgr.get_tool(video_understanding.card.id):
+                Runner.resource_mgr.add_tool(video_understanding)
+            self._instance.ability_manager.add(video_understanding.card)
+            self._video_tool_registered = True
+        except Exception as exc:
+            self._video_tool_registered = False
+            logger.warning("[JiuWenClaw] video_understanding tool registration failed: %s", exc)
+
         for mcp_tool in get_mcp_tools():
             Runner.resource_mgr.add_tool(mcp_tool)
             self._instance.ability_manager.add(mcp_tool.card)
@@ -422,6 +434,15 @@ class JiuWenClaw:
                 Runner.resource_mgr.add_tool(tool)
                 self._instance.ability_manager.add(tool.card)
             self._memory_tools_registered = True
+
+        if not self._video_tool_registered:
+            try:
+                if not Runner.resource_mgr.get_tool(video_understanding.card.id):
+                    Runner.resource_mgr.add_tool(video_understanding)
+                self._instance.ability_manager.add(video_understanding.card)
+                self._video_tool_registered = True
+            except Exception as exc:
+                logger.warning("[JiuWenClaw] ensure video_understanding tool failed: %s", exc)
 
         if not self._mcp_tools_registered:
             for mcp_tool in get_mcp_tools():
