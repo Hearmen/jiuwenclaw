@@ -10,12 +10,15 @@ import hmac
 import hashlib
 import inspect
 import json
+import os
 import re
 import time
 import ssl
 from dataclasses import dataclass
 from typing import Any, Callable
 from urllib.parse import urlparse
+
+import aiohttp
 
 from jiuwenclaw.utils import logger
 from jiuwenclaw.channel.base import BaseChannel, ChannelMetadata, RobotMessageRouter
@@ -514,10 +517,33 @@ class XiaoyiChannel(BaseChannel):
         parts = user_message.get("parts", [])
 
         text = ""
+        files = []
         for part in parts:
             if part.get("kind") == "text":
                 text = part.get("text", "")
-                break
+            elif part.get("kind") == "file":
+                file_data = part.get("file", {})
+                file_info = {
+                    "name": file_data.get("name", ""),
+                    "url": file_data.get("uri", ""),
+                    "size": file_data.get("size", 0),
+                    "type": file_data.get("mimeType", "")
+                }
+
+                file_url = file_info.get("url", "")
+                if file_url:
+                    file_content = await self._download_file(file_url)
+                    if file_content:
+                        workspace_dir = os.path.expanduser("~/.jiuwenclaw/workspace")
+                        file_path = os.path.join(workspace_dir, file_info["name"])
+                        try:
+                            os.makedirs(workspace_dir, exist_ok=True)
+                            with open(file_path, 'wb') as f:
+                                f.write(file_content)
+                            file_info["path"] = file_path
+                        except Exception as e:
+                            logger.warning("XiaoyiChannel 文件保存失败: %s", e)
+                files.append(file_info)
 
         self._session_task_map[session_id] = task_id
         await self._start_task_keepalive(session_id, task_id)
@@ -542,7 +568,7 @@ class XiaoyiChannel(BaseChannel):
             type="req",
             channel_id=self.channel_id,
             session_id=session_id,
-            params={"query": text, "task_id": task_id},
+            params={"query": text, "task_id": task_id, "files": files},
             timestamp=time.time(),
             ok=True,
             req_method=ReqMethod.CHAT_SEND,
@@ -610,6 +636,19 @@ class XiaoyiChannel(BaseChannel):
                     pass
             self._session_heartbeat_tasks.pop(session_id, None)
             logger.info(f"XiaoyiChannel 会话心跳已停止: {session_id}")
+
+    async def _download_file(self, url: str) -> bytes | None:
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.get(url) as response:
+                    if response.status == 200:
+                        return await response.read()
+                    else:
+                        logger.warning(f"XiaoyiChannel 文件下载失败: {url}, 状态码: {response.status}")
+                        return None
+        except Exception as e:
+            logger.warning(f"XiaoyiChannel 文件下载异常: {url}, 错误: {e}")
+            return None
 
     async def _handle_clear_context(self, message: dict[str, Any]) -> None:
         """处理清空上下文请求."""
