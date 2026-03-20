@@ -14,19 +14,11 @@ import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Awaitable, Callable
+from urllib.parse import urlparse
 
 from jiuwenclaw.utils import get_workspace_dir, logger
 
-# ---------------------------------------------------------------------------
-# SkillNet download timeout / retry configuration (overridable via env vars)
-# ---------------------------------------------------------------------------
-# Per-request timeout for individual GitHub API / raw content HTTP calls (seconds).
-_SKILLNET_REQUEST_TIMEOUT: int = int(os.environ.get("SKILLNET_REQUEST_TIMEOUT", "30"))
-
-# Overall timeout for the entire download-and-install pipeline (seconds).
-_SKILLNET_DOWNLOAD_TIMEOUT: int = int(os.environ.get("SKILLNET_DOWNLOAD_TIMEOUT", "300"))
-
-# Number of retries for transient HTTP failures (429, 5xx).
+_SKILLNET_DOWNLOAD_TIMEOUT: int = int(os.environ.get("SKILLNET_DOWNLOAD_TIMEOUT", "60"))
 _SKILLNET_MAX_RETRIES: int = int(os.environ.get("SKILLNET_MAX_RETRIES", "3"))
 
 # ---------------------------------------------------------------------------
@@ -36,6 +28,19 @@ _WORKSPACE = get_workspace_dir()
 _SKILLS_DIR = _WORKSPACE / "agent" / "skills"
 _MARKETPLACE_DIR = _SKILLS_DIR / "_marketplace"
 _STATE_FILE = _WORKSPACE / "skills_state.json"
+
+
+def _is_valid_http_mirror_url(url: str) -> bool:
+    """Return True if url is a plausible http(s) mirror base (for SkillDownloader)."""
+    s = url.strip()
+    if not s or len(s) > 2048:
+        return False
+    parsed = urlparse(s)
+    if parsed.scheme not in ("http", "https"):
+        return False
+    if not parsed.netloc:
+        return False
+    return True
 
 
 class SkillManager:
@@ -327,10 +332,25 @@ class SkillManager:
         if not skill_url:
             return {"success": False, "detail": "缺少参数: url"}
 
+        mirror_url: str | None = None
+        raw_mirror = params.get("mirror_url")
+        if raw_mirror is not None:
+            ms = str(raw_mirror).strip()
+            if ms:
+                if not _is_valid_http_mirror_url(ms):
+                    return {
+                        "success": False,
+                        "detail": "mirror_url 不是有效的 http(s) 地址",
+                        "detail_key": "skills.skillNet.errors.invalidMirrorUrl",
+                    }
+                mirror_url = ms
+
         install_id = uuid.uuid4().hex
         self._skillnet_install_jobs[install_id] = {"status": "pending"}
         asyncio.create_task(
-            self._skillnet_install_background(install_id, skill_url, force),
+            self._skillnet_install_background(
+                install_id, skill_url, force, mirror_url
+            ),
             name=f"skillnet_install_{install_id[:8]}",
         )
         return {
@@ -374,31 +394,16 @@ class SkillManager:
         }
 
     async def _skillnet_install_background(
-        self, install_id: str, skill_url: str, force: bool
+        self,
+        install_id: str,
+        skill_url: str,
+        force: bool,
+        mirror_url: str | None = None,
     ) -> None:
         try:
-            result = await asyncio.wait_for(
-                asyncio.to_thread(
-                    self._skillnet_install_files_sync, skill_url, force
-                ),
-                timeout=_SKILLNET_DOWNLOAD_TIMEOUT,
+            result = await asyncio.to_thread(
+                self._skillnet_install_files_sync, skill_url, force, mirror_url
             )
-        except asyncio.TimeoutError:
-            logger.error(
-                "SkillNet 后台安装超时 (>%ds): %s",
-                _SKILLNET_DOWNLOAD_TIMEOUT,
-                skill_url,
-            )
-            self._skillnet_install_jobs[install_id] = {
-                "status": "failed",
-                "detail": (
-                    f"下载超时（超过 {_SKILLNET_DOWNLOAD_TIMEOUT} 秒），请稍后重试。"
-                    "若网络较慢，可稍后在技能列表中查看是否已安装成功。"
-                ),
-                "detail_key": "skills.skillNet.errors.downloadTimeout",
-                "detail_params": {"seconds": _SKILLNET_DOWNLOAD_TIMEOUT},
-            }
-            return
         except Exception as exc:
             logger.error("SkillNet 后台安装异常: %s", exc)
             raw = str(exc).strip()
@@ -473,12 +478,16 @@ class SkillManager:
             "skill": {"name": skill_name, "source": "skillnet"},
         }
 
-    def _skillnet_install_files_sync(self, skill_url: str, force: bool) -> dict[str, Any]:
+    def _skillnet_install_files_sync(
+        self, skill_url: str, force: bool, mirror_url: str | None = None
+    ) -> dict[str, Any]:
         """在工作线程中下载并拷贝到 skills 目录；返回 ok / skill_name / meta / skill_url."""
         try:
             with tempfile.TemporaryDirectory(prefix="jiuwenclaw_skillnet_") as tmpdir:
                 tmp_path = Path(tmpdir)
-                download_path_str = self._skillnet_download_sync(skill_url, str(tmp_path))
+                download_path_str = self._skillnet_download_sync(
+                    skill_url, str(tmp_path), mirror_url
+                )
                 download_path = Path(download_path_str).resolve()
                 if not download_path.exists():
                     return {
@@ -1007,12 +1016,8 @@ class SkillManager:
         return None
 
     @staticmethod
-    def _skillnet_client_kwargs() -> dict[str, Any]:
-        """If GITHUB_TOKEN is configured when SkillNet accesses GitHub, it will be used to increase API rate limits."""
-        token = (os.getenv("GITHUB_TOKEN") or "").strip()
-        if token:
-            return {"github_token": token}
-        return {}
+    def _get_github_token() -> str:
+        return (os.getenv("GITHUB_TOKEN") or "").strip()
 
     @staticmethod
     def _skillnet_search_sync(search_kwargs: dict[str, Any]) -> list[Any]:
@@ -1024,7 +1029,7 @@ class SkillManager:
                 "未安装 skillnet-ai，请先安装依赖: pip install skillnet-ai"
             ) from exc
 
-        client = SkillNetClient(**SkillManager._skillnet_client_kwargs())
+        client = SkillNetClient(github_token=SkillManager._get_github_token())
         results = client.search(**search_kwargs)
         if results is None:
             return []
@@ -1040,8 +1045,7 @@ class SkillManager:
         except ImportError:
             return ""
 
-        token = (os.getenv("GITHUB_TOKEN") or "").strip() or None
-        dl = SkillDownloader(api_token=token)
+        dl = SkillDownloader(api_token=SkillManager._get_github_token())
         parsed = dl._parse_github_url(skill_url)
         if not parsed:
             return ""
@@ -1049,7 +1053,7 @@ class SkillManager:
         owner, repo, ref, dir_path, _ = parsed
         api = f"https://api.github.com/repos/{owner}/{repo}/contents/{dir_path}?ref={ref}"
         try:
-            r = dl.session.get(api, timeout=_SKILLNET_REQUEST_TIMEOUT)
+            r = dl.session.get(api, timeout=_SKILLNET_DOWNLOAD_TIMEOUT)
         except Exception as exc:
             logger.debug(
                 "SkillNet 安装错误上下文: GitHub Contents 请求失败: %s", exc
@@ -1096,33 +1100,11 @@ class SkillManager:
 
         return " | ".join(parts) if parts else ""
 
-    @staticmethod
-    def _apply_session_timeout_and_retry(session: Any) -> None:
-        """Patch a requests.Session to enforce per-request timeouts and retry."""
-        import requests
-        from requests.adapters import HTTPAdapter
-        from urllib3.util.retry import Retry
-
-        retry_strategy = Retry(
-            total=_SKILLNET_MAX_RETRIES,
-            backoff_factor=1,
-            status_forcelist=[429, 500, 502, 503, 504],
-            allowed_methods=["GET"],
-        )
-        adapter = HTTPAdapter(max_retries=retry_strategy)
-        session.mount("https://", adapter)
-        session.mount("http://", adapter)
-
-        original_request = session.request
-
-        def _request_with_timeout(*args: Any, **kwargs: Any) -> requests.Response:
-            kwargs.setdefault("timeout", _SKILLNET_REQUEST_TIMEOUT)
-            return original_request(*args, **kwargs)
-
-        session.request = _request_with_timeout
 
     @staticmethod
-    def _skillnet_download_sync(skill_url: str, target_dir: str) -> str:
+    def _skillnet_download_sync(
+        skill_url: str, target_dir: str, mirror_url: str | None = None
+    ) -> str:
         """同步调用 skillnet-ai download；失败时附带 GitHub API 返回说明（如前端的限流文案）。"""
         try:
             from skillnet_ai.downloader import SkillDownloader, GitHubAPIError
@@ -1131,16 +1113,15 @@ class SkillManager:
                 "未安装 skillnet-ai，请先安装依赖: pip install skillnet-ai"
             ) from exc
 
-        token = (os.getenv("GITHUB_TOKEN") or "").strip() or None
-        downloader = SkillDownloader(api_token=token)
-        SkillManager._apply_session_timeout_and_retry(downloader.session)
-
-        logger.info(
-            "SkillNet 下载开始: url=%s request_timeout=%ds retries=%d",
-            skill_url,
-            _SKILLNET_REQUEST_TIMEOUT,
-            _SKILLNET_MAX_RETRIES,
-        )
+        token = SkillManager._get_github_token()
+        dl_kwargs: dict[str, Any] = {
+            "api_token": token,
+            "timeout": _SKILLNET_DOWNLOAD_TIMEOUT,
+            "max_retries": _SKILLNET_MAX_RETRIES,
+        }
+        if mirror_url:
+            dl_kwargs["mirror_url"] = mirror_url
+        downloader = SkillDownloader(**dl_kwargs)
 
         try:
             local_path = downloader.download(folder_url=skill_url, target_dir=target_dir)

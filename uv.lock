@@ -1391,7 +1391,7 @@ requires-dist = [
     { name = "python-socks", specifier = ">=2.8.1" },
     { name = "python-telegram-bot", specifier = ">=20.0" },
     { name = "ruamel-yaml", specifier = ">=0.18.0" },
-    { name = "skillnet-ai", specifier = "==0.0.15" },
+    { name = "skillnet-ai", specifier = "==0.0.16" },
     { name = "websockets", specifier = ">=12.0" },
     { name = "wecom-aibot-sdk", specifier = ">=1.0.0" },
 ]
@@ -3560,7 +3560,7 @@ wheels = [
 
 [[package]]
 name = "skillnet-ai"
-version = "0.0.15"
+version = "0.0.16"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "openai" },
@@ -3574,9 +3574,9 @@ dependencies = [
     { name = "tqdm" },
     { name = "typer" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/22/d7/c07dcecbb694b07656d3be6b8017132cb65a0394bb7ec9bf06c88a0a8d18/skillnet_ai-0.0.15.tar.gz", hash = "sha256:997a240196cbc19e1b7108ac5a917a8ad33c078867cde7658b608cd97f839740", size = 55477, upload-time = "2026-03-18T13:06:48.485Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/b8/dd/1612292b128b6406f5bf6b5dc87afb05fa49cb5143b40d7ca60d53c4d39a/skillnet_ai-0.0.16.tar.gz", hash = "sha256:6a8f19bc318ce35457dfe80bc11698f54c0afcbc076ddbeb5af67ed45995b154", size = 57062, upload-time = "2026-03-19T07:37:15.09Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/e0/b6/4e31699ace2b722ed56d613930b6464859f1403d56e2990eace121fb6e26/skillnet_ai-0.0.15-py3-none-any.whl", hash = "sha256:0259d04b992f1b4d1887b4266e597813af195e693933713fdb63450e17b485c0", size = 57332, upload-time = "2026-03-18T13:06:47.037Z" },
+    { url = "https://files.pythonhosted.org/packages/54/42/d2be3fc8600dac1ae16802a68ea1042c2676cfe02dce891499431b316e9b/skillnet_ai-0.0.16-py3-none-any.whl", hash = "sha256:97f7c3314e6558385685670af3b61542c705314c7b8f835bf8645cd66619e88a", size = 58906, upload-time = "2026-03-19T07:37:10.73Z" },
 ]
 
 [[package]]

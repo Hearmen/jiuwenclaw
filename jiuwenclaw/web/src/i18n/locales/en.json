@@ -496,6 +496,11 @@
       "usageNotice1": "Installing a skill downloads files from GitHub. Ensure the machine running JiuwenClaw can reach GitHub (network / proxy).",
       "usageNotice2": "GitHub’s API limits anonymous (unauthenticated) use to about 60 requests per hour per IP. If install fails with rate limiting, wait and retry later. For increased rate limits, configure github_token in the configuration page.",
       "usageNotice3": "SkillNet search uses a public service; timeouts or errors may be due to network congestion or server load—try again later.",
+      "usageNotice4": "If installs fail or are very slow because of GitHub latency (e.g. mainland China), use the optional download mirror URL field below.",
+      "mirrorLabel": "Download mirror URL (optional)",
+      "mirrorPlaceholder": "https://ghfast.top/",
+      "mirrorExamples": "Examples: https://ghfast.top/, https://ghproxy.com/",
+      "mirrorInvalid": "Enter a valid http(s) URL or clear this field.",
       "errors": {
         "searchFailedFallback": "Search failed. Please try again later.",
         "sessionExpired": "Install session expired. Please click Install again.",
@@ -506,7 +511,8 @@
         "downloadFailed": "Download failed. Please try again.",
         "skillMdNotFound": "Download incomplete or missing SKILL.md. Please retry.",
         "parseSkillFailed": "Could not parse the downloaded skill file.",
-        "skillAlreadyInstalled": "This skill is already installed."
+        "skillAlreadyInstalled": "This skill is already installed.",
+        "invalidMirrorUrl": "mirror_url is not a valid http(s) URL."
       }
     },
     "marketplacesAvailable": "Available marketplaces: {{names}}",
