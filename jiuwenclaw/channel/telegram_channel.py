@@ -16,7 +16,14 @@ from jiuwenclaw.schema.message import Message, ReqMethod
 
 try:
     from telegram import Update
-    from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
+    from telegram.ext import (
+        Application,
+        CommandHandler,
+        MessageHandler,
+        filters,
+        ContextTypes,
+    )
+
     TELEGRAM_AVAILABLE = True
 except ImportError:
     TELEGRAM_AVAILABLE = False
@@ -74,7 +81,9 @@ class TelegramChannel(BaseChannel):
     async def start(self) -> None:
         """启动 Telegram Bot."""
         if not TELEGRAM_AVAILABLE:
-            logger.error("Telegram SDK not installed. Run: pip install python-telegram-bot")
+            logger.error(
+                "Telegram SDK not installed. Run: pip install python-telegram-bot"
+            )
             return
 
         if not self.config.enabled:
@@ -94,7 +103,9 @@ class TelegramChannel(BaseChannel):
 
         try:
             # 创建 Telegram Application
-            self._application = Application.builder().token(self.config.bot_token).build()
+            self._application = (
+                Application.builder().token(self.config.bot_token).build()
+            )
 
             # 注册命令处理器
             self._application.add_handler(CommandHandler("start", self._start_command))
@@ -111,14 +122,14 @@ class TelegramChannel(BaseChannel):
 
             # 在后台运行 polling
             await self._application.updater.start_polling(
-                allowed_updates=Update.ALL_TYPES,
-                drop_pending_updates=True
+                allowed_updates=Update.ALL_TYPES, drop_pending_updates=True
             )
 
-            logger.info("Telegram Bot 已启动 (token: {}...{})".format(
-                self.config.bot_token[:10],
-                self.config.bot_token[-5:]
-            ))
+            logger.info(
+                "Telegram Bot 已启动 (token: {}...{})".format(
+                    self.config.bot_token[:10], self.config.bot_token[-5:]
+                )
+            )
 
             # 持续运行直到停止
             while self._running:
@@ -164,18 +175,33 @@ class TelegramChannel(BaseChannel):
                 return
 
             # 发送消息
-            parse_mode = self.config.parse_mode if self.config.parse_mode != "None" else None
-
-            await self._application.bot.send_message(
-                chat_id=chat_id,
-                text=content,
-                parse_mode=parse_mode
+            parse_mode = (
+                self.config.parse_mode if self.config.parse_mode != "None" else None
             )
+
+            try:
+                await self._application.bot.send_message(
+                    chat_id=chat_id, text=content, parse_mode=parse_mode
+                )
+            except Exception as send_error:
+                # 仅在 parse_mode 非空且错误涉及解析时重试
+                error_str = str(send_error)
+                if parse_mode and (
+                    "parse" in error_str.lower() or "entity" in error_str.lower()
+                ):
+                    logger.warning(
+                        f"Telegram Markdown parse error, retrying without parse_mode: {send_error}"
+                    )
+                    await self._application.bot.send_message(
+                        chat_id=chat_id, text=content, parse_mode=None
+                    )
+                else:
+                    raise
 
             logger.debug(f"Telegram message sent to chat_id={chat_id}")
 
         except Exception as e:
-            logger.error(f"Error sending Telegram message: {e}")
+            logger.error(f"Error sending Telegram message: {type(e).__name__}: {e}")
 
     def _get_chat_id_from_message(self, msg: Message) -> int | None:
         """从 Message 中提取 chat_id."""
@@ -195,7 +221,11 @@ class TelegramChannel(BaseChannel):
     def _extract_content(self, msg: Message) -> str:
         """从 Message 中提取文本内容."""
         # Gateway/Agent 响应在 payload.content
-        content = (msg.params or {}).get("content") or (getattr(msg, "payload") or {}).get("content") or ""
+        content = (
+            (msg.params or {}).get("content")
+            or (getattr(msg, "payload") or {}).get("content")
+            or ""
+        )
 
         # 处理字典格式
         if isinstance(content, dict):
@@ -203,7 +233,9 @@ class TelegramChannel(BaseChannel):
 
         return str(content).strip()
 
-    async def _start_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    async def _start_command(
+        self, update: Update, context: ContextTypes.DEFAULT_TYPE
+    ) -> None:
         """处理 /start 命令."""
         if not update.effective_user or not update.effective_chat:
             return
@@ -224,7 +256,9 @@ class TelegramChannel(BaseChannel):
         await update.message.reply_text(welcome_msg)
         logger.info(f"Telegram /start from user_id={user_id} chat_id={chat_id}")
 
-    async def _help_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    async def _help_command(
+        self, update: Update, context: ContextTypes.DEFAULT_TYPE
+    ) -> None:
         """处理 /help 命令."""
         help_msg = (
             "JiuWenClaw 机器人帮助 📚\n\n"
@@ -235,10 +269,16 @@ class TelegramChannel(BaseChannel):
         )
         await update.message.reply_text(help_msg)
 
-    async def _handle_message(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    async def _handle_message(
+        self, update: Update, context: ContextTypes.DEFAULT_TYPE
+    ) -> None:
         """处理接收到的消息."""
         try:
-            if not update.message or not update.effective_user or not update.effective_chat:
+            if (
+                not update.message
+                or not update.effective_user
+                or not update.effective_chat
+            ):
                 return
 
             user_id = update.effective_user.id
@@ -260,20 +300,26 @@ class TelegramChannel(BaseChannel):
 
                 # off 模式: 不响应群聊消息
                 if group_mode == "off":
-                    logger.debug(f"Telegram group chat mode is 'off', ignoring message from chat_id={chat_id}")
+                    logger.debug(
+                        f"Telegram group chat mode is 'off', ignoring message from chat_id={chat_id}"
+                    )
                     return
 
                 # mention 模式: 只响应 @机器人 的消息
                 if group_mode == "mention":
                     bot_username = context.bot.username
                     if not bot_username:
-                        logger.warning("Cannot check mentions: bot username not available")
+                        logger.warning(
+                            "Cannot check mentions: bot username not available"
+                        )
                         return
 
                     # 检查是否 @ 了机器人
                     mention_text = f"@{bot_username}"
                     if mention_text not in text:
-                        logger.debug(f"Telegram group chat mode is 'mention', message doesn't mention bot, ignoring")
+                        logger.debug(
+                            f"Telegram group chat mode is 'mention', message doesn't mention bot, ignoring"
+                        )
                         return
 
                     # 移除 @mention 从文本中
@@ -282,12 +328,16 @@ class TelegramChannel(BaseChannel):
                 # reply 模式: 只响应回复机器人的消息
                 elif group_mode == "reply":
                     if not update.message.reply_to_message:
-                        logger.debug(f"Telegram group chat mode is 'reply', message is not a reply, ignoring")
+                        logger.debug(
+                            f"Telegram group chat mode is 'reply', message is not a reply, ignoring"
+                        )
                         return
 
                     # 检查是否回复的是机器人的消息
                     if update.message.reply_to_message.from_user.id != context.bot.id:
-                        logger.debug(f"Telegram group chat mode is 'reply', not replying to bot, ignoring")
+                        logger.debug(
+                            f"Telegram group chat mode is 'reply', not replying to bot, ignoring"
+                        )
                         return
 
                 # all 模式: 响应所有消息（默认行为）
