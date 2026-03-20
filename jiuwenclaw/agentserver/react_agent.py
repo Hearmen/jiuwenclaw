@@ -29,7 +29,7 @@ from openjiuwen.core.single_agent import AgentCard, ReActAgent
 
 from jiuwenclaw.agentserver.tools.todo_toolkits import TodoToolkit
 from jiuwenclaw.evolution.service import EvolutionService
-from jiuwenclaw.utils import logger, USER_WORKSPACE_DIR
+from jiuwenclaw.utils import get_agent_memory_dir, get_workspace_dir, logger
 from jiuwenclaw.config import get_config
 
 
@@ -110,8 +110,8 @@ class JiuClawReActAgent(ReActAgent):
         super().__init__(card)
         self._stream_tasks: set[asyncio.Task] = set()
         self._pause_events: dict[str, asyncio.Event] = {}  # task_key -> event
-        self._workspace_dir = USER_WORKSPACE_DIR / "workspace"
-        self._memory_dir = self._workspace_dir / "agent"
+        self._workspace_dir = get_workspace_dir()
+        self._memory_dir = get_agent_memory_dir()
         self._agent_id: str = "main_agent"
 
     def set_workspace(self, workspace_dir: str, agent_id: str) -> None:

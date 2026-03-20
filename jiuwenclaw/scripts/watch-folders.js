@@ -18,9 +18,13 @@ function generate() {
 // 初始生成
 generate();
 
-// 监听 workspace/agent 目录的变化
+// 监听 agent 目录的变化
 const chokidar = require('chokidar');
-const watcher = chokidar.watch(path.join(__dirname, '../../workspace/agent'), {
+const homeDir = process.env.USERPROFILE || process.env.HOME || '';
+const userAgentDir = homeDir ? path.join(homeDir, '.jiuwenclaw', 'agent') : '';
+const fallbackRepoAgentDir = path.join(__dirname, '../../workspace/agent');
+const watchTarget = userAgentDir || fallbackRepoAgentDir;
+const watcher = chokidar.watch(watchTarget, {
   persistent: true,
   ignoreInitial: true
 });
@@ -31,4 +35,4 @@ watcher
   .on('unlink', generate)
   .on('unlinkDir', generate);
 
-console.log('👀 正在监听 workspace/agent 目录的变化...');
+console.log(`👀 正在监听 agent 目录的变化: ${watchTarget}`);

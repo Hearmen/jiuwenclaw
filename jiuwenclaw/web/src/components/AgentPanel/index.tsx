@@ -14,7 +14,7 @@ interface FileInfo {
 }
 
 const ROOT_FOLDER_KEY = '__root__';
-const AGENT_ROOT_PREFIX = 'workspace/agent/';
+const AGENT_ROOT_PREFIX = 'agent/';
 
 interface DirectoryNode {
   key: string;
@@ -187,7 +187,7 @@ export function AgentPanel({ sessionId: _sessionId }: AgentPanelProps) {
         }
       }
 
-      const res = await fetch('/file-api/file-content?path=workspace/agent-data.json');
+      const res = await fetch('/file-api/file-content?path=agent/workspace/agent-data.json');
       if (!res.ok) {
         throw new Error('FETCH_FAILED');
       }

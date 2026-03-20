@@ -25,7 +25,6 @@ if not os.path.isdir(web_dist) or not os.listdir(web_dist):
 datas = [
     (os.path.join(project_root, "jiuwenclaw", "resources"), "jiuwenclaw/resources"),
     (os.path.join(project_root, "jiuwenclaw", "web", "dist"), "jiuwenclaw/web/dist"),
-    (os.path.join(project_root, "workspace"), "workspace"),
 ]
 
 # 部分包需要显式声明隐藏导入

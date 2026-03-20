@@ -1,8 +1,5 @@
-# 包含 config 目录
-recursive-include config *
-
-# 包含 workspace 目录
-recursive-include workspace *
+# 包含 package resources 目录
+recursive-include jiuwenclaw/resources *
 
 # 排除 node_modules，避免打包进 wheel
 prune jiuwenclaw/web/node_modules

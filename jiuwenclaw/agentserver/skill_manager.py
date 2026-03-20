@@ -16,7 +16,7 @@ from pathlib import Path
 from typing import Any, Awaitable, Callable
 from urllib.parse import urlparse
 
-from jiuwenclaw.utils import get_workspace_dir, logger
+from jiuwenclaw.utils import get_agent_root_dir, get_agent_skills_dir, logger
 
 _SKILLNET_DOWNLOAD_TIMEOUT: int = int(os.environ.get("SKILLNET_DOWNLOAD_TIMEOUT", "60"))
 _SKILLNET_MAX_RETRIES: int = int(os.environ.get("SKILLNET_MAX_RETRIES", "3"))
@@ -24,10 +24,10 @@ _SKILLNET_MAX_RETRIES: int = int(os.environ.get("SKILLNET_MAX_RETRIES", "3"))
 # ---------------------------------------------------------------------------
 # 默认路径
 # ---------------------------------------------------------------------------
-_WORKSPACE = get_workspace_dir()
-_SKILLS_DIR = _WORKSPACE / "agent" / "skills"
+_SKILLS_DIR = get_agent_skills_dir()
+_AGENT_ROOT = get_agent_root_dir()
 _MARKETPLACE_DIR = _SKILLS_DIR / "_marketplace"
-_STATE_FILE = _WORKSPACE / "skills_state.json"
+_STATE_FILE = _SKILLS_DIR / "skills_state.json"
 
 
 def _is_valid_http_mirror_url(url: str) -> bool:
@@ -819,7 +819,7 @@ class SkillManager:
     # -----------------------------------------------------------------------
 
     def _scan_local_skills(self) -> list[dict]:
-        """扫描 workspace/agent/skills/ 下的本地 skill（跳过 _marketplace）."""
+        """扫描 agent/skills/ 下的本地 skill（跳过 _marketplace）."""
         results: list[dict] = []
         if not _SKILLS_DIR.exists():
             return results
@@ -943,15 +943,18 @@ class SkillManager:
             source_skills_dir = source_repo_root / "workspace" / "agent" / "skills"
             if source_skills_dir.resolve() != _SKILLS_DIR.resolve():
                 mirrors.append(source_skills_dir)
+            source_resources_skills_dir = source_repo_root / "jiuwenclaw" / "resources" / "workspace" / "agent" / "skills"
+            if source_resources_skills_dir.exists() and source_resources_skills_dir.resolve() != _SKILLS_DIR.resolve():
+                mirrors.append(source_resources_skills_dir)
         except Exception:
             return []
         return mirrors
 
     @staticmethod
     def _generate_agent_data_for_workspace(workspace_root: Path) -> None:
-        """Generate workspace/agent-data.json from workspace/agent tree."""
-        agent_root = (workspace_root / "agent").resolve()
-        output_path = (workspace_root / "agent-data.json").resolve()
+        """Generate agent/workspace/agent-data.json from agent tree."""
+        agent_root = workspace_root.resolve()
+        output_path = (agent_root / "workspace" / "agent-data.json").resolve()
         root_folder_key = "__root__"
 
         if not agent_root.exists() or not agent_root.is_dir():
@@ -967,7 +970,7 @@ class SkillManager:
             folder_data.setdefault(folder_key, []).append(
                 {
                     "name": entry.name,
-                    "path": f"workspace/agent/{relative_file_path}",
+                    "path": f"agent/{relative_file_path}",
                     "isMarkdown": entry.suffix.lower() in {".md", ".mdx"},
                 }
             )
@@ -984,18 +987,17 @@ class SkillManager:
 
     def _refresh_agent_data_indexes(self) -> None:
         """Refresh agent-data.json for runtime and mirror workspaces."""
-        workspace_roots: set[Path] = set()
-        workspace_roots.add(_WORKSPACE.resolve())
+        workspace_roots: set[Path] = {_AGENT_ROOT.resolve()}
         for mirror_root in self._get_mirror_skills_dirs():
             try:
-                workspace_roots.add(mirror_root.parent.parent.resolve())
+                workspace_roots.add(mirror_root.parent.parent.parent.resolve())
             except Exception:
                 continue
         for workspace_root in workspace_roots:
             try:
                 self._generate_agent_data_for_workspace(workspace_root)
             except Exception as exc:
-                logger.warning("重建 agent-data.json 失败: workspace=%s error=%s", workspace_root, exc)
+                logger.warning("重建 agent-data.json 失败: agent_root=%s error=%s", workspace_root, exc)
 
     @staticmethod
     def _locate_skill_dir(path: Path) -> Path | None:

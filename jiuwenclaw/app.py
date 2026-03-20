@@ -39,7 +39,14 @@ for logger in LogManager.get_all_loggers().values():
     logger.set_level(logging.CRITICAL)
 from openjiuwen.core.foundation.llm import ProviderType
 
-from jiuwenclaw.utils import get_config_file, get_root_dir, is_package_installation, logger
+from jiuwenclaw.utils import (
+    get_agent_sessions_dir,
+    get_config_file,
+    get_env_file,
+    get_root_dir,
+    is_package_installation,
+    logger,
+)
 from jiuwenclaw.config import (
     get_config,
     update_heartbeat_in_config,
@@ -49,7 +56,7 @@ from jiuwenclaw.config import (
 )
 
 _PROJECT_ROOT = get_root_dir()
-_ENV_FILE = _PROJECT_ROOT / ".env"
+_ENV_FILE = get_env_file()
 load_dotenv(dotenv_path=_ENV_FILE)
 
 
@@ -307,7 +314,7 @@ def _register_web_handlers(
         await channel.send_response(ws, req_id, ok=True, payload={"channels": channels})
 
     async def _session_list(ws, req_id, params, session_id):
-        """返回 workspace/session 下的 session_id 列表（子目录名）。"""
+        """返回 agent/sessions 下的 session_id 列表（子目录名）。"""
         limit = 20
         if isinstance(params, dict):
             raw_limit = params.get("limit")
@@ -317,7 +324,7 @@ def _register_web_handlers(
                 limit = int(raw_limit.strip())
         limit = max(1, min(limit, 200))
 
-        workspace_session_dir = _PROJECT_ROOT / "workspace" / "session"
+        workspace_session_dir = get_agent_sessions_dir()
         if not workspace_session_dir.exists() or not workspace_session_dir.is_dir():
             sessions = []
         else:
@@ -329,7 +336,7 @@ def _register_web_handlers(
         await channel.send_response(ws, req_id, ok=True, payload={"sessions": sessions})
 
     async def _session_create(ws, req_id, params, session_id):
-        """创建一个新 session（在 workspace/session 下创建一个新目录）。"""
+        """创建一个新 session（在 agent/sessions 下创建一个新目录）。"""
         if not isinstance(params, dict):
             await channel.send_response(
                 ws, req_id, ok=False, error="params must be object", code="BAD_REQUEST",
@@ -343,7 +350,7 @@ def _register_web_handlers(
             return
         session_id_to_create = session_id_to_create.strip()
 
-        workspace_session_dir = _PROJECT_ROOT / "workspace" / "session"
+        workspace_session_dir = get_agent_sessions_dir()
         if not workspace_session_dir.exists():
             workspace_session_dir.mkdir(parents=True)
         session_dir = workspace_session_dir / session_id_to_create
@@ -356,7 +363,7 @@ def _register_web_handlers(
         await channel.send_response(ws, req_id, ok=True, payload={"session_id": session_id_to_create})
 
     async def _session_delete(ws, req_id, params, session_id):
-        """删除一个 session（在 workspace/session 下删除一个目录）。"""
+        """删除一个 session（在 agent/sessions 下删除一个目录）。"""
         if not isinstance(params, dict):
             await channel.send_response(
                 ws, req_id, ok=False, error="params must be object", code="BAD_REQUEST",
@@ -370,7 +377,7 @@ def _register_web_handlers(
             return
         session_id_to_delete = session_id_to_delete.strip()
 
-        workspace_session_dir = _PROJECT_ROOT / "workspace" / "session"
+        workspace_session_dir = get_agent_sessions_dir()
         session_dir = workspace_session_dir / session_id_to_delete
         if not session_dir.exists():
             await channel.send_response(

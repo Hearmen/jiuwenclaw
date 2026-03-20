@@ -15,7 +15,7 @@ from typing import Sequence
 
 from openjiuwen.core.foundation.tool import tool
 
-from jiuwenclaw.utils import USER_WORKSPACE_DIR
+from jiuwenclaw.utils import get_workspace_dir
 
 
 _DANGEROUS_COMMAND_PATTERNS: list[tuple[re.Pattern[str], str]] = [
@@ -75,7 +75,7 @@ def _check_command_safety(command: str) -> str | None:
 
 
 def _resolve_command_workdir(workdir: str) -> Path:
-    project_root = USER_WORKSPACE_DIR / "workspace"
+    project_root = get_workspace_dir()
     candidate = Path(workdir) if workdir else project_root
     if not candidate.is_absolute():
         candidate = project_root / candidate

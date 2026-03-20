@@ -21,7 +21,14 @@ from openjiuwen.core.session.checkpointer.persistence import PersistenceCheckpoi
 
 from jiuwenclaw.agentserver.prompt_builder import build_system_prompt
 from jiuwenclaw.gateway.cron import CronController, CronTargetChannel
-from jiuwenclaw.utils import get_root_dir, logger, USER_WORKSPACE_DIR
+from jiuwenclaw.utils import (
+    get_agent_root_dir,
+    get_agent_home_dir,
+    get_checkpoint_dir,
+    get_env_file,
+    get_workspace_dir,
+    logger,
+)
 from jiuwenclaw.config import get_config
 from jiuwenclaw.agentserver.react_agent import JiuClawReActAgent
 from jiuwenclaw.agentserver.tools.browser_tools import register_browser_runtime_mcp_server
@@ -44,7 +51,7 @@ from jiuwenclaw.schema.agent import AgentRequest, AgentResponse, AgentResponseCh
 from jiuwenclaw.agentserver.memory import get_memory_manager
 from jiuwenclaw.schema.message import ReqMethod
 
-load_dotenv(dotenv_path=get_root_dir() / ".env")
+load_dotenv(dotenv_path=get_env_file())
 
 
 SYSTEM_PROMPT = """# 角色
@@ -105,7 +112,11 @@ class JiuWenClaw:
         self._session_priorities: dict[str, int] = {}  # session_id -> 优先级计数器（用于先进后出）
         self._session_queues: dict[str, asyncio.PriorityQueue] = {}  # session_id -> 优先队列
         self._session_processors: dict[str, asyncio.Task] = {}  # session_id -> processor_task
-        self._workspace_dir: str = USER_WORKSPACE_DIR / "workspace" / "agent"
+        # Memory system expects workspace_dir/layout:
+        # - workspace_dir/memory/MEMORY.md + USER.md
+        # - workspace_dir/memory/memory.db (SQLite vector index)
+        # Therefore we set workspace_dir to agent root, not agent/workspace.
+        self._workspace_dir: str = str(get_agent_root_dir())
         self._agent_name: str = "main_agent"
         self._compaction_manager: ContextCompactionManager | None = None
         self._browser_mcp_registered: bool = False
@@ -118,11 +129,11 @@ class JiuWenClaw:
     async def set_checkpoint():
         try:
             PersistenceCheckpointerProvider()
-            checkpoint_path = USER_WORKSPACE_DIR / "checkpoint"
+            checkpoint_path = get_checkpoint_dir()
             checkpointer = await CheckpointerFactory.create(
                 CheckpointerConfig(
                     type="persistence",
-                    conf={"db_type": "sqlite", "db_path": f"{checkpoint_path}/checkpoint"},
+                    conf={"db_type": "sqlite", "db_path": str(checkpoint_path / "checkpoint")},
                 )
             )
             CheckpointerFactory.set_default_checkpointer(checkpointer)
@@ -203,7 +214,7 @@ class JiuWenClaw:
         Args:
             config: 可选配置，支持以下字段：
                 - agent_name: Agent 名称，默认 "main_agent"。
-                - workspace_dir: 工作区目录，默认 "workspace/agent"。
+                - workspace_dir: 工作区目录，默认 "agent"（memory 落在 agent/memory 下）。
                 - 其余字段透传给 ReActAgentConfig。
         """
         await self.set_checkpoint()
@@ -216,7 +227,8 @@ class JiuWenClaw:
         try:
             sysop_card = SysOperationCard(
                 mode=OperationMode.LOCAL,
-                work_config=LocalWorkConfig(work_dir=str(USER_WORKSPACE_DIR / "workspace")),
+                # Scope sys_operation to agent root so skills/memory/home/workspace are all accessible.
+                work_config=LocalWorkConfig(work_dir=str(get_agent_root_dir())),
             )
             Runner.resource_mgr.add_sys_operation(sysop_card)
             sysop_card_id = sysop_card.id
@@ -670,7 +682,7 @@ class JiuWenClaw:
         # Heartbeat 处理
         if "heartbeat" in request.params:
             # todo 修复目录
-            heartbeat_md = USER_WORKSPACE_DIR / "workspace" / "HEARTBEAT.md"
+            heartbeat_md = get_agent_home_dir() / "HEARTBEAT.md"
             if not os.path.isfile(heartbeat_md):
                 # 无自定义任务，短路返回
                 logger.debug("[JiuWenClaw] heartbeat OK (no HEARTBEAT.md): request_id=%s", request.request_id)

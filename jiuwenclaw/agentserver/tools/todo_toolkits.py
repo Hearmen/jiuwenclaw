@@ -19,7 +19,7 @@ from pydantic import BaseModel
 
 from openjiuwen.core.foundation.tool import LocalFunction, Tool, ToolCard
 
-from jiuwenclaw.utils import get_workspace_dir
+from jiuwenclaw.utils import get_agent_sessions_dir
 
 
 class TaskStatus(str, Enum):
@@ -63,12 +63,10 @@ class TodoToolkit:
 
         Args:
             session_id: Session/conversation identifier for scoping todo files.
-            todo_dir: Optional custom directory. Defaults to workspace/session/{session_id}/.
+            todo_dir: Optional custom directory. Defaults to agent/sessions/{session_id}/.
         """
         self.session_id = session_id
-        self.todo_dir = todo_dir or (
-            get_workspace_dir() / "session" / session_id
-        )
+        self.todo_dir = todo_dir or (get_agent_sessions_dir() / session_id)
         self.todo_dir.mkdir(parents=True, exist_ok=True)
         self._todo_path = self.todo_dir / self.TODO_FILENAME
 

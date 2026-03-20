@@ -3,7 +3,7 @@ import os
 from datetime import datetime, timezone, timedelta
 from typing import Optional
 
-from jiuwenclaw.utils import USER_WORKSPACE_DIR, logger
+from jiuwenclaw.utils import get_agent_memory_dir, get_workspace_dir, logger
 
 
 def _memory_prompt(language: str, is_cron: bool = False) -> str:
@@ -34,14 +34,14 @@ def _memory_prompt(language: str, is_cron: bool = False) -> str:
             sections.append(memory_prompt)
             sections.append("")
 
-            profile_content = _read_file(USER_WORKSPACE_DIR / "workspace" / "agent" / "memory" / "USER.md")
+            profile_content = _read_file(get_agent_memory_dir() / "USER.md")
             if profile_content:
                 sections.append("# 当前身份与用户资料")
                 sections.append("这是你对自己和用户的了解：")
                 sections.append(profile_content)
                 sections.append("")
 
-            memory_content = _read_file(USER_WORKSPACE_DIR / "workspace" / "agent" / "memory" / "MEMORY.md")
+            memory_content = _read_file(get_agent_memory_dir() / "MEMORY.md")
             if memory_content:
                 sections.append("# 长期记忆")
                 sections.append("之前会话的重要信息：")
@@ -50,7 +50,7 @@ def _memory_prompt(language: str, is_cron: bool = False) -> str:
 
             beijing_tz = timezone(timedelta(hours=8))
             today = datetime.now(tz=beijing_tz).strftime("%Y-%m-%d")
-            today_content = _read_file(USER_WORKSPACE_DIR / "workspace" / "agent" / "memory" / f"{today}.md")
+            today_content = _read_file(get_agent_memory_dir() / f"{today}.md")
             if today_content:
                 sections.append("# 今日会话记录")
                 sections.append(today_content)
@@ -79,14 +79,14 @@ def _memory_prompt(language: str, is_cron: bool = False) -> str:
             sections.append(memory_prompt)
             sections.append("")
 
-            profile_content = _read_file(USER_WORKSPACE_DIR / "workspace" / "agent" / "memory" / "USER.md")
+            profile_content = _read_file(get_agent_memory_dir() / "USER.md")
             if profile_content:
                 sections.append("# Current Identity and User Profile")
                 sections.append("What you know about yourself and the user:")
                 sections.append(profile_content)
                 sections.append("")
 
-            memory_content = _read_file(USER_WORKSPACE_DIR / "workspace" / "agent" / "memory" / "MEMORY.md")
+            memory_content = _read_file(get_agent_memory_dir() / "MEMORY.md")
             if memory_content:
                 sections.append("# Long-term Memory")
                 sections.append("Important information from previous sessions:")
@@ -95,7 +95,7 @@ def _memory_prompt(language: str, is_cron: bool = False) -> str:
 
             beijing_tz = timezone(timedelta(hours=8))
             today = datetime.now(tz=beijing_tz).strftime("%Y-%m-%d")
-            today_content = _read_file(USER_WORKSPACE_DIR / "workspace" / "agent" / "memory" / f"{today}.md")
+            today_content = _read_file(get_agent_memory_dir() / f"{today}.md")
             if today_content:
                 sections.append("# Today's Session Record")
                 sections.append(today_content)
@@ -162,14 +162,14 @@ def _memory_prompt(language: str, is_cron: bool = False) -> str:
         sections.append(memory_prompt)
         sections.append("")
 
-        profile_content = _read_file(USER_WORKSPACE_DIR / "workspace" / "agent" / "memory" / "USER.md")
+        profile_content = _read_file(get_agent_memory_dir() / "USER.md")
         if profile_content:
             sections.append("# 当前身份与用户资料")
             sections.append("这是你对自己和用户的了解：")
             sections.append(profile_content)
             sections.append("")
 
-        memory_content = _read_file(USER_WORKSPACE_DIR / "workspace" / "agent" / "memory" / "MEMORY.md")
+        memory_content = _read_file(get_agent_memory_dir() / "MEMORY.md")
         if memory_content:
             sections.append("# 长期记忆")
             sections.append("之前会话的重要信息：")
@@ -178,7 +178,7 @@ def _memory_prompt(language: str, is_cron: bool = False) -> str:
 
         beijing_tz = timezone(timedelta(hours=8))
         today = datetime.now(tz=beijing_tz).strftime("%Y-%m-%d")
-        today_content = _read_file(USER_WORKSPACE_DIR / "workspace" / "agent" / "memory" / f"{today}.md")
+        today_content = _read_file(get_agent_memory_dir() / f"{today}.md")
         if today_content:
             sections.append("# 今日会话记录")
             sections.append(today_content)
@@ -255,14 +255,14 @@ When valuable information is discovered during the conversation, it can be recor
         sections.append(memory_prompt)
         sections.append("")
 
-        profile_content = _read_file(USER_WORKSPACE_DIR / "workspace" / "agent" / "memory" / "USER.md")
+        profile_content = _read_file(get_agent_memory_dir() / "USER.md")
         if profile_content:
             sections.append("# Current Identity and User Profile")
             sections.append("What you know about yourself and the user:")
             sections.append(profile_content)
             sections.append("")
 
-        memory_content = _read_file(USER_WORKSPACE_DIR / "workspace" / "agent" / "memory" / "MEMORY.md")
+        memory_content = _read_file(get_agent_memory_dir() / "MEMORY.md")
         if memory_content:
             sections.append("# Long-term Memory")
             sections.append("Important information from previous sessions:")
@@ -271,7 +271,7 @@ When valuable information is discovered during the conversation, it can be recor
 
         beijing_tz = timezone(timedelta(hours=8))
         today = datetime.now(tz=beijing_tz).strftime("%Y-%m-%d")
-        today_content = _read_file(USER_WORKSPACE_DIR / "workspace" / "agent" / "memory" / f"{today}.md")
+        today_content = _read_file(get_agent_memory_dir() / f"{today}.md")
         if today_content:
             sections.append("# Today's Session Record")
             sections.append(today_content)
@@ -325,12 +325,12 @@ Storage types: "in_memory" (session cache)
 def _workspace_prompt(language: str) -> str:
     if language == "zh":
         return f"""# 工作空间
-你当前的工作路径为：{USER_WORKSPACE_DIR / "workspace"}.
+你当前的工作路径为：{get_workspace_dir()}.
 写入或保存文件都应该在这个路径完成，除非用户要求你操作其他目录。
 """
     else:
         return f"""# Workspace
-You are working under the dir：{USER_WORKSPACE_DIR / "workspace"}.
+You are working under the dir：{get_workspace_dir()}.
 Write or save all files under this dir, unless user ask you to operate in other dirs.
 """
 

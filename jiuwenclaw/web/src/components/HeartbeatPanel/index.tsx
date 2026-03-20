@@ -5,7 +5,7 @@ import { HeartbeatMessageModal } from '../../features/HeartbeatMessageModal';
 import { webRequest } from '../../services/webClient';
 import { useSessionStore } from '../../stores';
 
-const HEARTBEAT_FILE_PATH = 'workspace/HEARTBEAT.md';
+const HEARTBEAT_FILE_PATH = 'agent/home/HEARTBEAT.md';
 const HEARTBEAT_FILE_NAME = 'HEARTBEAT.md';
 
 interface ActiveHours {

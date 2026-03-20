@@ -18,7 +18,7 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import unquote, urlparse
 
-from jiuwenclaw.utils import get_root_dir, is_package_installation
+from jiuwenclaw.utils import get_logs_dir, get_root_dir, is_package_installation
 
 
 def _get_package_dir() -> Path:
@@ -48,16 +48,15 @@ def _default_dist_dir() -> Path:
 
 
 def _generate_agent_data(project_root: Path) -> None:
-    """Generate workspace/agent-data.json from workspace/agent tree."""
-    workspace_root = (project_root / "workspace").resolve()
-    agent_root = (workspace_root / "agent").resolve()
-    output_path = (workspace_root / "agent-data.json").resolve()
+    """Generate agent/workspace/agent-data.json from agent tree."""
+    agent_root = (project_root / "agent").resolve()
+    output_path = (agent_root / "workspace" / "agent-data.json").resolve()
     root_folder_key = "__root__"
 
     if not agent_root.exists():
-        raise FileNotFoundError("workspace/agent directory not found")
+        raise FileNotFoundError("agent directory not found")
     if not agent_root.is_dir():
-        raise NotADirectoryError("workspace/agent is not a directory")
+        raise NotADirectoryError("agent is not a directory")
 
     folder_data: dict[str, list[dict[str, str | bool]]] = {}
     for entry in sorted(agent_root.rglob("*")):
@@ -69,7 +68,7 @@ def _generate_agent_data(project_root: Path) -> None:
         folder_data.setdefault(folder_key, []).append(
             {
                 "name": entry.name,
-                "path": f"workspace/agent/{relative_file_path}",
+                "path": f"agent/{relative_file_path}",
                 "isMarkdown": entry.suffix.lower() in {".md", ".mdx"},
             }
         )
@@ -786,8 +785,8 @@ def main() -> None:
     default_project_root = get_root_dir()
 
     project_root = default_project_root
-    workspace_root = (project_root / "workspace").resolve()
-    logs_root = (project_root / "logs").resolve()
+    workspace_root = (project_root / "agent").resolve()
+    logs_root = get_logs_dir().resolve()
     logger = _setup_logger(logs_root, args.log_level)
 
     class _ConfiguredHandler(_SpaStaticHandler):

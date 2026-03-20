@@ -57,8 +57,6 @@ jiuwenclaw = [
     "resources/**/*",
     "resources/*",
     "resources/.env.template",
-    "workspace/**/*",
-    "workspace/*",
 ]
 
 [tool.setuptools.exclude-package-data]

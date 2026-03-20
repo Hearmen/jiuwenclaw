@@ -3,27 +3,29 @@ const path = require('path');
 
 const scriptDir = __dirname;
 const envRoot = process.env.JIUWENCLAW_ROOT ? path.resolve(process.env.JIUWENCLAW_ROOT) : '';
-const workspaceFromEnv = envRoot ? path.join(envRoot, 'workspace') : '';
+const agentFromEnv = envRoot ? path.join(envRoot, 'agent') : '';
 const legacyWorkspace = path.join(scriptDir, '../../workspace');
-const packageWorkspace = path.join(scriptDir, '../workspace');
+const packageWorkspace = path.join(scriptDir, '../resources/workspace');
+const legacyAgentFromWorkspace = path.join(legacyWorkspace, 'agent');
+const packageAgentFromWorkspace = path.join(packageWorkspace, 'agent');
+const packageAgentRoot = path.join(scriptDir, '..', 'agent');
 
-const workspaceRoot = [workspaceFromEnv, legacyWorkspace, packageWorkspace]
+const agentRoot = [agentFromEnv, packageAgentRoot, legacyAgentFromWorkspace, packageAgentFromWorkspace]
   .filter(Boolean)
   .find((candidate) => fs.existsSync(candidate));
 
-if (!workspaceRoot) {
-  console.error('❌ 错误: 无法定位 workspace 目录');
+if (!agentRoot) {
+  console.error('❌ 错误: 无法定位 agent 目录');
   process.exit(1);
 }
 
-const agentPath = path.join(workspaceRoot, 'agent');
-const outputPath = path.join(workspaceRoot, 'agent-data.json');
+const outputPath = path.join(agentRoot, 'workspace', 'agent-data.json');
 
-console.log('扫描目录:', agentPath);
+console.log('扫描目录:', agentRoot);
 
 try {
-  if (!fs.existsSync(agentPath)) {
-    console.error('❌ 错误: workspace/agent 目录不存在！');
+  if (!fs.existsSync(agentRoot)) {
+    console.error('❌ 错误: agent 目录不存在！');
     process.exit(1);
   }
 
@@ -37,7 +39,7 @@ try {
     }
     folderData[folderKey].push({
       name: path.basename(relativeFilePath),
-      path: `workspace/agent/${relativeFilePath.replace(/\\/g, '/')}`,
+      path: `agent/${relativeFilePath.replace(/\\/g, '/')}`,
       isMarkdown: isMarkdownFile(relativeFilePath)
     });
   };
@@ -62,7 +64,7 @@ try {
     });
   };
 
-  walkDirectory(agentPath);
+  walkDirectory(agentRoot);
 
   // 为了稳定输出，统一排序文件夹与文件
   const sortedFolderData = Object.keys(folderData)

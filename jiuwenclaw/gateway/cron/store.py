@@ -9,15 +9,14 @@ from pathlib import Path
 from typing import Any
 
 from jiuwenclaw.gateway.cron.models import CronJob, CronTarget
-from jiuwenclaw.utils import get_root_dir
+from jiuwenclaw.utils import get_agent_home_dir
 
 
 class CronJobStore:
-    """Persist cron jobs to ~/.jiuwenclaw/workspace/cron_jobs.json."""
+    """Persist cron jobs to ~/.jiuwenclaw/agent/home/cron_jobs.json."""
 
     def __init__(self, path: Path | None = None) -> None:
-        root = get_root_dir()
-        self._path = path or (root / "workspace" / "cron_jobs.json")
+        self._path = path or (get_agent_home_dir() / "cron_jobs.json")
         self._lock = asyncio.Lock()
 
     @property

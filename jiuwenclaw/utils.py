@@ -2,14 +2,16 @@
 
 """Path management for JiuWenClaw.
 
-Handles path resolution for both source and package installations:
-
-- When a user workspace exists (~/.jiuwenclaw), it is always used as the
-  runtime root for config, workspace and .env (for both source and package).
-- Before the user workspace is initialized:
-  - Source: Use project root directory for config and workspace.
-  - Package (whl): Use user home directory (~/.jiuwenclaw) as planned
-    runtime root, but templates are copied from installed package resources.
+Runtime layout:
+- ~/.jiuwenclaw/config/config.yaml
+- ~/.jiuwenclaw/config/.env
+- ~/.jiuwenclaw/agent/home
+- ~/.jiuwenclaw/agent/memory
+- ~/.jiuwenclaw/agent/skills
+- ~/.jiuwenclaw/agent/sessions
+- ~/.jiuwenclaw/agent/workspace
+- ~/.jiuwenclaw/.checkpoint
+- ~/.jiuwenclaw/.logs
 """
 
 import importlib.util
@@ -116,8 +118,9 @@ def prepare_workspace(overwrite: bool = True):
     if overwrite or not config_yaml_dest.exists():
         shutil.copy2(config_yaml_src, config_yaml_dest)
 
-    # ----- workspace: copy tree -----
+    # ----- workspace template source（须存在；模板内可不包含 agent/workspace，仅缺 agent-data.json）-----
     workspace_src_candidates = [
+        resources_dir / "workspace",
         package_root / "workspace",
         package_root.parent / "workspace",
     ]
@@ -127,15 +130,8 @@ def prepare_workspace(overwrite: bool = True):
             "workspace source not found; tried: "
             + ", ".join(str(p) for p in workspace_src_candidates)
         )
-    workspace_dest = USER_WORKSPACE_DIR / "workspace"
-    if overwrite:
-        if workspace_dest.exists():
-            shutil.rmtree(workspace_dest)
-        shutil.copytree(workspace_src, workspace_dest, dirs_exist_ok=True)
-    elif not workspace_dest.exists():
-        shutil.copytree(workspace_src, workspace_dest)
 
-    # ----- .env: copy from template -----
+    # ----- .env: copy from template to config/.env -----
     env_template_src_candidates = [
         resources_dir / ".env.template",
         package_root / ".env.template",
@@ -146,9 +142,71 @@ def prepare_workspace(overwrite: bool = True):
             "env template source not found; tried: "
             + ", ".join(str(p) for p in env_template_src_candidates)
         )
-    env_dest = USER_WORKSPACE_DIR / ".env"
+    env_dest = USER_WORKSPACE_DIR / "config" / ".env"
     if overwrite or not env_dest.exists():
         shutil.copy2(env_template_src, env_dest)
+
+    # ----- copy runtime dirs (new layout) -----
+    agent_root = USER_WORKSPACE_DIR / "agent"
+    agent_home = agent_root / "home"
+    agent_skills = agent_root / "skills"
+    agent_memory = agent_root / "memory"
+    agent_sessions = agent_root / "sessions"
+    (USER_WORKSPACE_DIR / ".checkpoint").mkdir(parents=True, exist_ok=True)
+    (USER_WORKSPACE_DIR / ".logs").mkdir(parents=True, exist_ok=True)
+
+    template_agent_dir = workspace_src / "agent"
+    if not template_agent_dir.exists():
+        raise RuntimeError(f"workspace template missing agent dir: {template_agent_dir}")
+
+    template_agent_workspace = template_agent_dir / "workspace"
+    template_agent_memory = template_agent_dir / "memory"
+    template_agent_skills = template_agent_dir / "skills"
+
+    agent_workspace = agent_root / "workspace"
+
+    def _copy_dir(src_dir: Path, dst_dir: Path) -> None:
+        if not src_dir.exists():
+            return
+        if overwrite and dst_dir.exists():
+            shutil.rmtree(dst_dir)
+        dst_dir.parent.mkdir(parents=True, exist_ok=True)
+        if not dst_dir.exists():
+            shutil.copytree(src_dir, dst_dir)
+        else:
+            shutil.copytree(src_dir, dst_dir, dirs_exist_ok=True)
+
+    # agent/workspace 可不在仓库中（agent-data.json 由运行时生成）；无模板子目录时建空目录
+    if template_agent_workspace.exists():
+        _copy_dir(template_agent_workspace, agent_workspace)
+    else:
+        if overwrite and agent_workspace.exists():
+            shutil.rmtree(agent_workspace)
+        agent_workspace.mkdir(parents=True, exist_ok=True)
+    _copy_dir(template_agent_memory, agent_memory)
+    _copy_dir(template_agent_skills, agent_skills)
+
+    # home: only SOUL/HEARTBEAT are shipped by the template
+    if overwrite and agent_home.exists():
+        shutil.rmtree(agent_home)
+    agent_home.mkdir(parents=True, exist_ok=True)
+    for home_name in ("SOUL.md", "SOUL_EN.md"):
+        src = template_agent_dir / home_name
+        if src.exists():
+            shutil.copy2(src, agent_home / home_name)
+
+    heartbeat_src = workspace_src / "HEARTBEAT.md"
+    if heartbeat_src.exists():
+        shutil.copy2(heartbeat_src, agent_home / "HEARTBEAT.md")
+
+    # skills state: shipped at workspace root
+    skills_state_src = workspace_src / "skills_state.json"
+    if skills_state_src.exists():
+        agent_skills.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(skills_state_src, agent_skills / "skills_state.json")
+
+    # sessions is runtime-only (template may not include it)
+    agent_sessions.mkdir(parents=True, exist_ok=True)
 
 
 def init_user_workspace(overwrite: bool = True) -> Path:
@@ -162,7 +220,7 @@ def init_user_workspace(overwrite: bool = True) -> Path:
     上述内容会被复制到:
     - ~/.jiuwenclaw/config/config.yaml
     - ~/.jiuwenclaw/.env
-    - ~/.jiuwenclaw/workspace/...
+    - ~/.jiuwenclaw/agent/workspace/...
 
     无论是通过 pip/whl 安装还是源码目录直接运行，效果保持一致。
     """
@@ -191,7 +249,7 @@ def _resolve_paths() -> None:
     # 优先使用已初始化的用户工作区 (~/.jiuwenclaw)，
     # 保证源码运行与安装包运行后的读写路径完全一致。
     user_config_dir = USER_WORKSPACE_DIR / "config"
-    user_workspace_dir = USER_WORKSPACE_DIR / "workspace"
+    user_workspace_dir = USER_WORKSPACE_DIR / "agent" / "workspace"
     if user_config_dir.exists():
         _root_dir = USER_WORKSPACE_DIR
         _config_dir = user_config_dir
@@ -203,7 +261,7 @@ def _resolve_paths() -> None:
         if package_root:
             _root_dir = USER_WORKSPACE_DIR
             _config_dir = USER_WORKSPACE_DIR / "config"
-            _workspace_dir = USER_WORKSPACE_DIR / "workspace"
+            _workspace_dir = USER_WORKSPACE_DIR / "agent" / "workspace"
         else:
             source_root = _find_source_root()
             _root_dir = source_root
@@ -232,8 +290,40 @@ def get_root_dir() -> Path:
 
 
 def get_agent_workspace_dir() -> Path:
-    """Get the agent workspace directory path (workspace/agent)."""
-    return get_workspace_dir() / "agent"
+    """Get the agent workspace directory path."""
+    return USER_WORKSPACE_DIR / "agent" / "workspace"
+
+
+def get_agent_root_dir() -> Path:
+    return USER_WORKSPACE_DIR / "agent"
+
+
+def get_agent_home_dir() -> Path:
+    return get_agent_root_dir() / "home"
+
+
+def get_agent_memory_dir() -> Path:
+    return get_agent_root_dir() / "memory"
+
+
+def get_agent_skills_dir() -> Path:
+    return get_agent_root_dir() / "skills"
+
+
+def get_agent_sessions_dir() -> Path:
+    return get_agent_root_dir() / "sessions"
+
+
+def get_checkpoint_dir() -> Path:
+    return USER_WORKSPACE_DIR / ".checkpoint"
+
+
+def get_logs_dir() -> Path:
+    return USER_WORKSPACE_DIR / ".logs"
+
+
+def get_env_file() -> Path:
+    return get_config_dir() / ".env"
 
 
 def get_config_file() -> Path:
@@ -248,8 +338,7 @@ def is_package_installation() -> bool:
 
 def setup_logger(log_level: str = "INFO") -> logging.Logger:
     """Setup logger with console and file handlers."""
-    project_root = get_root_dir()
-    logs_root = project_root / "logs"
+    logs_root = get_logs_dir()
     logs_root.mkdir(parents=True, exist_ok=True)
 
     logger = logging.getLogger("jiuwenclaw.app")

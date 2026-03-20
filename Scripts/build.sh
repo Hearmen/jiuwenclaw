@@ -41,48 +41,7 @@ if [[ -d "$NODE_MODULES" ]]; then
     NODE_MODULES_MOVED=true
 fi
 
-# 创建符号链接，让 workspace 和入口脚本在 jiuwenclaw 包内
-SYMLINKS_REMOVED=()
-JIUWENCLAW_DIR="$PROJECT_ROOT/jiuwenclaw"
-
-WORKSPACE_LINK="$JIUWENCLAW_DIR/workspace"
-if [[ ! -e "$WORKSPACE_LINK" ]]; then
-    echo "[build] 创建 workspace 符号链接..."
-    ln -s "$PROJECT_ROOT/workspace" "$WORKSPACE_LINK"
-    SYMLINKS_REMOVED+=("$WORKSPACE_LINK")
-fi
-
-# 创建入口脚本的符号链接
-APP_LINK="$JIUWENCLAW_DIR/app.py"
-if [[ ! -e "$APP_LINK" ]]; then
-    echo "[build] 创建 app.py 符号链接..."
-    ln -s "$PROJECT_ROOT/app.py" "$APP_LINK"
-    SYMLINKS_REMOVED+=("$APP_LINK")
-fi
-
-APP_WEB_LINK="$JIUWENCLAW_DIR/app_web.py"
-if [[ ! -e "$APP_WEB_LINK" ]]; then
-    echo "[build] 创建 app_web.py 符号链接..."
-    ln -s "$PROJECT_ROOT/app_web.py" "$APP_WEB_LINK"
-    SYMLINKS_REMOVED+=("$APP_WEB_LINK")
-fi
-
-START_SERVICES_LINK="$JIUWENCLAW_DIR/start_services.py"
-if [[ ! -e "$START_SERVICES_LINK" ]]; then
-    echo "[build] 创建 start_services.py 符号链接..."
-    ln -s "$PROJECT_ROOT/start_services.py" "$START_SERVICES_LINK"
-    SYMLINKS_REMOVED+=("$START_SERVICES_LINK")
-fi
-
 cleanup() {
-    # 清理符号链接
-    for link in "${SYMLINKS_REMOVED[@]}"; do
-        if [[ -e "$link" ]]; then
-            rm -rf "$link"
-            echo "[build] 已删除符号链接: $link"
-        fi
-    done
-
     # 恢复 node_modules
     if [[ "$NODE_MODULES_MOVED" == "true" && -d "$NODE_MODULES_BAK" ]]; then
         mv "$NODE_MODULES_BAK" "$NODE_MODULES"

@@ -151,7 +151,7 @@ class MemoryIndexManager:
     def _resolve_db_path(self) -> str:
         """Resolve database path.
 
-        确保向量数据库索引文件存放在与 MEMORY.md 同目录 (workspace/agent/memory/)
+        确保向量数据库索引文件存放在与 MEMORY.md 同目录 (workspace_dir/memory/)
         """
         store_path = self.settings.store.get("path", "memory.db")
         if os.path.isabs(store_path):

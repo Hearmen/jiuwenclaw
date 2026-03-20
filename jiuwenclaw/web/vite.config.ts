@@ -69,7 +69,7 @@ function devWsTrafficLogger(): Plugin {
     name: 'dev-ws-traffic-logger',
     configureServer(server) {
       const projectRootDir = resolveProjectRootDir()
-      const logDir = path.resolve(projectRootDir, 'logs')
+      const logDir = path.resolve(projectRootDir, '.logs')
       const logFile = path.resolve(logDir, 'ws-dev.log')
       fs.mkdirSync(logDir, { recursive: true })
       // 每次前端 dev 服务启动时清空日志，避免历史数据干扰排查。
@@ -157,8 +157,8 @@ function devWsTrafficLogger(): Plugin {
 /** 将文件读取接口挂到 Vite dev server，避免额外占用 3003 端口 */
 function devFileContentApi(): Plugin {
   const projectRootDir = resolveProjectRootDir()
-  const workspaceRootDir = path.resolve(projectRootDir, 'workspace')
-  const webLogsRootDir = path.resolve(projectRootDir, 'logs')
+  const workspaceRootDir = path.resolve(projectRootDir, 'agent')
+  const webLogsRootDir = path.resolve(projectRootDir, '.logs')
   const generateAgentFoldersScriptPath = path.resolve(__dirname, '../scripts/generate-agent-folders.js')
   // dev 模式默认开启调试视图，与“前端 dev 即调试模式”一致。
   let wsDisableCompress = true

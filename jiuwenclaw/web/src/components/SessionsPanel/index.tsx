@@ -191,7 +191,7 @@ export function SessionsPanel({ currentSessionId }: SessionsPanelProps) {
           return result;
         };
 
-        const rootDir = `workspace/session/${selectedSessionId}`;
+        const rootDir = `agent/sessions/${selectedSessionId}`;
         const rows = await fetchDirEntries(rootDir, 0);
         setFiles(rows);
       } catch (error) {

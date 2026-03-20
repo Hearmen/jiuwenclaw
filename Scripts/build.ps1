@@ -44,43 +44,6 @@ if (Test-Path $NodeModules) {
     $NodeModulesMoved = $true
 }
 
-# 创建符号链接，让 workspace 和入口脚本在 jiuwenclaw 包内
-$SymlinksRemoved = @()
-$JiuwenclawDir = Join-Path $ProjectRoot "jiuwenclaw"
-
-$WorkspaceLink = Join-Path $JiuwenclawDir "workspace"
-if (-not (Test-Path $WorkspaceLink)) {
-    Write-Host "[build] 创建 workspace 符号链接..." -ForegroundColor Gray
-    $WorkspaceSource = Join-Path $ProjectRoot "workspace"
-    New-Item -ItemType SymbolicLink -Path $WorkspaceLink -Target $WorkspaceSource | Out-Null
-    $SymlinksRemoved += $WorkspaceLink
-}
-
-# 创建入口脚本的符号链接
-$AppLink = Join-Path $JiuwenclawDir "app.py"
-if (-not (Test-Path $AppLink)) {
-    Write-Host "[build] 创建 app.py 符号链接..." -ForegroundColor Gray
-    $AppSource = Join-Path $ProjectRoot "app.py"
-    New-Item -ItemType SymbolicLink -Path $AppLink -Target $AppSource | Out-Null
-    $SymlinksRemoved += $AppLink
-}
-
-$AppWebLink = Join-Path $JiuwenclawDir "app_web.py"
-if (-not (Test-Path $AppWebLink)) {
-    Write-Host "[build] 创建 app_web.py 符号链接..." -ForegroundColor Gray
-    $AppWebSource = Join-Path $ProjectRoot "app_web.py"
-    New-Item -ItemType SymbolicLink -Path $AppWebLink -Target $AppWebSource | Out-Null
-    $SymlinksRemoved += $AppWebLink
-}
-
-$StartServicesLink = Join-Path $JiuwenclawDir "start_services.py"
-if (-not (Test-Path $StartServicesLink)) {
-    Write-Host "[build] 创建 start_services.py 符号链接..." -ForegroundColor Gray
-    $StartServicesSource = Join-Path $ProjectRoot "start_services.py"
-    New-Item -ItemType SymbolicLink -Path $StartServicesLink -Target $StartServicesSource | Out-Null
-    $SymlinksRemoved += $StartServicesLink
-}
-
 try {
 # 2. 构建 wheel
 Write-Host "[build] 正在构建 wheel 包..." -ForegroundColor Yellow
@@ -104,14 +67,6 @@ if (-not (Test-Path $DistOutput)) {
 Write-Host "[build] 完成! wheel 包位于: $DistOutput" -ForegroundColor Green
 Get-ChildItem $DistOutput -Filter "*.whl" | ForEach-Object { Write-Host "  - $($_.Name)" }
 } finally {
-    # 清理符号链接
-    foreach ($link in $SymlinksRemoved) {
-        if (Test-Path $link -PathType Any) {
-            Remove-Item $link -Force -Recurse
-            Write-Host "[build] 已删除符号链接: $link" -ForegroundColor Gray
-        }
-    }
-
     # 恢复 node_modules
     if ($NodeModulesMoved -and (Test-Path $NodeModulesBak)) {
         Move-Item $NodeModulesBak $NodeModules -Force

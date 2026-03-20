@@ -14,11 +14,11 @@ from pathlib import Path
 
 import yaml
 
-from jiuwenclaw.utils import get_config_file, get_agent_workspace_dir, logger
+from jiuwenclaw.utils import get_config_file, get_agent_root_dir, logger
 
 
 DEFAULT_CONFIG_PATH = str(get_config_file())
-DEFAULT_WORKSPACE_DIR = str(get_agent_workspace_dir())
+DEFAULT_WORKSPACE_DIR = str(get_agent_root_dir())
 
 _config_cache: Optional[Dict[str, Any]] = None
 
@@ -111,7 +111,8 @@ class MemorySettings:
     })
     
     store: Dict[str, Any] = field(default_factory=lambda: {
-        "path": "memory.db",  # 相对于 workspace/agent/memory/ 目录
+        # 相对于 workspace_dir/memory/ 目录
+        "path": "memory.db",
         "vector": {"enabled": True},
         "fts": {"enabled": True}
     })
@@ -171,7 +172,7 @@ def create_memory_settings(
     
     if "store" not in overrides:
         store_config = memory_config.get("store", {})
-        # 向量数据库索引文件存放在与 MEMORY.md 同目录 (workspace/agent/memory/memory.db)
+        # 向量数据库索引文件存放在与 MEMORY.md 同目录 (workspace_dir/memory/memory.db)
         # 只使用文件名，让 manager.py 的 _resolve_db_path 处理完整路径
         overrides["store"] = {
             "path": store_config.get("path", "memory.db"),
