@@ -19,7 +19,7 @@ class CronController:
     def __init__(self, *, store: CronJobStore, scheduler: CronSchedulerService) -> None:
         self._store = store
         self._scheduler = scheduler
-        self._target_channel: CronTargetChannel = CronTargetChannel.WEB
+        self._target_channel: CronTargetChannel | None = None
 
     def set_target_channel(self, channel: CronTargetChannel) -> None:
         self._target_channel = channel
@@ -69,13 +69,12 @@ class CronController:
     _DESCRIPTION_TIME_KEYWORDS = ("每天", "每周", "每月", "上午", "下午", "早上", "晚上", "凌晨")
 
     def _normalize_targets(self, raw: Any) -> str:
-        """将 targets 规范为 CronTargetChannel 枚举值，非法则默认 web。"""
+        """将 targets 规范为 CronTargetChannel 枚举值。"""
+        if self._target_channel is None and not str(raw or "").strip():
+            raise ValueError("targets is required when target_channel is not set")
         s = str(raw or "").strip() or self._target_channel.value
-        try:
-            CronTargetChannel(s)
-            return s
-        except ValueError:
-            return CronTargetChannel.WEB.value
+        CronTargetChannel(s)  # validate
+        return s
 
     @classmethod
     def _normalize_description(cls, description: str, name: str) -> str:

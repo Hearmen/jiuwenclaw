@@ -259,7 +259,7 @@ class CronSchedulerService:
                     req_method=ReqMethod.CHAT_SEND,
                     params={
                         "content": job.description,
-                        "query": f"[这是一条用户留给你的定时任务]\n{job.description}",
+                        "query": job.description,
                         "cron": {
                             "job_id": job.id,
                             "job_name": job.name,

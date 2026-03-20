@@ -19,7 +19,7 @@ from openjiuwen.core.session.checkpointer import CheckpointerFactory
 from openjiuwen.core.session.checkpointer.checkpointer import CheckpointerConfig
 from openjiuwen.core.session.checkpointer.persistence import PersistenceCheckpointerProvider
 
-from jiuwenclaw.agentserver.prompt_builder import build_system_prompt
+from jiuwenclaw.agentserver.prompt_builder import build_system_prompt, build_user_prompt
 from jiuwenclaw.gateway.cron import CronController, CronTargetChannel
 from jiuwenclaw.utils import (
     get_agent_root_dir,
@@ -789,9 +789,15 @@ class JiuWenClaw:
             "[JiuWenClaw] 处理请求: request_id=%s channel_id=%s session_id=%s",
             request.request_id, request.channel_id, session_id,
         )
+        config_base = get_config()
         inputs = {
             "conversation_id": request.session_id,
-            "query": request.params.get("query", ""),
+            "query": build_user_prompt(
+                request.params.get("query", ""),
+                files=request.params.get("files", {}),
+                channel=request.session_id.split('_')[0],
+                language=config_base.get("preferred_language", "zh")
+            ),
         }
 
         query = request.params.get("query", "")
@@ -901,10 +907,15 @@ class JiuWenClaw:
             "[JiuWenClaw] 处理流式请求: request_id=%s channel_id=%s session_id=%s",
             request.request_id, request.channel_id, session_id,
         )
-
+        config_base = get_config()
         inputs = {
             "conversation_id": request.session_id,
-            "query": request.params.get("query", ""),
+            "query": build_user_prompt(
+                request.params.get("query", ""),
+                files=request.params.get("files", {}),
+                channel=request.session_id.split('_')[0],
+                language=config_base.get("preferred_language", "zh")
+            ),
         }
 
         # supplement 任务：读取现有 todo 待办，拼入 query 让 agent 知道有未完成的任务
@@ -1065,7 +1076,7 @@ class JiuWenClaw:
                         )
                         # Check if this is a chunked/partial answer (streaming)
                         is_chunked = (
-                            output.get("chunked", False) or output.get("partial", False)
+                            output.get("chunked", False)
                             if isinstance(output, dict)
                             else False
                         )
