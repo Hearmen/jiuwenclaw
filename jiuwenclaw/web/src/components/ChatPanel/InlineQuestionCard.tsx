@@ -129,8 +129,13 @@ export function InlineQuestionCard({ onSubmit }: InlineQuestionCardProps) {
               ) : (
                 <div className="px-4 pb-3 flex flex-col gap-2">
                   {question.options.map((option) => {
-                    const isAccept = option.label === t('chatUi.inlineQuestion.accept');
-                    const isReject = option.label === t('chatUi.inlineQuestion.reject');
+                    const isAccept = option.label === t('chatUi.inlineQuestion.accept')
+                      || option.label === t('chatUi.inlineQuestion.allowOnce')
+                      || option.label === '本次允许';
+                    const isAlwaysAllow = option.label === t('chatUi.inlineQuestion.alwaysAllow')
+                      || option.label === '总是允许';
+                    const isReject = option.label === t('chatUi.inlineQuestion.reject')
+                      || option.label === '拒绝';
                     return (
                       <button
                         key={option.label}
@@ -154,6 +159,10 @@ export function InlineQuestionCard({ onSubmit }: InlineQuestionCardProps) {
                             el.style.backgroundColor = 'var(--ok-subtle, rgba(34,197,94,0.12))';
                             el.style.borderColor = 'var(--ok)';
                             el.style.color = 'var(--ok)';
+                          } else if (isAlwaysAllow) {
+                            el.style.backgroundColor = 'var(--accent-subtle, rgba(59,130,246,0.12))';
+                            el.style.borderColor = 'var(--accent)';
+                            el.style.color = 'var(--accent)';
                           } else if (isReject) {
                             el.style.backgroundColor = 'var(--danger-subtle, rgba(239,68,68,0.12))';
                             el.style.borderColor = 'var(--danger)';

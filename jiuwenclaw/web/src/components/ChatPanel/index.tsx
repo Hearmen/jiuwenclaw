@@ -98,7 +98,7 @@ export function ChatPanel({
           <>
             <MessageList messages={messages} />
             <SubtaskProgress />
-            {/* 内联演进审批卡片 */}
+            {/* 内联审批卡片（演进审批 & 权限审批共用） */}
             <InlineQuestionCard onSubmit={onUserAnswer} />
             {/* 思考中指示器 */}
             {isThinking && <ThinkingIndicator />}

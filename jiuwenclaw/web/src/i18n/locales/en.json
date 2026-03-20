@@ -598,7 +598,9 @@
       "header": "Evolution approval",
       "selected": "Selected",
       "accept": "Accept",
-      "reject": "Reject"
+      "reject": "Reject",
+      "allowOnce": "Allow once",
+      "alwaysAllow": "Always allow"
     }
   },
   "network": {

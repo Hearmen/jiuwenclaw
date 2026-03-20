@@ -598,7 +598,9 @@
       "header": "演进审批",
       "selected": "已选择",
       "accept": "接收",
-      "reject": "拒绝"
+      "reject": "拒绝",
+      "allowOnce": "本次允许",
+      "alwaysAllow": "总是允许"
     }
   },
   "network": {

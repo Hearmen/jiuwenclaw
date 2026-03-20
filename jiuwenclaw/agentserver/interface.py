@@ -46,6 +46,11 @@ from jiuwenclaw.agentserver.tools.video_understanding import video_understanding
 from jiuwenclaw.agentserver.memory.compaction import ContextCompactionManager
 from jiuwenclaw.agentserver.memory.config import clear_config_cache
 from jiuwenclaw.agentserver.memory import clear_memory_manager_cache
+from jiuwenclaw.agentserver.permissions import (
+    init_permission_engine,
+    get_permission_engine,
+    PermissionLevel,
+)
 from jiuwenclaw.agentserver.skill_manager import SkillManager, _SKILLS_DIR
 from jiuwenclaw.evolution.service import EvolutionService
 from jiuwenclaw.schema.agent import AgentRequest, AgentResponse, AgentResponseChunk
@@ -345,7 +350,15 @@ class JiuWenClaw:
                 self._instance.ability_manager.add(cron_tool.card)
         except Exception as exc:
             logger.error("[JiuWenClaw] 定时工具加载失败， reason=%s", exc)
+        # ---- 权限引擎初始化 ----
+        permissions_cfg = config_base.get("permissions", {})
+        init_permission_engine(permissions_cfg)
+        logger.info(
+            "[JiuWenClaw] Permission engine initialized: enabled=%s",
+            permissions_cfg.get("enabled", True),
+        )
         logger.info("[JiuWenClaw] 初始化完成: agent_name=%s", self._agent_name)
+
 
     def reload_agent_config(self) -> None:
         """从 config.yaml 重新加载配置并 reconfigure 当前实例，使模型/API 等配置生效且不重启进程。"""
@@ -373,6 +386,14 @@ class JiuWenClaw:
             _env_auto_scan = os.getenv("EVOLUTION_AUTO_SCAN")
             if _env_auto_scan is not None:
                 evo_svc.auto_scan = _env_auto_scan.lower() in ("true", "1", "yes")
+        # 权限配置热更新
+        permissions_cfg = config_base.get("permissions", {})
+        try:
+            engine = get_permission_engine()
+            engine.update_config(permissions_cfg)
+            logger.info("[JiuWenClaw] Permission config reloaded: enabled=%s", permissions_cfg.get("enabled", True))
+        except Exception as exc:
+            logger.warning("[JiuWenClaw] Permission config reload failed: %s", exc)
         logger.info("[JiuWenClaw] 配置已热更新，未重启进程")
 
     async def _register_runtime_tools(
@@ -696,7 +717,7 @@ class JiuWenClaw:
         if request.req_method == ReqMethod.CHAT_CANCEL:
             return await self.process_interrupt(request)
 
-        # User answer routing (evolution approval keep/undo)
+        # User answer routing (evolution approval & permission approval)
         if request.req_method == ReqMethod.CHAT_ANSWER:
             return await self._handle_user_answer(request)
 

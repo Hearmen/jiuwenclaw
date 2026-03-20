@@ -10,6 +10,8 @@ from __future__ import annotations
 import asyncio
 import importlib.util
 import sys
+import uuid
+from pathlib import Path
 from typing import Any, AsyncIterator, Dict, List, Optional
 
 import tiktoken
@@ -27,6 +29,13 @@ from openjiuwen.core.session.stream import OutputSchema
 from openjiuwen.core.session.stream.base import StreamMode
 from openjiuwen.core.single_agent import AgentCard, ReActAgent
 
+from jiuwenclaw.agentserver.permissions import (
+    assess_command_risk_with_llm,
+    check_tool_permissions,
+    persist_external_directory_allow,
+    persist_permission_allow_rule,
+)
+from jiuwenclaw.agentserver.permissions.models import PermissionLevel
 from jiuwenclaw.agentserver.tools.todo_toolkits import TodoToolkit
 from jiuwenclaw.evolution.service import EvolutionService
 from jiuwenclaw.utils import get_agent_memory_dir, get_workspace_dir, logger
@@ -44,6 +53,8 @@ _TODO_TOOL_NAMES = frozenset(
 )
 _CMD_EVOLVE = "/evolve"
 _CMD_SOLIDIFY = "/solidify"
+
+_PERMISSION_APPROVAL_TIMEOUT = 300  # Auto-reject after 5 minute timeout
 
 
 def _deduplicate_tools_by_name(tools: List[Any]) -> List[Any]:
@@ -107,6 +118,8 @@ class JiuClawReActAgent(ReActAgent):
     def __init__(self, card: AgentCard) -> None:
         self._evolution_service: Optional[EvolutionService] = None
         self._pending_auto_evolution_history: Optional[List[Any]] = None
+        self._pending_approvals: Dict[str, asyncio.Future] = {}  # request_id -> Future (权限审批)
+        self._pending_permission_meta: Dict[str, dict] = {}  # request_id -> {tool_name, tool_args}
         super().__init__(card)
         self._stream_tasks: set[asyncio.Task] = set()
         self._pause_events: dict[str, asyncio.Event] = {}  # task_key -> event
@@ -401,6 +414,15 @@ class JiuClawReActAgent(ReActAgent):
                     for tc in ai_message.tool_calls:
                         await self._emit_tool_call(session, tc)
 
+                # ---- 权限检查：在执行工具前逐一检查权限 ----
+                allowed_tool_calls, denied_results = await check_tool_permissions(
+                    ai_message.tool_calls,
+                    channel_id=getattr(session, "channel_id", "web") if session else "web",
+                    session_id=session_id or None,
+                    session=session,
+                    request_approval_callback=self._request_permission_approval,
+                )
+
                 # Add assistant message to context before tool execution
                 ai_msg_for_context = AssistantMessage(
                     content=ai_message.content,
@@ -410,16 +432,28 @@ class JiuClawReActAgent(ReActAgent):
 
                 tool_messages_added = False
                 try:
-                    results = await self.ability_manager.execute(
-                        ai_message.tool_calls, session
-                    )
-
-                    for i, (_result, tool_msg) in enumerate(results):
-                        await context.add_messages(tool_msg)
-                        # Emit tool_result event
+                    # 先把被拒绝的工具调用写入 ToolMessage
+                    from openjiuwen.core.foundation.llm import ToolMessage as _ToolMsg
+                    for tc, deny_msg in denied_results:
+                        tool_call_id = getattr(tc, "id", "")
+                        await context.add_messages(_ToolMsg(
+                            content=deny_msg,
+                            tool_call_id=tool_call_id,
+                        ))
                         if session is not None:
-                            tc = ai_message.tool_calls[i] if i < len(ai_message.tool_calls) else None
-                            await self._emit_tool_result(session, tc, _result)
+                            await self._emit_tool_result(session, tc, deny_msg)
+
+                    # 执行被允许的工具调用
+                    if allowed_tool_calls:
+                        results = await self.ability_manager.execute(
+                            allowed_tool_calls, session
+                        )
+
+                        for i, (_result, tool_msg) in enumerate(results):
+                            await context.add_messages(tool_msg)
+                            if session is not None:
+                                tc = allowed_tool_calls[i] if i < len(allowed_tool_calls) else None
+                                await self._emit_tool_result(session, tc, _result)
                     tool_messages_added = True
 
                     # Detect if todo tool was called, emit todo.updated if so
@@ -608,7 +642,123 @@ class JiuClawReActAgent(ReActAgent):
         finally:
             self._stream_tasks.discard(task)
             self._pause_events.pop(task_key, None)
-            
+
+    async def _request_permission_approval(
+        self,
+        session: Session,
+        tool_call: Any,
+        result: Any,
+    ) -> str:
+        """Request user approval for a tool call via chat.ask_user_question.
+
+        Returns:
+            "allow_once" | "allow_always" | "deny"
+            Timeout auto-returns "deny".
+        """
+        import json as _json
+
+        request_id = f"perm_approve_{uuid.uuid4().hex[:8]}"
+        loop = asyncio.get_event_loop()
+        future: asyncio.Future = loop.create_future()
+        self._pending_approvals[request_id] = future
+
+        tool_name = getattr(tool_call, "name", "")
+        tool_args = getattr(tool_call, "arguments", {})
+        if isinstance(tool_args, str):
+            try:
+                tool_args = _json.loads(tool_args)
+            except Exception:
+                tool_args = {}
+
+        #risk = assess_command_risk_static(tool_name, tool_args)
+        risk = await assess_command_risk_with_llm(
+            self._get_llm(), self._config.model_name, tool_name, tool_args
+        )
+
+        args_preview = ""
+        try:
+            raw = _json.dumps(tool_args, ensure_ascii=False, indent=2)
+            args_preview = raw[:500] if len(raw) > 500 else raw
+        except Exception:
+            args_preview = str(tool_args)[:500]
+
+        always_allow_hint = ""
+        #shell_injection_warning = ""
+        if tool_name == "mcp_exec_command":
+            cmd = tool_args.get("command", tool_args.get("cmd", "")) if isinstance(tool_args, dict) else ""
+            if cmd:
+                # import re as _re
+                # _ops_re = _re.compile(r'[;&|`<>]|\$[({]|\r?\n')
+                # if _ops_re.search(str(cmd)):
+                #     shell_injection_warning = (
+                #         "\n\n> **⚠ 安全警告：** 该命令包含 shell 操作符"
+                #         "（如 `&&` `;` `|` 等），可能存在命令注入风险，请仔细核查\n"
+                #     )
+                always_allow_hint = (
+                    f"\n\n> 选择「总是允许」将自动放行 `{cmd}` 命令"
+                )
+        elif tool_name:
+            always_allow_hint = f"\n\n> 选择「总是允许」将自动放行所有 `{tool_name}` 调用"
+
+        question_text = (
+            f"**工具 `{tool_name}` 需要授权才能执行**\n\n"
+            f"**安全风险评估：** {risk['icon']} **{risk['level']}风险**\n\n"
+            f"> {risk['explanation']}\n\n"
+        )
+        #question_text += shell_injection_warning
+        if args_preview and args_preview != "{}":
+            question_text += f"参数：\n```json\n{args_preview}\n```\n"
+        question_text += f"\n匹配规则：`{result.matched_rule or 'N/A'}`"
+        question_text += always_allow_hint
+
+        meta: dict = {
+            "tool_name": tool_name,
+            "tool_args": tool_args,
+        }
+        if result.matched_rule and "external_directory" in result.matched_rule:
+            meta["external_paths"] = getattr(result, "external_paths", None) or []
+        self._pending_permission_meta[request_id] = meta
+
+        try:
+            await session.write_stream(
+                OutputSchema(
+                    type="chat.ask_user_question",
+                    index=0,
+                    payload={
+                        "request_id": request_id,
+                        "questions": [
+                            {
+                                "question": question_text,
+                                "header": "权限审批",
+                                "options": [
+                                    {"label": "本次允许", "description": "仅本次授权执行"},
+                                    {"label": "总是允许", "description": "记住该规则，以后自动放行"},
+                                    {"label": "拒绝", "description": "拒绝执行此工具"},
+                                ],
+                                "multi_select": False,
+                            }
+                        ],
+                    },
+                )
+            )
+        except Exception:
+            logger.debug("_request_permission_approval: popup send failed", exc_info=True)
+            self._pending_approvals.pop(request_id, None)
+            self._pending_permission_meta.pop(request_id, None)
+            return "deny"
+
+        try:
+            return await asyncio.wait_for(future, timeout=_PERMISSION_APPROVAL_TIMEOUT)
+        except asyncio.TimeoutError:
+            logger.info(
+                "[ReActAgent] Permission approval timeout (tool=%s, id=%s), auto-rejecting",
+                tool_name, request_id,
+            )
+            return "deny"
+        finally:
+            self._pending_approvals.pop(request_id, None)
+            self._pending_permission_meta.pop(request_id, None)
+
     async def _emit_tool_call(self, session: Session, tool_call: Any) -> None:
         """Emit tool_call OutputSchema, notify frontend of tool call start."""
         try:
@@ -799,10 +949,43 @@ class JiuClawReActAgent(ReActAgent):
             logger.warning("Failed to fix incomplete tool context: %s", e)
 
     def resolve_evolution_approval(self, request_id: str, answers: list) -> bool:
-        """Delegate to EvolutionService."""
-        if self._evolution_service is None:
+        """解析用户审批：权限审批由本 agent 处理，演进审批委托 EvolutionService."""
+        if request_id.startswith("perm_approve_"):
+            return self._resolve_permission_approval(request_id, answers)
+        if self._evolution_service is not None:
+            return self._evolution_service.resolve_approval(request_id, answers)
+        return False
+
+    def _resolve_permission_approval(self, request_id: str, answers: list) -> bool:
+        """解析权限审批（总是允许/本次允许/拒绝）并 resolve Future."""
+        future = self._pending_approvals.get(request_id)
+        if future is None or future.done():
             return False
-        return self._evolution_service.resolve_approval(request_id, answers)
+        selected = (
+            answers[0].get("selected_options", [])
+            if answers and isinstance(answers[0], dict)
+            else []
+        )
+        if "总是允许" in selected:
+            meta = self._pending_permission_meta.get(request_id, {})
+            if meta:
+                external_paths = meta.get("external_paths") or []
+                if external_paths:
+                    persist_external_directory_allow(external_paths)
+                else:
+                    persist_permission_allow_rule(
+                        meta.get("tool_name", ""),
+                        meta.get("tool_args", {}),
+                    )
+            future.set_result("allow_always")
+            logger.info("[ReActAgent] Permission approval: request_id=%s decision=allow_always", request_id)
+        elif "本次允许" in selected:
+            future.set_result("allow_once")
+            logger.info("[ReActAgent] Permission approval: request_id=%s decision=allow_once", request_id)
+        else:
+            future.set_result("deny")
+            logger.info("[ReActAgent] Permission approval: request_id=%s decision=deny", request_id)
+        return True
 
     def _get_skill_messages(self) -> List[SystemMessage]:
         """Build Skill summary SystemMessage list.
