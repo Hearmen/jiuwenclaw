@@ -11,11 +11,14 @@ from __future__ import annotations
 import asyncio
 import inspect
 import json
+import os
 import secrets
 import time
 from dataclasses import dataclass, field
 from typing import Any, Awaitable, Callable
 from urllib.parse import parse_qs, urlparse
+
+import aiohttp
 
 from jiuwenclaw.utils import logger
 from jiuwenclaw.channel.base import BaseChannel, ChannelMetadata, RobotMessageRouter
@@ -159,6 +162,52 @@ class WebChannel(BaseChannel):
         if stream_id is not None:
             frame["stream_id"] = stream_id
         await self._broadcast(frame)
+
+    async def _download_file(self, url: str) -> bytes | None:
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.get(url) as response:
+                    if response.status == 200:
+                        return await response.read()
+                    else:
+                        logger.warning("WebChannel 文件下载失败: {}, 状态码: {}", url, response.status)
+                        return None
+        except Exception as e:
+            logger.warning("WebChannel 文件下载异常: {}, 错误: {}", url, e)
+            return None
+
+    async def _process_files(self, params: dict[str, Any]) -> dict[str, Any]:
+        files = params.get("files")
+        if not files or not isinstance(files, list):
+            return params
+
+        downloaded_files = []
+        workspace_dir = os.path.expanduser("~/.jiuwenclaw/workspace")
+
+        for file_info in files:
+            if not isinstance(file_info, dict):
+                downloaded_files.append(file_info)
+                continue
+
+            file_url = file_info.get("url") or file_info.get("uri") or ""
+            file_name = file_info.get("name") or file_info.get("filename") or "unknown_file"
+
+            if file_url:
+                file_content = await self._download_file(file_url)
+                if file_content:
+                    try:
+                        os.makedirs(workspace_dir, exist_ok=True)
+                        file_path = os.path.join(workspace_dir, file_name)
+                        with open(file_path, "wb") as f:
+                            f.write(file_content)
+                        file_info["path"] = file_path
+                    except Exception as e:
+                        logger.warning("WebChannel 文件保存失败: {}", e)
+
+            downloaded_files.append(file_info)
+
+        params["files"] = downloaded_files
+        return params
 
     # ── Channel 生命周期 ──────────────────────────────────
 
@@ -368,6 +417,8 @@ class WebChannel(BaseChannel):
         session_id = params.get("session_id")
         if not isinstance(session_id, str) or not session_id:
             session_id = self._make_session_id()
+
+        params = await self._process_files(params)
 
         user_message = Message(
             id=req_id,
