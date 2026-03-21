@@ -350,7 +350,9 @@ def setup_logger(log_level: str = "INFO") -> logging.Logger:
     logger = logging.getLogger("jiuwenclaw.app")
     logger.setLevel(getattr(logging, log_level.upper(), logging.INFO))
     logger.propagate = False
-    logger.handlers.clear()
+    for handler in logger.handlers[:]:
+        handler.close()
+        logger.removeHandler(handler)
 
     formatter = logging.Formatter(
         fmt="%(asctime)s.%(msecs)03d %(levelname)s %(name)s: %(message)s",

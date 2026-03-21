@@ -12,7 +12,7 @@ class TestSignalDetector:
     """Test SignalDetector class."""
 
     @staticmethod
-    def test_detect_no_signals(self):
+    def test_detect_no_signals():
         """Test detecting signals from messages without any signals."""
         detector = SignalDetector()
         messages = [
@@ -23,7 +23,7 @@ class TestSignalDetector:
         assert len(signals) == 0
 
     @staticmethod
-    def test_detect_execution_failure(self):
+    def test_detect_execution_failure():
         """Test detecting execution failure signals."""
         detector = SignalDetector()
         messages = [
@@ -42,7 +42,7 @@ class TestSignalDetector:
         assert "Command failed" in signals[0].excerpt
 
     @staticmethod
-    def test_detect_user_correction_chinese(self):
+    def test_detect_user_correction_chinese():
         """Test detecting user correction signals in Chinese."""
         detector = SignalDetector()
         messages = [
@@ -55,7 +55,7 @@ class TestSignalDetector:
         assert signals[0].section == "Examples"
 
     @staticmethod
-    def test_detect_user_correction_english(self):
+    def test_detect_user_correction_english():
         """Test detecting user correction signals in English."""
         detector = SignalDetector()
         messages = [
@@ -67,7 +67,7 @@ class TestSignalDetector:
         assert signals[0].type == "user_correction"
 
     @staticmethod
-    def test_detect_multiple_signals(self):
+    def test_detect_multiple_signals():
         """Test detecting multiple signals from messages."""
         detector = SignalDetector()
         messages = [
@@ -88,7 +88,7 @@ class TestSignalDetector:
         assert len(signals) >= 2
 
     @staticmethod
-    def test_deduplicate_signals(self):
+    def test_deduplicate_signals():
         """Test signal deduplication."""
         detector = SignalDetector()
         messages = [
@@ -100,7 +100,7 @@ class TestSignalDetector:
         assert len(signals) == 1
 
     @staticmethod
-    def test_detect_with_skill_from_tool_calls(self):
+    def test_detect_with_skill_from_tool_calls():
         """Test detecting skill name from tool calls."""
         detector = SignalDetector(skill_dir_map={"test-skill": "/path/to/test-skill"})
         messages = [
@@ -125,7 +125,7 @@ class TestSignalDetector:
         assert signals[0].skill_name == "test-skill"
 
     @staticmethod
-    def test_ignore_tool_schema_in_content(self):
+    def test_ignore_tool_schema_in_content():
         """Test that tool schema content is ignored even with error keywords."""
         detector = SignalDetector()
         messages = [
@@ -139,7 +139,7 @@ class TestSignalDetector:
         assert len(signals) == 0
 
     @staticmethod
-    def test_extract_around_match(self):
+    def test_extract_around_match():
         """Test excerpt extraction around matched text."""
         detector = SignalDetector()
         long_content = "Starting process... " * 10 + "ERROR: File not found" + " End of process... " * 10
@@ -152,7 +152,7 @@ class TestSignalDetector:
         assert "ERROR" in signals[0].excerpt or "error" in signals[0].excerpt.lower()
 
     @staticmethod
-    def test_various_error_keywords(self):
+    def test_various_error_keywords():
         """Test detection of various error keywords."""
         error_keywords = [
             "exception",
@@ -197,7 +197,7 @@ class TestSignalDetector:
         assert len(signals) == 1
 
     @staticmethod
-    def test_signal_to_dict_structure(self):
+    def test_signal_to_dict_structure():
         """Test that detected signals can be converted to dict properly."""
         detector = SignalDetector()
         messages = [

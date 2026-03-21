@@ -18,13 +18,13 @@ class TestEvolutionType:
     """Test EvolutionType enum."""
 
     @staticmethod
-    def test_evolution_type_values(self):
+    def test_evolution_type_values():
         """Test that EvolutionType has expected values."""
         assert EvolutionType.SKILL_EXPERIENCE.value == "skill_experience"
         assert EvolutionType.NEW_SKILL.value == "new_skill"
 
     @staticmethod
-    def test_evolution_type_comparison(self):
+    def test_evolution_type_comparison():
         """Test EvolutionType comparison."""
         assert EvolutionType.SKILL_EXPERIENCE == EvolutionType.SKILL_EXPERIENCE
         assert EvolutionType.SKILL_EXPERIENCE != EvolutionType.NEW_SKILL
@@ -34,7 +34,7 @@ class TestEvolutionChange:
     """Test EvolutionChange dataclass."""
 
     @staticmethod
-    def test_create_evolution_change(self):
+    def test_create_evolution_change():
         """Test creating an EvolutionChange."""
         change = EvolutionChange(
             section="Instructions",
@@ -48,7 +48,7 @@ class TestEvolutionChange:
         assert change.merge_target is None
 
     @staticmethod
-    def test_evolution_change_to_dict(self):
+    def test_evolution_change_to_dict():
         """Test converting EvolutionChange to dict."""
         change = EvolutionChange(
             section="Troubleshooting",
@@ -67,7 +67,7 @@ class TestEvolutionChange:
         }
 
     @staticmethod
-    def test_evolution_change_from_dict(self):
+    def test_evolution_change_from_dict():
         """Test creating EvolutionChange from dict."""
         data = {
             "section": "Examples",
@@ -84,7 +84,7 @@ class TestEvolutionChange:
         assert change.merge_target == "entry_456"
 
     @staticmethod
-    def test_evolution_change_from_dict_with_defaults(self):
+    def test_evolution_change_from_dict_with_defaults():
         """Test creating EvolutionChange from dict with default values."""
         data = {"content": "Test content"}
         change = EvolutionChange.from_dict(data)
@@ -95,7 +95,7 @@ class TestEvolutionChange:
         assert change.merge_target is None
 
     @staticmethod
-    def test_valid_sections_constant(self):
+    def test_valid_sections_constant():
         """Test that VALID_SECTIONS contains expected sections."""
         assert "Instructions" in VALID_SECTIONS
         assert "Examples" in VALID_SECTIONS
@@ -106,7 +106,7 @@ class TestEvolutionEntry:
     """Test EvolutionEntry dataclass."""
 
     @staticmethod
-    def test_create_evolution_entry(self):
+    def test_create_evolution_entry():
         """Test creating an EvolutionEntry."""
         change = EvolutionChange(
             section="Instructions",
@@ -126,7 +126,7 @@ class TestEvolutionEntry:
         assert entry.applied is False
 
     @staticmethod
-    def test_evolution_entry_make(self):
+    def test_evolution_entry_make():
         """Test EvolutionEntry.make factory method."""
         change = EvolutionChange(
             section="Examples",
@@ -145,7 +145,7 @@ class TestEvolutionEntry:
         assert entry.applied is False
 
     @staticmethod
-    def test_evolution_entry_to_dict(self):
+    def test_evolution_entry_to_dict():
         """Test converting EvolutionEntry to dict."""
         change = EvolutionChange(
             section="Troubleshooting",
@@ -169,7 +169,7 @@ class TestEvolutionEntry:
         assert "change" in result
 
     @staticmethod
-    def test_evolution_entry_from_dict(self):
+    def test_evolution_entry_from_dict():
         """Test creating EvolutionEntry from dict."""
         data = {
             "id": "ev_xyz789",
@@ -192,7 +192,7 @@ class TestEvolutionEntry:
         assert entry.change.section == "Instructions"
 
     @staticmethod
-    def test_evolution_entry_is_pending(self):
+    def test_evolution_entry_is_pending():
         """Test is_pending property."""
         change = EvolutionChange(
             section="Examples",
@@ -223,7 +223,7 @@ class TestEvolutionFile:
     """Test EvolutionFile dataclass."""
 
     @staticmethod
-    def test_create_evolution_file(self):
+    def test_create_evolution_file():
         """Test creating an EvolutionFile."""
         efile = EvolutionFile(skill_id="test-skill")
         assert efile.skill_id == "test-skill"
@@ -231,7 +231,7 @@ class TestEvolutionFile:
         assert len(efile.entries) == 0
 
     @staticmethod
-    def test_evolution_file_pending_entries(self):
+    def test_evolution_file_pending_entries():
         """Test pending_entries property."""
         change1 = EvolutionChange(
             section="Instructions",
@@ -268,7 +268,7 @@ class TestEvolutionFile:
         assert pending[0].id == "ev_001"
 
     @staticmethod
-    def test_evolution_file_to_dict(self):
+    def test_evolution_file_to_dict():
         """Test converting EvolutionFile to dict."""
         change = EvolutionChange(
             section="Troubleshooting",
@@ -294,7 +294,7 @@ class TestEvolutionFile:
         assert result["entries"][0]["id"] == "ev_123"
 
     @staticmethod
-    def test_evolution_file_from_dict(self):
+    def test_evolution_file_from_dict():
         """Test creating EvolutionFile from dict."""
         data = {
             "skill_id": "another-skill",
@@ -323,7 +323,7 @@ class TestEvolutionFile:
         assert efile.entries[0].id == "ev_456"
 
     @staticmethod
-    def test_evolution_file_empty(self):
+    def test_evolution_file_empty():
         """Test creating empty EvolutionFile."""
         efile = EvolutionFile.empty("empty-skill")
         assert efile.skill_id == "empty-skill"
@@ -334,7 +334,7 @@ class TestEvolutionSignal:
     """Test EvolutionSignal dataclass."""
 
     @staticmethod
-    def test_create_evolution_signal(self):
+    def test_create_evolution_signal():
         """Test creating an EvolutionSignal."""
         signal = EvolutionSignal(
             type="execution_failure",
@@ -352,7 +352,7 @@ class TestEvolutionSignal:
         assert signal.skill_name == "test-skill"
 
     @staticmethod
-    def test_evolution_signal_to_dict(self):
+    def test_evolution_signal_to_dict():
         """Test converting EvolutionSignal to dict."""
         signal = EvolutionSignal(
             type="user_correction",
@@ -370,7 +370,7 @@ class TestEvolutionSignal:
         assert result["tool_name"] is None
 
     @staticmethod
-    def test_evolution_signal_with_optional_fields(self):
+    def test_evolution_signal_with_optional_fields():
         """Test EvolutionSignal with None optional fields."""
         signal = EvolutionSignal(
             type="execution_failure",

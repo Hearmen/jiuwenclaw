@@ -16,40 +16,40 @@ class TestPathResolution:
     """Test path resolution functions."""
 
     @staticmethod
-    def test_get_root_dir(self):
+    def test_get_root_dir():
         """Test get_root_dir returns a Path."""
         root = utils.get_root_dir()
         assert isinstance(root, Path)
         assert root.exists()
 
     @staticmethod
-    def test_get_config_dir(self):
+    def test_get_config_dir():
         """Test get_config_dir returns a Path."""
         config_dir = utils.get_config_dir()
         assert isinstance(config_dir, Path)
 
     @staticmethod
-    def test_get_workspace_dir(self):
+    def test_get_workspace_dir():
         """Test get_workspace_dir returns a Path."""
         workspace = utils.get_workspace_dir()
         assert isinstance(workspace, Path)
 
     @staticmethod
-    def test_get_config_file(self):
+    def test_get_config_file():
         """Test get_config_file returns config.yaml path."""
         config_file = utils.get_config_file()
         assert isinstance(config_file, Path)
         assert config_file.name == "config.yaml"
 
     @staticmethod
-    def test_get_agent_workspace_dir(self):
+    def test_get_agent_workspace_dir():
         """Test get_agent_workspace_dir returns agent workspace."""
         agent_workspace = utils.get_agent_workspace_dir()
         assert isinstance(agent_workspace, Path)
         assert "agent" in str(agent_workspace)
 
     @staticmethod
-    def test_path_caching(self):
+    def test_path_caching():
         """Test that path results are cached."""
         # First call
         root1 = utils.get_root_dir()
@@ -62,7 +62,7 @@ class TestPackageDetection:
     """Test package installation detection."""
 
     @staticmethod
-    def test_is_package_installation(self):
+    def test_is_package_installation():
         """Test package installation detection."""
         # In normal testing, this should return False (development mode)
         result = utils.is_package_installation()
@@ -73,26 +73,26 @@ class TestLoggerSetup:
     """Test logger setup."""
 
     @staticmethod
-    def test_setup_logger_default(self):
+    def test_setup_logger_default():
         """Test logger setup with default level."""
         logger = utils.setup_logger()
         assert logger.name == "jiuwenclaw.app"
         assert logger.level == 20  # INFO level
 
     @staticmethod
-    def test_setup_logger_debug(self):
+    def test_setup_logger_debug():
         """Test logger setup with DEBUG level."""
         logger = utils.setup_logger("DEBUG")
         assert logger.level == 10  # DEBUG level
 
     @staticmethod
-    def test_setup_logger_error(self):
+    def test_setup_logger_error():
         """Test logger setup with ERROR level."""
         logger = utils.setup_logger("ERROR")
         assert logger.level == 40  # ERROR level
 
     @staticmethod
-    def test_logger_handlers(self):
+    def test_logger_handlers():
         """Test that logger has both console and file handlers."""
         logger = utils.setup_logger()
         handler_types = [type(h).__name__ for h in logger.handlers]
@@ -120,13 +120,13 @@ class TestConstants:
     """Test module constants."""
 
     @staticmethod
-    def test_user_home_defined(self):
+    def test_user_home_defined():
         """Test USER_HOME is defined and is a Path."""
         assert hasattr(utils, "USER_HOME")
         assert isinstance(utils.USER_HOME, Path)
 
     @staticmethod
-    def test_user_workspace_dir_defined(self):
+    def test_user_workspace_dir_defined():
         """Test USER_WORKSPACE_DIR is defined."""
         assert hasattr(utils, "USER_WORKSPACE_DIR")
         assert isinstance(utils.USER_WORKSPACE_DIR, Path)

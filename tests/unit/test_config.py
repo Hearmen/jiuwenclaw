@@ -16,39 +16,39 @@ class TestResolveEnvVars:
     """Test environment variable resolution in config."""
 
     @staticmethod
-    def test_resolve_string_with_env_var(self, monkeypatch: pytest.MonkeyPatch):
+    def test_resolve_string_with_env_var(monkeypatch: pytest.MonkeyPatch):
         """Test resolving string with environment variable."""
         monkeypatch.setenv("TEST_VAR", "test_value")
         result = resolve_env_vars("${TEST_VAR}")
         assert result == "test_value"
 
     @staticmethod
-    def test_resolve_string_with_default(self):
+    def test_resolve_string_with_default():
         """Test resolving string with default value."""
         result = resolve_env_vars("${TEST_VAR:-default_value}")
         assert result == "default_value"
 
     @staticmethod
-    def test_resolve_string_with_env_and_default(self, monkeypatch: pytest.MonkeyPatch):
+    def test_resolve_string_with_env_and_default(monkeypatch: pytest.MonkeyPatch):
         """Test resolving string when env var exists with default."""
         monkeypatch.setenv("TEST_VAR", "actual_value")
         result = resolve_env_vars("${TEST_VAR:-default_value}")
         assert result == "actual_value"
 
     @staticmethod
-    def test_resolve_empty_string(self):
+    def test_resolve_empty_string():
         """Test resolving empty string."""
         result = resolve_env_vars("")
         assert result == ""
 
     @staticmethod
-    def test_resolve_string_without_env_var(self):
+    def test_resolve_string_without_env_var():
         """Test resolving string without environment variable syntax."""
         result = resolve_env_vars("plain_string")
         assert result == "plain_string"
 
     @staticmethod
-    def test_resolve_dict_with_env_vars(self, monkeypatch: pytest.MonkeyPatch):
+    def test_resolve_dict_with_env_vars(monkeypatch: pytest.MonkeyPatch):
         """Test resolving dictionary with environment variables."""
         monkeypatch.setenv("API_KEY", "secret_key")
         monkeypatch.setenv("PORT", "8080")
@@ -65,7 +65,7 @@ class TestResolveEnvVars:
         }
 
     @staticmethod
-    def test_resolve_list_with_env_vars(self, monkeypatch: pytest.MonkeyPatch):
+    def test_resolve_list_with_env_vars(monkeypatch: pytest.MonkeyPatch):
         """Test resolving list with environment variables."""
         monkeypatch.setenv("VAR1", "value1")
         monkeypatch.setenv("VAR2", "value2")
@@ -78,7 +78,7 @@ class TestResolveEnvVars:
         assert result == ["value1", "value2", "static_value"]
 
     @staticmethod
-    def test_resolve_nested_structure(self, monkeypatch: pytest.MonkeyPatch):
+    def test_resolve_nested_structure(monkeypatch: pytest.MonkeyPatch):
         """Test resolving nested structure with environment variables."""
         monkeypatch.setenv("HOST", "example.com")
         input_dict = {
@@ -98,7 +98,7 @@ class TestResolveEnvVars:
         }
 
     @staticmethod
-    def test_resolve_multiple_vars_in_string(self, monkeypatch: pytest.MonkeyPatch):
+    def test_resolve_multiple_vars_in_string(monkeypatch: pytest.MonkeyPatch):
         """Test resolving multiple environment variables in one string."""
         monkeypatch.setenv("USER", "john")
         monkeypatch.setenv("DOMAIN", "example.com")
@@ -106,7 +106,7 @@ class TestResolveEnvVars:
         assert result == "john@example.com"
 
     @staticmethod
-    def test_resolve_non_string_types(self):
+    def test_resolve_non_string_types():
         """Test that non-string types are returned as-is."""
         assert resolve_env_vars(123) == 123
         assert resolve_env_vars(True) is True
@@ -118,14 +118,14 @@ class TestConfigFunctions:
     """Test config module functions."""
 
     @staticmethod
-    def test_get_config_raw(self, temp_config_file: Path):
+    def test_get_config_raw(temp_config_file: Path):
         """Test reading raw config without env resolution."""
         config = get_config_raw()
         assert config is not None
         assert "model" in config or "channels" in config
 
     @staticmethod
-    def test_config_file_structure(self, temp_config_file: Path):
+    def test_config_file_structure(temp_config_file: Path):
         """Test that config file has expected structure."""
         config = get_config_raw()
         # Check for common top-level keys

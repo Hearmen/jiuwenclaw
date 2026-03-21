@@ -12,7 +12,7 @@ class TestReqMethod:
     """Test ReqMethod enum."""
 
     @staticmethod
-    def test_chat_methods(self):
+    def test_chat_methods():
         """Test chat-related request methods."""
         assert ReqMethod.CHAT_SEND.value == "chat.send"
         assert ReqMethod.CHAT_RESUME.value == "chat.resume"
@@ -20,20 +20,20 @@ class TestReqMethod:
         assert ReqMethod.CHAT_ANSWER.value == "chat.user_answer"
 
     @staticmethod
-    def test_config_methods(self):
+    def test_config_methods():
         """Test config-related request methods."""
         assert ReqMethod.CONFIG_GET.value == "config.get"
         assert ReqMethod.CONFIG_SET.value == "config.set"
 
     @staticmethod
-    def test_session_methods(self):
+    def test_session_methods():
         """Test session-related request methods."""
         assert ReqMethod.SESSION_LIST.value == "session.list"
         assert ReqMethod.SESSION_CREATE.value == "session.create"
         assert ReqMethod.SESSION_DELETE.value == "session.delete"
 
     @staticmethod
-    def test_skills_methods(self):
+    def test_skills_methods():
         """Test skills-related request methods."""
         assert ReqMethod.SKILLS_LIST.value == "skills.list"
         assert ReqMethod.SKILLS_INSTALL.value == "skills.install"
@@ -44,13 +44,13 @@ class TestEventType:
     """Test EventType enum."""
 
     @staticmethod
-    def test_connection_events(self):
+    def test_connection_events():
         """Test connection-related event types."""
         assert EventType.CONNECTION_ACK.value == "connection.ack"
         assert EventType.HELLO.value == "hello"
 
     @staticmethod
-    def test_chat_events(self):
+    def test_chat_events():
         """Test chat-related event types."""
         assert EventType.CHAT_DELTA.value == "chat.delta"
         assert EventType.CHAT_FINAL.value == "chat.final"
@@ -62,7 +62,7 @@ class TestMode:
     """Test Mode enum."""
 
     @staticmethod
-    def test_mode_values(self):
+    def test_mode_values():
         """Test mode enum values."""
         assert Mode.AGENT.value == "agent"
         assert Mode.PLAN.value == "plan"
@@ -72,7 +72,7 @@ class TestAgentRequest:
     """Test AgentRequest dataclass."""
 
     @staticmethod
-    def test_create_agent_request_minimal(self):
+    def test_create_agent_request_minimal():
         """Test creating AgentRequest with minimal fields."""
         request = AgentRequest(request_id="test-123")
         assert request.request_id == "test-123"
@@ -83,7 +83,7 @@ class TestAgentRequest:
         assert request.is_stream is False
 
     @staticmethod
-    def test_create_agent_request_full(self):
+    def test_create_agent_request_full():
         """Test creating AgentRequest with all fields."""
         request = AgentRequest(
             request_id="test-456",
@@ -109,7 +109,7 @@ class TestAgentResponse:
     """Test AgentResponse dataclass."""
 
     @staticmethod
-    def test_create_agent_response_success(self):
+    def test_create_agent_response_success():
         """Test creating successful AgentResponse."""
         response = AgentResponse(
             request_id="req-1",
@@ -124,7 +124,7 @@ class TestAgentResponse:
         assert response.metadata is None
 
     @staticmethod
-    def test_create_agent_response_error(self):
+    def test_create_agent_response_error():
         """Test creating error AgentResponse."""
         response = AgentResponse(
             request_id="req-2",
@@ -142,7 +142,7 @@ class TestAgentResponseChunk:
     """Test AgentResponseChunk dataclass."""
 
     @staticmethod
-    def test_create_response_chunk(self):
+    def test_create_response_chunk():
         """Test creating AgentResponseChunk."""
         chunk = AgentResponseChunk(
             request_id="req-3",
@@ -156,7 +156,7 @@ class TestAgentResponseChunk:
         assert chunk.is_complete is False
 
     @staticmethod
-    def test_create_final_chunk(self):
+    def test_create_final_chunk():
         """Test creating final response chunk."""
         chunk = AgentResponseChunk(
             request_id="req-4",
@@ -171,7 +171,7 @@ class TestMessage:
     """Test Message dataclass."""
 
     @staticmethod
-    def test_create_request_message(self):
+    def test_create_request_message():
         """Test creating a request message."""
         message = Message(
             id="msg-1",
@@ -194,7 +194,7 @@ class TestMessage:
         assert message.event_type is None
 
     @staticmethod
-    def test_create_response_message(self):
+    def test_create_response_message():
         """Test creating a response message."""
         message = Message(
             id="msg-2",
@@ -210,7 +210,7 @@ class TestMessage:
         assert message.payload == {"response": "Hello"}
 
     @staticmethod
-    def test_create_event_message(self):
+    def test_create_event_message():
         """Test creating an event message."""
         message = Message(
             id="msg-3",
@@ -226,7 +226,7 @@ class TestMessage:
         assert message.event_type == EventType.CHAT_DELTA
 
     @staticmethod
-    def test_create_streaming_message(self):
+    def test_create_streaming_message():
         """Test creating a streaming message."""
         message = Message(
             id="msg-4",
@@ -245,7 +245,7 @@ class TestMessage:
         assert message.stream_id == "stream-123"
 
     @staticmethod
-    def test_message_mode(self):
+    def test_message_mode():
         """Test message mode field."""
         plan_message = Message(
             id="msg-5",
