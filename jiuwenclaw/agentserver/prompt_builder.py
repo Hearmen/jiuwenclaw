@@ -808,6 +808,8 @@ def build_system_prompt(mode: str, language: str, channel: str) -> str:
     """
 
     system_prompt = _start_prompt(language) + '\n'
+    # Inject current time so the model can reason about "now"
+    system_prompt += _time_prompt(language) + '\n'
     system_prompt += _context_prompt(language) + '\n'
     system_prompt += _skills_prompt(language) + '\n'
     system_prompt += _tool_prompt(mode, language) + '\n'
