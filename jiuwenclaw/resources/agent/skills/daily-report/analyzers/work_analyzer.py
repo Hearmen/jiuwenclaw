@@ -16,6 +16,10 @@ from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any, Optional
+from zoneinfo import ZoneInfo
+
+# 与 run_report 等日报技能一致：默认日历日/分析时间使用东八区
+_REPORT_TZ = ZoneInfo("Asia/Shanghai")
 
 # 尝试导入分词库
 try:
@@ -209,7 +213,8 @@ class WorkAnalyzer:
 
         return metrics
 
-    def _calculate_productivity_score(self, metrics: EfficiencyMetrics) -> float:
+    @staticmethod
+    def _calculate_productivity_score(metrics: EfficiencyMetrics) -> float:
         """计算生产力得分"""
         score = 0.0
 
@@ -231,8 +236,9 @@ class WorkAnalyzer:
             score += 10
 
         return min(score, 100.0)
-
-    def _calculate_focus_score(self, metrics: EfficiencyMetrics) -> float:
+        
+    @staticmethod
+    def _calculate_focus_score(metrics: EfficiencyMetrics) -> float:
         """计算专注度得分"""
         score = 100.0
 
@@ -251,7 +257,8 @@ class WorkAnalyzer:
         if metrics.emails_received > 20:
             score -= min((metrics.emails_received - 20) * 0.5, 20)
 
-        return max(score, 0.0)
+        # 指标约定为 0–100；起点 100 且 commit 合理时可 +10，需封顶
+        return min(max(score, 0.0), 100.0)
 
     def generate_comparison(
         self,
@@ -353,8 +360,8 @@ class WorkAnalyzer:
             AnalysisResult: 分析结果
         """
         result = AnalysisResult(
-            date=data.get("date", datetime.now().strftime("%Y-%m-%d")),
-            analyzed_at=datetime.now(),
+            date=data.get("date", datetime.now(_REPORT_TZ).strftime("%Y-%m-%d")),
+            analyzed_at=datetime.now(_REPORT_TZ),
         )
 
         # 计算效率指标
@@ -385,7 +392,8 @@ class WorkAnalyzer:
 
         return result
 
-    def _generate_summary(self, data: dict, metrics: EfficiencyMetrics) -> str:
+    @staticmethod
+    def _generate_summary(data: dict, metrics: EfficiencyMetrics) -> str:
         """生成工作摘要"""
         parts = []
 
@@ -411,8 +419,9 @@ class WorkAnalyzer:
 
         return "，".join(parts) + "。"
 
+    @staticmethod
     def _generate_suggestions(
-        self, metrics: EfficiencyMetrics, trends: TrendComparison
+        metrics: EfficiencyMetrics, trends: TrendComparison
     ) -> list[str]:
         """生成工作建议"""
         suggestions = []
@@ -450,7 +459,7 @@ def main():
 
     # 创建测试数据
     test_data = {
-        "date": datetime.now().strftime("%Y-%m-%d"),
+        "date": datetime.now(_REPORT_TZ).strftime("%Y-%m-%d"),
         "git": {
             "total_commits": 5,
             "total_files_changed": 12,

@@ -178,8 +178,8 @@ class CronController:
         name: str,
         cron_expr: str,
         timezone: str,
-        targets: str,
         description: str,
+        targets: str = "",
         enabled: bool = True,
         wake_offset_seconds: int | None = None,
     ) -> dict[str, Any]:
@@ -290,7 +290,6 @@ class CronController:
                             "type": "string",
                             "enum": [e.value for e in CronTargetChannel],
                             "description": "推送频道：web=网页, feishu=飞书, whatsapp=WhatsApp, wecom=企业微信。不传则使用当前请求来源频道",
-                            "default": self._target_channel.value,
                         },
                         "enabled": {
                             "type": "boolean",

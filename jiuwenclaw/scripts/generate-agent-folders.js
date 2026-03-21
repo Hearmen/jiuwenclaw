@@ -4,13 +4,9 @@ const path = require('path');
 const scriptDir = __dirname;
 const envRoot = process.env.JIUWENCLAW_ROOT ? path.resolve(process.env.JIUWENCLAW_ROOT) : '';
 const agentFromEnv = envRoot ? path.join(envRoot, 'agent') : '';
-const legacyWorkspace = path.join(scriptDir, '../../workspace');
-const packageWorkspace = path.join(scriptDir, '../resources/workspace');
-const legacyAgentFromWorkspace = path.join(legacyWorkspace, 'agent');
-const packageAgentFromWorkspace = path.join(packageWorkspace, 'agent');
-const packageAgentRoot = path.join(scriptDir, '..', 'agent');
+const packageAgentFromResources = path.join(scriptDir, '../resources/agent');
 
-const agentRoot = [agentFromEnv, packageAgentRoot, legacyAgentFromWorkspace, packageAgentFromWorkspace]
+const agentRoot = [agentFromEnv, packageAgentFromResources]
   .filter(Boolean)
   .find((candidate) => fs.existsSync(candidate));
 

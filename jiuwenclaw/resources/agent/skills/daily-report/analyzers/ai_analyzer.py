@@ -245,7 +245,8 @@ class AIAnalyzer:
         response = await self._call_llm(system_prompt, user_prompt)
         return response.strip() if response else self._generate_fallback_summary(data)
 
-    def _generate_fallback_summary(self, data: dict) -> str:
+    @staticmethod
+    def _generate_fallback_summary(data: dict) -> str:
         """生成备用摘要（当 LLM 不可用时）"""
         git_data = data.get("git", {})
         todo_data = data.get("todo", {})
@@ -320,8 +321,9 @@ class AIAnalyzer:
         # 备用建议
         return self._generate_fallback_suggestions(pending_tasks, in_progress)
 
+    @staticmethod
     def _generate_fallback_suggestions(
-        self, pending: list[str], in_progress: list[str]
+        pending: list[str], in_progress: list[str]
     ) -> list[str]:
         """生成备用建议"""
         suggestions = []
@@ -406,7 +408,8 @@ class AIAnalyzer:
 
         return result
 
-    def _generate_pattern_description(self, pattern: WorkPatternResult) -> str:
+    @staticmethod
+    def _generate_pattern_description(pattern: WorkPatternResult) -> str:
         """生成工作模式描述"""
         parts = []
 

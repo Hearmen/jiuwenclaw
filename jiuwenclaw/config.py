@@ -129,6 +129,18 @@ def update_preferred_language_in_config(lang: str) -> None:
     _dump_yaml_round_trip(_CONFIG_YAML_PATH, data)
 
 
+def set_preferred_language_in_config_file(config_path: Path, lang: str) -> None:
+    """将 preferred_language 写入指定 config.yaml（用于 init 等尚未绑定全局路径的场景）。"""
+    lang = str(lang or "zh").strip().lower()
+    if lang not in ("zh", "en"):
+        lang = "zh"
+    if not config_path.exists():
+        return
+    data = _load_yaml_round_trip(config_path)
+    data["preferred_language"] = lang
+    _dump_yaml_round_trip(config_path, data)
+
+
 def update_browser_in_config(updates: dict[str, Any]) -> None:
     """只更新 browser 段（如 chrome_path）并写回。"""
     data = _load_yaml_round_trip(_CONFIG_YAML_PATH)

@@ -76,28 +76,28 @@ daily-report/
 **脚本会自动采集以下数据**：
 - **Git 提交记录**：通过 `git log` 命令读取 `D:/Download/jiuwenclaw` 仓库的提交历史
 - **邮箱邮件统计**：通过 IMAP 协议连接 `zxworkem@163.com` 读取邮件统计（需要邮箱授权码）
-- **记忆系统**：读取 `workspace/agent/memory/` 目录下的每日记忆文件
-- **待办事项**：读取 `workspace/session/` 目录下的 todo.md 文件
+- **记忆系统**：读取 `~/.jiuwenclaw/agent/memory/` 目录下的每日记忆文件
+- **待办事项**：读取 `~/.jiuwenclaw/agent/sessions/` 下各会话的 `todo.md` 文件
 
 ### 手动触发
 
 当用户请求生成日报/周报/月报时，**执行以下命令**：
 
 ```bash
-# 生成今日日报（包含Git提交、待办任务、记忆数据、AI智能分析）
-cd D:/Download/jiuwenclaw && python workspace/agent/skills/daily-report/run_report.py daily --save
+# 生成今日日报（记忆/待办/Git 等；Git 在仓库根目录统计）
+python ~/.jiuwenclaw/agent/skills/daily-report/run_report.py daily --save
 
 # 生成指定日期日报
-cd D:/Download/jiuwenclaw && python workspace/agent/skills/daily-report/run_report.py daily --date 2026-03-06 --save
+python ~/.jiuwenclaw/agent/skills/daily-report/run_report.py daily --date 2026-03-06 --save
 
 # 生成周报（聚合一周数据）
-cd D:/Download/jiuwenclaw && python workspace/agent/skills/daily-report/run_report.py weekly --save
+python ~/.jiuwenclaw/agent/skills/daily-report/run_report.py weekly --save
 
 # 生成月报（聚合一月数据，包含每日Git提交统计）
-cd D:/Download/jiuwenclaw && python workspace/agent/skills/daily-report/run_report.py monthly --save
+python ~/.jiuwenclaw/agent/skills/daily-report/run_report.py monthly --save
 
 # 生成月报（指定月份）
-cd D:/Download/jiuwenclaw && python workspace/agent/skills/daily-report/run_report.py monthly --year 2026 --month 3 --save
+python ~/.jiuwenclaw/agent/skills/daily-report/run_report.py monthly --year 2026 --month 3 --save
 ```
 
 ### 执行步骤
@@ -127,8 +127,8 @@ cd D:/Download/jiuwenclaw && python workspace/agent/skills/daily-report/run_repo
 |--------|----------|----------|
 | **Git 仓库** | `git log` 命令 | 仓库路径: `D:/Download/jiuwenclaw` |
 | **网易邮箱** | IMAP 协议 | `.env`: `EMAIL_ADDRESS`, `EMAIL_TOKEN` |
-| **记忆系统** | 读取 MD 文件 | `workspace/agent/memory/YYYY-MM-DD.md` |
-| **待办事项** | 解析 todo.md | `workspace/session/*/todo.md` |
+| **记忆系统** | 读取 MD 文件 | `~/.jiuwenclaw/agent/memory/YYYY-MM-DD.md` |
+| **待办事项** | 解析 todo.md | `~/.jiuwenclaw/agent/sessions/*/todo.md` |
 
 ### 定时触发
 
@@ -236,7 +236,7 @@ heartbeat:
 from collectors import DataAggregator
 
 aggregator = DataAggregator(
-    workspace_dir="workspace",
+    workspace_dir="~/.jiuwenclaw/agent",
     git_repo="path/to/repo",
     email_config={
         "address": "xxx@163.com",
@@ -287,7 +287,7 @@ monthly = generator.generate_monthly(2026, 3)
 1. **Git 仓库**: 确保仓库路径正确且有访问权限
 2. **邮箱授权**: 使用授权码而非登录密码
 3. **心跳时间**: 修改后需重启服务
-4. **数据存储**: 报告保存到 `workspace/agent/reports/`
+4. **数据存储**: 报告保存到 `~/.jiuwenclaw/agent/reports/`
 
 ## 更新日志
 

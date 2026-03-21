@@ -73,12 +73,13 @@ class TodoCollector:
         初始化待办采集器
 
         Args:
-            workspace_dir: workspace 目录路径
+            workspace_dir: Agent 根目录（如 ~/.jiuwenclaw/agent）
         """
         self.workspace_dir = Path(workspace_dir)
-        self.session_dir = self.workspace_dir / "session"
+        self.session_dir = self.workspace_dir / "sessions"
 
-    def _read_file_safe(self, file_path: Path) -> str:
+    @staticmethod
+    def _read_file_safe(file_path: Path) -> str:
         """安全读取文件"""
         if not file_path.exists():
             return ""
@@ -101,7 +102,8 @@ class TodoCollector:
         todo_files.sort(key=lambda f: f.stat().st_mtime, reverse=True)
         return todo_files[0]
 
-    def _parse_status(self, line: str) -> tuple[str, str]:
+    @staticmethod
+    def _parse_status(line: str) -> tuple[str, str]:
         """
         解析任务行，提取 ID 和状态
 

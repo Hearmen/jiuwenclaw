@@ -262,14 +262,14 @@ When valuable information is discovered during the conversation, it can be recor
         sections.append(memory_prompt)
         sections.append("")
 
-        profile_content = _read_file(USER_WORKSPACE_DIR / "workspace" / "agent" / "memory" / "USER.md")
+        profile_content = _read_file(MEMORY_DIR / "USER.md")
         if profile_content:
             sections.append("## Current Identity and User Profile")
             sections.append("What you know about yourself and the user:")
             sections.append(profile_content)
             sections.append("")
 
-        memory_content = _read_file(USER_WORKSPACE_DIR / "workspace" / "agent" / "memory" / "MEMORY.md")
+        memory_content = _read_file(MEMORY_DIR / "MEMORY.md")
         if memory_content:
             sections.append("## Long-term Memory")
             sections.append("Important information from previous sessions:")
@@ -278,7 +278,7 @@ When valuable information is discovered during the conversation, it can be recor
 
         beijing_tz = timezone(timedelta(hours=8))
         today = datetime.now(tz=beijing_tz).strftime("%Y-%m-%d")
-        today_content = _read_file(USER_WORKSPACE_DIR / "workspace" / "agent" / "memory" / f"{today}.md")
+        today_content = _read_file(MEMORY_DIR / f"{today}.md")
         if today_content:
             sections.append("## Today's Session Record")
             sections.append(today_content)
@@ -527,6 +527,10 @@ Write or save all files under this dir, unless user ask you to operate in other 
 
 
 def _principle_prompt(language: str) -> str:
+    """优先从 ~/.jiuwenclaw/agent/home/PRINCIPLE.md 读取；缺失时回退内置文案。"""
+    file_content = _read_file(str(HOME_DIR / "PRINCIPLE.md"))
+    if file_content:
+        return file_content
     if language == "zh":
         return """## 执行任务的原则
 
@@ -536,8 +540,7 @@ def _principle_prompt(language: str) -> str:
 - **尽量不拒绝** 尽量满足用户的合理请求。只有在涉及违法、有害、侵犯他人权益或超出你能力范围时，才明确说明原因并拒绝。
 - **隐私守护** 永远守护用户的隐私，除非用户明确要求分享。
 """
-    else:
-        return """## Execution Principles
+    return """## Execution Principles
 
 - **Get straight to the point** Skip "Sure", "Happy to help"—just start doing the work.
 - **Think before acting** After receiving a task, clarify your approach and steps before executing; avoid acting blindly.
@@ -602,6 +605,10 @@ def _time_prompt(language: str) -> str:
 
 
 def _tone_prompt(language: str) -> str:
+    """优先从 ~/.jiuwenclaw/agent/home/TONE.md 读取；缺失时回退内置文案。"""
+    file_content = _read_file(str(HOME_DIR / "TONE.md"))
+    if file_content:
+        return file_content
     if language == "zh":
         return """## 回复的原则
 
@@ -613,8 +620,7 @@ def _tone_prompt(language: str) -> str:
 - **使用表情** 在合适处使用表情，让回复更有生气，但不过度。
 - **不废话、贴心** 做一个不废话的助手，永远贴心、永远热情。不要过度谄媚，也不要过度高冷。
 """
-    else:
-        return """## Reply Principles
+    return """## Reply Principles
 
 Reply like a real human—warm, friendly, and a bit playful:
 

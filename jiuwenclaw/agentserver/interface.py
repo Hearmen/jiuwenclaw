@@ -191,33 +191,40 @@ class JiuWenClaw:
         # 创建 ReActAgentConfig
         agent_config = ReActAgentConfig(**config)
 
-        # 上下文压缩卸载
-        processors = [
-            (
-                "MessageOffloader",
-                MessageOffloaderConfig(
-                    messages_threshold=40,
-                    tokens_threshold=20000,
-                    large_message_threshold=1000,
-                    trim_size=500,
-                    offload_message_type=["tool"],
-                    keep_last_round=False,
+
+        config_base = get_config()
+        memory_compression_config = config_base.get('memory_compression', {}).copy()
+
+        if memory_compression_config.get("enabled", False):
+            message_offloader_config = memory_compression_config.get("message_offloader_config", {}).copy()
+            dialogue_compressor_config = memory_compression_config.get("dialogue_compressor_config", {}).copy()
+            # 上下文压缩卸载
+            processors = [
+                (
+                    "MessageOffloader",
+                    MessageOffloaderConfig(
+                        messages_threshold=message_offloader_config.get("messages_threshold", 40),
+                        tokens_threshold=message_offloader_config.get("tokens_threshold", 20000),
+                        large_message_threshold=message_offloader_config.get("large_message_threshold", 1000),
+                        trim_size=message_offloader_config.get("trim_size", 500),
+                        offload_message_type=["tool"],
+                        keep_last_round=message_offloader_config.get("keep_last_round", False),
+                    )
+                ),
+                (
+                    "DialogueCompressor",
+                    DialogueCompressorConfig(
+                        messages_threshold=dialogue_compressor_config.get("messages_threshold", 40),
+                        tokens_threshold=dialogue_compressor_config.get("tokens_threshold", 50000),
+                        model=ModelRequestConfig(
+                            model=config["model_name"]
+                        ),
+                        model_client=config["model_client_config"],
+                        keep_last_round=dialogue_compressor_config.get("keep_last_round", False),
+                    )
                 )
-            ),
-            (
-                "DialogueCompressor",
-                DialogueCompressorConfig(
-                    messages_threshold=40,
-                    tokens_threshold=50000,
-                    model=ModelRequestConfig(
-                        model=config["model_name"]
-                    ),
-                    model_client=config["model_client_config"],
-                    keep_last_round=False,
-                )
-            )
-        ]
-        agent_config.configure_context_processors(processors)
+            ]
+            agent_config.configure_context_processors(processors)
         return agent_config
 
     async def create_instance(self, config: dict[str, Any] | None = None) -> None:

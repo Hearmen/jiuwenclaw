@@ -298,8 +298,8 @@ class ExternalDirectoryChecker:
         workspace = self._workspace_root
         if workspace is None:
             try:
-                from jiuwenclaw.utils import USER_WORKSPACE_DIR
-                workspace = USER_WORKSPACE_DIR / "workspace"
+                from jiuwenclaw.utils import get_workspace_dir
+                workspace = get_workspace_dir()
             except ImportError:
                 return None
         workdir = tool_args.get("workdir", ".")

@@ -22,7 +22,7 @@ generate();
 const chokidar = require('chokidar');
 const homeDir = process.env.USERPROFILE || process.env.HOME || '';
 const userAgentDir = homeDir ? path.join(homeDir, '.jiuwenclaw', 'agent') : '';
-const fallbackRepoAgentDir = path.join(__dirname, '../../workspace/agent');
+const fallbackRepoAgentDir = path.join(__dirname, '../resources/agent');
 const watchTarget = userAgentDir || fallbackRepoAgentDir;
 const watcher = chokidar.watch(watchTarget, {
   persistent: true,

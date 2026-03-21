@@ -13,6 +13,9 @@ from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Optional
+from zoneinfo import ZoneInfo
+
+_REPORT_TZ = ZoneInfo("Asia/Shanghai")
 
 
 @dataclass
@@ -40,12 +43,13 @@ class MemoryCollector:
         初始化记忆采集器
 
         Args:
-            workspace_dir: workspace 目录路径
+            workspace_dir: Agent 根目录（如 ~/.jiuwenclaw/agent）
         """
         self.workspace_dir = Path(workspace_dir)
-        self.memory_dir = self.workspace_dir / "agent" / "memory"
+        self.memory_dir = self.workspace_dir / "memory"
 
-    def _read_file_safe(self, file_path: Path) -> str:
+    @staticmethod
+    def _read_file_safe(file_path: Path) -> str:
         """安全读取文件"""
         if not file_path.exists():
             return ""
@@ -54,7 +58,8 @@ class MemoryCollector:
         except Exception:
             return ""
 
-    def _extract_list_items(self, content: str) -> list[str]:
+    @staticmethod
+    def _extract_list_items(content: str) -> list[str]:
         """提取列表项（以 - 或 * 开头的行）"""
         items = []
         for line in content.split("\n"):
@@ -66,7 +71,8 @@ class MemoryCollector:
                     items.append(item)
         return items
 
-    def _extract_sections(self, content: str, section_title: str) -> list[str]:
+    @staticmethod
+    def _extract_sections(content: str, section_title: str) -> list[str]:
         """提取指定标题下的内容"""
         items = []
         in_section = False
@@ -101,7 +107,7 @@ class MemoryCollector:
             MemoryData: 记忆数据
         """
         if date is None:
-            date = datetime.now().strftime("%Y-%m-%d")
+            date = datetime.now(_REPORT_TZ).strftime("%Y-%m-%d")
 
         data = MemoryData()
 
@@ -126,9 +132,9 @@ class MemoryCollector:
     def get_week_memories(self, end_date: Optional[str] = None) -> dict[str, MemoryData]:
         """获取一周的记忆数据"""
         if end_date is None:
-            end_date = datetime.now()
+            end_date = datetime.now(_REPORT_TZ)
         else:
-            end_date = datetime.strptime(end_date, "%Y-%m-%d")
+            end_date = datetime.strptime(end_date, "%Y-%m-%d").replace(tzinfo=_REPORT_TZ)
 
         result = {}
         for i in range(7):

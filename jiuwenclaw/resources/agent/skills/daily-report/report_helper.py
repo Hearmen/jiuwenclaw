@@ -30,29 +30,18 @@ if sys.platform == "win32":
 
 
 def get_workspace_dir() -> Path:
-    """获取 workspace 目录路径"""
-    # 优先使用环境变量
-    if "JIUWENCLAW_WORKSPACE" in os.environ:
-        return Path(os.environ["JIUWENCLAW_WORKSPACE"])
-
-    # 尝试常见路径
+    """获取 Agent 根目录（含 memory/、sessions/、skills/）。"""
+    if "JIUWENCLAW_AGENT_ROOT" in os.environ:
+        return Path(os.environ["JIUWENCLAW_AGENT_ROOT"])
+    home_agent = Path.home() / ".jiuwenclaw" / "agent"
+    if home_agent.is_dir():
+        return home_agent
+    # 开发：包内 resources/agent
     script_dir = Path(__file__).resolve()
-
-    # 向上查找 workspace 目录
-    current = script_dir
-    for _ in range(10):
-        workspace_candidate = current / "workspace"
-        if workspace_candidate.exists():
-            return workspace_candidate
-        current = current.parent
-
-    # 默认使用 ~/.jiuwenclaw/workspace
-    home_workspace = Path.home() / ".jiuwenclaw" / "workspace"
-    if home_workspace.exists():
-        return home_workspace
-
-    # 最后尝试相对于脚本位置
-    return script_dir.parent.parent.parent.parent  # skills/daily-report -> agent -> workspace
+    pkg_agent = script_dir.parent.parent.parent  # daily-report -> skills -> agent
+    if (pkg_agent / "memory").is_dir() or (pkg_agent / "skills").is_dir():
+        return pkg_agent
+    return home_agent
 
 
 def read_file_safe(file_path: Path) -> str:
@@ -331,8 +320,7 @@ def main():
     print(f"使用 workspace 目录: {workspace_dir}", file=sys.stderr)
 
     # 收集数据
-    memory_dir = workspace_dir / "agent" / "memory"
-    session_dir = workspace_dir / "session"
+    memory_dir = workspace_dir / "memory"
 
     # 1. 读取今日记忆
     today_memory_file = memory_dir / f"{date_str}.md"

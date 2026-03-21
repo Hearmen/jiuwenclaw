@@ -13,6 +13,10 @@ from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any, Optional
+from zoneinfo import ZoneInfo
+
+# 与 run_report / work_analyzer 一致：日历日与采集时间戳使用东八区
+_REPORT_TZ = ZoneInfo("Asia/Shanghai")
 
 from .email_collector import EmailCollector, EmailStats
 from .git_collector import GitCollector, GitStats
@@ -101,11 +105,11 @@ class DataAggregator:
             CollectedData: 聚合后的数据
         """
         if date is None:
-            date = datetime.now().strftime("%Y-%m-%d")
+            date = datetime.now(_REPORT_TZ).strftime("%Y-%m-%d")
 
         data = CollectedData(
             date=date,
-            collected_at=datetime.now(),
+            collected_at=datetime.now(_REPORT_TZ),
         )
 
         # 采集记忆数据
@@ -187,7 +191,7 @@ class DataAggregator:
         """轻量采集（仅 Git 和记忆）"""
         data = CollectedData(
             date=date,
-            collected_at=datetime.now(),
+            collected_at=datetime.now(_REPORT_TZ),
         )
 
         if self.git_collector:
@@ -200,9 +204,9 @@ class DataAggregator:
     def collect_week(self, end_date: Optional[str] = None) -> dict[str, CollectedData]:
         """采集一周的数据"""
         if end_date is None:
-            end_date = datetime.now()
+            end_date = datetime.now(_REPORT_TZ)
         else:
-            end_date = datetime.strptime(end_date, "%Y-%m-%d")
+            end_date = datetime.strptime(end_date, "%Y-%m-%d").replace(tzinfo=_REPORT_TZ)
 
         result = {}
         for i in range(7):

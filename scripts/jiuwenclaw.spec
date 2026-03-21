@@ -21,7 +21,7 @@ if not os.path.isdir(web_dist) or not os.listdir(web_dist):
         "错误: 请先构建前端。执行: cd jiuwenclaw/web && npm install && npm run build"
     )
 
-# 数据文件：resources、workspace 模板、前端构建产物
+# 数据文件：resources（含 agent 模板）、前端构建产物
 datas = [
     (os.path.join(project_root, "jiuwenclaw", "resources"), "jiuwenclaw/resources"),
     (os.path.join(project_root, "jiuwenclaw", "web", "dist"), "jiuwenclaw/web/dist"),

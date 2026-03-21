@@ -13,6 +13,9 @@ from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Optional
+from zoneinfo import ZoneInfo
+
+_REPORT_TZ = ZoneInfo("Asia/Shanghai")
 
 
 @dataclass
@@ -115,7 +118,7 @@ class GitCollector:
             GitStats: Git 统计数据
         """
         if date is None:
-            date = datetime.now().strftime("%Y-%m-%d")
+            date = datetime.now(_REPORT_TZ).strftime("%Y-%m-%d")
 
         stats = GitStats()
 
@@ -153,7 +156,7 @@ class GitCollector:
             try:
                 commit_date = datetime.fromisoformat(date_str.replace(" ", "T").split("+")[0])
             except ValueError:
-                commit_date = datetime.now()
+                commit_date = datetime.now(_REPORT_TZ)
 
             # 获取每个提交的文件变更统计
             numstat = self._run_git_command(
@@ -207,9 +210,9 @@ class GitCollector:
             按日期分组的 GitStats 字典
         """
         if end_date is None:
-            end_date = datetime.now()
+            end_date = datetime.now(_REPORT_TZ)
         else:
-            end_date = datetime.strptime(end_date, "%Y-%m-%d")
+            end_date = datetime.strptime(end_date, "%Y-%m-%d").replace(tzinfo=_REPORT_TZ)
 
         result = {}
         for i in range(7):
@@ -250,7 +253,7 @@ class GitCollector:
         Returns:
             包含日期、时间、提交信息的字典列表
         """
-        end_date = datetime.now()
+        end_date = datetime.now(_REPORT_TZ)
         result = []
 
         for i in range(days):

@@ -14,9 +14,12 @@
 
 import email
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import datetime
 from email.header import decode_header
 from typing import Optional
+from zoneinfo import ZoneInfo
+
+_REPORT_TZ = ZoneInfo("Asia/Shanghai")
 
 try:
     import imaplib
@@ -105,7 +108,8 @@ class EmailCollector:
         self.imap_server = NETEASE_IMAP_SERVERS[self.provider]
         self._connection = None
 
-    def _decode_str(self, s: str) -> str:
+    @staticmethod
+    def _decode_str(s: str) -> str:
         """解码邮件字符串"""
         if s is None:
             return ""
@@ -124,7 +128,8 @@ class EmailCollector:
 
         return "".join(result)
 
-    def _parse_date(self, date_str: str) -> Optional[datetime]:
+    @staticmethod
+    def _parse_date(date_str: str) -> Optional[datetime]:
         """解析邮件日期"""
         if not date_str:
             return None
@@ -172,7 +177,7 @@ class EmailCollector:
             EmailStats: 邮件统计数据
         """
         if date is None:
-            date = datetime.now().strftime("%Y-%m-%d")
+            date = datetime.now(_REPORT_TZ).strftime("%Y-%m-%d")
 
         stats = EmailStats()
 
@@ -255,7 +260,7 @@ class EmailCollector:
             return EmailInfo(
                 subject=subject,
                 sender=sender,
-                date=date or datetime.now(),
+                date=date or datetime.now(_REPORT_TZ),
                 is_read=is_read,
             )
 

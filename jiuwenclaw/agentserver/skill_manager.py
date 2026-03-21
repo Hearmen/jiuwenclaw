@@ -940,10 +940,9 @@ class SkillManager:
         mirrors: list[Path] = []
         try:
             source_repo_root = Path(__file__).resolve().parents[2]
-            source_skills_dir = source_repo_root / "workspace" / "agent" / "skills"
-            if source_skills_dir.resolve() != _SKILLS_DIR.resolve():
-                mirrors.append(source_skills_dir)
-            source_resources_skills_dir = source_repo_root / "jiuwenclaw" / "resources" / "workspace" / "agent" / "skills"
+            source_resources_skills_dir = (
+                source_repo_root / "jiuwenclaw" / "resources" / "agent" / "skills"
+            )
             if source_resources_skills_dir.exists() and source_resources_skills_dir.resolve() != _SKILLS_DIR.resolve():
                 mirrors.append(source_resources_skills_dir)
         except Exception:
@@ -990,7 +989,8 @@ class SkillManager:
         workspace_roots: set[Path] = {_AGENT_ROOT.resolve()}
         for mirror_root in self._get_mirror_skills_dirs():
             try:
-                workspace_roots.add(mirror_root.parent.parent.parent.resolve())
+                # mirror_root = .../agent/skills → agent 根目录为其 parent
+                workspace_roots.add(mirror_root.parent.resolve())
             except Exception:
                 continue
         for workspace_root in workspace_roots:

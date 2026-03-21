@@ -36,7 +36,7 @@ class XiaoyiChannelConfig:
     enable_streaming: bool = True
     # Push notification configuration
     uid: str = ""
-    api_key = ""
+    api_key: str = ""
     api_id: str = ""
     push_id: str = ""
     push_url: str = ""

@@ -15,6 +15,9 @@ from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any, Optional
+from zoneinfo import ZoneInfo
+
+_REPORT_TZ = ZoneInfo("Asia/Shanghai")
 
 from ..analyzers.work_analyzer import AnalysisResult, WorkAnalyzer
 from ..analyzers.ai_analyzer import AIAnalyzer, AIAnalysisResult
@@ -68,7 +71,7 @@ class ReportGenerator:
             str: Markdown 格式的日报
         """
         if date is None:
-            date = datetime.now().strftime("%Y-%m-%d")
+            date = datetime.now(_REPORT_TZ).strftime("%Y-%m-%d")
 
         if config is None:
             config = ReportConfig(report_type="daily", date=date)
@@ -117,9 +120,9 @@ class ReportGenerator:
             str: Markdown 格式的周报
         """
         if end_date is None:
-            end_date = datetime.now()
+            end_date = datetime.now(_REPORT_TZ)
         else:
-            end_date = datetime.strptime(end_date, "%Y-%m-%d")
+            end_date = datetime.strptime(end_date, "%Y-%m-%d").replace(tzinfo=_REPORT_TZ)
 
         # 计算本周日期范围
         start_date = end_date - timedelta(days=6)
@@ -146,7 +149,7 @@ class ReportGenerator:
         Returns:
             str: Markdown 格式的月报
         """
-        now = datetime.now()
+        now = datetime.now(_REPORT_TZ)
         if year is None:
             year = now.year
         if month is None:
@@ -161,7 +164,8 @@ class ReportGenerator:
         # 生成月报
         return self._render_monthly_report(aggregated, year, month)
 
-    def _aggregate_week_data(self, week_data: dict[str, CollectedData]) -> dict:
+    @staticmethod
+    def _aggregate_week_data(week_data: dict[str, CollectedData]) -> dict:
         """聚合一周数据"""
         aggregated = {
             "total_commits": 0,
@@ -206,8 +210,9 @@ class ReportGenerator:
         aggregated["total_days"] = len(month_data)
         return aggregated
 
+    @staticmethod
     def _render_daily_report(
-        self, data: CollectedData, analysis: AnalysisResult, config: ReportConfig,
+         data: CollectedData, analysis: AnalysisResult, config: ReportConfig,
         ai_result: Optional[AIAnalysisResult] = None
     ) -> str:
         """渲染日报"""
@@ -377,7 +382,8 @@ class ReportGenerator:
 
         return "\n".join(lines)
 
-    def _render_weekly_report(self, data: dict, start_date: str, end_date: str) -> str:
+    @staticmethod
+    def _render_weekly_report(data: dict, start_date: str, end_date: str) -> str:
         """渲染周报"""
         lines = [
             f"# 📋 工作周报 - {start_date} ~ {end_date}",
@@ -430,7 +436,8 @@ class ReportGenerator:
 
         return "\n".join(lines)
 
-    def _render_monthly_report(self, data: dict, year: int, month: int) -> str:
+    @staticmethod
+    def _render_monthly_report(data: dict, year: int, month: int) -> str:
         """渲染月报"""
         lines = [
             f"# 📋 工作月报 - {year}年{month}月",

@@ -17,16 +17,15 @@ import sys
 import subprocess
 from datetime import datetime, timedelta
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
-# 加载 .env 文件中的环境变量
+# 加载 ~/.jiuwenclaw/config/.env
 try:
     from dotenv import load_dotenv
-    # run_report.py 位于 workspace/agent/skills/daily-report/
-    # 需要向上 5 级到达项目根目录
-    PROJECT_ROOT = Path(__file__).parent.parent.parent.parent.parent
-    env_file = PROJECT_ROOT / ".env"
-    if env_file.exists():
-        load_dotenv(env_file)
+
+    _cfg_env = Path.home() / ".jiuwenclaw" / "config" / ".env"
+    if _cfg_env.exists():
+        load_dotenv(_cfg_env)
 except ImportError:
     pass  # dotenv 未安装时跳过
 
@@ -50,19 +49,27 @@ except ImportError:
     IMAP_AVAILABLE = False
     imaplib = None
 
-# 获取脚本所在目录
+# 脚本与路径：Git 用仓库根；记忆/会话/报告用 Agent 数据目录
 SKILL_DIR = Path(__file__).parent
-PROJECT_ROOT = SKILL_DIR.parent.parent.parent.parent
+PACKAGE_ROOT = SKILL_DIR.parent.parent.parent.parent
+REPO_ROOT = PACKAGE_ROOT.parent
+AGENT_ROOT = Path(
+    os.environ.get("JIUWENCLAW_AGENT_ROOT", str(Path.home() / ".jiuwenclaw" / "agent"))
+)
+CONFIG_ENV = Path.home() / ".jiuwenclaw" / "config" / ".env"
+
+# 报告用「日历日/当前年月」与项目 cron 默认时区一致（避免 naive datetime）
+_REPORT_TZ = ZoneInfo("Asia/Shanghai")
 
 
 def collect_git_stats(date: str = None) -> dict:
     """采集 Git 提交统计"""
     if date is None:
-        date = datetime.now().strftime("%Y-%m-%d")
+        date = datetime.now(_REPORT_TZ).strftime("%Y-%m-%d")
 
     try:
         result = subprocess.run(
-            ["git", "-C", str(PROJECT_ROOT), "log",
+            ["git", "-C", str(REPO_ROOT), "log",
              f"--since={date} 00:00:00",
              f"--until={date} 23:59:59",
              "--format=%H|%s|%an|%ai",
@@ -123,7 +130,7 @@ def collect_email_stats(date: str = None) -> dict:
         return {"error": "IMAP module not available"}
 
     # 直接从 .env 文件读取配置
-    env_file = PROJECT_ROOT / ".env"
+    env_file = CONFIG_ENV
     email_address = ""
     email_token = ""
     email_provider = "163"
@@ -196,14 +203,14 @@ def collect_email_stats(date: str = None) -> dict:
         return {
             "received_today": total_emails,
             "unread": unread,
-            "date": date if date else datetime.now().strftime("%Y-%m-%d")
+            "date": date if date else datetime.now(_REPORT_TZ).strftime("%Y-%m-%d")
         }
     except Exception as e:
         # 返回默认值而不是错误
         return {
             "received_today": 0,
             "unread": 0,
-            "date": date if date else datetime.now().strftime("%Y-%m-%d"),
+            "date": date if date else datetime.now(_REPORT_TZ).strftime("%Y-%m-%d"),
             "error": str(e)[:50]  # 截断错误信息
         }
 
@@ -222,7 +229,7 @@ def collect_email_content(limit: int = 20, days: int = 30) -> list:
         return []
 
     # 直接从 .env 文件读取配置
-    env_file = PROJECT_ROOT / ".env"
+    env_file = CONFIG_ENV
     email_address = ""
     email_token = ""
     email_provider = "163"
@@ -267,8 +274,7 @@ def collect_email_content(limit: int = 20, days: int = 30) -> list:
             return []
 
         # 搜索最近N天的邮件
-        from datetime import timedelta
-        since_date = (datetime.now() - timedelta(days=days)).strftime("%d-%b-%Y")
+        since_date = (datetime.now(_REPORT_TZ) - timedelta(days=days)).strftime("%d-%b-%Y")
         typ, msg_ids = mail.search(None, f'(SINCE {since_date})')
 
         if typ != "OK" or not msg_ids[0]:
@@ -360,7 +366,7 @@ def generate_daily_report(date: str = None, enable_ai: bool = True) -> str:
         enable_ai: 是否启用 AI 智能分析（默认启用）
     """
     if date is None:
-        date = datetime.now().strftime("%Y-%m-%d")
+        date = datetime.now(_REPORT_TZ).strftime("%Y-%m-%d")
 
     # 采集 Git 数据
     git_stats = collect_git_stats(date)
@@ -369,7 +375,7 @@ def generate_daily_report(date: str = None, enable_ai: bool = True) -> str:
     email_stats = collect_email_stats(date)
 
     # 读取记忆文件
-    memory_file = PROJECT_ROOT / "workspace" / "agent" / "memory" / f"{date}.md"
+    memory_file = AGENT_ROOT / "memory" / f"{date}.md"
     memory_content = ""
     work_items = []
 
@@ -384,7 +390,7 @@ def generate_daily_report(date: str = None, enable_ai: bool = True) -> str:
 
     # 查找 todo 文件
     todo_file = None
-    session_dir = PROJECT_ROOT / "workspace" / "session"
+    session_dir = AGENT_ROOT / "sessions"
     if session_dir.exists():
         todo_files = list(session_dir.rglob("todo.md"))
         if todo_files:
@@ -496,7 +502,7 @@ def generate_daily_report(date: str = None, enable_ai: bool = True) -> str:
             # 采集工作模式分析数据
             pattern_data = []
             for i in range(7):
-                check_date = (datetime.now() - timedelta(days=i)).strftime("%Y-%m-%d")
+                check_date = (datetime.now(_REPORT_TZ) - timedelta(days=i)).strftime("%Y-%m-%d")
                 day_stats = collect_git_stats(check_date)
                 for commit in day_stats.get("commits", []):
                     pattern_data.append({
@@ -580,7 +586,7 @@ def generate_daily_report(date: str = None, enable_ai: bool = True) -> str:
 
 def generate_monthly_report(year: int = None, month: int = None) -> str:
     """生成月报"""
-    now = datetime.now()
+    now = datetime.now(_REPORT_TZ)
     if year is None:
         year = now.year
     if month is None:
@@ -716,7 +722,7 @@ def main():
 
     try:
         if args.type == "daily":
-            date = args.date or datetime.now().strftime("%Y-%m-%d")
+            date = args.date or datetime.now(_REPORT_TZ).strftime("%Y-%m-%d")
             # AI 分析默认启用，除非显式指定 --no-ai
             enable_ai = not args.no_ai
             content = generate_daily_report(date, enable_ai=enable_ai)
@@ -726,13 +732,13 @@ def main():
                 print("INFO: AI 智能分析已启用", file=sys.stderr)
 
         elif args.type == "weekly":
-            date = args.date or datetime.now().strftime("%Y-%m-%d")
+            date = args.date or datetime.now(_REPORT_TZ).strftime("%Y-%m-%d")
             # 周报暂时用日报代替
             content = generate_daily_report(date)
             date_str = date
 
         elif args.type == "monthly":
-            now = datetime.now()
+            now = datetime.now(_REPORT_TZ)
             year = args.year or now.year
             month = args.month or now.month
             content = generate_monthly_report(year, month)
@@ -743,7 +749,7 @@ def main():
             if args.output_file:
                 filepath = Path(args.output_file)
             else:
-                reports_dir = PROJECT_ROOT / "workspace" / "agent" / "reports"
+                reports_dir = AGENT_ROOT / "reports"
                 reports_dir.mkdir(parents=True, exist_ok=True)
                 filepath = reports_dir / f"{args.type}-{date_str}.md"
             filepath.write_text(content, encoding="utf-8")
