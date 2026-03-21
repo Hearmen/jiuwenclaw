@@ -553,24 +553,75 @@ export function useWebSocket(options: UseWebSocketOptions): UseWebSocketReturn {
         if (!shouldHandleSessionEvent(payload)) return;
         const content = normalizeFinalContent(payload);
         const { currentStreamId, messages } = useChatStore.getState();
-        if (currentStreamId) {
-          updateMessage(currentStreamId, { content, isStreaming: false });
+        const payloadSessionId =
+          typeof payload.session_id === 'string' ? payload.session_id.trim() : '';
+        // 仅当有明确会话绑定时才把 final 合并进当前流式气泡。
+        // 定时任务等广播的 session_id 为空/null，若仍走 currentStreamId 会写到错误气泡甚至“无可见更新”。
+        const streamId = currentStreamId;
+        if (streamId && payloadSessionId) {
+          updateMessage(streamId, { content, isStreaming: false });
           stopStreaming();
           if (content && !content.includes('MEDIA:')) {
-            handleTtsPlayback(currentStreamId, content);
+            handleTtsPlayback(streamId, content);
           }
           return;
         }
         if (content) {
-          // 去重：若上一条已是相同内容的助手消息（同一回复被收到两次），不再追加
-          const last = messages[messages.length - 1];
-          if (
-            last?.role === 'assistant' &&
-            last.content === content
-          ) {
+          const cronMeta = payload.cron as Record<string, unknown> | undefined;
+          const cronRunId =
+            typeof cronMeta?.run_id === 'string' ? cronMeta.run_id.trim() : '';
+          const isCronPlaceholderContent = /^\[cron\].*正在执行中/.test(content);
+
+          // 正式结果：替换同 run_id 的占位气泡，或最近的 [cron]…正在执行中…
+          if (!isCronPlaceholderContent) {
+            let placeholderId: string | null = null;
+            if (cronRunId) {
+              const byRun = messages.find((m) => m.id === `cron-placeholder-${cronRunId}`);
+              if (byRun) placeholderId = byRun.id;
+            }
+            if (!placeholderId) {
+              for (let i = messages.length - 1; i >= 0; i -= 1) {
+                const msg = messages[i];
+                if (msg.role !== 'assistant' || typeof msg.content !== 'string') continue;
+                if (/^\[cron\].*正在执行中/.test(msg.content)) {
+                  placeholderId = msg.id;
+                  break;
+                }
+              }
+            }
+            if (placeholderId) {
+              updateMessage(placeholderId, { content, isStreaming: false });
+              if (!content.includes('MEDIA:')) {
+                handleTtsPlayback(placeholderId, content);
+              }
+              return;
+            }
+          }
+
+          const messageId =
+            isCronPlaceholderContent && cronRunId
+              ? `cron-placeholder-${cronRunId}`
+              : cronRunId && !isCronPlaceholderContent
+                ? `cron-final-${cronRunId}`
+                : `msg-${Date.now()}`;
+
+          const existing = messages.find((m) => m.id === messageId);
+          if (existing) {
+            if (existing.content === content) {
+              return;
+            }
+            updateMessage(messageId, { content, isStreaming: false });
+            if (!content.includes('MEDIA:')) {
+              handleTtsPlayback(messageId, content);
+            }
             return;
           }
-          const messageId = `msg-${Date.now()}`;
+
+          // 去重：若上一条已是相同内容的助手消息（同一回复被收到两次），不再追加
+          const last = messages[messages.length - 1];
+          if (last?.role === 'assistant' && last.content === content) {
+            return;
+          }
           addMessage({
             id: messageId,
             role: 'assistant',

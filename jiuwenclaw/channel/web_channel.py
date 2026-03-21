@@ -320,6 +320,11 @@ class WebChannel(BaseChannel):
                     "session_id": msg.session_id,
                     "content": content,
                 }
+                # 定时任务推送：附带 cron 元数据，供前端识别并替换占位消息（避免误写入流式气泡）
+                if event_name == "chat.final":
+                    cron_extra = msg.payload.get("cron")
+                    if isinstance(cron_extra, dict):
+                        payload["cron"] = cron_extra
         else:
             # payload 不是 dict，尝试从 params 提取
             content = str((msg.params or {}).get("content", "") or "")
