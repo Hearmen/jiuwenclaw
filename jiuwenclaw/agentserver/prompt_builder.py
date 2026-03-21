@@ -695,7 +695,7 @@ def _response_prompt(language: str) -> str:
 
 ```json
 {
-  "type": "【cron 或 heartbeat】",
+  "type": "【cron 或 heartbeat 或 notify】",
   "preferred_response_language": "【en 或 zh】",
   "content": "【任务信息】",
   "source": "system"
@@ -727,7 +727,7 @@ You receive user messages and system messages; handle each by source and type.
 
 ```json
 {
-  "type": "【cron or heartbeat】",
+  "type": "【cron or heartbeat or notify】",
   "preferred_response_language": "【en or zh】",
   "content": "【task info】",
   "source": "system"
@@ -851,10 +851,10 @@ def build_user_prompt(content: str, files: dict, channel: str, language: str) ->
     prompt = "你收到一条消息：\n"
     if channel in ["cron", "heartbeat"]:
         return prompt + json.dumps({
-            "source": channel,
+            "source": "system",
             "preferred_response_language": language,
             "content": content,
-            "type": "cron job"
+            "type": channel
         })
     return prompt + json.dumps({
         "source": channel,

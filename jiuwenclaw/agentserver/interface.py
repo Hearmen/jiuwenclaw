@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import os
 from typing import Any, AsyncIterator
 
@@ -19,6 +20,8 @@ from openjiuwen.core.session.checkpointer import CheckpointerFactory
 from openjiuwen.core.session.checkpointer.checkpointer import CheckpointerConfig
 from openjiuwen.core.session.checkpointer.persistence import PersistenceCheckpointerProvider
 
+from jiuwenclaw.agentserver.prompt_builder import build_system_prompt
+from jiuwenclaw.agentserver.tools.multi_session_toolkits import MultiSessionToolkit
 from jiuwenclaw.agentserver.prompt_builder import build_system_prompt, build_user_prompt
 from jiuwenclaw.gateway.cron import CronController, CronTargetChannel
 from jiuwenclaw.utils import (
@@ -131,6 +134,8 @@ class JiuWenClaw:
         self._video_tool_registered: bool = False
         self._todo_tool_sessions_registered: set[str] = set()
         self._sysop_card_id: str | None = None
+
+        self._session_tool = None
 
     @staticmethod
     async def set_checkpoint():
@@ -359,7 +364,6 @@ class JiuWenClaw:
         )
         logger.info("[JiuWenClaw] 初始化完成: agent_name=%s", self._agent_name)
 
-
     def reload_agent_config(self) -> None:
         """从 config.yaml 重新加载配置并 reconfigure 当前实例，使模型/API 等配置生效且不重启进程。"""
         if self._instance is None:
@@ -397,11 +401,16 @@ class JiuWenClaw:
         logger.info("[JiuWenClaw] 配置已热更新，未重启进程")
 
     async def _register_runtime_tools(
-        self, session_id: str | None, mode="plan", channel_id: str | None = None
+            self, session_id: str | None,
+            channel_id: str | None,
+            request_id: str | None,
+            mode="plan"
     ) -> None:
         """Register per-request tools for current agent execution."""
         if self._instance is None:
             raise RuntimeError("JiuWenClaw 未初始化，请先调用 create_instance()")
+
+        self._session_tool = None
 
         tool_list = self._instance.ability_manager.list()
         for tool in tool_list:
@@ -409,6 +418,8 @@ class JiuWenClaw:
                 if tool.name.startswith("todo_"):
                     self._instance.ability_manager.remove(tool.name)
                 elif tool.name.startswith("cron_"):
+                    self._instance.ability_manager.remove(tool.name)
+                elif tool.name.startswith("session_"):
                     self._instance.ability_manager.remove(tool.name)
 
         # 定时工具：按 channel 注册；优先用 channel_id，否则从 session_id 前缀推断
@@ -418,7 +429,6 @@ class JiuWenClaw:
         logger.info(f"[JiuwenClaw] update tool and prompt for channel {channel}")
         if channel not in ["heartbeat", "cron"]:
             cron_controller = CronController.get_instance()
-
             if channel == "feishu":
                 cron_controller.set_target_channel(CronTargetChannel.FEISHU)
             elif channel == "wecom":
@@ -435,18 +445,29 @@ class JiuWenClaw:
 
         effective_session_id = session_id or "default"
         if mode == "plan":
-            # if effective_session_id not in self._todo_tool_sessions_registered:
             todo_toolkit = TodoToolkit(session_id=effective_session_id)
             for tool in todo_toolkit.get_tools():
                 Runner.resource_mgr.add_tool(tool)
                 self._instance.ability_manager.add(tool.card)
             self._todo_tool_sessions_registered.add(effective_session_id)
         else:
-            tool_list = self._instance.ability_manager.list()
-            for tool in tool_list:
-                if isinstance(tool, ToolCard):
-                    if tool.name.startswith("todo_"):
-                        self._instance.ability_manager.remove(tool.name)
+            config_base = get_config()
+            config = config_base.get('react', {}).copy()
+            session_toolkits = MultiSessionToolkit(
+                session_id=effective_session_id,
+                channel_id=channel_id,
+                request_id=request_id,
+                sub_agent_config=self._load_react_config(config)
+            )
+            self._session_tool = session_toolkits
+            for tool in session_toolkits.get_tools():
+                Runner.resource_mgr.add_tool(tool)
+                self._instance.ability_manager.add(tool.card)
+            # tool_list = self._instance.ability_manager.list()
+            # for tool in tool_list:
+            #     if isinstance(tool, ToolCard):
+            #         if tool.name.startswith("todo_"):
+            #             self._instance.ability_manager.remove(tool.name)
 
         if not self._memory_tools_registered:
             await init_memory_manager_async(
@@ -863,8 +884,9 @@ class JiuWenClaw:
             try:
                 await self._register_runtime_tools(
                     request.session_id,
-                    request.params.get("mode", "plan"),
-                    channel_id=request.channel_id,
+                    request.channel_id,
+                    request.request_id,
+                    request.params.get("mode", "plan")
                 )
                 return await Runner.run_agent(agent=self._instance, inputs=inputs)
             except asyncio.CancelledError:
@@ -1009,8 +1031,9 @@ class JiuWenClaw:
             try:
                 await self._register_runtime_tools(
                     request.session_id,
-                    request.params.get("mode", "plan"),
-                    channel_id=request.channel_id,
+                    request.channel_id,
+                    request.request_id,
+                    request.params.get("mode", "plan")
                 )
                 async for chunk in Runner.run_agent_streaming(self._instance, inputs):
                     parsed = self._parse_stream_chunk(chunk)
@@ -1067,13 +1090,21 @@ class JiuWenClaw:
             logger.info("[JiuWenClaw] 流式处理被中断: request_id=%s", rid)
             raise
 
-        # 终止 chunk
-        yield AgentResponseChunk(
-            request_id=rid,
-            channel_id=cid,
-            payload=None,
-            is_complete=True,
-        )
+        if request.params.get("mode", "plan") == "plan":
+            # 终止 chunk
+            yield AgentResponseChunk(
+                request_id=rid,
+                channel_id=cid,
+                payload=None,
+                is_complete=True,
+            )
+        else:
+            yield AgentResponseChunk(
+                request_id=rid,
+                channel_id=cid,
+                payload=None,
+                is_complete=True and self._session_tool.all_tasks_done(),
+            )
 
     # ------------------------------------------------------------------
     # OutputSchema 解析

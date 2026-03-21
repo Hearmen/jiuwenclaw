@@ -37,9 +37,22 @@ class MessageHandler(ABC):
 
     - _user_messages：Channel 发来的消息，由内部转发循环消费并调用 agent_client.send_request
     - _robot_messages：AgentServer 的响应，由 ChannelManager 消费并派发到对应 Channel
+
+    单例模式：全局仅存在一个 MessageHandler 实例，可通过 MessageHandler(client) 或
+    MessageHandler.get_instance(client) 获取。
     """
 
+    _instance: "MessageHandler | None" = None
+
+    def __new__(cls, agent_client: "AgentServerClient", *args: Any, **kwargs: Any) -> "MessageHandler":
+        if cls._instance is None:
+            cls._instance = super().__new__(cls)
+        return cls._instance
+
     def __init__(self, agent_client: "AgentServerClient") -> None:
+        if getattr(self, "_singleton_initialized", False):
+            return
+        self._singleton_initialized = True
         self._agent_client = agent_client
         self._user_messages: asyncio.Queue["Message"] = asyncio.Queue()
         self._robot_messages: asyncio.Queue["Message"] = asyncio.Queue()
@@ -60,6 +73,21 @@ class MessageHandler(ABC):
         self._update_channel_in_config = update_channel_in_config
 
         self._load_channel_states_from_config()
+
+    @classmethod
+    def get_instance(cls, agent_client: "AgentServerClient | None" = None) -> "MessageHandler":
+        """获取单例实例。
+
+        - 若实例已存在：可直接调用 get_instance() 或 get_instance(None)，无需传入 client。
+        - 若尚未创建：需传入 agent_client，即 get_instance(client) 或 MessageHandler(client)。
+        """
+        if cls._instance is not None:
+            return cls._instance
+        if agent_client is None:
+            raise RuntimeError(
+                "MessageHandler 尚未初始化，请先使用 MessageHandler(client) 或 get_instance(client) 创建"
+            )
+        return cls(agent_client)
 
     def handle_message(self, msg: "Message") -> None:
         """Channel 同步回调：将消息放入 user_messages 队列，由转发循环发给 AgentServer."""

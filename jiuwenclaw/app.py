@@ -1207,9 +1207,12 @@ async def _run() -> None:
     # ---------- 一次启动所有服务 ----------
     agent = JiuWenClaw()
 
-    server = AgentWebSocketServer(
-        agent, host="127.0.0.1", port=agent_port,
-        ping_interval=20.0, ping_timeout=20.0,
+    server = AgentWebSocketServer.get_instance(
+        agent=agent,
+        host="127.0.0.1",
+        port=agent_port,
+        ping_interval=20.0,
+        ping_timeout=20.0,
     )
     await server.start()
     await asyncio.sleep(0.3)

@@ -7,7 +7,7 @@ from __future__ import annotations
 import asyncio
 import json
 from dataclasses import asdict
-from typing import Any
+from typing import Any, ClassVar
 
 from jiuwenclaw.utils import logger
 from jiuwenclaw.schema.agent import AgentRequest, AgentResponse, AgentResponseChunk
@@ -44,13 +44,17 @@ def _chunk_to_payload(chunk: AgentResponseChunk) -> dict[str, Any]:
 
 
 class AgentWebSocketServer:
-    """Gateway 与 AgentServer 之间的 WebSocket 服务端.
+    """Gateway 与 AgentServer 之间的 WebSocket 服务端（单例）.
 
     监听来自 Gateway (WebSocketAgentServerClient) 的连接，按协议约定处理请求：
     - 收到 JSON 载荷，字段为 AgentRequest（含 is_stream）
     - is_stream=False：调用 IAgentServer.process_message()，返回一条完整 AgentResponse JSON
     - is_stream=True：调用 IAgentServer.process_message_stream()，逐条返回 AgentResponseChunk JSON
+
+    支持 send_push：AgentServer 主动向 Gateway 推送消息（需 Gateway 预注册 agent-push 队列）。
     """
+
+    _instance: ClassVar[AgentWebSocketServer | None] = None
 
     def __init__(
         self,
@@ -67,6 +71,47 @@ class AgentWebSocketServer:
         self._ping_interval = ping_interval
         self._ping_timeout = ping_timeout
         self._server: Any = None
+        # 当前 Gateway 连接，用于 send_push 主动推送
+        self._current_ws: Any = None
+        self._current_send_lock: asyncio.Lock | None = None
+
+    @classmethod
+    def get_instance(
+        cls,
+        *,
+        agent: Any = None,
+        host: str = "127.0.0.1",
+        port: int = 18000,
+        ping_interval: float | None = 30.0,
+        ping_timeout: float | None = 300.0,
+    ) -> "AgentWebSocketServer":
+        """返回单例实例。
+
+        首次调用时 agent 必填，host/port/ping_* 可选。
+        后续调用可省略所有参数，返回已存在的实例。
+
+        Raises:
+            RuntimeError: 首次调用未提供 agent。
+        """
+        if cls._instance is not None:
+            return cls._instance
+        if agent is None:
+            raise RuntimeError(
+                "AgentWebSocketServer 未初始化。首次调用需传入 agent=..."
+            )
+        cls._instance = cls(
+            agent=agent,
+            host=host,
+            port=port,
+            ping_interval=ping_interval,
+            ping_timeout=ping_timeout,
+        )
+        return cls._instance
+
+    @classmethod
+    def reset_instance(cls) -> None:
+        """重置单例（仅用于测试）。"""
+        cls._instance = None
 
     @property
     def host(self) -> str:
@@ -124,6 +169,10 @@ class AgentWebSocketServer:
         remote = ws.remote_address
         logger.info("[AgentWebSocketServer] 新连接: %s", remote)
 
+        send_lock = asyncio.Lock()
+        self._current_ws = ws
+        self._current_send_lock = send_lock
+
         # 发送 connection.ack 事件，通知 Gateway 服务端已就绪
         try:
             ack_frame = {
@@ -136,7 +185,6 @@ class AgentWebSocketServer:
         except Exception as e:
             logger.warning("[AgentWebSocketServer] 发送 connection.ack 失败: %s", e)
 
-        send_lock = asyncio.Lock()
         tasks: set[asyncio.Task] = set()
 
         try:
@@ -149,6 +197,8 @@ class AgentWebSocketServer:
         except Exception as e:
             logger.exception("[AgentWebSocketServer] 连接处理异常 (%s): %s", remote, e)
         finally:
+            self._current_ws = None
+            self._current_send_lock = None
             if tasks:
                 await asyncio.gather(*tasks, return_exceptions=True)
 
@@ -223,90 +273,27 @@ class AgentWebSocketServer:
             chunk_count,
         )
 
+    async def send_push(self, msg) -> None:
+        """AgentServer 主动向 Gateway 推送消息。
 
-# ---------------------------------------------------------------------------
-# 自验证：Mock IAgentServer + 端对端测试
-# ---------------------------------------------------------------------------
-
-
-class _MockAgentServer:
-    """用于自验证的 Mock IAgentServer 实现."""
-
-    async def process_message(self, request: AgentRequest) -> AgentResponse:
-        params_str = json.dumps(request.params, ensure_ascii=False)
-        return AgentResponse(
-            request_id=request.request_id,
-            channel_id=request.channel_id,
-            ok=True,
-            payload={"content": f"Echo: {params_str}"},
-            metadata=request.metadata,
-        )
-
-    async def process_message_stream(self, request: AgentRequest):
-        params_str = json.dumps(request.params, ensure_ascii=False)
-        parts = [f"流式-1({params_str}) ", "流式-2 ", "流式-3(完)"]
-        for i, part in enumerate(parts):
-            yield AgentResponseChunk(
-                request_id=request.request_id,
-                channel_id=request.channel_id,
-                payload={"content": part},
-                is_complete=(i == len(parts) - 1),
+        payload 格式与 AgentResponse.payload 一致，
+        可含 event_type 等字段供 Gateway 转为 Message 派发到 Channel。
+        """
+        if self._current_ws is None or self._current_send_lock is None:
+            logger.warning(
+                "[AgentWebSocketServer] send_push 失败: 无活跃 Gateway 连接"
             )
+            return
 
+        try:
+            async with self._current_send_lock:
+                await self._current_ws.send(json.dumps(msg, ensure_ascii=False))
+            logger.info(
+                "[AgentWebSocketServer] send_push 已发送: channel_id=%s",
+                msg["channel_id"],
+            )
+        except Exception as e:
+            logger.warning("[AgentWebSocketServer] send_push 失败: %s", e)
 
-async def _run_verification() -> None:
-    """端对端验证：AgentWebSocketServer + WebSocketAgentServerClient."""
-    from jiuwenclaw.gateway.agent_client import WebSocketAgentServerClient
-
-    agent = _MockAgentServer()
-    port = 18765
-    server = AgentWebSocketServer(agent, host="127.0.0.1", port=port)
-    await server.start()
-    logger.info("[验证] AgentWebSocketServer 已启动: ws://127.0.0.1:%s", port)
-
-    client = WebSocketAgentServerClient()
-    try:
-        await client.connect(f"ws://127.0.0.1:{port}")
-
-        # 非流式请求
-        req1 = AgentRequest(
-            request_id="req-1",
-            channel_id="ch-1",
-            session_id="sess-1",
-            params={"message": "你好"},
-        )
-        resp1 = await client.send_request(req1)
-        assert resp1.request_id == "req-1"
-        assert resp1.ok is True
-        assert "Echo:" in str(resp1.payload)
-        logger.info("[验证] 非流式通过: payload=%s", resp1.payload)
-
-        # 流式请求
-        req2 = AgentRequest(
-            request_id="req-2",
-            channel_id="ch-1",
-            session_id="sess-1",
-            params={"message": "测试"},
-        )
-        chunks = []
-        async for chunk in client.send_request_stream(req2):
-            chunks.append(chunk)
-        assert len(chunks) == 3
-        assert chunks[-1].is_complete
-        full = "".join(c.payload.get("content", "") for c in chunks if c.payload)
-        logger.info("[验证] 流式通过: %s 个 chunk, 内容=%r", len(chunks), full)
-
-    finally:
-        await client.disconnect()
-        await server.stop()
-
-    logger.info("[验证] 端对端验证完成")
-
-
-def main() -> None:
-    """入口"""
-    asyncio.run(_run_verification())
-
-
-if __name__ == "__main__":
-    main()
+    def get_agent(self):
+        return getattr(self._agent, "_instance", None)
