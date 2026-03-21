@@ -10,15 +10,11 @@ import hmac
 import hashlib
 import inspect
 import json
-import os
-import re
 import time
 import ssl
 from dataclasses import dataclass
 from typing import Any, Callable
 from urllib.parse import urlparse
-
-import aiohttp
 
 from jiuwenclaw.utils import logger
 from jiuwenclaw.channel.base import BaseChannel, ChannelMetadata, RobotMessageRouter
@@ -83,7 +79,6 @@ class XiaoyiChannel(BaseChannel):
         self._connect_tasks: dict[str, asyncio.Task] = {}  # Connection tasks for each channel
         self._session_task_map: dict[str, str] = {}
         self._session_heartbeat_tasks: dict[str, asyncio.Task] = {}  # Response heartbeat tasks for each session
-        self._artifact_map: dict[str, str] = {}
         self._stream_text_buffers: dict[str, str] = {}
         self._task_keepalive_tasks: dict[str, asyncio.Task] = {}
         self._task_last_activity: dict[str, float] = {}
@@ -425,7 +420,6 @@ class XiaoyiChannel(BaseChannel):
 
         # ==================== PROCESS PARTS (TEXT & FILES) ====================
         text = ""
-        files = []
         file_attachments: list[str] = []
         media_files: list[dict[str, Any]] = []
 
@@ -513,7 +507,6 @@ class XiaoyiChannel(BaseChannel):
         params = {"query": text, "task_id": task_id}
         if media_payload:
             params.update(media_payload)
-            params["query"] += f"\n用户上传的文件路径为：{','.join(media_payload.get('MediaPaths', []))}"
 
         user_message = Message(
             id=message.get("id", ""),
@@ -597,10 +590,9 @@ class XiaoyiChannel(BaseChannel):
                                     "",
                                     url_key,
                                     append=True,
-                                    final=False,
+                                    is_final=False,
                                 )
                             except Exception as e:
-                                logger.warning(f"XiaoyiChannel 发送心跳消息失败 ({url_key}): {e}")
                                 logger.warning(f"XiaoyiChannel 发送心跳消息失败 ({url_key}): {e}")
             except asyncio.CancelledError:
                 logger.info(f"XiaoyiChannel 会话心跳已停止: {session_id}")
@@ -765,8 +757,6 @@ class XiaoyiChannel(BaseChannel):
             },
         }
         await self._send_agent_response(session_id, task_id, response, url_key)
-        if final:
-            self._artifact_map.pop(artifact_key, None)
 
     async def _send_agent_response(self, session_id: str, task_id: str, response: dict[str, Any], url_key: str) -> None:
         """发送 agent_response 包装的消息（A2A 格式）到指定通道."""
@@ -781,6 +771,18 @@ class XiaoyiChannel(BaseChannel):
             await self._safe_ws_send(url_key, wrapper)
         except Exception as e:
             logger.warning(f"XiaoyiChannel 发送响应失败 ({url_key}): {e}")
+
+    async def _safe_ws_send(self, url_key: str, payload: dict[str, Any]) -> None:
+        ws = self._ws_connections.get(url_key)
+        if not ws:
+            raise RuntimeError(f"ws connection not available: {url_key}")
+        lock = self._send_locks.get(url_key)
+        if lock is None:
+            lock = asyncio.Lock()
+            self._send_locks[url_key] = lock
+        data = json.dumps(payload, ensure_ascii=False)
+        async with lock:
+            await ws.send(data)
 
     def _clear_task_timeout(self, session_id: str) -> None:
         """清除任务超时任务."""

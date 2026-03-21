@@ -12,10 +12,9 @@ from typing import Any
 
 import aiohttp
 
-from jiuwenclaw.utils import logger, get_workspace_dir
+from jiuwenclaw.utils import logger, get_xy_tmp_dir
 
-_WORKSPACE = get_workspace_dir()
-_TMP_MEDIA_PATH = _WORKSPACE / "xiaoyi_channel"
+_TMP_MEDIA_PATH = get_xy_tmp_dir()
 
 
 # ==================== Configuration ====================
@@ -264,19 +263,8 @@ def build_xiaoyi_media_payload(media_list: list[DownloadedMedia]) -> dict[str, A
     if not media_list:
         return {}
 
-    first = media_list[0]
-    media_paths = [str(media.path) for media in media_list]
-    media_types = [media.content_type for media in media_list if media.content_type]
-
-    result: dict[str, Any] = {}
-
-    if len(media_paths) > 0:
-        result["MediaPaths"] = media_paths
-
-    if len(media_types) > 0:
-        result["MediaTypes"] = media_types
-
-    return result
+    files = [dict(path=str(media.path), type=media.content_type or "") for media in media_list]
+    return files
 
 
 # ==================== Image Extraction ====================

@@ -322,6 +322,12 @@ def get_logs_dir() -> Path:
     return USER_WORKSPACE_DIR / ".logs"
 
 
+def get_xy_tmp_dir() -> Path:
+    xy_tmp_dir = USER_WORKSPACE_DIR / "tmp" / "xiaoyi"
+    xy_tmp_dir.mkdir(parents=True, exist_ok=True)
+    return xy_tmp_dir
+
+
 def get_env_file() -> Path:
     return get_config_dir() / ".env"
 
