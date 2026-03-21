@@ -59,11 +59,18 @@ channels:
     enabled: false
   xiaoyi:
     # 华为小艺 A2A 配置
+    mode: xiaoyi_channel
     ak:
     sk:
+    api_id:
+    push_id:
     agent_id:
     ws_url1: wss://hag.cloud.huawei.com/openclaw/v1/ws/link
     ws_url2: wss://116.63.174.231/openclaw/v1/ws/link
+    uid:
+    api_key:
+    push_url:
+    file_upload_url:
     enable_streaming: true
     enabled: false
   dingtalk:

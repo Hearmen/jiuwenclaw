@@ -19,6 +19,7 @@ from urllib.parse import urlparse
 from jiuwenclaw.utils import logger
 from jiuwenclaw.channel.base import BaseChannel, ChannelMetadata, RobotMessageRouter
 from jiuwenclaw.schema.message import EventType, Message, ReqMethod
+from jiuwenclaw.channel.xiaoyi_utils.push import XiaoYiPushService, PushConfig
 
 
 @dataclass
@@ -26,6 +27,7 @@ class XiaoyiChannelConfig:
     """小艺通道配置（客户端模式）."""
 
     enabled: bool = False
+    mode: str = "xiaoyi_channel"  # xiaoyi_channel or xiaoyi_claw
     ak: str = ""
     sk: str = ""
     agent_id: str = ""
@@ -33,8 +35,12 @@ class XiaoyiChannelConfig:
     ws_url2: str = ""
     enable_streaming: bool = True
     # Push notification configuration
+    uid: str = ""
+    api_key = ""
     api_id: str = ""
     push_id: str = ""
+    push_url: str = ""
+    file_upload_url: str = ""
     # Task timeout in milliseconds (default: 1 hour)
     task_timeout_ms: int = 3600000
     # Session cleanup timeout in milliseconds (default: 1 hour)
@@ -51,15 +57,22 @@ def _generate_signature(sk: str, timestamp: str) -> str:
     return base64.b64encode(h.digest()).decode("utf-8")
 
 
-def _generate_auth_headers(ak: str, sk: str, agent_id: str) -> dict[str, str]:
+def _generate_auth_headers(config: XiaoyiChannelConfig) -> dict[str, str]:
     """生成鉴权 Header."""
+    if config.mode == "xiaoyi_claw":
+        return {
+            "x-uid": config.uid,
+            "x-api-key": config.api_key,
+            "x-agent-id": config.agent_id,
+            "x-request-from": "openclaw"
+        }
     timestamp = str(int(time.time() * 1000))
-    signature = _generate_signature(sk, timestamp)
+    signature = _generate_signature(config.sk, timestamp)
     return {
-        "x-access-key": ak,
+        "x-access-key": config.ak,
         "x-sign": signature,
         "x-ts": timestamp,
-        "x-agent-id": agent_id,
+        "x-agent-id": config.agent_id
     }
 
 
@@ -193,13 +206,20 @@ class XiaoyiChannel(BaseChannel):
         logger.info(f"XiaoyiChannel 发送消息: {msg}")
 
         content = ""
+        cron_job_name = ""
         if isinstance(msg.payload, dict):
             content = msg.payload.get("content", "\n")
             if isinstance(content, dict):
                 content = content.get("output", str(content))
             content = str(content)
+            cron_job_name = msg.payload.get("cron", {}).get("job_name", "")
         elif msg.payload:
             content = str(msg.payload)
+        
+        # 推送消息发送
+        if msg.id.startswith("cron-push"):
+            await self._send_push_notification(cron_job_name, content)
+            return
 
         # 如果禁用流式，总是作为完整消息发送
         if not self.config.enable_streaming:
@@ -297,7 +317,7 @@ class XiaoyiChannel(BaseChannel):
         """连接到小艺服务器（双通道）."""
         import websockets
 
-        headers = _generate_auth_headers(self.config.ak, self.config.sk, self.config.agent_id)
+        headers = _generate_auth_headers(self.config)
         parsed = urlparse(url)
         is_ip = bool(parsed.hostname and parsed.hostname.replace(".", "").isdigit())
 
@@ -404,16 +424,6 @@ class XiaoyiChannel(BaseChannel):
         user_message = message.get("params", {}).get("message", {})
         parts = user_message.get("parts", [])
 
-        # ==================== CONCURRENT REQUEST DETECTION ====================
-        # Check if this session already has an active task
-        if self._is_session_active(session_id):
-            logger.info(f"[CONCURRENT] Session {session_id} has an active task, sending busy response")
-            # Send busy response and skip processing
-            for url_key in list(self._ws_connections.keys()):
-                await self._send_text_response(session_id, task_id, "上一个任务仍在处理中，请稍后再试", url_key, is_final=True)
-            return
-        # =================================================================
-
         # Mark session as active
         self._mark_session_active(session_id)
         self._session_task_map[session_id] = task_id
@@ -456,6 +466,11 @@ class XiaoyiChannel(BaseChannel):
                 except Exception as e:
                     logger.error(f"XiaoYi: Failed to process file {name}: {e}")
                     file_attachments.append(f"[文件处理失败: {name}]")
+            elif kind == "data":
+                data = part.get("data", {})
+                if isinstance(data, dict):
+                    push_id = data.get("variables", {}).get("systemVariables", {}).get("push_id", "")
+                    self.config.push_id = push_id if push_id else self.config.push_id
         # =================================================================
 
         # Log summary of processed attachments
@@ -506,7 +521,7 @@ class XiaoyiChannel(BaseChannel):
         # Add media payload to metadata
         params = {"query": text, "task_id": task_id}
         if media_payload:
-            params.update(media_payload)
+            params["files"] = media_payload
 
         user_message = Message(
             id=message.get("id", ""),
@@ -807,11 +822,10 @@ class XiaoyiChannel(BaseChannel):
             return False
 
         try:
-            from jiuwenclaw.channel.xiaoyi_utils.push import XiaoYiPushService, PushConfig
-
             push_config = PushConfig(
                 api_id=self.config.api_id,
                 push_id=self.config.push_id,
+                push_url=self.config.push_url,
                 ak=self.config.ak,
                 sk=self.config.sk,
             )

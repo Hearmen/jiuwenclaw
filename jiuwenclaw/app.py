@@ -1454,15 +1454,35 @@ async def _run() -> None:
                 if not enabled:
                     logger.info("[App] channels.xiaoyi.%s，XiaoyiChannel 未启用", reason)
                 else:
-                    xiaoyi_config = XiaoyiChannelConfig(
-                        enabled=True,
-                        ak=str(xiaoyi_conf.get("ak") or "").strip(),
-                        sk=str(xiaoyi_conf.get("sk") or "").strip(),
-                        agent_id=str(xiaoyi_conf.get("agent_id") or "").strip(),
-                        ws_url1=str(xiaoyi_conf.get("ws_url1") or "wss://116.63.174.231/openclaw/v1/ws/link").strip(),
-                        ws_url2=str(xiaoyi_conf.get("ws_url2") or "wss://hag.cloud.huawei.com/openclaw/v1/ws/link").strip(),
-                        enable_streaming=bool(xiaoyi_conf.get("enable_streaming", True)),
-                    )
+                    if xiaoyi_conf.get("mode") == "xiaoyi_channel":
+                        xiaoyi_config = XiaoyiChannelConfig(
+                            enabled=True,
+                            mode=str(xiaoyi_conf.get("mode") or "xiaoyi_channel").strip(),
+                            ak=str(xiaoyi_conf.get("ak") or "").strip(),
+                            sk=str(xiaoyi_conf.get("sk") or "").strip(),
+                            api_id=str(xiaoyi_conf.get("api_id") or "").strip(),
+                            push_id=str(xiaoyi_conf.get("push_id") or "").strip(),
+                            push_url=str(xiaoyi_conf.get("push_url") or "").strip(),
+                            agent_id=str(xiaoyi_conf.get("agent_id") or "").strip(),
+                            ws_url1=str(xiaoyi_conf.get("ws_url1")).strip(),
+                            ws_url2=str(xiaoyi_conf.get("ws_url2")).strip(),
+                            enable_streaming=bool(xiaoyi_conf.get("enable_streaming", True)),
+                        )
+                    else:
+                        xiaoyi_config = XiaoyiChannelConfig(
+                            enabled=True,
+                            mode=str(xiaoyi_conf.get("mode") or "xiaoyi_claw").strip(),
+                            api_id=str(xiaoyi_conf.get("api_id") or "").strip(),
+                            push_id=str(xiaoyi_conf.get("push_id") or "").strip(),
+                            push_url=str(xiaoyi_conf.get("push_url") or "").strip(),
+                            agent_id=str(xiaoyi_conf.get("agent_id") or "").strip(),
+                            uid=str(xiaoyi_conf.get("uid") or "").strip(),
+                            api_key=str(xiaoyi_conf.get("api_key") or "").strip(),
+                            file_upload_url=str(xiaoyi_conf.get("file_upload_url") or "").strip(),
+                            ws_url1=str(xiaoyi_conf.get("ws_url1")).strip(),
+                            ws_url2=str(xiaoyi_conf.get("ws_url2")).strip(),
+                            enable_streaming=bool(xiaoyi_conf.get("enable_streaming", True)),
+                        )
                     xiaoyi_channel = XiaoyiChannel(xiaoyi_config, _DummyBus())
                     channel_manager.register_channel(xiaoyi_channel)
                     xiaoyi_task = asyncio.create_task(xiaoyi_channel.start(), name="xiaoyi")

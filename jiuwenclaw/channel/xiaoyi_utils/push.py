@@ -14,6 +14,8 @@ import aiohttp
 
 from jiuwenclaw.utils import logger
 
+PUSH_URL = "https://hag.cloud.huawei.com/open-ability-agent/v1/agent-webhook"
+
 
 @dataclass
 class PushConfig:
@@ -22,7 +24,7 @@ class PushConfig:
     push_id: str = ""
     ak: str = ""
     sk: str = ""
-    push_url: str = "https://hag.cloud.huawei.com/open-ability-agent/v1/agent-webhook"
+    push_url: str = ""
 
     @property
     def is_configured(self) -> bool:
@@ -111,7 +113,7 @@ class XiaoYiPushService:
             timeout = aiohttp.ClientTimeout(total=30)
             async with aiohttp.ClientSession() as session:
                 async with session.post(
-                    self.config.push_url,
+                    self.config.push_url or PUSH_URL,
                     headers=headers,
                     json=payload,
                     timeout=timeout,

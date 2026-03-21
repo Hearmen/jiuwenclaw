@@ -423,6 +423,8 @@ class JiuWenClaw:
                 cron_controller.set_target_channel(CronTargetChannel.FEISHU)
             elif channel == "wecom":
                 cron_controller.set_target_channel(CronTargetChannel.WECOM)
+            elif channel == "xiaoyi":
+                cron_controller.set_target_channel(CronTargetChannel.XIAOYI) 
             elif channel in ("web", "sess"):
                 cron_controller.set_target_channel(CronTargetChannel.WEB)
 
