@@ -1,4 +1,5 @@
 # Copyright (c) Huawei Technologies Co., Ltd. 2025. All rights reserved.
+import os
 from typing import Any, Optional
 
 from pydantic import Field
@@ -9,10 +10,6 @@ from openjiuwen.core.common.security.url_utils import UrlUtils
 from openjiuwen.core.foundation.llm.schema.config import ModelClientConfig
 from openjiuwen.core.foundation.llm.model_clients.openai_model_client import \
     AssistantMessageChunk, OpenAIModelClient, ToolCall, UsageMetadata
-
-
-class PatchModelClientConfig(ModelClientConfig):
-    default_headers: Optional[dict] = Field(default=None, description="model client default headers")
 
 
 class PatchOpenAIModelClient(OpenAIModelClient):
@@ -49,7 +46,7 @@ class PatchOpenAIModelClient(OpenAIModelClient):
             http_client=http_client,
             timeout=final_timeout,
             max_retries=self.model_client_config.max_retries,
-            default_headers=self.model_client_config.default_headers
+            default_headers=os.getenv("default_headers", None),
         )
     
     def _parse_stream_chunk(self, chunk: Any) -> Optional[AssistantMessageChunk]:

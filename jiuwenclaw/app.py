@@ -41,10 +41,7 @@ for logger in LogManager.get_all_loggers().values():
 import openjiuwen.core.foundation.llm.schema.config as as_config_module
 import openjiuwen.core.foundation.llm as as_llm_module
 from openjiuwen.core.foundation.llm.model_clients.openai_model_client import OpenAIModelClient
-from jiuwenclaw.jiuwen_core_patch import PatchModelClientConfig, PatchOpenAIModelClient
-
-as_config_module.ModelClientConfig = PatchModelClientConfig
-as_llm_module.ModelClientConfig = PatchModelClientConfig
+from jiuwenclaw.jiuwen_core_patch import PatchOpenAIModelClient
 
 OpenAIModelClient._create_async_openai_client = PatchOpenAIModelClient._create_async_openai_client
 OpenAIModelClient._parse_stream_chunk = PatchOpenAIModelClient._parse_stream_chunk

@@ -10,7 +10,6 @@ models:
         client_provider: ${MODEL_PROVIDER}
         timeout: 1800
         verify_ssl: false
-        default_headers: ${DEFAULT_HEADERS}
       model_config_obj:
         temperature: 0.95
   video:
@@ -21,7 +20,6 @@ models:
         client_provider: ${VIDEO_PROVIDER}
         timeout: 1800
         verify_ssl: false
-        default_headers: ${DEFAULT_HEADERS}
       model_config_obj:
         temperature: 0.95
   audio:
@@ -32,7 +30,6 @@ models:
         client_provider: ${AUDIO_PROVIDER}
         verify_ssl: false
         timeout: 1800
-        default_headers: ${DEFAULT_HEADERS}
       model_config_obj:
         temperature: 0.95
   vision:
@@ -43,7 +40,6 @@ models:
         client_provider: ${VISION_PROVIDER}
         verify_ssl: false
         timeout: 1800
-        default_headers: ${DEFAULT_HEADERS}
       model_config_obj:
         temperature: 0.95
         
