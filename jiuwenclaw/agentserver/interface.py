@@ -36,6 +36,11 @@ from jiuwenclaw.utils import (
 from jiuwenclaw.config import get_config
 from jiuwenclaw.agentserver.react_agent import JiuClawReActAgent
 from jiuwenclaw.agentserver.tools.browser_tools import register_browser_runtime_mcp_server
+from jiuwenclaw.agentserver.tools.audio_tools import (
+    audio_question_answering,
+    audio_metadata,
+)
+from jiuwenclaw.agentserver.tools.image_tools import visual_question_answering
 from jiuwenclaw.agentserver.tools.mcp_toolkits import get_mcp_tools
 from jiuwenclaw.agentserver.tools.todo_toolkits import TaskStatus, TodoToolkit
 from jiuwenclaw.agentserver.tools.memory_tools import (
@@ -46,7 +51,12 @@ from jiuwenclaw.agentserver.tools.memory_tools import (
     edit_memory,
     read_memory,
 )
-from jiuwenclaw.agentserver.tools.video_understanding import video_understanding
+from jiuwenclaw.agentserver.tools.video_tools import video_understanding
+from jiuwenclaw.agentserver.tools.multimodal_config import (
+    apply_audio_model_config_from_yaml,
+    apply_vision_model_config_from_yaml,
+    apply_video_model_config_from_yaml,
+)
 from jiuwenclaw.agentserver.memory.compaction import ContextCompactionManager
 from jiuwenclaw.agentserver.memory.config import clear_config_cache
 from jiuwenclaw.agentserver.memory import clear_memory_manager_cache
@@ -130,6 +140,8 @@ class JiuWenClaw:
         self._agent_name: str = "main_agent"
         self._compaction_manager: ContextCompactionManager | None = None
         self._browser_mcp_registered: bool = False
+        self._vision_mcp_registered: bool = False
+        self._audio_mcp_registered: bool = False
         self._memory_tools_registered: bool = False
         self._mcp_tools_registered: bool = False
         self._video_tool_registered: bool = False
@@ -161,7 +173,7 @@ class JiuWenClaw:
         self._agent_name = agent_name
 
         # 处理 model_client_config：确保包含必需字段
-        model_configs = config.get("models", []).copy()
+        model_configs = config.get("models", []).copy()	 
         react_config = {**react_config, **model_configs.get("default", {}).copy(), "prompt_template": [
             {"role": "system", "content": build_system_prompt(
                 mode="plan",
@@ -223,6 +235,9 @@ class JiuWenClaw:
         await self.set_checkpoint()
 
         config_base = get_config()
+        apply_video_model_config_from_yaml(config_base)
+        apply_audio_model_config_from_yaml(config_base)
+        apply_vision_model_config_from_yaml(config_base)
         agent_config = self._load_react_config(config_base)
 
         sysop_card_id: str | None = None
@@ -261,7 +276,7 @@ class JiuWenClaw:
 
             # 检查是否有有效的模型配置（api_key 或 client_provider）
             has_valid_model_config = False
-            if isinstance(config_base.get("models", dict).get("default", dict).get("model_client_config"), dict):
+            if isinstance(config_base.get("models", dict).get("default", dict).get("model_client_config"), dict):	 
                 mcc = config_base.get("models", dict).get("default", dict)["model_client_config"]
                 # 检查是否有 api_key（非空）或通过环境变量配置
                 api_key = mcc.get("api_key", "")
@@ -337,6 +352,26 @@ class JiuWenClaw:
         except Exception as exc:
             logger.warning("[JiuWenClaw] browser MCP registration skipped: %s", exc)
 
+        # add vision tools (直接注册方式)
+        try:
+            for tool in [visual_question_answering]:
+                Runner.resource_mgr.add_tool(tool)
+                self._instance.ability_manager.add(tool.card)
+            self._vision_mcp_registered = True
+            logger.info("[JiuWenClaw] vision tools registered successfully")
+        except Exception as exc:
+            logger.warning("[JiuWenClaw] vision tools registration skipped: %s", exc)
+
+        # add audio tools (直接注册方式)
+        try:
+            for tool in [audio_question_answering, audio_metadata]:
+                Runner.resource_mgr.add_tool(tool)
+                self._instance.ability_manager.add(tool.card)
+            self._audio_mcp_registered = True
+            logger.info("[JiuWenClaw] audio tools registered successfully")
+        except Exception as exc:
+            logger.warning("[JiuWenClaw] audio tools registration skipped: %s", exc)
+
         # add cron tools
         try:
             cron_controller = CronController.get_instance()
@@ -362,6 +397,9 @@ class JiuWenClaw:
         clear_memory_manager_cache()
 
         config_base = get_config()
+        apply_video_model_config_from_yaml(config_base)
+        apply_audio_model_config_from_yaml(config_base)
+        apply_vision_model_config_from_yaml(config_base)
         agent_config = self._load_react_config(config_base)
 
         if self._sysop_card_id:
@@ -423,7 +461,7 @@ class JiuWenClaw:
             elif channel == "wecom":
                 cron_controller.set_target_channel(CronTargetChannel.WECOM)
             elif channel == "xiaoyi":
-                cron_controller.set_target_channel(CronTargetChannel.XIAOYI) 
+                cron_controller.set_target_channel(CronTargetChannel.XIAOYI)
             elif channel in ("web", "sess"):
                 cron_controller.set_target_channel(CronTargetChannel.WEB)
 
@@ -451,7 +489,7 @@ class JiuWenClaw:
             for tool in session_toolkits.get_tools():
                 Runner.resource_mgr.add_tool(tool)
                 self._instance.ability_manager.add(tool.card)
-            
+
         # Register send file toolkit
         if not self._send_file_tool_registered:
             send_file_toolkit = SendFileToolkit(
@@ -487,6 +525,26 @@ class JiuWenClaw:
                 self._video_tool_registered = True
             except Exception as exc:
                 logger.warning("[JiuWenClaw] ensure video_understanding tool failed: %s", exc)
+
+        if not self._vision_mcp_registered:
+            try:
+                for tool in [visual_question_answering]:
+                    if not Runner.resource_mgr.get_tool(tool.card.id):
+                        Runner.resource_mgr.add_tool(tool)
+                    self._instance.ability_manager.add(tool.card)
+                self._vision_mcp_registered = True
+            except Exception as exc:
+                logger.warning("[JiuWenClaw] ensure vision tools failed: %s", exc)
+
+        if not self._audio_mcp_registered:
+            try:
+                for tool in [audio_question_answering, audio_metadata]:
+                    if not Runner.resource_mgr.get_tool(tool.card.id):
+                        Runner.resource_mgr.add_tool(tool)
+                    self._instance.ability_manager.add(tool.card)
+                self._audio_mcp_registered = True
+            except Exception as exc:
+                logger.warning("[JiuWenClaw] ensure audio tools failed: %s", exc)
 
         if not self._mcp_tools_registered:
             for mcp_tool in get_mcp_tools():

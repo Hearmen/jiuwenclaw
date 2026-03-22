@@ -42,8 +42,15 @@ def resolve_env_vars(value: Any) -> Any:
 
         def replace_env(match):
             var_name = match.group(1)
-            default = match.group(2) if match.group(2) is not None else ""
-            return os.getenv(var_name, default)
+            default = match.group(2)
+            current = os.getenv(var_name)
+            # Bash: ${VAR:-default} uses default when VAR is unset OR empty.
+            # ${VAR} (no :-) keeps getenv behavior; unset -> "".
+            if default is not None:
+                if current is None or current == "":
+                    return default
+                return current
+            return current if current is not None else ""
 
         return re.sub(pattern, replace_env, value)
     elif isinstance(value, dict):

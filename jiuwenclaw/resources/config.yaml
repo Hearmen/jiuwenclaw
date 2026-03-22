@@ -42,7 +42,7 @@ models:
         timeout: 1800
       model_config_obj:
         temperature: 0.95
-        
+
 react:
   agent_name: main_agent
   max_iterations: 100
