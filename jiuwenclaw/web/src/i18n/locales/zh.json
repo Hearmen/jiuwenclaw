@@ -599,6 +599,9 @@
     },
     "toolGroup": {
       "executed": "已执行 {{totalPairs}} 次工具调用",
+      "sessionExecuted": "{{count}} 个会话任务已完成",
+      "sessionCompleted": "会话任务已完成",
+      "sessionFailed": "会话失败",
       "pending": "{{pendingCount}} 个执行中",
       "timeout": "{{timeoutCount}} 个超时",
       "latest": "↓ 最新"

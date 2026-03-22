@@ -1103,6 +1103,31 @@ select {
     color: var(--warn);
   }
 
+  .tool-pair-icon.session {
+    background: var(--accent-subtle);
+    color: var(--accent);
+  }
+ 	 
+  .tool-pair-item-session {
+    background: rgba(96, 165, 250, 0.05);
+    border-bottom: 1px solid rgba(96, 165, 250, 0.15);
+  }
+
+  .tool-pair-pre-session {
+    background: rgba(96, 165, 250, 0.08);
+    border-color: rgba(96, 165, 250, 0.3);
+  }
+ 	 
+  :root[data-theme="light"] .tool-pair-item-session {
+    background: rgba(96, 165, 250, 0.08);
+    border-bottom: 1px solid rgba(96, 165, 250, 0.2);
+  }
+
+  :root[data-theme="light"] .tool-pair-pre-session {
+    background: rgba(96, 165, 250, 0.12);
+    border-color: rgba(96, 165, 250, 0.4);
+  }
+
   .tool-pair-name {
     font-family: var(--mono);
     font-size: 13px;

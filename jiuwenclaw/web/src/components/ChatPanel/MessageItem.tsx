@@ -36,6 +36,7 @@ export function MessageItem({ message, autoSpeak = false }: MessageItemProps) {
   } = message;
   const [hasAutoSpoken, setHasAutoSpoken] = useState(false);
   const [isAudioPlaying, setIsAudioPlaying] = useState(false);
+  const [isExpanded, setIsExpanded] = useState(false);
   const audioRef = useRef<HTMLAudioElement | null>(null);
 
   // TTS
@@ -146,6 +147,69 @@ export function MessageItem({ message, autoSpeak = false }: MessageItemProps) {
 
   // 系统消息
   if (role === 'system') {
+ 	     // 检查是否为 chat.session_result 事件
+ 	     if (content && content.startsWith('chat.session_result:')) {
+ 	       console.log('chat.session_result event:', content);
+ 	       const [, jsonStr] = content.split('chat.session_result:');
+ 	       try {
+ 	         const sessionData = JSON.parse(jsonStr);
+ 	         console.log('Parsed session data:', sessionData);
+ 	         const { description, result } = sessionData;
+ 	         
+ 	         return (
+ 	           <div className="chat-tool-card animate-rise">
+ 	             <div
+ 	               className="cursor-pointer"
+ 	               onClick={() => setIsExpanded(!isExpanded)}
+ 	             >
+ 	               <div className="flex items-center gap-2">
+ 	                 <span className="w-5 h-5 rounded bg-accent-2-subtle text-accent-2 flex items-center justify-center text-sm">
+ 	                   <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2}>
+ 	                     <path strokeLinecap="round" strokeLinejoin="round" d="M9 12h3.75M9 15h3.75M9 18h3.75m3 .75H18a2.25 2.25 0 002.25-2.25V6.108c0-1.135-.845-2.098-1.976-2.192a48.424 48.424 0 00-1.123-.08m-5.801 0c-.065.21-.1.433-.1.664 0 .414.336.75.75.75h4.5a.75.75 0 00.75-.75 2.25 2.25 0 00-.1-.664m-5.8 0A2.251 2.251 0 0113.5 2.25H15c1.012 0 1.867.668 2.15 1.586m-5.8 0c-.376.023-.75.05-1.124.08C9.095 4.01 8.25 4.973 8.25 6.108V19.5a2.25 2.25 0 002.25 2.25h.75m0-3h-3.75m0 0h-3.75m0 0H9m1.5 3h3.75m-3.75 0H9m1.5 3h3.75m-3.75 0H9m1.5 3h3.75m-3.75 0H9" />
+ 	                   </svg>
+ 	                 </span>
+ 	                 <span className="font-mono text-sm font-medium text-text">
+ 	                   会话任务：【{description || '未知任务'}】已完成
+ 	                 </span>
+ 	                 <span className="text-text-muted text-sm">
+ 	                   {isExpanded ? '▼' : '▶'}
+ 	                 </span>
+ 	               </div>
+ 	             </div>
+ 	             {isExpanded && (
+ 	               <div className="mt-2 p-2 rounded-md bg-card border border-border">
+ 	                 {description && (
+ 	                   <div className="mb-2">
+ 	                     <div className="font-mono text-xs text-text-muted mb-1">Description:</div>
+ 	                     <pre className="font-mono text-sm text-text overflow-x-auto whitespace-pre-wrap">
+ 	                       {description}
+ 	                     </pre>
+ 	                   </div>
+ 	                 )}
+ 	                 {result && (
+ 	                   <div>
+ 	                     <div className="font-mono text-xs text-text-muted mb-1">Result:</div>
+ 	                     <pre className="font-mono text-sm text-text overflow-x-auto whitespace-pre-wrap max-h-60">
+ 	                       {result}
+ 	                     </pre>
+ 	                   </div>
+ 	                 )}
+ 	               </div>
+ 	             )}
+ 	           </div>
+ 	         );
+ 	       } catch (e) {
+ 	         // 如果解析失败，显示原始内容
+ 	         return (
+ 	           <div className="flex justify-center my-4 animate-fade-in">
+ 	             <div className="px-4 py-2 rounded-full bg-secondary border border-border text-text-muted text-sm">
+ 	               {content}
+ 	             </div>
+ 	           </div>
+ 	         );
+ 	       }
+ 	     }
+ 	     
     return (
       <div className="flex justify-center my-4 animate-fade-in">
         <div className="px-4 py-2 rounded-full bg-secondary border border-border text-text-muted text-sm">

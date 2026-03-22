@@ -18,7 +18,6 @@ const MODEL_DEFAULT_KEYS = new Set(["api_base", "api_key", "model", "model_provi
 const MODEL_VIDEO_KEYS = new Set(["video_api_base", "video_api_key", "video_model", "video_provider"]);
 const MODEL_AUDIO_KEYS = new Set(["audio_api_base", "audio_api_key", "audio_model", "audio_provider"]);
 const MODEL_VISION_KEYS = new Set(["vision_api_base", "vision_api_key", "vision_model", "vision_provider"]);
-const MODEL_KEYS = new Set([...MODEL_DEFAULT_KEYS, ...MODEL_VIDEO_KEYS, ...MODEL_AUDIO_KEYS, ...MODEL_VISION_KEYS]);
 const EMBED_KEYS = new Set(["embed_api_base", "embed_api_key", "embed_model"]);
 const EMAIL_KEYS = new Set(["email_address", "email_token"]);
 const THIRD_PARTY_API_KEYS = new Set([

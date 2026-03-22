@@ -20,13 +20,14 @@ export function ToolCallDisplay({ toolCall, toolResult }: ToolCallDisplayProps) 
   const [isExpanded, setIsExpanded] = useState(false);
 
   if (toolCall) {
-    // 使用格式化的描述或默认显示工具名
-    const displayTitle = toolCall.description
-      ? `${toolCall.name}: ${toolCall.description}`
-      : toolCall.name;
+    // session 类型：仅显示 会话任务：【description】，不显示 "session" 名称
+    const isSession = toolCall.name === 'session';
+    const displayTitle = isSession
+      ? (toolCall.formatted_args || '会话任务已完成')
+      : (toolCall.description ? `${toolCall.name}: ${toolCall.description}` : toolCall.name);
 
-    // 使用格式化的参数摘要
-    const displaySubtitle = toolCall.formatted_args || '';
+    // 使用格式化的参数摘要（session 类型时 subtitle 已融入 title，不再重复显示）
+    const displaySubtitle = isSession ? '' : (toolCall.formatted_args || '');
 
     return (
       <div className="chat-tool-card animate-rise">
@@ -63,10 +64,12 @@ export function ToolCallDisplay({ toolCall, toolResult }: ToolCallDisplayProps) 
   }
 
   if (toolResult) {
-    // 使用格式化的摘要或默认显示
+    // 使用格式化的摘要或默认显示（session 类型优先用 summary，避免出现 "session 完成"）
     const displaySummary = toolResult.summary
       ? toolResult.summary
-      : `${toolResult.toolName} ${toolResult.success ? t('chatUi.toolResult.success') : t('chatUi.toolResult.failed')}`;
+      : (toolResult.toolName === 'session'
+        ? (toolResult.success ? t('chatUi.toolGroup.sessionCompleted') : t('chatUi.toolGroup.sessionFailed'))
+        : `${toolResult.toolName} ${toolResult.success ? t('chatUi.toolResult.success') : t('chatUi.toolResult.failed')}`);
 
     return (
       <div className="chat-tool-card animate-rise">

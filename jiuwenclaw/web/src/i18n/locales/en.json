@@ -599,6 +599,9 @@
     },
     "toolGroup": {
       "executed": "{{totalPairs}} tool calls executed",
+      "sessionExecuted": "{{count}} session tasks completed",
+      "sessionCompleted": "Session task completed",
+      "sessionFailed": "Session failed",
       "pending": "{{pendingCount}} running",
       "timeout": "{{timeoutCount}} timed out",
       "latest": "↓ Latest"

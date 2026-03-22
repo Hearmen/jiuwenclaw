@@ -19,6 +19,8 @@ import {
   MediaItem,
   AgentMode,
   Session,
+  ToolResult,
+ 	ToolCall,
 } from '../types';
 import { useChatStore, useTodoStore, useSessionStore } from '../stores';
 import { webClient } from '../services/webClient';
@@ -790,6 +792,76 @@ export function useWebSocket(options: UseWebSocketOptions): UseWebSocketReturn {
       webClient.on('chat.ask_user_question', ({ payload }) => {
         if (!shouldHandleSessionEvent(payload)) return;
         setPendingQuestion(payload as unknown as AskUserQuestionPayload);
+      }),
+      // 同时监听 session_result 事件，以处理后端可能发送的不同格式
+      webClient.on('session_result', ({ payload }) => {
+        setThinking(false);
+        const sessionId =
+          typeof payload.session_id === 'string' ? payload.session_id : '';
+        const description =
+          typeof payload.description === 'string' ? payload.description : '';
+        const result = typeof payload.result === 'string' ? payload.result : '';
+        // 创建工具调用对象
+        const toolCallId = `session-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+        const sessionToolCall: ToolCall = {
+          id: toolCallId,
+          name: 'session',
+          arguments: {
+            session_id: sessionId,
+            description: description,
+          },
+          description: description || '会话完成',
+          formatted_args: `会话任务：【${description || '未知任务'}】`,
+        };
+        addToolCall(sessionToolCall);
+        // 组合 description 和 result 作为完整结果
+        const fullResult = description
+          ? `描述: ${description}\n\n结果: ${result}`
+          : result;
+        const sessionResult: ToolResult = {
+          toolName: 'session',
+          result: fullResult,
+          success: true,
+          toolCallId: toolCallId,
+          summary: '完成',
+        };
+        addToolResult(sessionResult);
+      }),
+      webClient.on('chat.session_result', ({ payload }) => {
+        if (shouldDropDuplicatedEvent('chat.session_result', payload)) {
+          return;
+        }
+        setThinking(false);
+        const sessionId =
+          typeof payload.session_id === 'string' ? payload.session_id : '';
+        const description =
+          typeof payload.description === 'string' ? payload.description : '';
+        const result = typeof payload.result === 'string' ? payload.result : '';
+        // 创建工具调用对象
+        const toolCallId = `session-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+        const sessionToolCall: ToolCall = {
+          id: toolCallId,
+          name: 'session',
+          arguments: {
+            session_id: sessionId,
+            description: description,
+          },
+          description: description || '会话完成',
+          formatted_args: `会话任务：【${description || '未知任务'}】`,
+        };
+        addToolCall(sessionToolCall);
+        // 组合 description 和 result 作为完整结果
+        const fullResult = description
+          ? `描述: ${description}\n\n结果: ${result}`
+          : result;
+        const sessionResult: ToolResult = {
+          toolName: 'session',
+          result: fullResult,
+          success: true,
+          toolCallId: toolCallId,
+          summary: '完成',
+        };
+        addToolResult(sessionResult);
       }),
     ];
 

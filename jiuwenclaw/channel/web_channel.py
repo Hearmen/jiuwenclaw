@@ -305,7 +305,8 @@ class WebChannel(BaseChannel):
             # 对于需要传递完整结构化数据的事件类型
             if event_name in ("connection.ack", "todo.updated", "chat.tool_call", "chat.tool_result",
                              "chat.processing_status", "chat.interrupt_result", "chat.error", "heartbeat.relay",
-                             "context.compressed", "chat.ask_user_question", "chat.subtask_update"):
+                             "context.compressed", "chat.ask_user_question", "chat.subtask_update",
+                             "chat.session_result"):
                 # 传递完整 payload，保留所有字段
                 payload = {**msg.payload}
                 # 确保包含 session_id
