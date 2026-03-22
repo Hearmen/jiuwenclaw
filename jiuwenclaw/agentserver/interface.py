@@ -22,6 +22,7 @@ from openjiuwen.core.session.checkpointer.persistence import PersistenceCheckpoi
 
 from jiuwenclaw.agentserver.prompt_builder import build_system_prompt
 from jiuwenclaw.agentserver.tools.multi_session_toolkits import MultiSessionToolkit
+from jiuwenclaw.agentserver.tools import SendFileToolkit
 from jiuwenclaw.agentserver.prompt_builder import build_system_prompt, build_user_prompt
 from jiuwenclaw.gateway.cron import CronController, CronTargetChannel
 from jiuwenclaw.utils import (
@@ -132,6 +133,7 @@ class JiuWenClaw:
         self._memory_tools_registered: bool = False
         self._mcp_tools_registered: bool = False
         self._video_tool_registered: bool = False
+        self._send_file_tool_registered: bool = False
         self._todo_tool_sessions_registered: set[str] = set()
         self._sysop_card_id: str | None = None
 
@@ -449,6 +451,18 @@ class JiuWenClaw:
             for tool in session_toolkits.get_tools():
                 Runner.resource_mgr.add_tool(tool)
                 self._instance.ability_manager.add(tool.card)
+            
+        # Register send file toolkit
+        if not self._send_file_tool_registered:
+            send_file_toolkit = SendFileToolkit(
+                request_id=request_id,
+                session_id=effective_session_id,
+                channel_id=channel_id,
+            )
+            for tool in send_file_toolkit.get_tools():
+                Runner.resource_mgr.add_tool(tool)
+                self._instance.ability_manager.add(tool.card)
+            self._send_file_tool_registered = True
             # tool_list = self._instance.ability_manager.list()
             # for tool in tool_list:
             #     if isinstance(tool, ToolCard):

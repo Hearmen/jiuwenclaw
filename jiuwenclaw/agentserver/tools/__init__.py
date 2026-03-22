@@ -13,6 +13,10 @@ from .memory_tools import (
     read_memory,
 )
 
+from .send_file_to_user import (
+    SendFileToolkit,
+)
+
 __all__ = [
     "set_global_memory_manager",
     "init_memory_manager_async",
@@ -22,4 +26,5 @@ __all__ = [
     "write_memory",
     "edit_memory",
     "read_memory",
+    "SendFileToolkit",
 ]

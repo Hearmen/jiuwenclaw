@@ -310,7 +310,9 @@ def _register_web_handlers(
             val = params[param_key]
             if param_key.endswith("_provider") and val and val not in available_model_providers:
                 await channel.send_response(
-                    ws, req_id, ok=False, error=f"Model provider must in: {available_model_providers} ", code="BAD_REQUEST"
+                    ws, req_id, ok=False, 
+                    error=f"Model provider must in: {available_model_providers} ", 
+                    code="BAD_REQUEST"
                 )
                 return
             if val is None:
