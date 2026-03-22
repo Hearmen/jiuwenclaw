@@ -169,6 +169,8 @@ def _run_command_sync(
         shell=use_shell,
         cwd=str(workdir),
         text=True,
+        encoding='utf-8',
+        errors='replace',
         capture_output=True,
         timeout=timeout_seconds,
     )
