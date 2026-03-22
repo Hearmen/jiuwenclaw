@@ -2,24 +2,11 @@
  * SkillNet 在线搜索弹窗
  * 从 SkillNet 检索并安装技能
  */
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { useTranslation } from "react-i18next";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { Trans, useTranslation } from "react-i18next";
 import { webRequest } from "../../services/webClient";
 
-/** Empty input → no mirror; non-empty must be http(s) URL or treated as invalid (do not send to backend). */
-function parseOptionalHttpMirrorUrl(input: string): { valid: boolean; value: string | null } {
-  const t = input.trim();
-  if (!t) return { valid: true, value: null };
-  try {
-    const u = new URL(t);
-    if (u.protocol !== "http:" && u.protocol !== "https:") {
-      return { valid: false, value: null };
-    }
-    return { valid: true, value: t };
-  } catch {
-    return { valid: false, value: null };
-  }
-}
+const SKILLNET_UPSTREAM_REPO_URL = "https://github.com/zjunlp/SkillNet";
 
 type SkillNetItem = {
   skill_name: string;
@@ -47,7 +34,6 @@ export function SkillNetSearchModal({
 }: SkillNetSearchModalProps) {
   const { t } = useTranslation();
   const [query, setQuery] = useState("");
-  const [mirrorUrlInput, setMirrorUrlInput] = useState("");
   const [results, setResults] = useState<SkillNetItem[]>([]);
   const [loadState, setLoadState] = useState<LoadState>("idle");
   const [expandedUrl, setExpandedUrl] = useState<string | null>(null);
@@ -63,13 +49,6 @@ export function SkillNetSearchModal({
     }),
     [sessionId]
   );
-
-  const parsedMirror = useMemo(
-    () => parseOptionalHttpMirrorUrl(mirrorUrlInput),
-    [mirrorUrlInput]
-  );
-  const mirrorFieldInvalid =
-    mirrorUrlInput.trim().length > 0 && !parsedMirror.valid;
 
   useEffect(() => {
     if (!open) return;
@@ -138,13 +117,6 @@ export function SkillNetSearchModal({
       setActionTarget(item.skill_url);
       setErrorMessage(null);
       try {
-        const installParams: Record<string, unknown> = {
-          url: item.skill_url,
-          force: true,
-        };
-        if (parsedMirror.value) {
-          installParams.mirror_url = parsedMirror.value;
-        }
         const data = await webRequest<{
           success: boolean;
           pending?: boolean;
@@ -153,7 +125,10 @@ export function SkillNetSearchModal({
           detail_key?: string;
           detail_params?: Record<string, unknown>;
           skill?: { name?: string };
-        }>("skills.skillnet.install", withSession(installParams));
+        }>(
+          "skills.skillnet.install",
+          withSession({ url: item.skill_url, force: true })
+        );
         if (!data.success) {
           const message = data.detail_key
             ? t(data.detail_key, data.detail_params as Record<string, string> | undefined)
@@ -215,7 +190,7 @@ export function SkillNetSearchModal({
         setActionTarget(null);
       }
     },
-    [clearInstalledSuccess, onInstalled, parsedMirror.value, t, withSession]
+    [clearInstalledSuccess, onInstalled, t, withSession]
   );
 
   if (!open) return null;
@@ -229,10 +204,23 @@ export function SkillNetSearchModal({
         aria-label={t("common.close")}
       />
       <div className="relative w-full max-w-2xl max-h-[85vh] overflow-hidden rounded-xl border border-border bg-card shadow-2xl animate-rise flex flex-col">
-        <div className="flex items-center justify-between gap-3 px-5 py-3 border-b border-border bg-panel flex-shrink-0">
-          <h3 className="text-base font-semibold text-text">
-            {t("skills.skillNet.title")}
-          </h3>
+        <div className="flex items-start justify-between gap-3 px-5 py-3 border-b border-border bg-panel flex-shrink-0">
+          <div className="min-w-0 flex-1 space-y-1">
+            <h3 className="text-base font-semibold text-text">
+              {t("skills.skillNet.title")}
+            </h3>
+            <p className="text-[11px] leading-snug text-text-muted">
+              <a
+                href={SKILLNET_UPSTREAM_REPO_URL}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="font-medium text-accent underline decoration-accent/35 underline-offset-2 hover:text-accent-hover hover:decoration-accent/60"
+                aria-label={t("skills.skillNet.titleRepoAria")}
+              >
+                {t("skills.skillNet.titleRepoLinkText")}
+              </a>
+            </p>
+          </div>
           <button
             type="button"
             onClick={onClose}
@@ -254,40 +242,18 @@ export function SkillNetSearchModal({
             </div>
             <ul className="list-disc pl-4 space-y-1">
               <li>{t("skills.skillNet.usageNotice3")}</li>
-              <li>{t("skills.skillNet.usageNotice1")}</li>
+              <li>
+                <Trans
+                  i18nKey="skills.skillNet.usageNotice1"
+                  components={{
+                    strong: (
+                      <strong className="font-semibold text-text" />
+                    ),
+                  }}
+                />
+              </li>
               <li>{t("skills.skillNet.usageNotice2")}</li>
-              <li>{t("skills.skillNet.usageNotice4")}</li>
             </ul>
-          </div>
-          <div className="mb-4 space-y-1.5">
-            <label
-              htmlFor="skillnet-mirror-url"
-              className="block text-xs font-medium text-text"
-            >
-              {t("skills.skillNet.mirrorLabel")}
-            </label>
-            <input
-              id="skillnet-mirror-url"
-              type="text"
-              inputMode="url"
-              autoComplete="off"
-              spellCheck={false}
-              value={mirrorUrlInput}
-              onChange={(e) => setMirrorUrlInput(e.target.value)}
-              placeholder={t("skills.skillNet.mirrorPlaceholder")}
-              aria-invalid={mirrorFieldInvalid}
-              className={`w-full px-3 py-2 rounded-md bg-secondary border text-sm text-text placeholder:text-text-muted ${
-                mirrorFieldInvalid ? "border-danger" : "border-border"
-              }`}
-            />
-            <p className="text-xs text-text-muted whitespace-pre-wrap font-mono leading-relaxed">
-              {t("skills.skillNet.mirrorExamples")}
-            </p>
-            {mirrorFieldInvalid && (
-              <p className="text-xs text-danger" role="alert">
-                {t("skills.skillNet.mirrorInvalid")}
-              </p>
-            )}
           </div>
           <div className="flex items-center gap-2">
             <input
@@ -380,7 +346,7 @@ export function SkillNetSearchModal({
                           e.stopPropagation();
                           handleInstall(item);
                         }}
-                        disabled={anyInstalling || mirrorFieldInvalid}
+                        disabled={anyInstalling}
                         className={`px-3 py-1.5 rounded-md text-xs whitespace-nowrap transition-colors flex-shrink-0 ${
                           anyInstalling
                             ? "bg-secondary text-text-muted cursor-not-allowed"

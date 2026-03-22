@@ -30,6 +30,17 @@ _MARKETPLACE_DIR = _SKILLS_DIR / "_marketplace"
 _STATE_FILE = _SKILLS_DIR / "skills_state.json"
 
 
+class SkillNetEmptyDownloadError(Exception):
+    """skillnet-ai ``download()`` returned None; 前端用 detail_key 做多语言。"""
+
+    def __init__(self, *, github_context: str = "") -> None:
+        self.github_context = (github_context or "").strip()
+        self.detail_key = "skills.skillNet.errors.emptyDownloadResult"
+        hint = f"\n{self.github_context[:800]}" if self.github_context else ""
+        self.detail_params = {"hint": hint}
+        super().__init__(self.github_context or "empty download path")
+
+
 def _is_valid_http_mirror_url(url: str) -> bool:
     """Return True if url is a plausible http(s) mirror base (for SkillDownloader)."""
     s = url.strip()
@@ -541,6 +552,15 @@ class SkillManager:
                     "meta": meta,
                     "skill_url": skill_url,
                 }
+        except SkillNetEmptyDownloadError as exc:
+            logger.error("SkillNet 下载失败: %s", exc)
+            out: dict[str, Any] = {
+                "ok": False,
+                "detail_key": exc.detail_key,
+                "detail": "",
+            }
+            out["detail_params"] = exc.detail_params
+            return out
         except Exception as exc:
             logger.error("SkillNet 下载失败: %s", exc)
             raw = str(exc).strip()
@@ -1135,10 +1155,10 @@ class SkillManager:
                 raise RuntimeError(f"{exc} | {ctx}") from exc
             raise
         if not local_path:
+            # skillnet-ai 在多种情况下会无异常地返回 None：URL 无效、目录下列表为空、
+            # 或 Contents API 成功但拉 raw 文件全部失败（超时/网络）等，库未区分原因。
             ctx = SkillManager._github_skillnet_install_error_context(skill_url)
-            if ctx:
-                raise RuntimeError(f"SkillNet 返回空下载路径 | {ctx}")
-            raise RuntimeError("SkillNet 返回空下载路径")
+            raise SkillNetEmptyDownloadError(github_context=ctx)
         return str(local_path)
 
     async def _git_clone(self, url: str, dest: Path) -> str | None:

@@ -486,6 +486,8 @@
     "detailError": "加载详情失败",
     "skillNet": {
       "title": "SkillNet 在线搜索",
+      "titleRepoLinkText": "SkillNet 开源仓库",
+      "titleRepoAria": "SkillNet 官方 GitHub 仓库",
       "search": "搜索",
       "collapse": "收起",
       "expand": "展开",
@@ -515,6 +517,7 @@
         "saveConfigFailed": "安装完成但保存配置失败，请刷新页面重试。",
         "reloadRequired": "技能已安装，请手动刷新页面生效。",
         "downloadFailed": "下载失败，请重试。",
+        "emptyDownloadResult": "SkillNet 未下载到任何内容。可能原因：链接无效或路径下无文件；或已从 GitHub 列出文件但从 raw.githubusercontent.com 拉取全部失败（网络超时、防火墙、仅 API 可达而 raw 不可达等）。{{hint}}",
         "skillMdNotFound": "下载未完成或内容不完整，未找到 SKILL.md，请重试。",
         "parseSkillFailed": "无法解析下载的技能文件",
         "skillAlreadyInstalled": "该技能已安装。",

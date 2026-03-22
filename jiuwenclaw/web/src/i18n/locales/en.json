@@ -486,6 +486,8 @@
     "detailError": "Failed to load details",
     "skillNet": {
       "title": "SkillNet Online Search",
+      "titleRepoLinkText": "SkillNet on GitHub",
+      "titleRepoAria": "SkillNet repository on GitHub",
       "search": "Search",
       "collapse": "Collapse",
       "expand": "Expand",
@@ -515,6 +517,7 @@
         "saveConfigFailed": "Install completed but saving config failed. Please refresh the page and retry.",
         "reloadRequired": "Skill installed. Please refresh the page to take effect.",
         "downloadFailed": "Download failed. Please try again.",
+        "emptyDownloadResult": "SkillNet downloaded nothing (empty path). Common causes: invalid URL or no files under that path; or GitHub listed files but every raw.githubusercontent.com fetch failed (timeouts, firewall, API reachable but raw blocked, etc.).{{hint}}",
         "skillMdNotFound": "Download incomplete or missing SKILL.md. Please retry.",
         "parseSkillFailed": "Could not parse the downloaded skill file.",
         "skillAlreadyInstalled": "This skill is already installed.",
