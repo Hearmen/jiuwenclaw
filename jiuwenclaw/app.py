@@ -58,10 +58,13 @@ from jiuwenclaw.utils import (
 )
 from jiuwenclaw.config import (
     get_config,
+    get_config_raw,
     update_heartbeat_in_config,
     update_channel_in_config,
     update_browser_in_config,
     update_preferred_language_in_config,
+    update_context_engine_enabled_in_config,
+    update_permissions_enabled_in_config,
 )
 
 _PROJECT_ROOT = get_root_dir()
@@ -169,6 +172,9 @@ _CONFIG_SET_ENV_MAP = {
 # 配置项键名列表，用于日志等说明
 CONFIG_KEYS = tuple(_CONFIG_SET_ENV_MAP.keys())
 
+# 来自 config.yaml 的配置项（前端 param 名 -> config.yaml 路径）
+_CONFIG_YAML_KEYS = frozenset({"context_engine_enabled", "permissions_enabled"})
+
 
 def _clear_agent_config_cache() -> None:
     """写回 config.yaml 后清除 agent 侧配置缓存，使下次读取时得到最新文件内容。"""
@@ -261,6 +267,16 @@ def _register_web_handlers(
             param_key: (os.getenv(env_key) or "")
             for param_key, env_key in _CONFIG_SET_ENV_MAP.items()
         }
+        # 合并 config.yaml 中的配置项
+        try:
+            raw = get_config_raw()
+            ctx_cfg = (raw.get("react") or {}).get("context_engine_config") or {}
+            payload["context_engine_enabled"] = "true" if ctx_cfg.get("enabled", False) else "false"
+            perm_cfg = raw.get("permissions") or {}
+            payload["permissions_enabled"] = "true" if perm_cfg.get("enabled", False) else "false"
+        except Exception:  # noqa: BLE001
+            payload.setdefault("context_engine_enabled", "false")
+            payload.setdefault("permissions_enabled", "false")
         await channel.send_response(ws, req_id, ok=True, payload=payload)
 
     def _persist_env_updates(updates: dict[str, str]) -> None:
@@ -295,39 +311,63 @@ def _register_web_handlers(
             logger.warning("[config.set] 写回 .env 失败: %s", e)
 
     async def _config_set(ws, req_id, params, session_id):
-        """根据前端消息内容更新配置（仅允许 _CONFIG_SET_ENV_MAP 中的键），并写回 .env。"""
+        """根据前端消息内容更新配置（支持 .env 与 config.yaml 中的键），并写回对应文件。"""
         if not isinstance(params, dict):
             await channel.send_response(ws, req_id, ok=False, error="params must be object", code="BAD_REQUEST")
             return
-        updates: dict[str, str] = {}
+        env_updates: dict[str, str] = {}
+        yaml_updated: list[str] = []
         available_model_providers = [provider.value for provider in ProviderType]
+
         for param_key, env_key in _CONFIG_SET_ENV_MAP.items():
             if param_key not in params:
                 continue
             val = params[param_key]
             if param_key.endswith("_provider") and val and val not in available_model_providers:
                 await channel.send_response(
-                    ws, req_id, ok=False, 
-                    error=f"Model provider must in: {available_model_providers} ", 
+                    ws, req_id, ok=False,
+                    error=f"Model provider must in: {available_model_providers} ",
                     code="BAD_REQUEST"
                 )
                 return
             if val is None:
-                updates[env_key] = ""
+                env_updates[env_key] = ""
             else:
-                updates[env_key] = str(val).strip()
-        for env_key, value in updates.items():
+                env_updates[env_key] = str(val).strip()
+
+        for param_key in _CONFIG_YAML_KEYS:
+            if param_key not in params:
+                continue
+            val = params[param_key]
+            parsed = str(val).strip().lower() in ("true", "1", "yes")
+            try:
+                if param_key == "context_engine_enabled":
+                    update_context_engine_enabled_in_config(parsed)
+                elif param_key == "permissions_enabled":
+                    update_permissions_enabled_in_config(parsed)
+                yaml_updated.append(param_key)
+            except Exception as e:  # noqa: BLE001
+                logger.warning("[config.set] 写回 config.yaml 失败 %s: %s", param_key, e)
+
+        for env_key, value in env_updates.items():
             os.environ[env_key] = value
         applied_without_restart = True
-        if updates:
-            _persist_env_updates(updates)
-            logger.info("[config.set] 已更新: %s", list(updates.keys()))
+
+        if env_updates:
+            _persist_env_updates(env_updates)
+            logger.info("[config.set] 已更新 .env: %s", list(env_updates.keys()))
+        if yaml_updated:
+            _clear_agent_config_cache()
+            logger.info("[config.set] 已更新 config.yaml: %s", yaml_updated)
+
+        if env_updates or yaml_updated:
             if on_config_saved:
-                callback_result = on_config_saved(set(updates.keys()))
+                callback_result = on_config_saved(set(env_updates.keys()) | set(yaml_updated))
                 if inspect.isawaitable(callback_result):
                     callback_result = await callback_result
                 applied_without_restart = bool(callback_result)
-        updated_param_keys = [k for k, e in _CONFIG_SET_ENV_MAP.items() if e in updates]
+
+        updated_param_keys = [k for k, e in _CONFIG_SET_ENV_MAP.items() if e in env_updates] + yaml_updated
         await channel.send_response(
             ws, req_id, ok=True,
             payload={"updated": updated_param_keys, "applied_without_restart": applied_without_restart},

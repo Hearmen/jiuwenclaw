@@ -332,6 +332,8 @@
       "embed": { "label": "Embed Configuration", "hint": "Embed service and authentication settings" },
       "thirdParty": { "label": "Third-Party Services", "hint": "API key settings" },
       "evolution": { "label": "Evolution Settings", "hint": "Online skill evolution settings" },
+      "contextEngine": { "label": "Context Compression", "hint": "Enable or disable dialogue context compression" },
+      "permissions": { "label": "Tool Safety Guardrail", "hint": "Enable or disable permission checks for tool calls" },
       "email": { "label": "Email Settings", "hint": "Email account and token settings" },
       "other": { "label": "Other Settings", "hint": "Unclassified extended parameters" }
     },

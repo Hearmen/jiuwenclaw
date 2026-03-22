@@ -65,7 +65,7 @@ export function LogsPanel({ isConnected: _isConnected }: LogsPanelProps) {
   const fetchLogs = useCallback(async () => {
     setLoading(true);
     try {
-      const filePath = encodeURIComponent('logs/ws-dev.log');
+      const filePath = encodeURIComponent('.logs/ws-dev.log');
       const response = await fetch(`/file-api/file-content?path=${filePath}`);
       if (!response.ok) {
         const detail = await response.text();

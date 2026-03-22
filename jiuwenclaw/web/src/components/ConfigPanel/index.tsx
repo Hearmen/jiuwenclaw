@@ -40,6 +40,8 @@ function classifyKey(key: string): string {
   if (THIRD_PARTY_API_KEYS.has(key)) return "third_party_api";
   if (EMAIL_KEYS.has(key)) return "email";
   if (EVOLUTION_KEYS.has(key)) return "evolution";
+  if (key === "context_engine_enabled") return "context_engine";
+  if (key === "permissions_enabled") return "permissions";
   if (key.startsWith("feishu")) return "feishu";
   return "other";
 }
@@ -86,6 +88,20 @@ function getGroupIcon(tag: string) {
       </svg>
     );
   }
+  if (tag === "context_engine") {
+    return (
+      <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={1.8}>
+        <path strokeLinecap="round" strokeLinejoin="round" d="M3.75 3v11.25A2.25 2.25 0 006 16.5h2.25M3.75 3h-1.5m1.5 0h16.5m0 0h1.5m-1.5 0v11.25A2.25 2.25 0 0118 16.5h-2.25m-7.5 0h7.5m-7.5 0l-1 3m8.5-3l1 3m0 0l.5 1.5m-.5-1.5h-9.5m0 0l-.5 1.5" />
+      </svg>
+    );
+  }
+  if (tag === "permissions") {
+    return (
+      <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={1.8}>
+        <path strokeLinecap="round" strokeLinejoin="round" d="M9 12.75L11.25 15 15 9.75m-3-7.036A11.959 11.959 0 013.598 6 11.99 11.99 0 003 9.749c0 5.592 3.824 10.29 9 11.623 5.176-1.332 9-6.03 9-11.622 0-1.31-.21-2.571-.598-3.751h-.152c-3.196 0-6.1-1.248-8.25-3.285z" />
+      </svg>
+    );
+  }
   return (
     <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={1.8}>
       <path strokeLinecap="round" strokeLinejoin="round" d="M11.25 6h9m-9 6h9m-9 6h9M3.75 6h.008v.008H3.75V6zm0 6h.008v.008H3.75V12zm0 6h.008v.008H3.75V18z" />
@@ -101,6 +117,8 @@ function getGroupToneClass(tag: string): string {
   if (tag === "embed") return "text-cyan-500 bg-cyan-500/10 border-cyan-500/20";
   if (tag === "third_party_api") return "text-indigo-500 bg-indigo-500/10 border-indigo-500/20";
   if (tag === "evolution") return "text-amber-500 bg-amber-500/10 border-amber-500/20";
+  if (tag === "context_engine") return "text-sky-500 bg-sky-500/10 border-sky-500/20";
+  if (tag === "permissions") return "text-rose-500 bg-rose-500/10 border-rose-500/20";
   if (tag === "email") return "text-emerald-500 bg-emerald-500/10 border-emerald-500/20";
   return "text-text-muted bg-secondary/70 border-border";
 }
@@ -111,11 +129,13 @@ function getNestedModelStyle(tag: string): string {
   if (tag === "model_video") return "border-l-2 border-l-violet-500/60 bg-violet-500/[0.06]";
   if (tag === "model_audio") return "border-l-2 border-l-orange-500/60 bg-orange-500/[0.06]";
   if (tag === "model_vision") return "border-l-2 border-l-teal-500/60 bg-teal-500/[0.06]";
+  if (tag === "context_engine") return "border-l-2 border-l-sky-500/60 bg-sky-500/[0.06]";
+  if (tag === "permissions") return "border-l-2 border-l-rose-500/60 bg-rose-500/[0.06]";
   return "border-l-2 border-l-border bg-secondary/20";
 }
 
 function isBooleanKey(key: string): boolean {
-  return EVOLUTION_KEYS.has(key);
+  return EVOLUTION_KEYS.has(key) || key === "context_engine_enabled" || key === "permissions_enabled";
 }
 
 function parseBoolValue(value: string): boolean {
@@ -124,6 +144,8 @@ function parseBoolValue(value: string): boolean {
 
 const BOOL_KEY_LABELS: Record<string, string> = {
   evolution_auto_scan: "自动检测可演进信号",
+  context_engine_enabled: "启用",
+  permissions_enabled: "启用",
 };
 
 function isSensitiveKey(key: string): boolean {
@@ -157,8 +179,10 @@ function getGroupMeta(t: (key: string) => string): Record<string, { label: strin
     embed: { label: t('config.groups.embed.label'), order: 4, hint: t('config.groups.embed.hint') },
     third_party_api: { label: t('config.groups.thirdParty.label'), order: 5, hint: t('config.groups.thirdParty.hint') },
     evolution: { label: t('config.groups.evolution.label'), order: 6, hint: t('config.groups.evolution.hint') },
-    email: { label: t('config.groups.email.label'), order: 7, hint: t('config.groups.email.hint') },
-    other: { label: t('config.groups.other.label'), order: 8, hint: t('config.groups.other.hint') },
+    context_engine: { label: t('config.groups.contextEngine.label'), order: 7, hint: t('config.groups.contextEngine.hint') },
+    permissions: { label: t('config.groups.permissions.label'), order: 8, hint: t('config.groups.permissions.hint') },
+    email: { label: t('config.groups.email.label'), order: 9, hint: t('config.groups.email.hint') },
+    other: { label: t('config.groups.other.label'), order: 10, hint: t('config.groups.other.hint') },
   };
 }
 
@@ -173,7 +197,8 @@ function isProviderKey(key: string): boolean {
 /** 表格列显示用：video_api_base -> api_base，避免与分组标题重复 */
 function getKeyDisplayLabel(key: string): string {
   const m = key.match(/^(video|audio|vision)_(.+)$/);
-  return m ? m[2] : key;
+  if (m) return m[2];
+  return BOOL_KEY_LABELS[key] ?? key;
 }
 
 function GroupSection({

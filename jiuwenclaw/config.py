@@ -150,3 +150,24 @@ def update_browser_in_config(updates: dict[str, Any]) -> None:
     for k, v in updates.items():
         section[k] = v
     _dump_yaml_round_trip(_CONFIG_YAML_PATH, data)
+
+
+def update_context_engine_enabled_in_config(value: bool) -> None:
+    """更新 react.context_engine_config.enabled（上下文压缩开关）并写回。"""
+    data = _load_yaml_round_trip(_CONFIG_YAML_PATH)
+    if "react" not in data:
+        data["react"] = {}
+    react = data["react"]
+    if "context_engine_config" not in react:
+        react["context_engine_config"] = {}
+    react["context_engine_config"]["enabled"] = value
+    _dump_yaml_round_trip(_CONFIG_YAML_PATH, data)
+
+
+def update_permissions_enabled_in_config(value: bool) -> None:
+    """更新 permissions.enabled（工具安全护栏开关）并写回。"""
+    data = _load_yaml_round_trip(_CONFIG_YAML_PATH)
+    if "permissions" not in data:
+        data["permissions"] = {}
+    data["permissions"]["enabled"] = value
+    _dump_yaml_round_trip(_CONFIG_YAML_PATH, data)

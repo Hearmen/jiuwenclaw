@@ -332,6 +332,8 @@
       "embed": { "label": "Embed配置", "hint": "Embed 服务与鉴权参数" },
       "thirdParty": { "label": "第三方服务配置", "hint": "API Key 配置" },
       "evolution": { "label": "自演进配置", "hint": "Skills 在线自演进参数" },
+      "contextEngine": { "label": "上下文压缩", "hint": "控制对话上下文是否启用压缩" },
+      "permissions": { "label": "工具安全护栏", "hint": "控制工具调用时的权限检查" },
       "email": { "label": "邮箱配置", "hint": "邮件账号与令牌参数" },
       "other": { "label": "其他配置", "hint": "未归类的扩展参数" }
     },
