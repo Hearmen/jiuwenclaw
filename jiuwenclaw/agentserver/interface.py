@@ -177,6 +177,14 @@ class JiuWenClaw:
                 model_client_config["api_base"] = config.pop("api_base", "")
             if "api_key" not in model_client_config:
                 model_client_config["api_key"] = config.pop("api_key", "")
+            try:
+                default_headers = model_client_config.get("default_headers")
+                model_client_config["default_headers"] = json.loads(default_headers) \
+                    if default_headers else None
+            except json.decoder.JSONDecodeError as e:
+                logger.error(f"Model default headers is not a valide json. {e}")
+                model_client_config["default_headers"] = None
+
             model_client_config["timeout"] = config.pop("timeout", 1800)
             config["model_client_config"] = model_client_config
 

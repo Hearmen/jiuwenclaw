@@ -123,9 +123,10 @@ class XiaoyiChannel(BaseChannel):
         if not self.config.enabled:
             logger.warning("XiaoyiChannel 未启用（enabled=False）")
             return
-        if not self.config.ak or not self.config.sk or not self.config.agent_id:
-            logger.error("XiaoyiChannel 未配置 ak/sk/agent_id")
-            return
+        if self.config.mode == "xiaoyi_channel":
+            if not self.config.ak or not self.config.sk or not self.config.agent_id:
+                logger.error("XiaoyiChannel 未配置 ak/sk/agent_id")
+                return
 
         self._running = True
         # Start dual channel connections
@@ -817,7 +818,7 @@ class XiaoyiChannel(BaseChannel):
 
     async def _send_push_notification(self, text: str, push_text: str) -> bool:
         """发送推送通知."""
-        if not (self.config.api_id and self.config.push_id and self.config.ak and self.config.sk):
+        if not (self.config.api_id):
             logger.info("[PUSH] Push not configured, skipping")
             return False
 

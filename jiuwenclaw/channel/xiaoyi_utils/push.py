@@ -32,8 +32,6 @@ class PushConfig:
         return bool(
             self.api_id.strip()
             and self.push_id.strip()
-            and self.ak.strip()
-            and self.sk.strip()
         )
 
 

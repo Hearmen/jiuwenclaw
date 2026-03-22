@@ -13,6 +13,7 @@ react:
     api_base: ${API_BASE:-https://api.modelarts-maas.com/openai/v1}
     api_key: ${API_KEY}
     verify_ssl: false
+    default_headers: ${DEFAULT_HEADERS}
   model_config_obj:
   context_engine_config:
     enable_reload: true
