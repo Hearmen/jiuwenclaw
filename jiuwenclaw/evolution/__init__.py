@@ -5,7 +5,7 @@
 Provides EvolutionService as the unified facade, backed by:
   - SignalDetector: rules-based signal extraction with evolution type classification
   - SkillEvolver: LLM-based experience generation with history dedup
-  - EvolutionStore: pure IO layer for evolutions.json and SKILL.md
+  - EvolutionStore: pure IO layer for evolutions_desc.json / evolutions_body.json and SKILL.md
 """
 from jiuwenclaw.evolution.schema import (
     EvolutionChange,
@@ -13,6 +13,7 @@ from jiuwenclaw.evolution.schema import (
     EvolutionFile,
     EvolutionSignal,
     EvolutionType,
+    ExperienceTarget,
 )
 from jiuwenclaw.evolution.signal_detector import SignalDetector
 from jiuwenclaw.evolution.evolver import SkillEvolver
@@ -25,6 +26,7 @@ __all__ = [
     "EvolutionFile",
     "EvolutionSignal",
     "EvolutionType",
+    "ExperienceTarget",
     "SignalDetector",
     "SkillEvolver",
     "EvolutionStore",

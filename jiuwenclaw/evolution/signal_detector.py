@@ -52,7 +52,7 @@ _CORRECTION_PATTERNS = [
 _CORRECTION_PATTERN = re.compile("|".join(_CORRECTION_PATTERNS), re.IGNORECASE)
 
 _SKILL_MD_PATTERN = re.compile(r"[/\\]+([^/\\]+)[/\\]+SKILL\.md", re.IGNORECASE)
-_TOOL_SCHEMA_PATTERN = re.compile(r"^---\nname:\s*\w+\ndescription:", re.MULTILINE)
+_TOOL_SCHEMA_PATTERN = re.compile(r"^---\nname:\s*[^\n]+\ndescription:", re.MULTILINE)
 
 
 class SignalDetector:

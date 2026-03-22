@@ -19,12 +19,20 @@ class EvolutionType(str, Enum):
     NEW_SKILL = "new_skill"
 
 
+class ExperienceTarget(str, Enum):
+    """Which layer of the skill the experience targets."""
+
+    DESCRIPTION = "description"
+    BODY = "body"
+
+
 @dataclass
 class EvolutionChange:
     section: str    # "Instructions" | "Examples" | "Troubleshooting"
     action: str     # "append" | "skip"
     content: str    # Markdown content to append
-    relevant: bool = True
+    target: ExperienceTarget = ExperienceTarget.BODY
+    skip_reason: Optional[str] = None  # "irrelevant" | "duplicate" (only when action=="skip")
     merge_target: Optional[str] = None  # existing entry id to replace (dedup merge)
 
     def to_dict(self) -> dict:
@@ -32,19 +40,27 @@ class EvolutionChange:
             "section": self.section,
             "action": self.action,
             "content": self.content,
-            "relevant": self.relevant,
+            "target": self.target.value,
         }
+        if self.skip_reason:
+            d["skip_reason"] = self.skip_reason
         if self.merge_target:
             d["merge_target"] = self.merge_target
         return d
 
     @classmethod
     def from_dict(cls, d: dict) -> "EvolutionChange":
+        raw_target = d.get("target", "body")
+        try:
+            target = ExperienceTarget(raw_target)
+        except ValueError:
+            target = ExperienceTarget.BODY
         return cls(
             section=d.get("section", "Troubleshooting"),
             action=d.get("action", "append"),
             content=d.get("content", ""),
-            relevant=d.get("relevant", True),
+            target=target,
+            skip_reason=d.get("skip_reason"),
             merge_target=d.get("merge_target"),
         )
 
@@ -133,6 +149,18 @@ class EvolutionFile:
     @classmethod
     def empty(cls, skill_id: str) -> "EvolutionFile":
         return cls(skill_id=skill_id)
+
+
+@dataclass
+class ExperienceContext:
+    """All inputs needed for LLM-based experience generation."""
+
+    skill_name: str
+    signals: List["EvolutionSignal"]
+    skill_content: str
+    messages: List[dict]
+    existing_desc_entries: List[EvolutionEntry]
+    existing_body_entries: List[EvolutionEntry]
 
 
 @dataclass

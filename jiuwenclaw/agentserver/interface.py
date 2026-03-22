@@ -1197,7 +1197,11 @@ class JiuWenClaw:
                         "is_processing": True,
                         "current_task": "thinking",
                     }
-
+                if chunk_type == "processing_complete":
+                    return {
+                        "event_type": "chat.processing_status",
+                        "is_processing": False,
+                    }
                 if chunk_type == "todo.updated":
                     todos = (
                         payload.get("todos", [])

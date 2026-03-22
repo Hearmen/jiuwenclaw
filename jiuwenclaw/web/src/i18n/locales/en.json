@@ -606,7 +606,10 @@
       "accept": "Accept",
       "reject": "Reject",
       "allowOnce": "Allow once",
-      "alwaysAllow": "Always allow"
+      "alwaysAllow": "Always allow",
+      "acceptAll": "Accept all",
+      "submit": "Submit",
+      "entryCount": "{{count}} entries total"
     }
   },
   "network": {

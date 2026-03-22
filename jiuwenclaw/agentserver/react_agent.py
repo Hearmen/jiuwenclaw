@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import importlib.util
+import re
 import sys
 import uuid
 from pathlib import Path
@@ -316,6 +317,7 @@ class JiuClawReActAgent(ReActAgent):
             raise ValueError("Input must be dict with 'query' or str")
         
         stripped = user_input.strip()
+        stripped = EvolutionService.extract_user_content(stripped)
         # Intercept slash commands (skip ReAct reasoning loop to save tokens)
         if stripped.startswith(_CMD_EVOLVE):
             if self._evolution_service is None:
@@ -450,10 +452,13 @@ class JiuClawReActAgent(ReActAgent):
                         )
 
                         for i, (_result, tool_msg) in enumerate(results):
+                            tc = allowed_tool_calls[i] if i < len(allowed_tool_calls) else None
+                            if tc is not None:
+                                tool_msg = self._maybe_inject_body_experience(tc, tool_msg)
                             await context.add_messages(tool_msg)
                             if session is not None:
-                                tc = allowed_tool_calls[i] if i < len(allowed_tool_calls) else None
                                 await self._emit_tool_result(session, tc, _result)
+                    
                     tool_messages_added = True
 
                     # Detect if todo tool was called, emit todo.updated if so
@@ -606,6 +611,15 @@ class JiuClawReActAgent(ReActAgent):
                 # Handle auto-scan evolution after answer
                 history = self._pending_auto_evolution_history
                 if history is not None and self._evolution_service is not None and session is not None:
+                    # Signal frontend that main processing is done before evolution starts,
+                    # so new user input is treated as a normal submit (not interrupt).
+                    await session.write_stream(
+                        OutputSchema(
+                            type="processing_complete",
+                            index=0,
+                            payload={},
+                        )
+                    )
                     try:
                         await self._evolution_service.run_auto_evolution(session, history)
                     except Exception as e:
@@ -990,13 +1004,12 @@ class JiuClawReActAgent(ReActAgent):
     def _get_skill_messages(self) -> List[SystemMessage]:
         """Build Skill summary SystemMessage list.
 
-        Includes:
-          1. skill_prompt
-          2. evolution summaries
+        For each skill, its description is listed, and any pending description
+        experiences are appended directly after it.  Body experiences are NOT
+        included here (they are solidified into SKILL.md).
         """
         prompt_parts: List[str] = []
 
-        # 1. skill_prompt (skill list description)
         if self._skill_util is not None and self._skill_util.has_skill():
             skill_info = self._skill_util.get_skill_prompt()
             lines = skill_info.split("\n\n")[-1].strip().split("\n")
@@ -1010,20 +1023,53 @@ class JiuClawReActAgent(ReActAgent):
                     "(SKILL.MD) using view_file and follow its workflow.\n\n"
                     "Here are the skills available:\n"
                 )
-                prompt_parts.append(header + "\n".join(f"- {line}" for line in skill_lines))
-
-        # 2. Skill evolution summary
-        if self._evolution_service is not None:
-            store = self._evolution_service.store
-            skill_names = store.list_skill_names()
-            summaries = store.get_all_evolution_summaries(skill_names)
-            if summaries:
-                prompt_parts.append(summaries)
+                augmented: List[str] = []
+                for line in skill_lines:
+                    aug_line = f"- {line}"
+                    if self._evolution_service is not None:
+                        m = re.search(r"Skill name:\s*(\S+?);", line)
+                        if m:
+                            skill_name = m.group(1)
+                            desc_text = self._evolution_service.store.format_desc_experience_text(skill_name)
+                            if desc_text:
+                                aug_line += f"\n  Skill description patch: {desc_text}"
+                    augmented.append(aug_line)
+                prompt_parts.append(header + "\n".join(augmented))
 
         if not prompt_parts:
             return []
 
         return [SystemMessage(content="\n\n".join(prompt_parts))]
+
+    _SKILL_MD_RE = re.compile(r"[/\\]([^/\\]+)[/\\]SKILL\.md", re.IGNORECASE)
+
+    def _maybe_inject_body_experience(self, tc: Any, tool_msg: Any) -> Any:
+        """Append body-experience text when the agent reads a SKILL.md via view_file."""
+        if self._evolution_service is None:
+            return tool_msg
+        if getattr(tc, "name", "") != "view_file":
+            return tool_msg
+
+        try:
+            import json as _json
+            args = _json.loads(tc.arguments) if isinstance(tc.arguments, str) else tc.arguments
+            file_path: str = args.get("file_path", "")
+        except Exception:
+            return tool_msg
+
+        m = self._SKILL_MD_RE.search(file_path)
+        if not m:
+            return tool_msg
+
+        skill_name = m.group(1)
+        body_text = self._evolution_service.store.format_body_experience_text(skill_name)
+        if not body_text:
+            return tool_msg
+
+        original = tool_msg.content if isinstance(tool_msg.content, str) else str(tool_msg.content)
+        tool_msg.content = original + body_text
+        logger.info("[ReActAgent] injected body experience for skill=%s", skill_name)
+        return tool_msg
 
     async def _get_session_messages(self, session: Optional[Any]) -> List[Any]:
         """Get raw historical message list from session.
