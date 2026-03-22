@@ -992,29 +992,6 @@ class JiuWenClaw:
         }
 
         # supplement 任务：读取现有 todo 待办，拼入 query 让 agent 知道有未完成的任务
-        if request.params.get("is_supplement"):
-            try:
-                todo_toolkit = TodoToolkit(session_id=request.session_id)
-                tasks = todo_toolkit._load_tasks()
-                pending = [t for t in tasks if t.status.value != "completed"]
-                if pending:
-                    todo_summary = "\n".join(
-                        f"  - [{t.idx}] {t.tasks}" for t in pending
-                    )
-                    original_query = inputs["query"]
-                    inputs["query"] = (
-                        f"当前待办列表中有以下未完成的任务：\n{todo_summary}\n\n"
-                        f"用户追加了新需求：{original_query}\n\n"
-                        f"请先使用 todo_insert 将新需求添加到待办列表，"
-                        f"然后按顺序执行所有未完成的待办任务。"
-                    )
-                    logger.info(
-                        "[JiuWenClaw] supplement: 已将 %d 个待办项拼入 query, session_id=%s",
-                        len(pending), request.session_id,
-                    )
-            except Exception as exc:
-                logger.warning("[JiuWenClaw] supplement: 读取 todo 列表失败: %s", exc)
-
         query = request.params.get("query", "")
         if self._compaction_manager:
             self._compaction_manager.add_message("user", query)
