@@ -14,7 +14,11 @@ interface ConfigGroup {
   order?: number;
 }
 
-const MODEL_KEYS = new Set(["api_base", "api_key", "model", "model_provider"]);
+const MODEL_DEFAULT_KEYS = new Set(["api_base", "api_key", "model", "model_provider"]);
+const MODEL_VIDEO_KEYS = new Set(["video_api_base", "video_api_key", "video_model", "video_provider"]);
+const MODEL_AUDIO_KEYS = new Set(["audio_api_base", "audio_api_key", "audio_model", "audio_provider"]);
+const MODEL_VISION_KEYS = new Set(["vision_api_base", "vision_api_key", "vision_model", "vision_provider"]);
+const MODEL_KEYS = new Set([...MODEL_DEFAULT_KEYS, ...MODEL_VIDEO_KEYS, ...MODEL_AUDIO_KEYS, ...MODEL_VISION_KEYS]);
 const EMBED_KEYS = new Set(["embed_api_base", "embed_api_key", "embed_model"]);
 const EMAIL_KEYS = new Set(["email_address", "email_token"]);
 const THIRD_PARTY_API_KEYS = new Set([
@@ -28,7 +32,10 @@ const REQUIRED_MODEL_FIELD_SET = new Set<string>(REQUIRED_MODEL_FIELDS);
 const EVOLUTION_KEYS = new Set(["evolution_auto_scan"]);
 
 function classifyKey(key: string): string {
-  if (MODEL_KEYS.has(key)) return "model";
+  if (MODEL_DEFAULT_KEYS.has(key)) return "model_default";
+  if (MODEL_VIDEO_KEYS.has(key)) return "model_video";
+  if (MODEL_AUDIO_KEYS.has(key)) return "model_audio";
+  if (MODEL_VISION_KEYS.has(key)) return "model_vision";
   if (EMBED_KEYS.has(key)) return "embed";
   if (THIRD_PARTY_API_KEYS.has(key)) return "third_party_api";
   if (EMAIL_KEYS.has(key)) return "email";
@@ -37,8 +44,10 @@ function classifyKey(key: string): string {
   return "other";
 }
 
+const MODEL_GROUP_TAGS = new Set(["model_default", "model_video", "model_audio", "model_vision"]);
+
 function getGroupIcon(tag: string) {
-  if (tag === "model") {
+  if (MODEL_GROUP_TAGS.has(tag)) {
     return (
       <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={1.8}>
         <path strokeLinecap="round" strokeLinejoin="round" d="M9.75 3v4.5m4.5-4.5V6M3 10.5h18M4.5 6.75h15A1.5 1.5 0 0121 8.25v9A3.75 3.75 0 0117.25 21h-10.5A3.75 3.75 0 013 17.25v-9a1.5 1.5 0 011.5-1.5z" />
@@ -85,12 +94,24 @@ function getGroupIcon(tag: string) {
 }
 
 function getGroupToneClass(tag: string): string {
-  if (tag === "model") return "text-blue-500 bg-blue-500/10 border-blue-500/20";
+  if (tag === "model_default") return "text-blue-500 bg-blue-500/10 border-blue-500/20";
+  if (tag === "model_video") return "text-violet-500 bg-violet-500/10 border-violet-500/20";
+  if (tag === "model_audio") return "text-orange-500 bg-orange-500/10 border-orange-500/20";
+  if (tag === "model_vision") return "text-teal-500 bg-teal-500/10 border-teal-500/20";
   if (tag === "embed") return "text-cyan-500 bg-cyan-500/10 border-cyan-500/20";
   if (tag === "third_party_api") return "text-indigo-500 bg-indigo-500/10 border-indigo-500/20";
   if (tag === "evolution") return "text-amber-500 bg-amber-500/10 border-amber-500/20";
   if (tag === "email") return "text-emerald-500 bg-emerald-500/10 border-emerald-500/20";
   return "text-text-muted bg-secondary/70 border-border";
+}
+
+/** 模型子分组的嵌套样式：左侧色条 + 淡色底，与整体一致、易区分 */
+function getNestedModelStyle(tag: string): string {
+  if (tag === "model_default") return "border-l-2 border-l-blue-500/60 bg-blue-500/[0.06]";
+  if (tag === "model_video") return "border-l-2 border-l-violet-500/60 bg-violet-500/[0.06]";
+  if (tag === "model_audio") return "border-l-2 border-l-orange-500/60 bg-orange-500/[0.06]";
+  if (tag === "model_vision") return "border-l-2 border-l-teal-500/60 bg-teal-500/[0.06]";
+  return "border-l-2 border-l-border bg-secondary/20";
 }
 
 function isBooleanKey(key: string): boolean {
@@ -129,17 +150,30 @@ function normalizeConfigValue(value: unknown): string {
 
 function getGroupMeta(t: (key: string) => string): Record<string, { label: string; order: number; hint: string }> {
   return {
-    model: { label: t('config.groups.model.label'), order: 0, hint: t('config.groups.model.hint') },
-    embed: { label: t('config.groups.embed.label'), order: 1, hint: t('config.groups.embed.hint') },
-    third_party_api: { label: t('config.groups.thirdParty.label'), order: 2, hint: t('config.groups.thirdParty.hint') },
-    evolution: { label: t('config.groups.evolution.label'), order: 3, hint: t('config.groups.evolution.hint') },
-    email: { label: t('config.groups.email.label'), order: 4, hint: t('config.groups.email.hint') },
-    other: { label: t('config.groups.other.label'), order: 5, hint: t('config.groups.other.hint') },
+    model_default: { label: t('config.groups.modelDefault.label'), order: 0, hint: t('config.groups.modelDefault.hint') },
+    model_video: { label: t('config.groups.modelVideo.label'), order: 1, hint: t('config.groups.modelVideo.hint') },
+    model_audio: { label: t('config.groups.modelAudio.label'), order: 2, hint: t('config.groups.modelAudio.hint') },
+    model_vision: { label: t('config.groups.modelVision.label'), order: 3, hint: t('config.groups.modelVision.hint') },
+    embed: { label: t('config.groups.embed.label'), order: 4, hint: t('config.groups.embed.hint') },
+    third_party_api: { label: t('config.groups.thirdParty.label'), order: 5, hint: t('config.groups.thirdParty.hint') },
+    evolution: { label: t('config.groups.evolution.label'), order: 6, hint: t('config.groups.evolution.hint') },
+    email: { label: t('config.groups.email.label'), order: 7, hint: t('config.groups.email.hint') },
+    other: { label: t('config.groups.other.label'), order: 8, hint: t('config.groups.other.hint') },
   };
 }
 
 function isRequiredModelField(key: string): boolean {
   return REQUIRED_MODEL_FIELD_SET.has(key);
+}
+
+function isProviderKey(key: string): boolean {
+  return key.endsWith("_provider");
+}
+
+/** 表格列显示用：video_api_base -> api_base，避免与分组标题重复 */
+function getKeyDisplayLabel(key: string): string {
+  const m = key.match(/^(video|audio|vision)_(.+)$/);
+  return m ? m[2] : key;
 }
 
 function GroupSection({
@@ -148,12 +182,14 @@ function GroupSection({
   onChange,
   defaultOpen,
   t,
+  nested = false,
 }: {
   group: ConfigGroup;
   draftValues: Record<string, string>;
   onChange: (key: string, value: string) => void;
   defaultOpen: boolean;
   t: (key: string, options?: Record<string, unknown>) => string;
+  nested?: boolean;
 }) {
   const [open, setOpen] = useState(defaultOpen);
   const [visibleFields, setVisibleFields] = useState<Record<string, boolean>>({});
@@ -165,14 +201,21 @@ function GroupSection({
     setVisibleFields((prev) => ({ ...prev, [key]: !prev[key] }));
   };
 
+  const nestedStyle = nested ? getNestedModelStyle(group.tag) : "";
   return (
-    <div className="rounded-xl border border-border bg-card/70 backdrop-blur-sm overflow-hidden shadow-sm">
+    <div className={
+      nested
+        ? "rounded-r-md overflow-hidden border border-border/50"
+        : "rounded-xl border border-border bg-card/70 backdrop-blur-sm overflow-hidden shadow-sm"
+    }>
       <button
         onClick={() => setOpen(!open)}
-        className="w-full flex items-center justify-between px-4 py-3 bg-secondary/30 hover:bg-secondary/60 transition-colors text-sm"
+        className={`w-full flex items-center justify-between transition-colors text-sm ${
+          nested ? `py-2 pr-3 pl-4 ${nestedStyle} hover:opacity-90` : "px-4 py-3 bg-secondary/30 hover:bg-secondary/60"
+        }`}
       >
         <span className="flex items-center gap-3 min-w-0">
-          <span className={`inline-flex items-center justify-center w-7 h-7 rounded-md border ${toneClass}`}>
+          <span className={`inline-flex items-center justify-center rounded-md border ${toneClass} ${nested ? "w-6 h-6" : "w-7 h-7"}`}>
             {getGroupIcon(group.tag)}
           </span>
           <span className="min-w-0 text-left">
@@ -180,7 +223,7 @@ function GroupSection({
             <span className="block text-xs text-text-muted truncate">{hint}</span>
           </span>
         </span>
-        <span className="flex items-center gap-2 text-text-muted ml-3">
+        <span className={`flex items-center gap-2 text-text-muted ${nested ? "ml-2" : "ml-3"}`}>
           <span className="text-[11px] px-2 py-0.5 rounded-full border border-border bg-secondary/60">
             {t('config.itemsCount', { count: group.keys.length })}
           </span>
@@ -197,7 +240,7 @@ function GroupSection({
           <tbody>
             {group.keys.map(([key, value]) => (
               <tr key={key} className="border-t border-border first:border-t-0 even:bg-secondary/10 hover:bg-secondary/25 transition-colors">
-                <td className="px-4 py-2.5 align-middle mono text-xs text-text-muted w-[32%]">{key}</td>
+                <td className="px-4 py-2.5 align-middle mono text-xs text-text-muted w-[32%]" title={key}>{getKeyDisplayLabel(key)}</td>
                 <td className="px-4 py-2.5 break-all text-[13px] align-middle">
                   {isBooleanKey(key) ? (
                     <div className="flex items-center gap-2">
@@ -228,7 +271,7 @@ function GroupSection({
                         </button>
                       </div>
                     </div>
-                  ) : key === "model_provider" ? (
+                  ) : isProviderKey(key) ? (
                     <div className="flex items-center gap-2">
                       <span
                         className={`inline-flex w-3 justify-center shrink-0 font-semibold leading-none select-none ${
@@ -306,6 +349,69 @@ function GroupSection({
   );
 }
 
+/** 模型配置父级：把默认/视频/音频/视觉四个子分组收拢在「模型配置」下 */
+function ModelConfigSection({
+  modelGroups,
+  draftValues,
+  onChange,
+  t,
+}: {
+  modelGroups: ConfigGroup[];
+  draftValues: Record<string, string>;
+  onChange: (key: string, value: string) => void;
+  t: (key: string, options?: Record<string, unknown>) => string;
+}) {
+  const [open, setOpen] = useState(true);
+  const totalItems = modelGroups.reduce((s, g) => s + g.keys.length, 0);
+
+  return (
+    <div className="rounded-xl border border-blue-500/30 border-border bg-card/70 backdrop-blur-sm overflow-hidden shadow-sm">
+      <button
+        onClick={() => setOpen(!open)}
+        className="w-full flex items-center justify-between px-4 py-3 bg-secondary/30 hover:bg-secondary/60 transition-colors text-sm"
+      >
+        <span className="flex items-center gap-3 min-w-0">
+          <span className="inline-flex items-center justify-center w-7 h-7 rounded-md border text-blue-500 bg-blue-500/10 border-blue-500/20">
+            <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={1.8}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M9.75 3v4.5m4.5-4.5V6M3 10.5h18M4.5 6.75h15A1.5 1.5 0 0121 8.25v9A3.75 3.75 0 0117.25 21h-10.5A3.75 3.75 0 013 17.25v-9a1.5 1.5 0 011.5-1.5z" />
+            </svg>
+          </span>
+          <span className="min-w-0 text-left">
+            <span className="block font-medium text-text">{t('config.groups.model.label')}</span>
+            <span className="block text-xs text-text-muted truncate">{t('config.groups.model.hint')}</span>
+          </span>
+        </span>
+        <span className="flex items-center gap-2 text-text-muted ml-3">
+          <span className="text-[11px] px-2 py-0.5 rounded-full border border-border bg-secondary/60">
+            {t('config.itemsCount', { count: totalItems })}
+          </span>
+          <svg
+            className={`w-4 h-4 transition-transform ${open ? "rotate-180" : ""}`}
+            fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2}
+          >
+            <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
+          </svg>
+        </span>
+      </button>
+      {open && (
+        <div className="border-t border-border px-2 pb-2 pt-1 space-y-2">
+          {modelGroups.map((group) => (
+            <GroupSection
+              key={group.tag}
+              group={group}
+              draftValues={draftValues}
+              onChange={onChange}
+              defaultOpen={group.tag === "model_default"}
+              t={t}
+              nested
+            />
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 export function ConfigPanel({ config, isConnected, onSaveConfig }: ConfigPanelProps) {
   const { t } = useTranslation();
   const [draftValues, setDraftValues] = useState<Record<string, string>>({});
@@ -345,7 +451,19 @@ export function ConfigPanel({ config, isConnected, onSaveConfig }: ConfigPanelPr
       .map(([tag, keys]) => ({ tag, label: groupMeta[tag]?.label ?? tag, keys, order: groupMeta[tag]?.order ?? 99 }))
       .sort((a, b) => a.order - b.order);
   }, [normalizedConfig, t]);
+
+  const { modelGroups, otherGroups } = useMemo(() => {
+    const model: ConfigGroup[] = [];
+    const other: ConfigGroup[] = [];
+    for (const g of groups) {
+      if (MODEL_GROUP_TAGS.has(g.tag)) model.push(g);
+      else other.push(g);
+    }
+    return { modelGroups: model, otherGroups: other };
+  }, [groups]);
+
   const totalItems = useMemo(() => groups.reduce((sum, group) => sum + group.keys.length, 0), [groups]);
+  const topLevelGroupCount = (modelGroups.length > 0 ? 1 : 0) + otherGroups.length;
   const hasChanges = useMemo(() => {
     const keys = Object.keys(normalizedConfig);
     return keys.some((key) => (draftValues[key] ?? "") !== normalizedConfig[key]);
@@ -434,16 +552,24 @@ export function ConfigPanel({ config, isConnected, onSaveConfig }: ConfigPanelPr
         ) : (
           <div className="space-y-3 flex-1 min-h-0 overflow-auto pr-1">
             <div className="flex items-center justify-between text-xs text-text-muted px-1">
-              <span>{t('config.groupsCount', { count: groups.length })}</span>
+              <span>{t('config.groupsCount', { count: topLevelGroupCount })}</span>
               <span className="mono">{t('config.paramsCount', { count: totalItems })}</span>
             </div>
-            {groups.map((group) => (
+            {modelGroups.length > 0 && (
+              <ModelConfigSection
+                modelGroups={modelGroups}
+                draftValues={draftValues}
+                onChange={handleFieldChange}
+                t={t}
+              />
+            )}
+            {otherGroups.map((group) => (
               <GroupSection
-                key={group.label}
+                key={group.tag}
                 group={group}
                 draftValues={draftValues}
                 onChange={handleFieldChange}
-                defaultOpen={group.tag === "model"}
+                defaultOpen={false}
                 t={t}
               />
             ))}

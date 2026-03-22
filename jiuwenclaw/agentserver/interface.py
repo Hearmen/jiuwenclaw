@@ -154,59 +154,33 @@ class JiuWenClaw:
 
     def _load_react_config(self, config):
         # 提取 agent_name，如果不存在则使用默认值
-        agent_name = config.pop("agent_name", "main_agent")
+        react_config = config.get("react", {}).copy()
+        agent_name = react_config.pop("agent_name", "main_agent")
         self._agent_name = agent_name
 
-        if "workspace_dir" in config:
-            self._workspace_dir = config.pop("workspace_dir")
-
         # 处理 model_client_config：确保包含必需字段
-        if "model_client_config" in config:
-            model_client_config = config["model_client_config"]
-            # 如果 model_client_config 缺少必需字段，尝试从顶层配置补充
-            if not isinstance(model_client_config, dict):
-                model_client_config = {}
-            # 确保必需字段存在（即使为空，也会在运行时通过环境变量填充）
-            if "client_provider" not in model_client_config:
-                model_client_config["client_provider"] = config.pop("model_provider", "OpenAI")
-            # 库要求首字母大写的 OpenAI / SiliconFlow，小写 openai 会报 Unsupported client_type
-            p = model_client_config.get("client_provider", "")
-            if isinstance(p, str) and p.strip().lower() == "openai":
-                model_client_config["client_provider"] = "OpenAI"
-            if "api_base" not in model_client_config:
-                model_client_config["api_base"] = config.pop("api_base", "")
-            if "api_key" not in model_client_config:
-                model_client_config["api_key"] = config.pop("api_key", "")
-            try:
-                default_headers = model_client_config.get("default_headers")
-                model_client_config["default_headers"] = json.loads(default_headers) \
-                    if default_headers else None
-            except json.decoder.JSONDecodeError as e:
-                logger.error(f"Model default headers is not a valide json. {e}")
-                model_client_config["default_headers"] = None
-
-            model_client_config["timeout"] = config.pop("timeout", 1800)
-            config["model_client_config"] = model_client_config
-
-        config["model_config_obj"] = {
-            "temperature": 0.95
-        }
-
-        config["prompt_template"] = [
-            {"role": "system", "content": SYSTEM_PROMPT}
-        ]
+        model_configs = config.get("models", []).copy()
+        react_config = {**react_config, **model_configs.get("default", {}).copy(), "prompt_template": [
+            {"role": "system", "content": build_system_prompt(
+                mode="plan",
+                language=config.get("preferred_language", "en"),
+                channel="web"
+            )}
+        ]}
 
         # 创建 ReActAgentConfig
-        agent_config = ReActAgentConfig(**config)
+        agent_config = ReActAgentConfig(**react_config)
 
+        context_engine_config = react_config.get('context_engine_config', {}).copy()
 
-        config_base = get_config()
-        memory_compression_config = config_base.get('memory_compression', {}).copy()
-
-        if memory_compression_config.get("enabled", False):
-            message_offloader_config = memory_compression_config.get("message_offloader_config", {}).copy()
-            dialogue_compressor_config = memory_compression_config.get("dialogue_compressor_config", {}).copy()
+        if context_engine_config.get("enabled", False):
+            message_offloader_config = context_engine_config.get("message_offloader_config", {}).copy()
+            dialogue_compressor_config = context_engine_config.get("dialogue_compressor_config", {}).copy()
             # 上下文压缩卸载
+            model_name = (model_configs
+                          .get("default", {})
+                          .get("model_client_config", {})
+                          .get("model_name", "default"))
             processors = [
                 (
                     "MessageOffloader",
@@ -225,9 +199,9 @@ class JiuWenClaw:
                         messages_threshold=dialogue_compressor_config.get("messages_threshold", 40),
                         tokens_threshold=dialogue_compressor_config.get("tokens_threshold", 50000),
                         model=ModelRequestConfig(
-                            model=config["model_name"]
+                            model=model_name
                         ),
-                        model_client=config["model_client_config"],
+                        model_client=model_configs.get("default", {}).get("model_client_config", {}),
                         keep_last_round=dialogue_compressor_config.get("keep_last_round", False),
                     )
                 )
@@ -247,8 +221,7 @@ class JiuWenClaw:
         await self.set_checkpoint()
 
         config_base = get_config()
-        config = config_base.get('react', {}).copy()
-        agent_config = self._load_react_config(config)
+        agent_config = self._load_react_config(config_base)
 
         sysop_card_id: str | None = None
         try:
@@ -281,13 +254,13 @@ class JiuWenClaw:
                 logger.warning("[JiuWenClaw] register_skill failed, continue without skills: %s", exc)
 
             # Register EvolutionService (enable evolution feature)
-            evolution_cfg: dict = config.pop("evolution", {})
+            evolution_cfg: dict = config_base.get("react", {}).pop("evolution", {})
             evolution_enabled: bool = evolution_cfg.get("enabled", False)
 
             # 检查是否有有效的模型配置（api_key 或 client_provider）
             has_valid_model_config = False
-            if isinstance(config.get("model_client_config"), dict):
-                mcc = config["model_client_config"]
+            if isinstance(config_base.get("models", dict).get("default", dict).get("model_client_config"), dict):
+                mcc = config_base.get("models", dict).get("default", dict)["model_client_config"]
                 # 检查是否有 api_key（非空）或通过环境变量配置
                 api_key = mcc.get("api_key", "")
                 if api_key or os.getenv("API_KEY"):
@@ -387,8 +360,7 @@ class JiuWenClaw:
         clear_memory_manager_cache()
 
         config_base = get_config()
-        config = config_base.get('react', {}).copy()
-        agent_config = self._load_react_config(config)
+        agent_config = self._load_react_config(config_base)
 
         if self._sysop_card_id:
             agent_config.sys_operation_id = self._sysop_card_id
@@ -467,12 +439,11 @@ class JiuWenClaw:
             self._todo_tool_sessions_registered.add(effective_session_id)
         else:
             config_base = get_config()
-            config = config_base.get('react', {}).copy()
             session_toolkits = MultiSessionToolkit(
                 session_id=effective_session_id,
                 channel_id=channel_id,
                 request_id=request_id,
-                sub_agent_config=self._load_react_config(config)
+                sub_agent_config=self._load_react_config(config_base)
             )
             self._session_tool = session_toolkits
             for tool in session_toolkits.get_tools():

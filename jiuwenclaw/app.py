@@ -135,11 +135,29 @@ _FORWARD_NO_LOCAL_HANDLER_METHODS = frozenset({
 })
 
 # 配置信息：config.get 返回、config.set 可修改的键（前端 param 名 -> 环境变量名）
+# default 模型 + video/audio/vision 多模型
 _CONFIG_SET_ENV_MAP = {
+    # default 模型（主对话）
     "model_provider": "MODEL_PROVIDER",
     "model": "MODEL_NAME",
     "api_base": "API_BASE",
     "api_key": "API_KEY",
+    # video 模型
+    "video_api_base": "VIDEO_API_BASE",
+    "video_api_key": "VIDEO_API_KEY",
+    "video_model": "VIDEO_MODEL_NAME",
+    "video_provider": "VIDEO_PROVIDER",
+    # audio 模型
+    "audio_api_base": "AUDIO_API_BASE",
+    "audio_api_key": "AUDIO_API_KEY",
+    "audio_model": "AUDIO_MODEL_NAME",
+    "audio_provider": "AUDIO_PROVIDER",
+    # vision 模型
+    "vision_api_base": "VISION_API_BASE",
+    "vision_api_key": "VISION_API_KEY",
+    "vision_model": "VISION_MODEL_NAME",
+    "vision_provider": "VISION_PROVIDER",
+    # 其他
     "email_address": "EMAIL_ADDRESS",
     "email_token": "EMAIL_TOKEN",
     "embed_api_key": "EMBED_API_KEY",
@@ -290,7 +308,7 @@ def _register_web_handlers(
             if param_key not in params:
                 continue
             val = params[param_key]
-            if param_key == "model_provider" and val not in available_model_providers:
+            if param_key.endswith("_provider") and val and val not in available_model_providers:
                 await channel.send_response(
                     ws, req_id, ok=False, error=f"Model provider must in: {available_model_providers} ", code="BAD_REQUEST"
                 )
@@ -1292,7 +1310,12 @@ async def _run() -> None:
 
     def _on_config_saved(updated_env_keys: set[str] | None = None) -> bool:
         """先尝试热更新，失败则安排延迟重启。返回 True 表示已热更新未重启，False 表示已安排重启。"""
-        browser_runtime_keys = {"MODEL_PROVIDER", "MODEL_NAME", "API_BASE", "API_KEY"}
+        browser_runtime_keys = {
+            "MODEL_PROVIDER", "MODEL_NAME", "API_BASE", "API_KEY",
+            "VIDEO_PROVIDER", "VIDEO_MODEL_NAME", "VIDEO_API_BASE", "VIDEO_API_KEY",
+            "AUDIO_PROVIDER", "AUDIO_MODEL_NAME", "AUDIO_API_BASE", "AUDIO_API_KEY",
+            "VISION_PROVIDER", "VISION_MODEL_NAME", "VISION_API_BASE", "VISION_API_KEY",
+        }
         try:
             agent.reload_agent_config()
             if updated_env_keys and (browser_runtime_keys & set(updated_env_keys)):

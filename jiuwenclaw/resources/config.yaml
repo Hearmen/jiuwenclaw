@@ -1,6 +1,52 @@
 # 前端显示语言：zh（中文）/ en（英文），与 Web 界面语言切换同步
 preferred_language: zh
 
+models:
+  default:
+      model_client_config:
+        api_base: ${API_BASE}
+        api_key: ${API_KEY}
+        model_name: ${MODEL_NAME:-xiaomi/mimo-v2-omni}
+        client_provider: ${MODEL_PROVIDER}
+        timeout: 1800
+        verify_ssl: false
+        default_headers: ${DEFAULT_HEADERS}
+      model_config_obj:
+        temperature: 0.95
+  video:
+      model_client_config:
+        api_base: ${VIDEO_API_BASE}
+        api_key: ${VIDEO_API_KEY}
+        model_name: ${VIDEO_MODEL_NAME:-xiaomi/mimo-v2-omni}
+        client_provider: ${VIDEO_PROVIDER}
+        timeout: 1800
+        verify_ssl: false
+        default_headers: ${DEFAULT_HEADERS}
+      model_config_obj:
+        temperature: 0.95
+  audio:
+      model_client_config:
+        api_base: ${AUDIO_API_BASE}
+        api_key: ${AUDIO_API_KEY}
+        model_name: ${AUDIO_MODEL_NAME:-openai/gpt-4o-audio-preview}
+        client_provider: ${AUDIO_PROVIDER}
+        verify_ssl: false
+        timeout: 1800
+        default_headers: ${DEFAULT_HEADERS}
+      model_config_obj:
+        temperature: 0.95
+  vision:
+      model_client_config:
+        api_base: ${VISION_API_BASE}
+        api_key: ${VISION_API_KEY}
+        model_name: ${VISION_MODEL_NAME:-bytedance-seed/seed-2.0-mini}
+        client_provider: ${VISION_PROVIDER}
+        verify_ssl: false
+        timeout: 1800
+        default_headers: ${DEFAULT_HEADERS}
+      model_config_obj:
+        temperature: 0.95
+        
 react:
   agent_name: main_agent
   max_iterations: 100
@@ -8,15 +54,20 @@ react:
   answer_chunk_size: 500
   stream_chunk_threshold: 50
   stream_character_threshold: 2000
-  model_client_config:
-    client_provider: ${MODEL_PROVIDER:-OpenAI}
-    api_base: ${API_BASE:-https://api.modelarts-maas.com/openai/v1}
-    api_key: ${API_KEY}
-    verify_ssl: false
-    default_headers: ${DEFAULT_HEADERS}
-  model_config_obj:
   context_engine_config:
     enable_reload: true
+    enabled: true
+    message_offloader_config:
+      messages_threshold: 40
+      tokens_threshold: 20000
+      large_message_threshold: 1000
+      trim_size: 500
+      offload_message_type: [ "tool" ]
+      keep_last_round: false
+    dialogue_compressor_config:
+      messages_threshold: 40
+      tokens_threshold: 50000
+      keep_last_round: false
   # Skills 在线自演进配置
   evolution:
     enabled: true             # true = 启用在线 Skills 自演进
@@ -123,21 +174,6 @@ channels:
     enable_streaming: true
     send_thinking_message: false
     enabled: false
-
-
-memory_compression:
-  enabled: true
-  message_offloader_config:
-    messages_threshold: 40
-    tokens_threshold: 20000
-    large_message_threshold: 1000
-    trim_size: 500
-    offload_message_type: ["tool"]
-    keep_last_round: false
-  dialogue_compressor_config:
-    messages_threshold: 40
-    tokens_threshold: 50000
-    keep_last_round: false
 
 # ========== 细粒度权限管控 ==========
 #

@@ -324,6 +324,10 @@
     "hideValue": "Hide value",
     "showValue": "Show value",
     "groups": {
+      "modelDefault": { "label": "Default Model (Main Chat)", "hint": "Primary chat model service and auth" },
+      "modelVideo": { "label": "Video Model", "hint": "Video understanding/generation model (optional)" },
+      "modelAudio": { "label": "Audio Model", "hint": "Speech recognition/synthesis model (optional)" },
+      "modelVision": { "label": "Vision Model", "hint": "Image understanding model (optional)" },
       "model": { "label": "Model Configuration", "hint": "Model service and authentication settings" },
       "embed": { "label": "Embed Configuration", "hint": "Embed service and authentication settings" },
       "thirdParty": { "label": "Third-Party Services", "hint": "API key settings" },
