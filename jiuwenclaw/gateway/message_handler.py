@@ -369,6 +369,46 @@ class MessageHandler(ABC):
             metadata=metadata,
         )
 
+    @staticmethod
+    def _non_stream_rpc_may_run_parallel(req: "AgentRequest") -> bool:
+        """可与其它非流式 RPC 并发，不阻塞 _forward_loop。
+
+        网关队列否则串行 await Agent，慢请求（如 SkillNet 搜索）会堵住后续的 skills.list 刷新。
+        聊天相关必须按入队顺序与流式任务协调，不得后台并发。
+        """
+        from jiuwenclaw.schema.message import ReqMethod
+
+        m = req.req_method
+        if m is None:
+            return False
+        return m not in (
+            ReqMethod.CHAT_SEND,
+            ReqMethod.CHAT_RESUME,
+            ReqMethod.CHAT_CANCEL,
+            ReqMethod.CHAT_ANSWER,
+        )
+
+    async def _process_non_stream_request(self, msg: "Message", req: "AgentRequest") -> None:
+        """执行单次非流式 Agent 请求并将结果写入 robot_messages（供串行或后台任务复用）。"""
+        try:
+            resp = await self._agent_client.send_request(req)
+            out = self._response_to_message(resp, session_id=msg.session_id)
+            await self.publish_robot_messages(out)
+            logger.info(
+                "[MessageHandler] Agent 响应已写入 robot_messages: request_id=%s channel_id=%s",
+                resp.request_id,
+                resp.channel_id,
+            )
+        except Exception as e:
+            logger.exception("AgentServer send_request failed for %s: %s", msg.id, e)
+            err_msg = self._build_error_out_message(msg, e)
+            await self.publish_robot_messages(err_msg)
+            logger.info(
+                "[MessageHandler] 错误响应已写入 robot_messages: id=%s channel_id=%s",
+                msg.id,
+                msg.channel_id,
+            )
+
     # ---------- 入队 -> AgentServer -> 出队 转发循环 ----------
 
     async def _forward_loop(self) -> None:
@@ -516,15 +556,20 @@ class MessageHandler(ABC):
                             req.request_id, req.channel_id, len(self._stream_tasks),
                         )
                         # 不 await，让流式任务在后台运行，_forward_loop 继续处理下一个消息
-                    else:
-                        # 非流式处理：单个响应写入 robot_messages
-                        resp = await self._agent_client.send_request(req)
-                        out = self._response_to_message(resp, session_id=msg.session_id)
-                        await self.publish_robot_messages(out)
-                        logger.info(
-                            "[MessageHandler] Agent 响应已写入 robot_messages: request_id=%s channel_id=%s",
-                            resp.request_id, resp.channel_id,
+                    elif self._non_stream_rpc_may_run_parallel(req):
+                        # 非流式且非聊天：后台执行，避免慢 RPC（如 SkillNet）阻塞队列中的其它请求
+                        method_label = req.req_method.value if req.req_method else "none"
+                        asyncio.create_task(
+                            self._process_non_stream_request(msg, req),
+                            name=f"gw-nonstr-{method_label}-{req.request_id[:24]}",
                         )
+                        logger.info(
+                            "[MessageHandler] 非流式 RPC 已后台执行: id=%s method=%s",
+                            msg.id,
+                            method_label,
+                        )
+                    else:
+                        await self._process_non_stream_request(msg, req)
                 except Exception as e:
                     logger.exception("AgentServer send_request failed for %s: %s", msg.id, e)
                     err_msg = self._build_error_out_message(msg, e)
