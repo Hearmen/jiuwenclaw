@@ -1169,7 +1169,11 @@ class JiuWenClaw:
                     )
                     if not content:
                         return None
-                    return {"event_type": "chat.delta", "content": content}
+                    return {
+                        "event_type": "chat.delta",
+                        "content": content,
+                        "source_chunk_type": chunk_type,
+                    }
 
                 if chunk_type == "answer":
                     if isinstance(payload, dict):
@@ -1198,8 +1202,16 @@ class JiuWenClaw:
                     # For chunked answers, return as delta (will be accumulated)
                     # For non-chunked, return as final
                     if is_chunked:
-                        return {"event_type": "chat.delta", "content": content}
-                    return {"event_type": "chat.final", "content": content}
+                        return {
+                            "event_type": "chat.delta",
+                            "content": content,
+                            "source_chunk_type": chunk_type,
+                        }
+                    return {
+                        "event_type": "chat.final",
+                        "content": content,
+                        "source_chunk_type": chunk_type,
+                    }
 
                 if chunk_type == "tool_call":
                     tool_info = (
@@ -1286,7 +1298,11 @@ class JiuWenClaw:
                         return None
                 else:
                     content = str(payload)
-                return {"event_type": "chat.delta", "content": content}
+                return {
+                    "event_type": "chat.delta",
+                    "content": content,
+                    "source_chunk_type": chunk_type,
+                }
 
             # 普通 dict
             if isinstance(chunk, dict):
@@ -1299,7 +1315,11 @@ class JiuWenClaw:
                     }
                 output = chunk.get("output", "")
                 if output:
-                    return {"event_type": "chat.delta", "content": str(output)}
+                    return {
+                        "event_type": "chat.delta",
+                        "content": str(output),
+                        "source_chunk_type": "dict_output",
+                    }
                 return None
 
         except Exception:

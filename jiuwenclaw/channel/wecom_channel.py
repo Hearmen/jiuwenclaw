@@ -261,7 +261,8 @@ class WecomChannel(BaseChannel):
     @staticmethod
     def _is_thinking_only_content(text: str) -> bool:
         """判断内容是否为空或仅为占位符（纯省略号等），不应视为有效回复。
-        思考过程（llm_reasoning/thinking）已在 interface 转为 chat.processing_status，不会以 content 到达。"""
+        思考过程（thinking）会在 interface 转为 chat.processing_status；
+        llm_reasoning 若以 content 到达，则在 WecomChannel 内基于 source_chunk_type 再次过滤。"""
         if not text or not isinstance(text, str):
             return True
         t = text.strip()
@@ -281,6 +282,15 @@ class WecomChannel(BaseChannel):
         if content is None:
             return None
         return str(content)
+
+    @staticmethod
+    def _is_reasoning_chunk(msg: Message) -> bool:
+        """判断当前消息是否为不应展示给企业微信用户的 reasoning chunk。"""
+        payload = getattr(msg, "payload", None) or {}
+        if not isinstance(payload, dict):
+            return False
+        source_chunk_type = str(payload.get("source_chunk_type") or "").strip().lower()
+        return source_chunk_type == "llm_reasoning"
 
     async def _send_stream_placeholder(self, req_id: str) -> None:
         """发送流式首帧占位。PHP SDK 用 <think></think> 显示加载动画，企业微信 Markdown 可能支持。"""
@@ -338,6 +348,9 @@ class WecomChannel(BaseChannel):
         if req_id and self.config.enable_streaming:
             entry = self._pending_streams.get(req_id)
             if entry:
+                if self._is_reasoning_chunk(msg):
+                    logger.debug("WecomChannel 跳过 reasoning chunk: req_id=%s", req_id)
+                    return
                 content = self._extract_content_from_payload(msg)
                 if content is not None:
                     entry["accumulated"] = (entry.get("accumulated") or "") + content
@@ -394,6 +407,9 @@ class WecomChannel(BaseChannel):
         chatid = self._extract_chatid(msg)
         if not chatid:
             logger.warning("WecomChannel 无法确定回发目标 chatid")
+            return
+        if self._is_reasoning_chunk(msg):
+            logger.debug("WecomChannel 跳过 final reasoning chunk")
             return
         content = self._strip_think_tags(self._extract_content(msg)).strip()
         if not content or self._is_thinking_only_content(content):
