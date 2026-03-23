@@ -990,6 +990,19 @@ class SkillManager:
         return mirrors
 
     @staticmethod
+    def _normalize_lang_suffix(name: str) -> str:
+        """将 xxxx_zh.MD / xxxx_en.MD 规范为 xxxx.MD（去除 _zh/_en 后缀）。"""
+        stem, suffix = name.rpartition(".")[0], name.rpartition(".")[2]
+        suffix_lower = suffix.lower()
+        if suffix_lower in ("md", "mdx"):
+            stem_lower = stem.lower()
+            if stem_lower.endswith("_zh"):
+                stem = stem[:-3]
+            elif stem_lower.endswith("_en"):
+                stem = stem[:-3]
+        return f"{stem}.{suffix}" if stem else name
+
+    @staticmethod
     def _generate_agent_data_for_workspace(workspace_root: Path) -> None:
         """Generate agent/workspace/agent-data.json from agent tree."""
         agent_root = workspace_root.resolve()
@@ -1000,16 +1013,34 @@ class SkillManager:
             return
 
         folder_data: dict[str, list[dict[str, str | bool]]] = {}
+        seen_paths: dict[str, set[str]] = {}
         for entry in sorted(agent_root.rglob("*")):
             if not entry.is_file():
                 continue
             relative_file_path = entry.relative_to(agent_root).as_posix()
             relative_folder_path = entry.parent.relative_to(agent_root).as_posix()
             folder_key = root_folder_key if relative_folder_path == "." else relative_folder_path
+
+            display_name = SkillManager._normalize_lang_suffix(entry.name)
+            display_path = (
+                f"agent/{relative_folder_path}/{display_name}".replace("/.", "/").replace("//", "/")
+                if relative_folder_path != "."
+                else f"agent/{display_name}"
+            )
+            # 模板中 HEARTBEAT/PRINCIPLE/TONE 在 agent 根目录，运行时在 agent/home/，统一映射到 home
+            if folder_key == root_folder_key and display_name.lower() in ("heartbeat.md", "principle.md", "tone.md"):
+                folder_key = "home"
+                display_path = f"agent/home/{display_name}"
+
+            seen = seen_paths.setdefault(folder_key, set())
+            if display_path in seen:
+                continue
+            seen.add(display_path)
+
             folder_data.setdefault(folder_key, []).append(
                 {
-                    "name": entry.name,
-                    "path": f"agent/{relative_file_path}",
+                    "name": display_name,
+                    "path": display_path,
                     "isMarkdown": entry.suffix.lower() in {".md", ".mdx"},
                 }
             )

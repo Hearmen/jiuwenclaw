@@ -28,14 +28,43 @@ try {
   const isMarkdownFile = (fileName) => fileName.endsWith('.md') || fileName.endsWith('.mdx');
   const ROOT_FOLDER_KEY = '__root__';
   const folderData = {};
+  const seenPaths = {}; // folderKey -> Set of normalized paths，用于去重 _zh/_en
+
+  const normalizeLangSuffix = (name) => {
+    const lastDot = name.lastIndexOf('.');
+    if (lastDot === -1) return name;
+    const stem = name.slice(0, lastDot);
+    const suffix = name.slice(lastDot + 1);
+    if (!/\.(md|mdx)$/i.test('.' + suffix)) return name;
+    const stemLower = stem.toLowerCase();
+    if (stemLower.endsWith('_zh')) return stem.slice(0, -3) + '.' + suffix;
+    if (stemLower.endsWith('_en')) return stem.slice(0, -3) + '.' + suffix;
+    return name;
+  };
 
   const upsertFileToFolder = (folderKey, relativeFilePath) => {
+    const rawName = path.basename(relativeFilePath);
+    const displayName = normalizeLangSuffix(rawName);
+    const relativeFolderPath = path.dirname(relativeFilePath);
+    let displayPath = relativeFolderPath === '.'
+      ? `agent/${displayName}`
+      : `agent/${relativeFolderPath.replace(/\\/g, '/')}/${displayName}`;
+    // 模板中 HEARTBEAT/PRINCIPLE/TONE 在 agent 根目录，运行时在 agent/home/，统一映射到 home
+    if (folderKey === ROOT_FOLDER_KEY && ['heartbeat.md', 'principle.md', 'tone.md'].includes(displayName.toLowerCase())) {
+      folderKey = 'home';
+      displayPath = `agent/home/${displayName}`;
+    }
+
+    if (!seenPaths[folderKey]) seenPaths[folderKey] = new Set();
+    if (seenPaths[folderKey].has(displayPath)) return;
+    seenPaths[folderKey].add(displayPath);
+
     if (!folderData[folderKey]) {
       folderData[folderKey] = [];
     }
     folderData[folderKey].push({
-      name: path.basename(relativeFilePath),
-      path: `agent/${relativeFilePath.replace(/\\/g, '/')}`,
+      name: displayName,
+      path: displayPath,
       isMarkdown: isMarkdownFile(relativeFilePath)
     });
   };

@@ -377,6 +377,24 @@ function devFileContentApi(): Plugin {
               return
             }
             if (!fs.existsSync(fullPath)) {
+              if (filePath.replace(/\\/g, '/') === 'agent/workspace/agent-data.json') {
+                try {
+                  const runResult = spawnSync(process.execPath, [generateAgentFoldersScriptPath], {
+                    encoding: 'utf-8',
+                    env: { ...process.env, JIUWENCLAW_ROOT: projectRootDir },
+                    cwd: path.dirname(path.dirname(generateAgentFoldersScriptPath)),
+                  })
+                  if (runResult.status === 0 && fs.existsSync(fullPath)) {
+                    const content = fs.readFileSync(fullPath, 'utf-8')
+                    res.statusCode = 200
+                    res.setHeader('content-type', 'text/plain; charset=utf-8')
+                    res.end(content)
+                    return
+                  }
+                } catch {
+                  /* fall through to 404 */
+                }
+              }
               res.statusCode = 404
               res.setHeader('content-type', 'application/json; charset=utf-8')
               res.end(JSON.stringify({ error: '文件不存在', fullPath }))

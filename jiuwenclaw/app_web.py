@@ -47,6 +47,19 @@ def _default_dist_dir() -> Path:
     return root / "web" / "dist"
 
 
+def _normalize_lang_suffix(name: str) -> str:
+    """将 xxxx_zh.MD / xxxx_en.MD 规范为 xxxx.MD（去除 _zh/_en 后缀）。"""
+    stem, suffix = name.rpartition(".")[0], name.rpartition(".")[2]
+    suffix_lower = suffix.lower()
+    if suffix_lower in ("md", "mdx"):
+        stem_lower = stem.lower()
+        if stem_lower.endswith("_zh"):
+            stem = stem[:-3]
+        elif stem_lower.endswith("_en"):
+            stem = stem[:-3]
+    return f"{stem}.{suffix}" if stem else name
+
+
 def _generate_agent_data(project_root: Path) -> None:
     """Generate agent/workspace/agent-data.json from agent tree."""
     agent_root = (project_root / "agent").resolve()
@@ -59,16 +72,34 @@ def _generate_agent_data(project_root: Path) -> None:
         raise NotADirectoryError("agent is not a directory")
 
     folder_data: dict[str, list[dict[str, str | bool]]] = {}
+    seen_paths: dict[str, set[str]] = {}  # folder_key -> normalized paths，用于去重
     for entry in sorted(agent_root.rglob("*")):
         if not entry.is_file():
             continue
         relative_file_path = entry.relative_to(agent_root).as_posix()
         relative_folder_path = entry.parent.relative_to(agent_root).as_posix()
         folder_key = root_folder_key if relative_folder_path == "." else relative_folder_path
+
+        display_name = _normalize_lang_suffix(entry.name)
+        display_path = (
+            f"agent/{relative_folder_path}/{display_name}".replace("/.", "/").replace("//", "/")
+            if relative_folder_path != "."
+            else f"agent/{display_name}"
+        )
+        # 模板中 HEARTBEAT/PRINCIPLE/TONE 在 agent 根目录，运行时在 agent/home/，统一映射到 home
+        if folder_key == root_folder_key and display_name.lower() in ("heartbeat.md", "principle.md", "tone.md"):
+            folder_key = "home"
+            display_path = f"agent/home/{display_name}"
+
+        seen = seen_paths.setdefault(folder_key, set())
+        if display_path in seen:
+            continue  # 同一文件夹内 _zh 与 _en 并存时只保留先出现的
+        seen.add(display_path)
+
         folder_data.setdefault(folder_key, []).append(
             {
-                "name": entry.name,
-                "path": f"agent/{relative_file_path}",
+                "name": display_name,
+                "path": display_path,
                 "isMarkdown": entry.suffix.lower() in {".md", ".mdx"},
             }
         )
@@ -527,8 +558,15 @@ class _SpaStaticHandler(SimpleHTTPRequestHandler):
                 self._write_json(403, {"error": "forbidden_path"})
                 return
             if not full_path.exists():
-                self._write_json(404, {"error": "file_not_found", "fullPath": str(full_path)})
-                return
+                if file_arg.replace("\\", "/") == "agent/workspace/agent-data.json":
+                    try:
+                        _generate_agent_data(self.project_root)
+                    except Exception as exc:  # noqa: BLE001
+                        self._write_json(500, {"error": "generate_failed", "detail": str(exc)})
+                        return
+                if not full_path.exists():
+                    self._write_json(404, {"error": "file_not_found", "fullPath": str(full_path)})
+                    return
             try:
                 data = full_path.read_text(encoding="utf-8")
             except OSError as exc:
