@@ -318,8 +318,12 @@ function GroupSection({
                         >
                           <option value="" disabled>{t('config.selectModelProvider')}</option>
                           <option value="OpenAI">OpenAI</option>
-                          <option value="DashScope">DashScope</option>
-                          <option value="SiliconFlow">SiliconFlow</option> 
+                          {!key.includes('video_') && !key.includes('audio_') && !key.includes('vision_') && (
+                            <>
+                              <option value="DashScope">DashScope</option>
+                              <option value="SiliconFlow">SiliconFlow</option>
+                            </>
+                          )}
                         </select>
                       </div>
                     </div>
