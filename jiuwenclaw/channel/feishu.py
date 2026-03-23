@@ -590,13 +590,20 @@ class FeishuChannel(BaseChannel):
             stream_key = str(getattr(msg, "id", "") or "")
             streaming_enabled = bool(self.config.enable_streaming)
 
-            # 流式增量：先缓存，不立即发送。
+            # 流式增量：先缓存；若开启流式则实时发送，否则仅缓存不发送。
             if event_name == "chat.delta":
                 delta = self._extract_message_content(msg)
                 if delta and stream_key:
                     self._stream_text_buffers[stream_key] = (
                         self._stream_text_buffers.get(stream_key, "") + delta
                     )
+                    # 开启流式时实时发送增量（思考过程）
+                    if streaming_enabled:
+                        await self._send_feishu_message(
+                            *self._extract_receive_info(msg),
+                            self._build_card_content(delta),
+                            msg.id,
+                        )
                 return
 
             # 非 streaming 模式下仅下发最终结果，屏蔽执行过程类事件。
