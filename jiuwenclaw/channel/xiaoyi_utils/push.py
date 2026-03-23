@@ -89,7 +89,7 @@ class XiaoYiPushService:
             }
 
             logger.info(f"[PUSH] Sending push notification: {push_text}")
-            if self.config.mode == "xiaoi_claw":
+            if self.config.mode == "xiaoyi_claw":
                 headers = {
                     "Content-Type": "application/json",
                     "Accept": "application/json",
