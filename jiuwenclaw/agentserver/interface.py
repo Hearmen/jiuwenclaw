@@ -172,8 +172,8 @@ class JiuWenClaw:
         agent_name = react_config.pop("agent_name", "main_agent")
         self._agent_name = agent_name
 
-        # 处理 model_client_config：确保包含必需字段（models 为 dict，如 models.default）
-        model_configs = config.get("models", {}).copy()	 
+        # 处理 model_client_config：确保包含必需字段
+        model_configs = config.get("models", []).copy()	 
         react_config = {**react_config, **model_configs.get("default", {}).copy(), "prompt_template": [
             {"role": "system", "content": build_system_prompt(
                 mode="plan",
@@ -276,8 +276,8 @@ class JiuWenClaw:
 
             # 检查是否有有效的模型配置（api_key 或 client_provider）
             has_valid_model_config = False
-            if isinstance(config_base.get("models", {}).get("default", {}).get("model_client_config"), dict):
-                mcc = config_base.get("models", {}).get("default", {}).get("model_client_config", {})
+            if isinstance(config_base.get("models", dict).get("default", dict).get("model_client_config"), dict):	 
+                mcc = config_base.get("models", dict).get("default", dict)["model_client_config"]
                 # 检查是否有 api_key（非空）或通过环境变量配置
                 api_key = mcc.get("api_key", "")
                 if api_key or os.getenv("API_KEY"):

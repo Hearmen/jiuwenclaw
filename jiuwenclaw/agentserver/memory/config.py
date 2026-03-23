@@ -17,9 +17,7 @@ import yaml
 from jiuwenclaw.utils import get_config_file, get_agent_root_dir, logger
 
 
-def _get_config_path() -> Path:
-    """运行时获取 config 路径，以支持 init_user_workspace 迁移后路径刷新。"""
-    return Path(get_config_file())
+DEFAULT_CONFIG_PATH = str(get_config_file())
 DEFAULT_WORKSPACE_DIR = str(get_agent_root_dir())
 
 _config_cache: Optional[Dict[str, Any]] = None
@@ -55,7 +53,7 @@ def _load_config() -> Dict[str, Any]:
     if _config_cache is not None:
         return _config_cache
     
-    config_path = _get_config_path()
+    config_path = Path(DEFAULT_CONFIG_PATH)
     
     if not config_path.exists():
         logger.warning(f"Config file not found: {config_path}")
