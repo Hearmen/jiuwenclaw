@@ -627,7 +627,8 @@ class FeishuChannel(BaseChannel):
                 elif event_name in {"chat.error", "chat.interrupt_result"}:
                     self._stream_text_buffers.pop(stream_key, None)
                 content_str = self._extract_message_content(msg)
-                if event_name == "chat.final":
+                is_complete = msg.payload.get("is_complete", False)
+                if is_complete:
                     content_str = self._merge_stream_and_final_content(
                         buffered_text,
                         content_str,
@@ -928,7 +929,7 @@ class FeishuChannel(BaseChannel):
         response = self._api_client.im.v1.message.create(request)
 
         if not response.success():
-            logger.error(
+            logger.warning(
                 f"发送飞书消息失败: 错误码={response.code}, "
                 f"消息={response.msg}, 日志ID={response.get_log_id()}"
             )
