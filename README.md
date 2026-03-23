@@ -38,6 +38,38 @@ When you express dissatisfaction or an error occurs, JiuwenClaw automatically re
   <strong>⚡ Your always-on, data-sovereign personal AI assistant ⚡</strong>
 </p>
 
+## ⚠️ Version Upgrade Notice
+
+**If you're upgrading from an earlier version to v0.1.7:**
+
+Due to breaking changes in this release, you **must** reinitialize JiuwenClaw after upgrading. The service will fail to start without reinitialization.
+
+### Backup Before Upgrading
+
+Before running `jiuwenclaw-init`, please backup your existing data:
+
+| Data Type | Source Path | Description |
+|-----------|-------------|-------------|
+| Memory Data | `.jiuwenclaw/workspace/agent/memory` | All your conversation memories |
+| Custom Skills | `.jiuwenclaw/workspace/agent/agent` | Your custom agent skills |
+| Configuration | `.jiuwenclaw/config` | Your app settings |
+
+### Migration Steps
+
+After upgrading and running `jiuwenclaw-init`, manually migrate your data:
+
+1. **Copy Memory:**
+   ```bash
+   cp -r .jiuwenclaw/workspace/agent/memory .jiuwenclaw/agent/memory
+   ```
+
+2. **Copy Skills:**
+   ```bash
+   cp -r .jiuwenclaw/workspace/agent/agent .jiuwenclaw/agent/skill
+   ```
+
+The new initialization process includes automatic migration of compatible configuration data from previous versions.
+
 ## 🚀 Getting Started
 
 ### 📦 Installation
@@ -46,7 +78,8 @@ When you express dissatisfaction or an error occurs, JiuwenClaw automatically re
 # Install JiuwenClaw
 pip install jiuwenclaw
 
-# Initialize JiuwenClaw (first-time setup)
+# Initialize JiuwenClaw (first-time setup or after upgrading)
+# ⚠️ Remember to backup your data before running this command
 jiuwenclaw-init
 
 # Start JiuwenClaw
