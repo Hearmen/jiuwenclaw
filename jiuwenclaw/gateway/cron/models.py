@@ -4,6 +4,8 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any
 
+from jiuwenclaw.gateway.cron.job_format_compat import convert_cron_job_dict_to_flat
+
 
 class CronTargetChannel(str, Enum):
     """推送频道枚举。"""
@@ -82,6 +84,7 @@ class CronJob:
 
     @staticmethod
     def from_dict(data: dict[str, Any]) -> "CronJob":
+        data = convert_cron_job_dict_to_flat(data)
         job_id = str(data.get("id") or "").strip()
         name = str(data.get("name") or "").strip()
         cron_expr = str(data.get("cron_expr") or "").strip()
