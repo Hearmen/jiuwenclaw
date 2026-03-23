@@ -48,10 +48,6 @@ class XiaoyiChannelConfig:
     task_timeout_ms: int = 3600000
     # Session cleanup timeout in milliseconds (default: 1 hour)
     session_cleanup_timeout_ms: int = 3600000
-    # File upload service configuration
-    file_upload_base_url: str = ""
-    file_upload_api_key: str = ""
-    file_upload_uid: str = ""
 
 
 def _generate_signature(sk: str, timestamp: str) -> str:
@@ -97,7 +93,7 @@ class XYFileUploadService:
                     "uid": self.uid,
                     "teamId": self.uid,
                 },
-                "useEdge": False,
+                "useEdge": True,
             }
             
             headers = {
@@ -205,9 +201,9 @@ class XiaoyiChannel(BaseChannel):
         self._sessions_marked_for_cleanup: dict[str, dict[str, Any]] = {}  # Session cleanup state
         # File upload service configuration
         self.file_upload_config = {
-            "baseUrl": config.file_upload_base_url,
-            "apiKey": config.file_upload_api_key,
-            "uid": config.file_upload_uid,
+            "baseUrl": config.file_upload_url,
+            "apiKey": config.api_key,
+            "uid": config.uid,
         }
         # Save additional configuration fields
         self.api_id = config.api_id
@@ -313,9 +309,8 @@ class XiaoyiChannel(BaseChannel):
         if not self._ws_connections:
             return
         session_id, task_id = self._extract_platform_receive_info(msg)
-        
         # Handle chat.file event
-        if msg.event_type == EventType.CHAT_FILE:
+        if self.config.mode == "xiaoyi_claw" and msg.event_type == EventType.CHAT_FILE:
             files = msg.payload.get("files", []) if isinstance(msg.payload, dict) else []
             if files:
                 for file_info in files:
@@ -364,7 +359,9 @@ class XiaoyiChannel(BaseChannel):
             # 流式模式 - 类似 TS 版本的实现
             # 判断事件类型
             is_delta = msg.event_type == EventType.CHAT_DELTA
-            is_final = msg.event_type == EventType.CHAT_FINAL
+            last_chunk = msg.event_type == EventType.CHAT_FINAL
+            is_final = msg.payload.get("is_complete", False)
+            last_chunk = True if is_final else last_chunk
 
             # 获取之前发送的文本
             previous_text = self._accumulated_texts.get(session_id, "")
@@ -381,7 +378,7 @@ class XiaoyiChannel(BaseChannel):
             # 在消息流中，总是使用 append=true, isFinal=false
             append = True
             final = False
-            last_chunk = is_final
+            last_chunk = last_chunk
             final = is_final
 
         # Get accumulated text for this session (for push notification)
@@ -718,7 +715,7 @@ class XiaoyiChannel(BaseChannel):
             await self.bus.route_user_message(user_message)
 
         # Start session heartbeat to prevent xiaoyi client timeout
-        if session_id:
+        if not self.config.enable_streaming and session_id:
             await self._start_session_heartbeat(session_id, task_id)
 
     async def _start_session_heartbeat(self, session_id: str, task_id: str) -> None:
@@ -937,170 +934,63 @@ class XiaoyiChannel(BaseChannel):
             if file_size > 20 * 1024 * 1024:  # 20MB limit
                 logger.error(f"XiaoyiChannel 文件过大，使用OSMS上传: {file_path}")
                 # Use OSMS upload for large files
-                base_url = self.file_upload_config.get("baseUrl")
-                api_key = self.file_upload_config.get("apiKey")
-                uid = self.file_upload_config.get("uid")
-                
-                if not all([base_url, api_key, uid]):
-                    logger.error("XiaoyiChannel OSMS配置不完整，无法上传大文件")
-                    return
-                
-                async with XYFileUploadService(base_url, api_key, uid) as upload_service:
-                    object_id = await upload_service.upload_file(file_path)
-                    if object_id:
-                        # Send file reference response
-                        response = {
-                            "jsonrpc": "2.0",
-                            "id": f"msg_{int(time.time() * 1000)}",
-                            "result": {
-                                "taskId": task_id,
-                                "kind": "artifact-update",
-                                "append": False,
-                                "lastChunk": True,
-                                "isFinal": True,
-                                "artifact": {
-                                    "artifactId": f"artifact_{int(time.time() * 1000)}",
-                                    "parts": [
-                                        {
-                                            "kind": "artifact",
-                                            "artifact": {
-                                                "kind": "file",
-                                                "file": {
-                                                    "objectId": object_id,
-                                                    "fileName": file_name,
-                                                    "contentType": "application/octet-stream"
-                                                }
-                                            }
-                                        }
-                                    ],
-                                },
-                            },
-                        }
-                        await self._safe_ws_send(url_key, response)
+            base_url = self.file_upload_config.get("baseUrl")
+            api_key = self.file_upload_config.get("apiKey")
+            uid = self.file_upload_config.get("uid")
+            
+            if not all([base_url, api_key, uid]):
+                logger.error("XiaoyiChannel OSMS配置不完整，无法上传大文件")
                 return
             
-            # Read file content as Base64
-            with open(file_path, "rb") as f:
-                file_content = f.read()
-            
-            base64_content = base64.b64encode(file_content).decode("utf-8")
-            
-            # Guess content type
-            import mimetypes
-            content_type, _ = mimetypes.guess_type(file_name)
-            if not content_type:
-                content_type = "application/octet-stream"
-            
-            # Send file response
-            response = {
-                "jsonrpc": "2.0",
-                "id": f"msg_{int(time.time() * 1000)}",
-                "result": {
-                    "taskId": task_id,
-                    "kind": "artifact-update",
-                    "append": False,
-                    "lastChunk": True,
-                    "isFinal": True,
-                    "artifact": {
-                        "artifactId": f"artifact_{int(time.time() * 1000)}",
-                        "parts": [
-                            {
-                                "kind": "file",
-                                "file": {
-                                    "name": file_name,
-                                    "contentType": content_type,
-                                    "data": base64_content
-                                }
-                            }
-                        ],
-                    },
-                },
-            }
-            await self._safe_ws_send(url_key, response)
+            object_id = ""
+            async with XYFileUploadService(base_url, api_key, uid) as upload_service:
+                object_id = await upload_service.upload_file(file_path)
+                logger.info(f"file upload success: {object_id}")
+                if object_id:
+                    # Send file reference response
+                    payload = {
+                        "jsonrpc": "2.0",
+                        "id": f"msg_{int(time.time() * 1000)}",
+                        "result": {
+                            "taskId": task_id,
+                            "kind": "artifact-update",
+                            "append": True,
+                            "lastChunk": False,
+                            "isFinal": False,
+                            "artifact": {
+                                "artifactId": task_id,
+                                "parts": [
+                                    {
+                                        "kind": "file",
+                                        "file": {
+                                            "fieldId": object_id,
+                                            "name": file_name,
+                                            "mimeType": file_name.split(".")[-1]
+                                        }
+                                    }
+                                ],
+                            },
+                        },
+                    }
+                    response = {
+                        "msgType": "agent_response",
+                        "agentId": self.config.agent_id,
+                        "session_id": session_id,
+                        "task_id": task_id,
+                        "msgDetail": json.dumps(payload)
+                        }
+                    await self._safe_ws_send(url_key, response)
+            return object_id
         except Exception as e:
             logger.error(f"XiaoyiChannel 发送文件响应失败: {e}")
 
     async def _send_file_response(self, session_id: str, task_id: str, file_info: dict, url_key: str) -> None:
         """发送文件响应到指定通道."""
-        try:
-            # Check if file info has content (Base64)
-            if file_info.get("content") and isinstance(file_info["content"], str):
-                # This is a file with Base64 content
-                file_name = file_info.get("fileName", "file.txt")
-                content_type = file_info.get("contentType", "application/octet-stream")
-                base64_content = file_info["content"]
-                
-                # Send file response with Base64 content
-                response = {
-                    "jsonrpc": "2.0",
-                    "id": f"msg_{int(time.time() * 1000)}",
-                    "result": {
-                        "taskId": task_id,
-                        "kind": "artifact-update",
-                        "append": False,
-                        "lastChunk": True,
-                        "isFinal": True,
-                        "artifact": {
-                            "artifactId": f"artifact_{int(time.time() * 1000)}",
-                            "parts": [
-                                {
-                                    "kind": "file",
-                                    "file": {
-                                        "name": file_name,
-                                        "contentType": content_type,
-                                        "data": base64_content
-                                    }
-                                }
-                            ],
-                        },
-                    },
-                }
-                await self._safe_ws_send(url_key, response)
-                return
-            
+        try:            
             # If file is available locally, send as Base64
             if file_info.get("fullPath") or file_info.get("path"):
                 await self._send_file_response_base64(session_id, task_id, file_info, url_key)
                 return
-            
-            # If file is already uploaded to OSMS
-            if file_info.get("objectId"):
-                file_name = file_info.get("fileName", "file.txt")
-                content_type = file_info.get("contentType", "application/octet-stream")
-                object_id = file_info["objectId"]
-                
-                # Send file reference response
-                response = {
-                    "jsonrpc": "2.0",
-                    "id": f"msg_{int(time.time() * 1000)}",
-                    "result": {
-                        "taskId": task_id,
-                        "kind": "artifact-update",
-                        "append": False,
-                        "lastChunk": True,
-                        "isFinal": True,
-                        "artifact": {
-                            "artifactId": f"artifact_{int(time.time() * 1000)}",
-                            "parts": [
-                                {
-                                    "kind": "artifact",
-                                    "artifact": {
-                                        "kind": "file",
-                                        "file": {
-                                            "objectId": object_id,
-                                            "fileName": file_name,
-                                            "contentType": content_type
-                                        }
-                                    }
-                                }
-                            ],
-                        },
-                    },
-                }
-                await self._safe_ws_send(url_key, response)
-                return
-            
-            logger.error(f"XiaoyiChannel 无法发送文件：无效的文件信息")
         except Exception as e:
             logger.error(f"XiaoyiChannel 发送文件响应失败: {e}")
 
@@ -1140,11 +1030,14 @@ class XiaoyiChannel(BaseChannel):
 
         try:
             push_config = PushConfig(
+                mode=self.config.mode,
                 api_id=self.config.api_id,
                 push_id=self.config.push_id,
                 push_url=self.config.push_url,
                 ak=self.config.ak,
                 sk=self.config.sk,
+                uid=self.config.uid,
+                api_key=self.config.api_key
             )
             push_service = XiaoYiPushService(push_config)
             result = await push_service.send_push(text, push_text)

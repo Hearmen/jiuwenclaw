@@ -20,19 +20,14 @@ PUSH_URL = "https://hag.cloud.huawei.com/open-ability-agent/v1/agent-webhook"
 @dataclass
 class PushConfig:
     """Push 消息配置."""
+    mode: str = ""
     api_id: str = ""
     push_id: str = ""
     ak: str = ""
     sk: str = ""
+    uid: str = ""
+    api_key: str = ""
     push_url: str = ""
-
-    @property
-    def is_configured(self) -> bool:
-        """检查是否已配置."""
-        return bool(
-            self.api_id.strip()
-            and self.push_id.strip()
-        )
 
 
 class XiaoYiPushService:
@@ -68,13 +63,9 @@ class XiaoYiPushService:
         Returns:
             bool: 是否发送成功
         """
-        if not self.config.is_configured:
-            logger.info("[PUSH] Push not configured, skipping")
-            return False
 
         try:
             timestamp = str(int(time.time() * 1000))
-            signature = self._generate_signature(timestamp)
             message_id = self._generate_uuid()
 
             payload = {
@@ -98,16 +89,25 @@ class XiaoYiPushService:
             }
 
             logger.info(f"[PUSH] Sending push notification: {push_text}")
-
-            headers = {
-                "Content-Type": "application/json",
-                "Accept": "application/json",
-                "x-hag-trace-id": self._generate_uuid(),
-                "X-Access-Key": self.config.ak,
-                "X-Sign": signature,
-                "X-Ts": timestamp,
-            }
-
+            if self.config.mode == "xiaoi_claw":
+                headers = {
+                    "Content-Type": "application/json",
+                    "Accept": "application/json",
+                    "x-hag-trace-id": self._generate_uuid(),
+                    "x-uid": self.config.uid,
+                    "x-api-key": self.config.api_key,
+                    "x-request-from": "openclaw"
+                } 
+            else:
+                signature = self._generate_signature(timestamp)
+                headers = {
+                    "Content-Type": "application/json",
+                    "Accept": "application/json",
+                    "x-hag-trace-id": self._generate_uuid(),
+                    "X-Access-Key": self.config.ak,
+                    "X-Sign": signature,
+                    "X-Ts": timestamp,
+                }
             timeout = aiohttp.ClientTimeout(total=30)
             async with aiohttp.ClientSession() as session:
                 async with session.post(

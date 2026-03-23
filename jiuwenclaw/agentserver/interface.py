@@ -1019,7 +1019,7 @@ class JiuWenClaw:
             yield AgentResponseChunk(
                 request_id=request.request_id,
                 channel_id=request.channel_id,
-                payload={"event_type": "chat.error", "error": "模型未正确配置，请先配置模型信息"},
+                payload={"event_type": "chat.error", "error": "模型未正确配置，请先配置模型信息", "is_complete": True},
                 is_complete=True,
             )
             return
@@ -1130,14 +1130,14 @@ class JiuWenClaw:
             yield AgentResponseChunk(
                 request_id=rid,
                 channel_id=cid,
-                payload=None,
+                payload={"is_complete": True},
                 is_complete=True,
             )
         else:
             yield AgentResponseChunk(
                 request_id=rid,
                 channel_id=cid,
-                payload=None,
+                payload={"is_complete": True},
                 is_complete=True and self._session_tool.all_tasks_done(),
             )
 
@@ -1248,13 +1248,6 @@ class JiuWenClaw:
                         "current_task": "thinking",
                     }
 
-                # llm_reasoning：模型推理/思考内容，不转为 chat.delta，避免发到企业微信
-                if chunk_type == "llm_reasoning":
-                    return {
-                        "event_type": "chat.processing_status",
-                        "is_processing": True,
-                        "current_task": "thinking",
-                    }
                 if chunk_type == "processing_complete":
                     return {
                         "event_type": "chat.processing_status",

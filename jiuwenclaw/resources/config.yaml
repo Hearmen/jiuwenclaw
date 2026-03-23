@@ -115,12 +115,13 @@ channels:
     agent_id:
     ws_url1: wss://hag.cloud.huawei.com/openclaw/v1/ws/link
     ws_url2: wss://116.63.174.231/openclaw/v1/ws/link
+    enable_streaming: true
+    enabled: false
+    # xiaoyi_claw配置
     uid:
     api_key:
     push_url:
     file_upload_url:
-    enable_streaming: true
-    enabled: false
   dingtalk:
     # 钉钉应用配置
     client_id:

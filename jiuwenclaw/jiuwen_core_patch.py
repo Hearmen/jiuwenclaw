@@ -1,4 +1,5 @@
 # Copyright (c) Huawei Technologies Co., Ltd. 2025. All rights reserved.
+import json
 import os
 from typing import Any, Optional
 
@@ -39,14 +40,19 @@ class PatchOpenAIModelClient(OpenAIModelClient):
             timeout=final_timeout,
             max_retries=self.model_client_config.max_retries
         )
-
+        default_headers = os.getenv("default_headers", None)
+        try:
+            default_headers = json.loads(default_headers)
+        except json.decoder.JSONDecodeError as error:
+            llm_logger.warning(f"Model default headers parse failed: {error}")
+            default_headers = None
         return AsyncOpenAI(
             api_key=self.model_client_config.api_key,
             base_url=self.model_client_config.api_base,
             http_client=http_client,
             timeout=final_timeout,
             max_retries=self.model_client_config.max_retries,
-            default_headers=os.getenv("default_headers", None),
+            default_headers=default_headers
         )
     
     def _parse_stream_chunk(self, chunk: Any) -> Optional[AssistantMessageChunk]:
