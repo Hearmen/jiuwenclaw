@@ -1,10 +1,12 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useState } from "react";
 import { useTranslation } from 'react-i18next';
 
 interface ConfigPanelProps {
   config: Record<string, unknown> | null;
   isConnected: boolean;
   onSaveConfig: (updates: Record<string, string>) => Promise<void>;
+  /** 首次进入配置页时展开的分组 tag（如 third_party_api）；离开配置页时由 App 清空 */
+  initialExpandGroupTag?: string | null;
 }
 
 interface ConfigGroup {
@@ -227,11 +229,14 @@ function GroupSection({
 
   const nestedStyle = nested ? getNestedModelStyle(group.tag) : "";
   return (
-    <div className={
+    <div
+      id={nested ? undefined : `config-group-${group.tag}`}
+      className={
       nested
         ? "rounded-r-md overflow-hidden border border-border/50"
         : "rounded-xl border border-border bg-card/70 backdrop-blur-sm overflow-hidden shadow-sm"
-    }>
+    }
+    >
       <button
         onClick={() => setOpen(!open)}
         className={`w-full flex items-center justify-between transition-colors text-sm ${
@@ -436,7 +441,12 @@ function ModelConfigSection({
   );
 }
 
-export function ConfigPanel({ config, isConnected, onSaveConfig }: ConfigPanelProps) {
+export function ConfigPanel({
+  config,
+  isConnected,
+  onSaveConfig,
+  initialExpandGroupTag = null,
+}: ConfigPanelProps) {
   const { t } = useTranslation();
   const [draftValues, setDraftValues] = useState<Record<string, string>>({});
   const [saving, setSaving] = useState(false);
@@ -485,6 +495,14 @@ export function ConfigPanel({ config, isConnected, onSaveConfig }: ConfigPanelPr
     }
     return { modelGroups: model, otherGroups: other };
   }, [groups]);
+
+  useLayoutEffect(() => {
+    if (!initialExpandGroupTag) return;
+    const hasGroup = groups.some((g) => g.tag === initialExpandGroupTag);
+    if (!hasGroup) return;
+    const el = document.getElementById(`config-group-${initialExpandGroupTag}`);
+    el?.scrollIntoView({ behavior: "smooth", block: "nearest" });
+  }, [groups, initialExpandGroupTag]);
 
   const totalItems = useMemo(() => groups.reduce((sum, group) => sum + group.keys.length, 0), [groups]);
   const topLevelGroupCount = (modelGroups.length > 0 ? 1 : 0) + otherGroups.length;
@@ -593,7 +611,9 @@ export function ConfigPanel({ config, isConnected, onSaveConfig }: ConfigPanelPr
                 group={group}
                 draftValues={draftValues}
                 onChange={handleFieldChange}
-                defaultOpen={false}
+                defaultOpen={
+                  initialExpandGroupTag != null && group.tag === initialExpandGroupTag
+                }
                 t={t}
               />
             ))}

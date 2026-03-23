@@ -5,8 +5,11 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Trans, useTranslation } from "react-i18next";
 import { webRequest } from "../../services/webClient";
+import { normalizeSkillNetUrl } from "../../utils/skillNetUrl";
 
 const SKILLNET_UPSTREAM_REPO_URL = "https://github.com/zjunlp/SkillNet";
+/** 同时进行的 SkillNet 安装任务上限（与后端 asyncio 能力匹配，避免前端狂点拖垮） */
+const SKILLNET_MAX_CONCURRENT_INSTALLS = 5;
 
 type SkillNetItem = {
   skill_name: string;
@@ -22,23 +25,37 @@ type LoadState = "idle" | "loading" | "success" | "error";
 interface SkillNetSearchModalProps {
   open: boolean;
   sessionId: string;
+  /** 当前已安装技能名（兜底，与列表插件判定一致） */
+  installedSkillNames?: ReadonlySet<string>;
+  /** 已安装技能的来源 URL（规范化后），优先于 skill_name 匹配 SkillNet 结果 */
+  installedSkillOrigins?: ReadonlySet<string>;
   onClose: () => void;
   onInstalled?: (skillName: string) => void | Promise<void>;
+  /** 点击文案中的「配置页面」时：关闭弹窗并切换到应用内配置页 */
+  onNavigateToConfig?: () => void;
 }
 
 export function SkillNetSearchModal({
   open,
   sessionId,
+  installedSkillNames,
+  installedSkillOrigins,
   onClose,
   onInstalled,
+  onNavigateToConfig,
 }: SkillNetSearchModalProps) {
   const { t } = useTranslation();
   const [query, setQuery] = useState("");
   const [results, setResults] = useState<SkillNetItem[]>([]);
   const [loadState, setLoadState] = useState<LoadState>("idle");
   const [expandedUrl, setExpandedUrl] = useState<string | null>(null);
-  const [actionTarget, setActionTarget] = useState<string | null>(null);
-  const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  /** 正在安装中的 skill_url（可多路并发，上限见 SKILLNET_MAX_CONCURRENT_INSTALLS） */
+  const [installingUrls, setInstallingUrls] = useState<Set<string>>(() => new Set());
+  const installingUrlsRef = useRef<Set<string>>(new Set());
+  /** 顶部红条：搜索失败、或并发上限等（与按 URL 的安装失败分离） */
+  const [bannerError, setBannerError] = useState<string | null>(null);
+  /** 某 skill_url 安装失败时的说明（成功或重试开装时会清除该条） */
+  const [installErrorByUrl, setInstallErrorByUrl] = useState<Record<string, string>>({});
   const [installedSuccess, setInstalledSuccess] = useState<string | null>(null);
   const installedSuccessTimerRef = useRef<number | null>(null);
 
@@ -80,7 +97,7 @@ export function SkillNetSearchModal({
     if (!q) return;
 
     setLoadState("loading");
-    setErrorMessage(null);
+    setBannerError(null);
     try {
       const data = await webRequest<{
         success: boolean;
@@ -92,7 +109,7 @@ export function SkillNetSearchModal({
       if (!data.success) {
         const message = data.detail_key
           ? t(data.detail_key, data.detail_params as Record<string, string> | undefined)
-          : (data.detail || t("skills.errors.skillNetSearchFailed"));
+          : (data.detail?.trim() || t("skills.errors.skillNetSearchFailed"));
         throw new Error(message);
       }
       setResults(data.skills || []);
@@ -102,20 +119,43 @@ export function SkillNetSearchModal({
       console.error(err);
       setResults([]);
       setLoadState("error");
-      const fallback = t("skills.errors.skillNetSearchFailedHint");
-      const message =
+      const fallbackDetail = t("skills.errors.skillNetSearchFailedHint");
+      const detail =
         err instanceof Error && err.message.trim()
           ? err.message.trim()
-          : fallback;
-      setErrorMessage(message);
+          : fallbackDetail;
+      setBannerError(
+        t("skills.errors.skillNetSearchErrorBanner", { detail })
+      );
     }
   }, [query, t, withSession]);
 
+  const syncInstallingState = useCallback(() => {
+    setInstallingUrls(new Set(installingUrlsRef.current));
+  }, []);
+
   const handleInstall = useCallback(
     async (item: SkillNetItem) => {
-      if (!item.skill_url) return;
-      setActionTarget(item.skill_url);
-      setErrorMessage(null);
+      const url = item.skill_url;
+      if (!url) return;
+      if (installingUrlsRef.current.has(url)) return;
+      if (installingUrlsRef.current.size >= SKILLNET_MAX_CONCURRENT_INSTALLS) {
+        setBannerError(
+          t("skills.skillNet.concurrentLimitReached", {
+            max: SKILLNET_MAX_CONCURRENT_INSTALLS,
+          })
+        );
+        return;
+      }
+      installingUrlsRef.current.add(url);
+      syncInstallingState();
+      setBannerError(null);
+      setInstallErrorByUrl((prev) => {
+        if (!(url in prev)) return prev;
+        const next = { ...prev };
+        delete next[url];
+        return next;
+      });
       try {
         const data = await webRequest<{
           success: boolean;
@@ -173,6 +213,12 @@ export function SkillNetSearchModal({
         } else {
           name = data.skill?.name || item.skill_name;
         }
+        setInstallErrorByUrl((prev) => {
+          if (!(url in prev)) return prev;
+          const next = { ...prev };
+          delete next[url];
+          return next;
+        });
         setInstalledSuccess(name);
         if (installedSuccessTimerRef.current !== null) {
           window.clearTimeout(installedSuccessTimerRef.current);
@@ -185,12 +231,13 @@ export function SkillNetSearchModal({
           err instanceof Error && err.message
             ? err.message
             : t("skills.errors.skillNetInstallFailedHint");
-        setErrorMessage(message);
+        setInstallErrorByUrl((prev) => ({ ...prev, [url]: message }));
       } finally {
-        setActionTarget(null);
+        installingUrlsRef.current.delete(url);
+        syncInstallingState();
       }
     },
-    [clearInstalledSuccess, onInstalled, t, withSession]
+    [clearInstalledSuccess, onInstalled, syncInstallingState, t, withSession]
   );
 
   if (!open) return null;
@@ -252,7 +299,21 @@ export function SkillNetSearchModal({
                   }}
                 />
               </li>
-              <li>{t("skills.skillNet.usageNotice2")}</li>
+              <li>
+                <Trans
+                  i18nKey="skills.skillNet.usageNotice2"
+                  components={{
+                    configLink: (
+                      <button
+                        type="button"
+                        aria-label={t("skills.skillNet.configPageLinkAria")}
+                        className="inline p-0 m-0 align-baseline border-0 bg-transparent cursor-pointer font-medium text-accent underline decoration-accent/35 underline-offset-2 hover:text-accent-hover hover:decoration-accent/60"
+                        onClick={() => onNavigateToConfig?.()}
+                      />
+                    ),
+                  }}
+                />
+              </li>
             </ul>
           </div>
           <div className="flex items-center gap-2">
@@ -277,21 +338,44 @@ export function SkillNetSearchModal({
             </button>
           </div>
 
-          {errorMessage && (
+          {bannerError && (
             <div className="mt-3 px-3 py-2 rounded-md bg-secondary text-sm text-danger break-words whitespace-pre-wrap max-h-48 overflow-y-auto">
-              {errorMessage}
+              {bannerError}
             </div>
           )}
 
           {loadState === "success" && (
-            <div className="mt-4 space-y-2 max-h-[50vh] overflow-y-auto">
+            <div className="mt-4 flex min-h-0 max-h-[50vh] flex-col gap-2">
+              {installingUrls.size >= SKILLNET_MAX_CONCURRENT_INSTALLS && (
+                <div
+                  className="flex-shrink-0 rounded-lg border border-amber-500/45 bg-amber-500/12 px-3 py-2.5 text-sm font-medium text-text shadow-sm"
+                  role="status"
+                >
+                  {t("skills.skillNet.concurrentLimitReached", {
+                    max: SKILLNET_MAX_CONCURRENT_INSTALLS,
+                  })}
+                </div>
+              )}
+              <div className="min-h-0 flex-1 space-y-2 overflow-y-auto pr-0.5">
               {results.length === 0 ? (
                 <div className="text-xs text-text-muted">{t("skills.skillNet.noResults")}</div>
               ) : (
                 results.map((item) => {
-                  const isInstalling = actionTarget === item.skill_url;
-                  const anyInstalling = actionTarget !== null;
+                  const byUrl =
+                    item.skill_url &&
+                    (installedSkillOrigins?.has(
+                      normalizeSkillNetUrl(item.skill_url)
+                    ) ??
+                      false);
+                  const byName = installedSkillNames?.has(item.skill_name) ?? false;
+                  const isInstalled = Boolean(byUrl || byName);
+                  const isInstalling = installingUrls.has(item.skill_url);
+                  const atConcurrentLimit =
+                    installingUrls.size >= SKILLNET_MAX_CONCURRENT_INSTALLS;
+                  const installBlockedByLimit =
+                    atConcurrentLimit && !isInstalling;
                   const isExpanded = expandedUrl === item.skill_url;
+                  const rowInstallError = installErrorByUrl[item.skill_url];
                   return (
                     <div
                       key={item.skill_url}
@@ -340,27 +424,56 @@ export function SkillNetSearchModal({
                           </div>
                         )}
                       </div>
-                      <button
-                        type="button"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          handleInstall(item);
-                        }}
-                        disabled={anyInstalling}
-                        className={`px-3 py-1.5 rounded-md text-xs whitespace-nowrap transition-colors flex-shrink-0 ${
-                          anyInstalling
-                            ? "bg-secondary text-text-muted cursor-not-allowed"
-                            : "bg-accent text-white hover:bg-accent-hover"
-                        }`}
+                      <div
+                        className="flex flex-col items-end gap-1 flex-shrink-0 max-w-[min(100%,14rem)]"
+                        onClick={(e) => e.stopPropagation()}
                       >
-                        {isInstalling
-                          ? t("common.loading")
-                          : t("skills.skillNet.installFromResult")}
-                      </button>
+                        {isInstalled ? (
+                          <span className="px-3 py-1.5 rounded-md text-xs whitespace-nowrap border border-[color:var(--border-ok)] bg-ok-subtle text-ok">
+                            {t("skills.status.installed")}
+                          </span>
+                        ) : (
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              void handleInstall(item);
+                            }}
+                            disabled={isInstalling || installBlockedByLimit}
+                            title={
+                              installBlockedByLimit
+                                ? t("skills.skillNet.concurrentLimitReached", {
+                                    max: SKILLNET_MAX_CONCURRENT_INSTALLS,
+                                  })
+                                : isInstalling
+                                  ? t("skills.skillNet.installingInProgress")
+                                  : undefined
+                            }
+                            className={`px-3 py-1.5 rounded-md text-xs whitespace-nowrap transition-colors ${
+                              isInstalling || installBlockedByLimit
+                                ? "bg-secondary text-text-muted cursor-not-allowed"
+                                : "bg-accent text-white hover:bg-accent-hover"
+                            }`}
+                          >
+                            {isInstalling
+                              ? t("skills.skillNet.installingInProgress")
+                              : t("skills.skillNet.installFromResult")}
+                          </button>
+                        )}
+                        {rowInstallError ? (
+                          <p
+                            className="text-[11px] text-danger text-right leading-snug break-words"
+                            role="alert"
+                          >
+                            {rowInstallError}
+                          </p>
+                        ) : null}
+                      </div>
                     </div>
                   );
                 })
               )}
+              </div>
             </div>
           )}
         </div>

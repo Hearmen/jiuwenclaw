@@ -8,6 +8,7 @@ import { useTranslation } from 'react-i18next';
 import { webRequest } from "../../services/webClient";
 import { SourceManagerModal } from "../../features/SourceManagerModal";
 import { SkillNetSearchModal } from "../../features/SkillNetSearchModal";
+import { normalizeSkillNetUrl } from "../../utils/skillNetUrl";
 
 /** 刷新会 git pull marketplace，略放宽；普通进页单次 RPC 一般很快。 */
 const SKILLS_FETCH_TIMEOUT_REFRESH_MS = 60_000;
@@ -22,6 +23,8 @@ type SkillItem = {
   tags: string[];
   allowed_tools: string[];
   marketplace?: string;
+  /** SkillNet 等安装来源 URL，与在线搜索 skill_url 对照「已安装」 */
+  origin?: string;
 };
 
 type InstalledPluginItem = {
@@ -50,6 +53,7 @@ type LoadState = "idle" | "loading" | "success" | "error";
 
 interface SkillPanelProps {
   sessionId: string;
+  onNavigateToConfig?: () => void;
 }
 
 function getSourceLabel(source: string, t: (key: string) => string): string {
@@ -58,7 +62,31 @@ function getSourceLabel(source: string, t: (key: string) => string): string {
   return source || t('skills.source.unknown');
 }
 
-export function SkillPanel({ sessionId }: SkillPanelProps) {
+/** 与后端一致：tags/allowed_tools 可能是逗号分隔字符串，统一为 string[] */
+function coerceStringList(val: unknown): string[] {
+  if (val == null) return [];
+  if (Array.isArray(val)) {
+    return val.map((x) => String(x).trim()).filter(Boolean);
+  }
+  if (typeof val === "string") {
+    const s = val.trim();
+    if (!s) return [];
+    return s.includes(",")
+      ? s.split(",").map((p) => p.trim()).filter(Boolean)
+      : [s];
+  }
+  return [String(val)];
+}
+
+function normalizeSkillItem<T extends SkillItem>(raw: T): T {
+  return {
+    ...raw,
+    tags: coerceStringList(raw.tags),
+    allowed_tools: coerceStringList(raw.allowed_tools),
+  };
+}
+
+export function SkillPanel({ sessionId, onNavigateToConfig }: SkillPanelProps) {
   const { t } = useTranslation();
   const [skills, setSkills] = useState<SkillItem[]>([]);
   const [plugins, setPlugins] = useState<InstalledPluginItem[]>([]);
@@ -92,6 +120,23 @@ export function SkillPanel({ sessionId }: SkillPanelProps) {
     return map;
   }, [plugins]);
 
+  const installedSkillNames = useMemo(
+    () => new Set(installedSkillMap.keys()),
+    [installedSkillMap]
+  );
+
+  /** 已安装技能的来源 URL（规范化），与 SkillNet 搜索结果的 skill_url 匹配 */
+  const installedSkillOrigins = useMemo(() => {
+    const set = new Set<string>();
+    for (const s of skills) {
+      const o = s.origin?.trim();
+      if (o) {
+        set.add(normalizeSkillNetUrl(o));
+      }
+    }
+    return set;
+  }, [skills]);
+
   const filteredSkills = useMemo(() => {
     const keyword = search.trim().toLowerCase();
     if (!keyword) return skills;
@@ -100,7 +145,7 @@ export function SkillPanel({ sessionId }: SkillPanelProps) {
         skill.name,
         skill.description,
         skill.author,
-        skill.tags.join(" "),
+        coerceStringList(skill.tags).join(" "),
       ]
         .join(" ")
         .toLowerCase();
@@ -154,7 +199,7 @@ export function SkillPanel({ sessionId }: SkillPanelProps) {
             : SKILLS_FETCH_TIMEOUT_NORMAL_MS,
         }
       );
-      setSkills(data.skills || []);
+      setSkills((data.skills || []).map(normalizeSkillItem));
       setPlugins(data.plugins || []);
       setListState("success");
 
@@ -173,7 +218,7 @@ export function SkillPanel({ sessionId }: SkillPanelProps) {
           "skills.get",
           withSession({ name: skillName })
         );
-        setSelectedSkill(data);
+        setSelectedSkill(normalizeSkillItem(data));
         setDetailState("success");
       } catch (error) {
         console.error(error);
@@ -583,9 +628,15 @@ export function SkillPanel({ sessionId }: SkillPanelProps) {
       <SkillNetSearchModal
         open={skillNetModalOpen}
         sessionId={sessionId}
+        installedSkillNames={installedSkillNames}
+        installedSkillOrigins={installedSkillOrigins}
         onClose={() => setSkillNetModalOpen(false)}
         onInstalled={async () => {
           await fetchSkills();
+        }}
+        onNavigateToConfig={() => {
+          setSkillNetModalOpen(false);
+          onNavigateToConfig?.();
         }}
       />
     </div>

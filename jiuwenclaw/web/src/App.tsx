@@ -230,6 +230,13 @@ function AppContent() {
   const [heartbeatModalOpen, setHeartbeatModalOpen] = useState(false);
   const [hasVisitedSkills, setHasVisitedSkills] = useState(false);
   const [hasVisitedChannels, setHasVisitedChannels] = useState(false);
+  /** 从 SkillNet 等入口跳转配置页时，首次展开对应配置分组（如第三方服务） */
+  const [configInitialExpandGroup, setConfigInitialExpandGroup] = useState<string | null>(null);
+  useEffect(() => {
+    if (activeNav !== 'configpanel') {
+      setConfigInitialExpandGroup(null);
+    }
+  }, [activeNav]);
   const restartAutoCloseTimerRef = useRef<number | null>(null);
   const newSessionToastTimerRef = useRef<number | null>(null);
   const heartbeatToastTimerRef = useRef<number | null>(null);
@@ -625,6 +632,7 @@ function AppContent() {
               config={serverConfig}
               isConnected={isConnected}
               onSaveConfig={saveConfigAndRestart}
+              initialExpandGroupTag={configInitialExpandGroup}
             />
           </div>
         )}
@@ -641,7 +649,13 @@ function AppContent() {
 
         {hasVisitedSkills && (
           <div className={`app-section ${activeNav === 'skills' ? '' : 'is-hidden'}`}>
-            <SkillPanel sessionId={sessionId} />
+            <SkillPanel
+              sessionId={sessionId}
+              onNavigateToConfig={() => {
+                setConfigInitialExpandGroup('third_party_api');
+                setActiveNav('configpanel');
+              }}
+            />
           </div>
         )}
         {hasVisitedChannels && (

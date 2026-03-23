@@ -762,6 +762,22 @@ class SkillManager:
     # -----------------------------------------------------------------------
 
     @staticmethod
+    def _coerce_str_list(val: Any) -> list[str]:
+        """frontmatter 里 tags/allowed_tools 可能是逗号分隔字符串，统一为 list[str]."""
+        if val is None:
+            return []
+        if isinstance(val, list):
+            return [str(x).strip() for x in val if str(x).strip()]
+        if isinstance(val, str):
+            s = val.strip()
+            if not s:
+                return []
+            if "," in s:
+                return [p.strip() for p in s.split(",") if p.strip()]
+            return [s]
+        return [str(val)]
+
+    @staticmethod
     def _parse_skill_md(path: Path) -> dict | None:
         """解析 SKILL.md，提取 YAML frontmatter 和正文.
 
@@ -809,8 +825,8 @@ class SkillManager:
         meta.setdefault("description", "")
         meta.setdefault("version", "")
         meta.setdefault("author", "")
-        meta.setdefault("tags", [])
-        meta.setdefault("allowed_tools", [])
+        meta["tags"] = SkillManager._coerce_str_list(meta.get("tags"))
+        meta["allowed_tools"] = SkillManager._coerce_str_list(meta.get("allowed_tools"))
 
         meta["body"] = body
         meta["path"] = str(path)
@@ -863,10 +879,14 @@ class SkillManager:
                     if source == "project" and p.get("marketplace"):
                         source = p.get("marketplace", "project")
                     break
-            # 检查是否通过 import_local 导入
+            # 检查是否通过 import_local / SkillNet 等写入 local_skills（含 origin 供前端对照 skill_url）
             for ls in self._state.get("local_skills", []):
                 if ls.get("name") == meta.get("name"):
                     source = ls.get("source", "local") if isinstance(ls, dict) else "local"
+                    if isinstance(ls, dict):
+                        origin = ls.get("origin")
+                        if isinstance(origin, str) and origin.strip():
+                            meta["origin"] = origin.strip()
                     break
 
             meta["source"] = source
