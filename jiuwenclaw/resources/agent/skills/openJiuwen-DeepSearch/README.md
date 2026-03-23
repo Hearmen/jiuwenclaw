@@ -72,18 +72,9 @@ uv run "scripts\main.py" --mode query --query "待生成深度调研报告的主
 
 ## 输出结果
 
-### 日志输出
-
 - 日志目录：`./output/logs/`
-- 结果目录：`./output/results/`
+- 结果目录：openJiuwen-DeepSearch技能文件夹根目录
 
-## 常见问题
-
-### Q: 输出结果保存在哪里？
-
-A:
-- 日志：`./output/logs/`
-- 结果：`./output.md`
 
 ## 许可证
 

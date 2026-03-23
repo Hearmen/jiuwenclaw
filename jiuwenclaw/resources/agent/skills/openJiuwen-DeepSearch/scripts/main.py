@@ -240,7 +240,7 @@ def run_background():
     query_text = ' '.join(cmd_args[cmd_args.index('--query') + 1:]) if '--query' in cmd_args else 'default'
     logger.info("任务已在后台启动，查询: %s", query_text)
     logger.info("日志位置: output/logs/")
-    logger.info("结果位置: output/results/")
+    logger.info("结果位置: 技能文件夹根目录")
     sys.exit(0)
 
 
