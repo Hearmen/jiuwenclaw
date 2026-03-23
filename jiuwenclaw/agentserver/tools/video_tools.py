@@ -220,6 +220,11 @@ async def video_understanding(inputs: dict[str, Any], **kwargs) -> str:
         except Exception as e:
             logger.warning("[video_understanding] refresh config failed: %s", e)
         req = _normalize_request(inputs or {})
+        logger.info(
+            "[video_understanding] using model: %s (api_base: %s)",
+            req.model, 
+            os.environ.get("VIDEO_API_BASE", "")
+        )
         return await asyncio.to_thread(_glm_video_understanding_sync, req)
     except Exception as exc:
         return f"[ERROR]: glm video understanding failed: {exc}"

@@ -16,6 +16,7 @@ from openjiuwen.core.foundation.tool import McpServerConfig, tool
 from openjiuwen.core.runner import Runner
 import requests
 
+from jiuwenclaw.utils import logger
 from jiuwenclaw.agentserver.tools.multimodal_config import apply_vision_model_config_from_yaml
 
 load_dotenv(verbose=True)
@@ -283,6 +284,9 @@ async def visual_question_answering(image_path_or_url: str, question: str) -> st
         apply_vision_model_config_from_yaml(get_config())
     except Exception:
         _log.debug("Failed to apply vision model config from yaml", exc_info=True)
+
+    vision_api_key, vision_api_base, vision_model = _get_vision_api_credentials()
+    logger.info("[visual_question_answering] using model: %s (api_base: %s)", vision_model, vision_api_base)
 
     ocr_out = await _invoke_openai_vision(image_path_or_url, _OCR_INSTRUCTIONS)
     vqa_out = await _invoke_openai_vision(image_path_or_url, _build_vqa_prompt(ocr_out, question))

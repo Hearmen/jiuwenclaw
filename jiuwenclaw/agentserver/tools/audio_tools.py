@@ -21,6 +21,7 @@ from openjiuwen.core.foundation.tool import McpServerConfig, tool
 from openjiuwen.core.runner import Runner
 import requests
 
+from jiuwenclaw.utils import logger
 from jiuwenclaw.agentserver.tools.multimodal_config import apply_audio_model_config_from_yaml
 
 ACR_ACCESS_KEY = os.environ.get("ACR_ACCESS_KEY", "")
@@ -165,6 +166,9 @@ async def audio_question_answering(audio_path_or_url: str, question: str) -> str
     if not api_key:
         return _build_missing_key_msg("audio question answering")
 
+    audio_model = os.environ.get("AUDIO_MODEL_NAME", "gpt-4o-audio-preview")
+    logger.info("[audio_question_answering] using model: %s (api_base: %s)", audio_model, api_base)
+
     try:
         prompt_text = f"Answer the following question based on the given audio information:\n\n{question}"
         cleanup_needed = False
@@ -197,7 +201,7 @@ async def audio_question_answering(audio_path_or_url: str, question: str) -> str
             )
 
         resp = client.chat.completions.create(
-            model="gpt-4o-audio-preview",
+            model=audio_model,
             messages=[
                 {"role": "system", "content": "You are a helpful assistant specializing in audio analysis."},
                 {
