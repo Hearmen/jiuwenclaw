@@ -12,7 +12,8 @@
 
 from __future__ import annotations
 
-from typing import List
+import json
+from typing import List, Union
 
 from openjiuwen.core.foundation.tool import LocalFunction, Tool, ToolCard
 
@@ -41,7 +42,7 @@ class SendFileToolkit:
             channel_id,
         )
 
-    async def send_file(self, abs_file_path_list: List[str]) -> str:
+    async def send_file(self, abs_file_path_list: Union[List[str], str]) -> str:
         """Send files to user.
 
         Args:
@@ -50,6 +51,12 @@ class SendFileToolkit:
         Returns:
             Success message or error description.
         """
+        if isinstance(abs_file_path_list, str):
+            try:
+                abs_file_path_list = json.loads(abs_file_path_list)
+            except json.decoder.JSONDecodeError as e:
+                logger.info(f"send_file args error: {e}")
+                raise TypeError(f"[SendFileToolkit] send_file args error.") from e
         logger.info(
             "[SendFileToolkit] send_file 开始 session_id=%s 文件数=%d",
             self.session_id,
@@ -114,7 +121,7 @@ class SendFileToolkit:
                     "type": "object",
                     "properties": {
                         "abs_file_path_list": {
-                            "type": "array",
+                            "type": ["array", "string"],
                             "items": {"type": "string"},
                             "description": "要发送的文件绝对路径列表",
                         }
