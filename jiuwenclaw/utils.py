@@ -329,6 +329,15 @@ def _resolve_paths() -> None:
     _initialized = True
 
 
+def reset_resolved_paths() -> None:
+    """重置路径缓存，使下次 _resolve_paths 重新解析。用于 init_user_workspace 等迁移后刷新配置路径。"""
+    global _initialized, _config_dir, _workspace_dir, _root_dir
+    _initialized = False
+    _config_dir = None
+    _workspace_dir = None
+    _root_dir = None
+
+
 def get_config_dir() -> Path:
     """Get the config directory path."""
     _resolve_paths()
@@ -393,6 +402,22 @@ def get_env_file() -> Path:
 def get_config_file() -> Path:
     """Get the config.yaml file path."""
     return get_config_dir() / "config.yaml"
+
+
+def get_env_template_path() -> Path:
+    """Get the package .env.template path (resources/.env.template)."""
+    pkg = _find_package_root()
+    if not pkg:
+        return Path()
+    return pkg / "resources" / ".env.template"
+
+
+def get_config_template_path() -> Path:
+    """Get the package config.yaml template path (resources/config.yaml)."""
+    pkg = _find_package_root()
+    if not pkg:
+        return Path()
+    return pkg / "resources" / "config.yaml"
 
 
 def is_package_installation() -> bool:

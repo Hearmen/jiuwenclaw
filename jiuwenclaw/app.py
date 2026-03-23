@@ -13,6 +13,7 @@ import shutil
 import sys
 import time
 import re
+import yaml
 
 from pathlib import Path
 from dotenv import load_dotenv
@@ -20,10 +21,123 @@ from typing import Any
 import psutil
 
 
-from jiuwenclaw.utils import USER_WORKSPACE_DIR, prepare_workspace
+from jiuwenclaw.utils import (
+    USER_WORKSPACE_DIR,
+    prepare_workspace,
+    init_user_workspace,
+    reset_resolved_paths,
+    get_env_template_path,
+    get_config_template_path,
+    logger,
+)
+from jiuwenclaw.config import merge_config_from_old, update_env_file
+
+
+def _mark_old(p: Path) -> None:
+    """迁移后给旧文件/目录打 .old 标记，保证一次性逻辑。"""
+    if not p.exists():
+        return
+    old_path = p.parent / (p.name + ".old")
+    if old_path.exists():
+        shutil.rmtree(old_path) if old_path.is_dir() else old_path.unlink()
+    shutil.move(str(p), str(old_path))
+    logger.info("[迁移] 已标记为旧版: %s -> %s", p, old_path)
+
+
+def _ensure_template_skills() -> None:
+    """补充 resources 内置 skills（skill_creation、daily-report 等），缺失的才复制，不覆盖已有。"""
+    _pkg = Path(__file__).resolve().parent
+    _template_skills = _pkg / "resources" / "agent" / "skills"
+    _dst_skills = USER_WORKSPACE_DIR / "agent" / "skills"
+    if _template_skills.exists() and _dst_skills.exists():
+        for item in _template_skills.iterdir():
+            src_skill = _template_skills / item.name
+            dst_skill = _dst_skills / item.name
+            if src_skill.is_dir() and not dst_skill.exists():
+                shutil.copytree(src_skill, dst_skill)
+                logger.info("[迁移] 已补充内置 skill: %s", item.name)
+
+
+def _maybe_migrate_old_workspace() -> None:
+    """若检测到旧版 workspace/agent 有内容而新版 agent 对应目录为空，则执行迁移；迁移后旧路径打 .old 标记（一次性）。"""
+    def _migrate_dir(src: Path, dst: Path, name: str) -> bool:
+        if not src.exists():
+            return False
+        if not any(src.iterdir()):
+            return False
+        dst.mkdir(parents=True, exist_ok=True)
+        for item in src.iterdir():
+            s, d = src / item.name, dst / item.name
+            if s.is_file():
+                shutil.copy2(s, d)
+            elif s.is_dir():
+                if d.exists():
+                    shutil.copytree(s, d, dirs_exist_ok=True)
+                else:
+                    shutil.copytree(s, d)
+        logger.info("[迁移] 已同步 %s: %s -> %s", name, src, dst)
+        _mark_old(src)
+        return True
+
+    for (src, dst, name) in [
+        (USER_WORKSPACE_DIR / "workspace" / "agent" / "memory", USER_WORKSPACE_DIR / "agent" / "memory", "memory"),
+        (USER_WORKSPACE_DIR / "workspace" / "agent" / "skills", USER_WORKSPACE_DIR / "agent" / "skills", "skills"),
+    ]:
+        if src.exists() and any(src.iterdir()):
+            dst_count = len(list(dst.iterdir())) if dst.exists() else 0
+            if dst_count == 0:
+                _migrate_dir(src, dst, name)
+
+    _ensure_template_skills()
+
+    _old_env = USER_WORKSPACE_DIR / ".env"
+    _new_env = USER_WORKSPACE_DIR / "config" / ".env"
+    if _old_env.exists():
+        _new_env.parent.mkdir(parents=True, exist_ok=True)
+        if not _new_env.exists():
+            _env_tmpl = get_env_template_path()
+            if _env_tmpl.exists():
+                shutil.copy2(_env_tmpl, _new_env)
+        if _new_env.exists():
+            update_env_file(old_path=_old_env, new_path=_new_env)
+            logger.info("[迁移] 已合并旧 .env 到 %s", _new_env)
+            _mark_old(_old_env)
+
+    _backup_cfg = USER_WORKSPACE_DIR / "config" / "config_backup.yaml"
+    _old_cfg_root = USER_WORKSPACE_DIR / "config.yaml"
+    _new_cfg = USER_WORKSPACE_DIR / "config" / "config.yaml"
+
+    def _is_old_format(p: Path) -> bool:
+        """检测是否为旧版格式：有 react.model_client_config 且无 models 段"""
+        if not p.exists():
+            return False
+        try:
+            data = yaml.safe_load(p.read_text(encoding="utf-8")) or {}
+            react = data.get("react") or {}
+            has_old_mcc = bool(react.get("model_client_config"))
+            has_models = "models" in data
+            return bool(has_old_mcc and not has_models)
+        except Exception:
+            return False
+
+    # 旧配置来源：备份 > 根目录 > 当前 config（若为旧格式）
+    _old_cfg_src = _backup_cfg if _backup_cfg.exists() else (_old_cfg_root if _old_cfg_root.exists() else None)
+    if not _old_cfg_src and _new_cfg.exists() and _is_old_format(_new_cfg):
+        _old_cfg_src = _new_cfg  # 当前即为旧格式，用自身作旧配置源进行迁移
+
+    _cfg_tmpl = get_config_template_path()
+    if _old_cfg_src and _cfg_tmpl.exists():
+        merge_config_from_old(_old_cfg_src, _new_cfg, template_config_path=_cfg_tmpl)
+        logger.info("[迁移] 已合并旧 config.yaml 到新模板格式")
+        if _old_cfg_src != _new_cfg:
+            _mark_old(_old_cfg_src)
+
+
 _config_file = USER_WORKSPACE_DIR / "config" / "config.yaml"
 if not _config_file.exists():
     prepare_workspace(overwrite=False)
+else:
+    _maybe_migrate_old_workspace()
 
 # 减少日志打印
 from openjiuwen.core.common.logging import LogManager
@@ -35,8 +149,8 @@ from jiuwenclaw.channel import (
     WhatsAppChannelConfig,
 )
 
-for logger in LogManager.get_all_loggers().values():
-    logger.set_level(logging.CRITICAL)
+for _lg in LogManager.get_all_loggers().values():
+    _lg.set_level(logging.CRITICAL)
 
 import openjiuwen.core.foundation.llm.schema.config as as_config_module
 import openjiuwen.core.foundation.llm as as_llm_module
@@ -54,7 +168,6 @@ from jiuwenclaw.utils import (
     get_env_file,
     get_root_dir,
     is_package_installation,
-    logger,
 )
 from jiuwenclaw.config import (
     get_config,
@@ -1804,7 +1917,84 @@ async def _run() -> None:
 
 
 def main() -> None:
-    asyncio.run(_run())
+    try:
+        asyncio.run(_run())
+    except Exception as e:
+        logger.warning("[APP] 启动失败: %s", e)
+        confirm = input("检测到您之前有记忆，是否初始化/迁移工作区记忆？(y/n，默认 y): ") or "y"
+        if confirm.lower() == "y":
+            logger.info("执行工作区初始化...")
+
+            raw_config_file = USER_WORKSPACE_DIR / "config" / "config.yaml"
+            old_config_root = USER_WORKSPACE_DIR / "config.yaml"
+            backup_config_file = USER_WORKSPACE_DIR / "config" / "config_backup.yaml"
+            if raw_config_file.exists():
+                shutil.copy2(raw_config_file, backup_config_file)
+                logger.info("已备份旧版本 config.yaml 到 %s", backup_config_file)
+            elif old_config_root.exists():
+                shutil.copy2(old_config_root, backup_config_file)
+                logger.info("已备份旧版本 config.yaml（根目录）到 %s", backup_config_file)
+
+            init_user_workspace(overwrite=True)
+            reset_resolved_paths()
+            _clear_agent_config_cache()
+
+            def _migrate_dir_ex(src: Path, dst: Path, name: str) -> None:
+                if not src.exists():
+                    logger.info("[迁移] %s 源目录不存在，跳过: %s", name, src)
+                    return
+                dst.mkdir(parents=True, exist_ok=True)
+                for item in src.iterdir():
+                    s, d = src / item.name, dst / item.name
+                    if s.is_file():
+                        shutil.copy2(s, d)
+                    elif s.is_dir():
+                        if d.exists():
+                            shutil.copytree(s, d, dirs_exist_ok=True)
+                        else:
+                            shutil.copytree(s, d)
+                logger.info("[迁移] 已复制 %s: %s -> %s", name, src, dst)
+                _mark_old(src)
+
+            _migrate_dir_ex(
+                USER_WORKSPACE_DIR / "workspace" / "agent" / "memory",
+                USER_WORKSPACE_DIR / "agent" / "memory",
+                "memory",
+            )
+            _migrate_dir_ex(
+                USER_WORKSPACE_DIR / "workspace" / "agent" / "skills",
+                USER_WORKSPACE_DIR / "agent" / "skills",
+                "skills",
+            )
+            _ensure_template_skills()
+
+            raw_ENV_FILE = USER_WORKSPACE_DIR / ".env"
+            _new_env = USER_WORKSPACE_DIR / "config" / ".env"
+            if raw_ENV_FILE.exists():
+                _new_env.parent.mkdir(parents=True, exist_ok=True)
+                if not _new_env.exists():
+                    _env_tmpl = get_env_template_path()
+                    if _env_tmpl.exists():
+                        shutil.copy2(_env_tmpl, _new_env)
+                if _new_env.exists():
+                    update_env_file(old_path=raw_ENV_FILE, new_path=_new_env)
+                    logger.info("[迁移] 已合并旧 .env 到 %s", _new_env)
+                    _mark_old(raw_ENV_FILE)
+
+            backup_config = USER_WORKSPACE_DIR / "config" / "config_backup.yaml"
+            old_config_root = USER_WORKSPACE_DIR / "config.yaml"
+            new_config = USER_WORKSPACE_DIR / "config" / "config.yaml"
+            old_config_src = backup_config if backup_config.exists() else (old_config_root if old_config_root.exists() else None)
+            cfg_tmpl = get_config_template_path()
+            if old_config_src:
+                merge_config_from_old(old_config_src, new_config, template_config_path=cfg_tmpl if cfg_tmpl.exists() else None)
+                logger.info("[迁移] 已合并旧 config.yaml 配置")
+                _mark_old(old_config_src)
+
+            load_dotenv(dotenv_path=USER_WORKSPACE_DIR / "config" / ".env")
+            asyncio.run(_run())
+        else:
+            logger.info("已取消初始化，正在退出")
 
 
 if __name__ == "__main__":
