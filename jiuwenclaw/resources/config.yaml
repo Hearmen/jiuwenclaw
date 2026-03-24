@@ -122,6 +122,8 @@ channels:
     api_key:
     push_url:
     file_upload_url:
+    # 小艺手机端插件tools调用，会添加相关tools到系统提示词
+    phone_tools_enabled: false
   dingtalk:
     # 钉钉应用配置
     client_id:

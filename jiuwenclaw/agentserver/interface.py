@@ -52,6 +52,18 @@ from jiuwenclaw.agentserver.tools.memory_tools import (
     read_memory,
 )
 from jiuwenclaw.agentserver.tools.video_tools import video_understanding
+from jiuwenclaw.agentserver.tools.xiaoyi_phone_tools import (
+    get_user_location,
+    create_note, search_notes, modify_note,
+    create_calendar_event, search_calendar,
+    search_contacts,
+    search_photo_gallery, upload_photo,
+    search_files, upload_files, send_file_to_user,
+    call_phone,
+    send_message, search_messages,
+    create_alarm, search_alarms, modify_alarm, delete_alarm,
+    xiaoyi_collection,
+)
 from jiuwenclaw.agentserver.tools.multimodal_config import (
     apply_audio_model_config_from_yaml,
     apply_vision_model_config_from_yaml,
@@ -146,6 +158,7 @@ class JiuWenClaw:
         self._mcp_tools_registered: bool = False
         self._video_tool_registered: bool = False
         self._send_file_tool_registered: bool = False
+        self._xiaoyi_phone_tools_registered: bool = False
         self._todo_tool_sessions_registered: set[str] = set()
         self._sysop_card_id: str | None = None
 
@@ -372,6 +385,42 @@ class JiuWenClaw:
         except Exception as exc:
             logger.warning("[JiuWenClaw] audio tools registration skipped: %s", exc)
 
+        # add device-side plugins (xiaoyi phone tools)
+        config_base = get_config()
+        channels_cfg = config_base.get("channels", {})
+        xiaoyi_cfg = channels_cfg.get("xiaoyi", {})
+        xiaoyi_phone_tools_enabled = xiaoyi_cfg.get("phone_tools_enabled", False)
+
+        if xiaoyi_phone_tools_enabled:
+            try:
+                # 批量注册所有设备侧工具
+                phone_tools = [
+                    get_user_location,
+                    create_note, search_notes, modify_note,
+                    create_calendar_event, search_calendar,
+                    search_contacts,
+                    search_photo_gallery, upload_photo,
+                    search_files, upload_files, send_file_to_user,
+                    call_phone,
+                    send_message, search_messages,
+                    create_alarm, search_alarms, modify_alarm, delete_alarm,
+                    xiaoyi_collection,
+                ]
+
+                for tool in phone_tools:
+                    try:
+                        Runner.resource_mgr.add_tool(tool)
+                        self._instance.ability_manager.add(tool.card)
+                    except Exception as tool_exc:
+                        logger.warning(f"[JiuWenClaw] Failed to register tool {tool.card.name}: {tool_exc}")
+
+                self._xiaoyi_phone_tools_registered = True
+                logger.info(f"[JiuWenClaw] {len(phone_tools)} xiaoyi phone tools registered successfully")
+            except Exception as exc:
+                logger.warning("[JiuWenClaw] xiaoyi phone tools registration skipped: %s", exc)
+        else:
+            logger.info("[JiuWenClaw] xiaoyi channel not enabled, skipping phone tools")
+
         # add cron tools
         try:
             cron_controller = CronController.get_instance()
@@ -469,6 +518,38 @@ class JiuWenClaw:
                 if not Runner.resource_mgr.get_tool(cron_tool.card.id):
                     Runner.resource_mgr.add_tool(cron_tool)
                 self._instance.ability_manager.add(cron_tool.card)
+
+        # 小艺手机端插件(xiaoyi phone tools)未生效时重新加载
+        config_base = get_config()
+        channels_cfg = config_base.get("channels", {})
+        xiaoyi_cfg = channels_cfg.get("xiaoyi", {})
+        xiaoyi_phone_tools_enabled = xiaoyi_cfg.get("phone_tools_enabled", False)
+
+        if xiaoyi_phone_tools_enabled and not self._xiaoyi_phone_tools_registered:
+            try:
+                phone_tools = [
+                    get_user_location,
+                    create_note, search_notes, modify_note,
+                    create_calendar_event, search_calendar,
+                    search_contacts,
+                    search_photo_gallery, upload_photo,
+                    search_files, upload_files, send_file_to_user,
+                    call_phone,
+                    send_message, search_messages,
+                    create_alarm, search_alarms, modify_alarm, delete_alarm,
+                    xiaoyi_collection,
+                ]
+
+                for tool in phone_tools:
+                    try:
+                        if not Runner.resource_mgr.get_tool(tool.card.id):
+                            Runner.resource_mgr.add_tool(tool)
+                            self._instance.ability_manager.add(tool.card)
+                    except Exception as tool_exc:
+                        logger.debug(f"[JiuWenClaw] Tool {tool.card.name} may already exist: {tool_exc}")
+
+            except Exception as exc:
+                logger.warning(f"[JiuWenClaw] xiaoyi phone tools runtime registration skipped: {exc}")
 
         effective_session_id = session_id or "default"
         if mode == "plan":
