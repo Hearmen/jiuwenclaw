@@ -113,6 +113,7 @@ class FeishuChannel(BaseChannel):
 
     async def _handle_message(
         self,
+        message_id: str,
         chat_id: str,
         content: str,
         metadata: dict[str, Any] | None = None,
@@ -127,9 +128,17 @@ class FeishuChannel(BaseChannel):
             content: 消息内容
             metadata: 额外的元数据
         """
-        msg = Message(id=chat_id, type="req", channel_id=self.name, session_id=str(chat_id),
-            params={"content": content, "query": content}, timestamp=time.time(), ok=True,
-            req_method=ReqMethod.CHAT_SEND, is_stream=True, metadata=metadata)
+        msg = Message(
+            id=message_id,
+            type="req",
+            channel_id=self.name,
+            session_id=str(chat_id),
+            params={"content": content, "query": content},
+            timestamp=time.time(), ok=True,
+            req_method=ReqMethod.CHAT_SEND,
+            is_stream=True,
+            metadata=metadata
+        )
         if self._message_callback:
             self._message_callback(msg)
         else:
@@ -999,6 +1008,7 @@ class FeishuChannel(BaseChannel):
 
             # 处理消息：将平台身份写入 metadata，供回发时使用（与 session_id 解耦，\new_session 后仍可正确回发）
             await self._handle_message(
+                message_id=message.message_id,
                 chat_id=message.chat_id,
                 content=content,
                 metadata={
