@@ -7,6 +7,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import time
 from typing import Any, AsyncIterator
 
 from dotenv import load_dotenv
@@ -85,6 +86,7 @@ from jiuwenclaw.agentserver.skill_manager import SkillManager, _SKILLS_DIR
 from jiuwenclaw.evolution.service import EvolutionService
 from jiuwenclaw.schema.agent import AgentRequest, AgentResponse, AgentResponseChunk
 from jiuwenclaw.agentserver.memory import get_memory_manager
+from jiuwenclaw.agentserver.session_history import append_history_record
 from jiuwenclaw.schema.message import ReqMethod
 
 load_dotenv(dotenv_path=get_env_file())
@@ -1011,6 +1013,15 @@ class JiuWenClaw:
             )
 
         session_id = self._get_session_id(request)
+        query = request.params.get("query", "")
+        append_history_record(
+            session_id=session_id,
+            request_id=request.request_id,
+            channel_id=request.channel_id,
+            role="user",
+            content=query,
+            timestamp=time.time(),
+        )
 
         # 确保 session 的任务处理器在运行
         await self._ensure_session_processor(session_id)
@@ -1030,7 +1041,6 @@ class JiuWenClaw:
             ),
         }
 
-        query = request.params.get("query", "")
         if self._compaction_manager:
             self._compaction_manager.add_message("user", query)
 
@@ -1094,6 +1104,17 @@ class JiuWenClaw:
                 content_str = str(content)
             self._compaction_manager.add_message("assistant", content_str)
 
+        assistant_content = content if isinstance(content, str) else str(content)
+        append_history_record(
+            session_id=session_id,
+            request_id=request.request_id,
+            channel_id=request.channel_id,
+            role="assistant",
+            event_type="chat.final",
+            content=assistant_content,
+            timestamp=time.time(),
+        )
+
         return AgentResponse(
             request_id=request.request_id,
             channel_id=request.channel_id,
@@ -1132,6 +1153,15 @@ class JiuWenClaw:
             return
 
         session_id = self._get_session_id(request)
+        query = request.params.get("query", "")
+        append_history_record(
+            session_id=session_id,
+            request_id=request.request_id,
+            channel_id=request.channel_id,
+            role="user",
+            content=query,
+            timestamp=time.time(),
+        )
         await self._ensure_session_processor(session_id)
 
         logger.info(
@@ -1150,7 +1180,6 @@ class JiuWenClaw:
         }
 
         # supplement 任务：读取现有 todo 待办，拼入 query 让 agent 知道有未完成的任务
-        query = request.params.get("query", "")
         if self._compaction_manager:
             self._compaction_manager.add_message("user", query)
             memory_mgr = await get_memory_manager(
@@ -1215,6 +1244,15 @@ class JiuWenClaw:
                     if isinstance(data, asyncio.CancelledError):
                         logger.info("[JiuWenClaw] 流式处理被中断: request_id=%s", rid)
                         raise data
+                    append_history_record(
+                        session_id=session_id,
+                        request_id=rid,
+                        channel_id=cid,
+                        role="assistant",
+                        event_type="chat.error",
+                        content=str(data),
+                        timestamp=time.time(),
+                    )
                     yield AgentResponseChunk(
                         request_id=rid,
                         channel_id=cid,
@@ -1222,6 +1260,17 @@ class JiuWenClaw:
                         is_complete=False,
                     )
                 else:
+                    if isinstance(data, dict) and isinstance(data.get("event_type"), str):
+                        append_history_record(
+                            session_id=session_id,
+                            request_id=rid,
+                            channel_id=cid,
+                            role="assistant",
+                            event_type=str(data.get("event_type")),
+                            content=data.get("content") or data.get("error") or "",
+                            timestamp=time.time(),
+                            extra={"event_payload": dict(data)},
+                        )
                     yield AgentResponseChunk(
                         request_id=rid,
                         channel_id=cid,
