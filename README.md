@@ -46,12 +46,10 @@ Due to breaking changes in this release, you **must** reinitialize JiuwenClaw af
 
 ### Backup Before Upgrading
 
-Before running `jiuwenclaw-init`, please backup your existing data:
-
 | Data Type | Source Path | Description |
 |-----------|-------------|-------------|
 | Memory Data | `.jiuwenclaw/workspace/agent/memory` | All your conversation memories |
-| Custom Skills | `.jiuwenclaw/workspace/agent/agent` | Your custom agent skills |
+| Custom Skills | `.jiuwenclaw/workspace/agent/skills` | Your custom agent skills |
 | Configuration | `.jiuwenclaw/config` | Your app settings |
 
 ### Migration Steps
@@ -65,10 +63,8 @@ After upgrading and running `jiuwenclaw-init`, manually migrate your data:
 
 2. **Copy Skills:**
    ```bash
-   cp -r .jiuwenclaw/workspace/agent/agent .jiuwenclaw/agent/skill
+   cp -r .jiuwenclaw/workspace/agent/skills .jiuwenclaw/agent/skills
    ```
-
-The new initialization process includes automatic migration of compatible configuration data from previous versions.
 
 ## 🚀 Getting Started
 

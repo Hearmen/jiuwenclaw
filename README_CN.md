@@ -43,12 +43,10 @@
 
 ### 升级前备份数据
 
-在运行 `jiuwenclaw-init` 之前，请备份以下数据：
-
 | 数据类型 | 原路径 | 说明 |
 |---------|--------|------|
 | 记忆数据 | `.jiuwenclaw/workspace/agent/memory` | 所有对话记忆 |
-| 自定义技能 | `.jiuwenclaw/workspace/agent/agent` | 您的自定义技能 |
+| 自定义技能 | `.jiuwenclaw/workspace/agent/skills` | 您的自定义技能 |
 | 配置文件 | `.jiuwenclaw/config` | 应用设置 |
 
 ### 数据迁移步骤
@@ -57,9 +55,7 @@
 
 1. **迁移记忆数据**：将原目录下的 `.jiuwenclaw/workspace/agent/memory` 复制到 `.jiuwenclaw/agent/memory`
 
-2. **迁移技能数据**：将原目录下的 `.jiuwenclaw/workspace/agent/agent` 复制到 `.jiuwenclaw/agent/skill`
-
-新的初始化过程会自动迁移兼容的配置数据。
+2. **迁移技能数据**：将原目录下的 `.jiuwenclaw/workspace/agent/skills` 复制到 `.jiuwenclaw/agent/skills`
 
 ## 🚀 快速上手
 
