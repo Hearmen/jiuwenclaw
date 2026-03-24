@@ -23,6 +23,11 @@ from jiuwenclaw.utils import logger
 from jiuwenclaw.channel.base import BaseChannel, ChannelMetadata, RobotMessageRouter
 from jiuwenclaw.schema.message import EventType, Message, ReqMethod
 from jiuwenclaw.channel.xiaoyi_utils.push import XiaoYiPushService, PushConfig
+from jiuwenclaw.channel.xiaoyi_utils.formatter import (
+    get_status_state_for_event,
+    get_status_text_for_event,
+    should_send_as_status_update,
+)
 
 
 # 全局 XiaoyiChannel 实例引用（供手机端工具调用使用）
@@ -364,6 +369,15 @@ class XiaoyiChannel(BaseChannel):
                                 await self._send_file_response(session_id, task_id, file_info, url_key)
                             except Exception as e:
                                 logger.warning(f"XiaoyiChannel 发送文件响应失败 ({url_key}): {e}")
+            return
+
+        if should_send_as_status_update(msg.event_type):
+            status_text = get_status_text_for_event(msg.event_type, msg.payload)
+            status_state = get_status_state_for_event(msg.event_type, msg.payload)
+            for url_key in list(self._ws_connections.keys()):
+                await self._send_status_update_with_state(
+                    task_id, session_id, status_text, status_state, url_key
+                )
             return
 
         content = ""
@@ -743,7 +757,7 @@ class XiaoyiChannel(BaseChannel):
                     if self._is_session_waiting_for_push(session_id, task_id):
                         break
                     # Send status update
-                    await self._send_status_update(task_id, session_id, "任务正在处理中，请稍后")
+                    await self._send_status_update(task_id, session_id, "任务正在处理中，请稍后~")
             except asyncio.CancelledError:
                 pass
 
@@ -828,6 +842,28 @@ class XiaoyiChannel(BaseChannel):
         # Send to all active connections
         for url_key in list(self._ws_connections.keys()):
             await self._send_agent_response(session_id, task_id, response, url_key)
+
+    async def _send_status_update_with_state(
+        self, task_id: str, session_id: str, message: str, state: str, url_key: str
+    ) -> None:
+        """发送状态更新消息（A2A 格式），支持自定义状态."""
+        response = {
+            "jsonrpc": "2.0",
+            "id": f"msg_{int(time.time() * 1000)}",
+            "result": {
+                "taskId": task_id,
+                "kind": "status-update",
+                "final": False,
+                "status": {
+                    "message": {
+                        "role": "agent",
+                        "parts": [{"kind": "text", "text": message}],
+                    },
+                    "state": state,
+                },
+            },
+        }
+        await self._send_agent_response(session_id, task_id, response, url_key)
 
     def _is_session_active(self, session_id: str) -> bool:
         """检查会话是否有活跃任务."""
