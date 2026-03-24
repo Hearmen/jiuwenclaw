@@ -537,6 +537,7 @@ class XiaoyiChannel(BaseChannel):
                 logger.info(
                     f"XiaoyiChannel 连接关闭 {url_key}: {url} (code={close_code}, reason={close_reason})"
                 )
+
     async def _send_init_message(self, url_key: str) -> None:
         """发送初始化消息 (clawd_bot_init) 到指定通道."""
         ws = self._ws_connections.get(url_key)
@@ -565,8 +566,8 @@ class XiaoyiChannel(BaseChannel):
                 if ws:
                     try:
                         await ws.close()
-                    except Exception:
-                        pass
+                    except Exception as close_error:
+                        logger.warning(f"XiaoyiChannel 关闭连接失败 ({url_key}): {close_error}")
                 break
             await asyncio.sleep(20)
 
@@ -699,8 +700,8 @@ class XiaoyiChannel(BaseChannel):
                     "last_task_id": task_id or "",
                 },
             )
-        except Exception:
-            pass
+        except Exception as config_error:
+            logger.warning(f"XiaoyiChannel 更新配置失败: {config_error}")
 
         # ==================== BUILD MESSAGE AND ROUTE ====================
         # 平台身份写入 metadata，供回发时使用（与 session_id 解耦，\new_session 后仍可正确回发）
@@ -1179,8 +1180,8 @@ class XiaoyiChannel(BaseChannel):
             if ws:
                 try:
                     await self._safe_ws_send(url_key, wrapper)
-                    logger.info(f"XiaoyiChannel 发送 command 成功 ({url_key}):intent={command.get('payload', {})
-                                .get('executeParam', {}).get('intentName', 'unknown')}")
+                    intent_name = command.get('payload', {}).get('executeParam', {}).get('intentName', 'unknown')
+                    logger.info(f"XiaoyiChannel 发送 command 成功 ({url_key}):intent={intent_name}")
                     sent = True
                 except Exception as e:
                     logger.warning(f"XiaoyiChannel 发送 command 失败 ({url_key}): {e}")
@@ -1318,7 +1319,9 @@ class XiaoyiChannel(BaseChannel):
                     continue
 
                 if intent_name:
-                    logger.info(f"[XiaoyiChannel] Extracted data-event: intent={intent_name}, status={status}, outputs_keys={list(outputs.keys())}")
+                    outputs_keys = list(outputs.keys())
+                    logger.info(f"[XiaoyiChannel] Extracted data-event: intent={intent_name}, "
+                                f"status={status}, outputs_keys={outputs_keys}")
                     return DataEvent(
                         intent_name=intent_name,
                         outputs=outputs,
