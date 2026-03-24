@@ -51,6 +51,10 @@ from jiuwenclaw.agentserver.tools.memory_tools import (
     edit_memory,
     read_memory,
 )
+from jiuwenclaw.agentserver.tools.task_tools import (
+    get_task_tools,
+    _is_task_memory_enabled,
+)
 from jiuwenclaw.agentserver.tools.video_tools import video_understanding
 from jiuwenclaw.agentserver.tools.xiaoyi_phone_tools import (
     get_user_location,
@@ -155,6 +159,7 @@ class JiuWenClaw:
         self._vision_mcp_registered: bool = False
         self._audio_mcp_registered: bool = False
         self._memory_tools_registered: bool = False
+        self._task_memory_tools_registered: bool = False
         self._mcp_tools_registered: bool = False
         self._video_tool_registered: bool = False
         self._send_file_tool_registered: bool = False
@@ -329,6 +334,17 @@ class JiuWenClaw:
             Runner.resource_mgr.add_tool(tool)
             self._instance.ability_manager.add(tool.card)
         self._memory_tools_registered = True
+
+        # add task memory tools (TaskMemoryService skill)
+        if _is_task_memory_enabled():
+            try:
+                for tool in get_task_tools():
+                    Runner.resource_mgr.add_tool(tool)
+                    self._instance.ability_manager.add(tool.card)
+                self._task_memory_tools_registered = True
+                logger.info("[JiuWenClaw] task memory tools registered")
+            except Exception as exc:
+                logger.warning("[JiuWenClaw] task memory tools registration failed: %s", exc)
 
         # add video_understanding tool
         try:
@@ -597,6 +613,16 @@ class JiuWenClaw:
                 Runner.resource_mgr.add_tool(tool)
                 self._instance.ability_manager.add(tool.card)
             self._memory_tools_registered = True
+
+        if not self._task_memory_tools_registered and _is_task_memory_enabled():
+            try:
+                for tool in get_task_tools():
+                    if not Runner.resource_mgr.get_tool(tool.card.id):
+                        Runner.resource_mgr.add_tool(tool)
+                    self._instance.ability_manager.add(tool.card)
+                self._task_memory_tools_registered = True
+            except Exception as exc:
+                logger.warning("[JiuWenClaw] ensure task memory tools failed: %s", exc)
 
         if not self._video_tool_registered:
             try:
