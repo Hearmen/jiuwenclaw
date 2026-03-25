@@ -18,10 +18,6 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 from urllib.request import urlopen
 
-from jiuwenclaw.browser_timeout_policy import (
-    allow_short_timeout_override,
-    resolve_browser_task_timeout,
-)
 from openjiuwen.core.foundation.store.base_kv_store import BaseKVStore
 from openjiuwen.core.foundation.store.kv.in_memory_kv_store import InMemoryKVStore
 from openjiuwen.core.foundation.tool import McpServerConfig
@@ -33,11 +29,15 @@ from openjiuwen.core.single_agent.middleware.base import (
     AnyAgentCallback,
 )
 from playwright_runtime import REPO_ROOT
-from playwright_runtime.agents import build_browser_worker_agent
+from playwright_runtime.agents import augment_browser_task_prompt, build_browser_worker_agent
 from playwright_runtime.config import BrowserRunGuardrails, resolve_playwright_mcp_cwd
 from playwright_runtime.drivers.managed_browser import ManagedBrowserDriver, _default_chrome_user_data_dir
 from playwright_runtime.hooks import BrowserCancellationMiddleware, BrowserRunCancelled
 from playwright_runtime.profiles import BrowserProfile, BrowserProfileStore
+from jiuwenclaw.browser_timeout_policy import (
+    allow_short_timeout_override,
+    resolve_browser_task_timeout,
+)
 
 MAX_ITERATION_MESSAGE = "Max iterations reached without completion"
 
@@ -616,12 +616,13 @@ class BrowserService:
         if self._browser_agent is None:
             raise RuntimeError("BrowserService is not started")
 
+        task_body = augment_browser_task_prompt(task)
         task_prompt = (
             f"Session id: {session_id}\n"
             f"Request id: {request_id}\n"
             f"Max steps: {self.guardrails.max_steps}\n"
             f"Max failures: {self.guardrails.max_failures}\n\n"
-            f"Task:\n{task}\n\n"
+            f"Task:\n{task_body}\n\n"
             "Perform the task in the current logical browser session/tab for this session id."
         )
         result = await Runner.run_agent(
