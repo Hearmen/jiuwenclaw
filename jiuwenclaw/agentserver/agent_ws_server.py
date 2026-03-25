@@ -11,7 +11,7 @@ from dataclasses import asdict
 from pathlib import Path
 from typing import Any, ClassVar
 
-from jiuwenclaw.utils import get_agent_sessions_dir, logger
+from jiuwenclaw.utils import get_agent_sessions_dir, get_config_file, logger
 from jiuwenclaw.schema.agent import AgentRequest, AgentResponse, AgentResponseChunk
 
 
@@ -237,6 +237,9 @@ class AgentWebSocketServer:
                 else:
                     await self._handle_history_get(ws, request, send_lock)
                 return
+            if request.req_method == ReqMethod.BROWSER_START:
+                await self._handle_browser_start(ws, request, send_lock)
+                return
             if request.is_stream:
                 await self._handle_stream(ws, request, send_lock)
             else:
@@ -356,6 +359,31 @@ class AgentWebSocketServer:
         )
         async with send_lock:
             await ws.send(json.dumps(_chunk_to_payload(done_chunk), ensure_ascii=False))
+
+    async def _handle_browser_start(self, ws: Any, request: AgentRequest, send_lock: asyncio.Lock) -> None:
+        """启动浏览器并返回执行结果（returncode）。"""
+        try:
+            from jiuwenclaw.agentserver.tools.browser_start_client import start_browser
+
+            config_path = str(get_config_file())
+            returncode = start_browser(dry_run=False, config_file=config_path)
+            resp = AgentResponse(
+                request_id=request.request_id,
+                channel_id=request.channel_id,
+                ok=True,
+                payload={"returncode": returncode},
+            )
+        except Exception as e:  # noqa: BLE001
+            logger.exception("[AgentWebSocketServer] browser.start failed: %s", e)
+            resp = AgentResponse(
+                request_id=request.request_id,
+                channel_id=request.channel_id,
+                ok=False,
+                payload={"error": str(e)},
+            )
+
+        async with send_lock:
+            await ws.send(json.dumps(_response_to_payload(resp), ensure_ascii=False))
 
     async def send_push(self, msg) -> None:
         """AgentServer 主动向 Gateway 推送消息。

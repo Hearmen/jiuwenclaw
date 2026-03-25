@@ -103,6 +103,7 @@ _FORWARD_REQ_METHODS = frozenset({
     "chat.resume",
     "chat.user_answer",
     "history.get",
+    "browser.start",
     # "tts.synthesize",
     "skills.marketplace.list",
     "skills.list",
@@ -121,6 +122,7 @@ _FORWARD_REQ_METHODS = frozenset({
 })
 
 _FORWARD_NO_LOCAL_HANDLER_METHODS = frozenset({
+    "browser.start",
     "skills.marketplace.list",
     "skills.list",
     "skills.installed",
@@ -511,30 +513,6 @@ def _register_web_handlers(
             return
 
         await channel.send_response(ws, req_id, ok=True, payload={"chrome_path": chrome_path})
-
-    async def _browser_start(ws, req_id, params, session_id):
-        """收到 browser.start 请求时，通过 import 调用 start_browser 启动浏览器。"""
-        try:
-            from jiuwenclaw.agentserver.tools.browser_start_client import start_browser
-
-            config_path = str(get_config_file())
-            returncode = start_browser(dry_run=False, config_file=config_path)
-            await channel.send_response(
-                ws,
-                req_id,
-                ok=True,
-                payload={"returncode": returncode},
-            )
-
-        except Exception as e:  # noqa: BLE001
-            logger.exception("[browser.start] failed: %s", e)
-            await channel.send_response(
-                ws,
-                req_id,
-                ok=False,
-                error=str(e),
-                code="INTERNAL_ERROR",
-            )
 
     async def _memory_compute(ws, req_id, params, session_id):
 
@@ -1210,7 +1188,6 @@ def _register_web_handlers(
 
     channel.register_method("path.get", _path_get)
     channel.register_method("path.set", _path_set)
-    channel.register_method("browser.start", _browser_start)
 
     channel.register_method("memory.compute", _memory_compute)
 
