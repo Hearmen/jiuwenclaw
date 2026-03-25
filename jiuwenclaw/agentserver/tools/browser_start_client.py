@@ -23,7 +23,6 @@ browser:
 from __future__ import annotations
 
 import argparse
-import importlib.util
 import os
 import platform
 import shutil
@@ -65,13 +64,9 @@ def _profile_name(profile_directory: str) -> str:
 
 
 def _load_profile_store_types() -> tuple[type[Any], type[Any]]:
-    module_path = _browser_move_root() / "src" / "playwright_runtime" / "profiles.py"
-    spec = importlib.util.spec_from_file_location("jiuwenclaw_browser_profiles", module_path)
-    if spec is None or spec.loader is None:
-        raise RuntimeError(f"Failed to load browser profile module: {module_path}")
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return module.BrowserProfile, module.BrowserProfileStore
+    from playwright_runtime.profiles import BrowserProfile, BrowserProfileStore
+
+    return BrowserProfile, BrowserProfileStore
 
 
 def _persist_browser_profile(

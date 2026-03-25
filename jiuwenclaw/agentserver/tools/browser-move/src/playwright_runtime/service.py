@@ -136,6 +136,7 @@ class BrowserService:
         self._driver_mode = self._resolve_driver_mode()
         self._active_profile: Optional[BrowserProfile] = None
         self._managed_driver: Optional[ManagedBrowserDriver] = None
+        self._registered_cdp_endpoint: str = ""
         self._failure_context_by_session: Dict[str, str] = {}
 
     @staticmethod
@@ -240,6 +241,22 @@ class BrowserService:
         )
         return any(marker in text for marker in markers)
 
+    @staticmethod
+    def _extract_error_text(error_value: Any) -> str:
+        if error_value is None:
+            return ""
+        parts: List[str] = []
+        for attr in ("reason", "message", "msg", "code"):
+            value = getattr(error_value, attr, None)
+            if value:
+                parts.append(str(value))
+        for attr in ("args",):
+            value = getattr(error_value, attr, None)
+            if value:
+                parts.extend(str(item) for item in value if item)
+        parts.append(str(error_value))
+        return " | ".join(part for part in parts if part).strip()
+
     def _resolve_effective_timeout(self, timeout_s: Optional[int]) -> int:
         effective_timeout = resolve_browser_task_timeout(timeout_s, self.guardrails.timeout_s)
         requested_timeout = None
@@ -337,6 +354,63 @@ class BrowserService:
         params["env"] = env_map
         self.mcp_cfg.params = params
 
+    def _configured_cdp_endpoint(self) -> str:
+        params = dict(getattr(self.mcp_cfg, "params", {}) or {})
+        env_map = dict(params.get("env", {}) or {})
+        return str(env_map.get("PLAYWRIGHT_MCP_CDP_ENDPOINT") or "").strip()
+
+    def _server_resource_id(self) -> str:
+        return (self.mcp_cfg.server_id or "").strip() or self.mcp_cfg.server_name
+
+    async def _remove_registered_mcp_server(self) -> None:
+        resource_mgr = Runner.resource_mgr
+        server_id = self._server_resource_id()
+
+        async def _invoke(method) -> None:
+            try:
+                await method(server_id, ignore_not_exist=True)
+                return
+            except TypeError:
+                await method(server_id)
+
+        direct_method = getattr(resource_mgr, "remove_tool_server", None)
+        if callable(direct_method):
+            await _invoke(direct_method)
+            return
+
+        direct_method = getattr(resource_mgr, "remove_mcp_server", None)
+        if callable(direct_method):
+            await _invoke(direct_method)
+            return
+
+        for attr_name in ("tool_mgr", "_tool_mgr", "tool_manager", "_tool_manager"):
+            manager = getattr(resource_mgr, attr_name, None)
+            if manager is None:
+                continue
+            nested_method = getattr(manager, "remove_tool_server", None)
+            if callable(nested_method):
+                await _invoke(nested_method)
+                return
+            nested_method = getattr(manager, "remove_mcp_server", None)
+            if callable(nested_method):
+                await _invoke(nested_method)
+                return
+
+    async def _register_mcp_server(self) -> None:
+        register_result = await Runner.resource_mgr.add_mcp_server(self.mcp_cfg, tag="browser.service")
+        if register_result is not None and not getattr(register_result, "is_ok", lambda: False)():
+            error_value = getattr(register_result, "value", register_result)
+            error_text = self._extract_error_text(error_value).lower()
+            if "already exist" not in error_text:
+                raise RuntimeError(
+                    f"Failed to register Playwright MCP server: {self._extract_error_text(error_value)}"
+                )
+        self._registered_cdp_endpoint = self._configured_cdp_endpoint()
+
+    async def _refresh_mcp_server_binding(self) -> None:
+        await self._remove_registered_mcp_server()
+        await self._register_mcp_server()
+
     async def _ensure_managed_driver_started(self) -> None:
         existing_profile = self._resolve_existing_cdp_profile()
         if existing_profile is not None:
@@ -394,11 +468,11 @@ class BrowserService:
     async def _reset_browser_runtime(self) -> None:
         try:
             if self.started:
-                server_resource_id = (self.mcp_cfg.server_id or "").strip() or self.mcp_cfg.server_name
-                await Runner.resource_mgr.remove_tool_server(server_resource_id, ignore_not_exist=True)
+                await self._remove_registered_mcp_server()
         except Exception:
             pass
         self.started = False
+        self._registered_cdp_endpoint = ""
         self._browser_agent = None
         await self._stop_managed_driver()
 
@@ -575,6 +649,8 @@ class BrowserService:
     async def ensure_started(self) -> None:
         if self.started:
             await self._ensure_managed_driver_started()
+            if self._configured_cdp_endpoint() != self._registered_cdp_endpoint:
+                await self._refresh_mcp_server_binding()
             return
 
         if shutil.which("npx") is None:
@@ -583,12 +659,7 @@ class BrowserService:
         await self._ensure_managed_driver_started()
         self._ensure_screenshots_dir()
         await Runner.start()
-
-        register_result = await Runner.resource_mgr.add_mcp_server(self.mcp_cfg, tag="browser.service")
-        if register_result is not None and not getattr(register_result, "is_ok", lambda: False)():
-            error_value = getattr(register_result, "value", register_result)
-            if "already exist" not in str(error_value):
-                raise RuntimeError(f"Failed to register Playwright MCP server: {error_value}")
+        await self._register_mcp_server()
 
         self._browser_agent = build_browser_worker_agent(
             provider=self.provider,
