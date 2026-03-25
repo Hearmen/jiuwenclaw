@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import locale
 import os
 import re
 import shutil
@@ -164,12 +165,15 @@ def _run_command_sync(
     shell_type: str,
 ) -> tuple[subprocess.CompletedProcess[str], str]:
     plan, use_shell, resolved_shell = _resolve_execution_plan(command, shell_type)
+    # Windows 下 cmd 的输出通常是系统代码页（常见 CP936/GBK），
+    # 这里不要强行按 UTF-8 解码，否则会出现中文乱码（如 .lnk 名称）。
+    encoding = locale.getpreferredencoding(False) or "utf-8"
     result = subprocess.run(
         plan,
         shell=use_shell,
         cwd=str(workdir),
         text=True,
-        encoding='utf-8',
+        encoding=encoding,
         errors='replace',
         capture_output=True,
         timeout=timeout_seconds,
