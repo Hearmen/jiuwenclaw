@@ -30,6 +30,29 @@ from jiuwenclaw.channel.xiaoyi_utils.formatter import (
 )
 
 
+FILE_TYPE_TO_MIME_TYPE: dict[str, str] = {
+    "txt": "text/plain",
+    "html": "text/html",
+    "css": "text/css",
+    "js": "application/javascript",
+    "json": "application/json",
+    "png": "image/png",
+    "jpeg": "image/jpeg",
+    "jpg": "image/jpeg",
+    "gif": "image/gif",
+    "svg": "image/svg+xml",
+    "pdf": "application/pdf",
+    "zip": "application/zip",
+    "doc": "application/msword",
+    "docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    "xls": "application/vnd.ms-excel",
+    "xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    "ppt": "application/vnd.ms-powerpoint",
+    "pptx": "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+    "mp3": "audio/mpeg",
+    "mp4": "video/mp4",
+}
+
 # 全局 XiaoyiChannel 实例引用（供手机端工具调用使用）
 _xiaoyi_channel_instance: Optional["XiaoyiChannel"] = None
 
@@ -117,7 +140,7 @@ class XYFileUploadService:
                     "uid": self.uid,
                     "teamId": self.uid,
                 },
-                "useEdge": True,
+                "useEdge": False,
             }
             
             headers = {
@@ -129,7 +152,7 @@ class XYFileUploadService:
             
             async with self.session.post(prepare_url, json=prepare_data, headers=headers) as resp:
                 if not resp.ok:
-                    raise Exception(f"Prepare failed: HTTP {resp.status}")
+                    raise Exception(f"Prepare failed: HTTP {resp}")
                 
                 prepare_resp = await resp.json()
                 if prepare_resp.get("code") != "0":
@@ -200,7 +223,6 @@ class XiaoyiChannel(BaseChannel):
     """小艺通道：作为客户端连接到小艺服务器，实现 A2A 协议."""
 
     name = "xiaoyi"
-    _TASK_KEEPALIVE_INTERVAL_SECONDS = 8.0
 
     def __init__(self, config: XiaoyiChannelConfig, router: RobotMessageRouter):
         super().__init__(config, router)
@@ -213,7 +235,6 @@ class XiaoyiChannel(BaseChannel):
         self._session_task_map: dict[str, str] = {}
         self._session_heartbeat_tasks: dict[str, asyncio.Task] = {}  # Response heartbeat tasks for each session
         self._stream_text_buffers: dict[str, str] = {}
-        self._task_keepalive_tasks: dict[str, asyncio.Task] = {}
         self._task_last_activity: dict[str, float] = {}
         self._on_message_cb: Callable[[Message], Any] | None = None
         # Task timeout management
@@ -337,8 +358,8 @@ class XiaoyiChannel(BaseChannel):
                 platform_session_id or (msg.session_id or ""),
                 platform_task_id or platform_session_id,
             )
-        session_id = msg.session_id or ""
-        task_id = self._session_task_map.get(session_id, session_id)
+        task_id = msg.id or ""
+        session_id = self._session_task_map.get(task_id, task_id)
         return session_id, task_id
 
     async def send(self, msg: Message) -> None:
@@ -358,7 +379,6 @@ class XiaoyiChannel(BaseChannel):
                             "success": True,
                             "result_type": "file_created",
                             "fullPath": file_info,
-                            "path": os.path.basename(file_info),
                             "fileName": os.path.basename(file_info)
                         }
                     
@@ -618,7 +638,7 @@ class XiaoyiChannel(BaseChannel):
 
         # Mark session as active
         self._mark_session_active(session_id)
-        self._session_task_map[session_id] = task_id
+        self._session_task_map[task_id] = session_id
 
         # ==================== PROCESS PARTS (TEXT & FILES) ====================
         text = ""
@@ -935,7 +955,6 @@ class XiaoyiChannel(BaseChannel):
         session_id = message.get("sessionId", "")
         task_id = message.get("params", {}).get("id") or message.get("taskId", "")
         logger.info(f"XiaoyiChannel 取消任务: {session_id} {task_id}")
-        await self._stop_task_keepalive(self._make_task_key(session_id, task_id))
         if session_id:
             await self._stop_session_heartbeat(session_id)
 
@@ -1004,19 +1023,14 @@ class XiaoyiChannel(BaseChannel):
     async def _send_file_response_base64(self, session_id: str, task_id: str, file_info: dict, url_key: str) -> None:
         """发送文件响应（Base64 格式）到指定通道."""
         try:
-            file_name = file_info.get("fileName", os.path.basename(file_info.get("path", "file.txt")))
-            file_path = file_info.get("fullPath", file_info.get("path", file_name))
-            
-            # Check if file exists
-            if not os.path.exists(file_path):
-                logger.error(f"XiaoyiChannel 文件不存在: {file_path}")
+            file_path = file_info.get("fullPath", "")
+            if not file_path or not os.path.exists(file_path):
+                logger.error(f"send file failed, caused by file not exist. file path: {file_path}")
                 return
+            file_name = os.path.basename(file_info.get("fileName", ""))
+            file_name = file_name if file_name else os.path.basename(file_path)
             
             # Check file size (limit to 20MB for Base64)
-            file_size = os.path.getsize(file_path)
-            if file_size > 20 * 1024 * 1024:  # 20MB limit
-                logger.error(f"XiaoyiChannel 文件过大，使用OSMS上传: {file_path}")
-                # Use OSMS upload for large files
             base_url = self.file_upload_config.get("baseUrl")
             api_key = self.file_upload_config.get("apiKey")
             uid = self.file_upload_config.get("uid")
@@ -1026,6 +1040,7 @@ class XiaoyiChannel(BaseChannel):
                 return
             
             object_id = ""
+            mime_type = FILE_TYPE_TO_MIME_TYPE.get(file_name.split(".")[-1], "text/plain")
             async with XYFileUploadService(base_url, api_key, uid) as upload_service:
                 object_id = await upload_service.upload_file(file_path)
                 logger.info(f"file upload success: {object_id}")
@@ -1033,9 +1048,8 @@ class XiaoyiChannel(BaseChannel):
                     # Send file reference response
                     payload = {
                         "jsonrpc": "2.0",
-                        "id": f"msg_{int(time.time() * 1000)}",
+                        "id": task_id,
                         "result": {
-                            "taskId": task_id,
                             "kind": "artifact-update",
                             "append": True,
                             "lastChunk": False,
@@ -1046,20 +1060,23 @@ class XiaoyiChannel(BaseChannel):
                                     {
                                         "kind": "file",
                                         "file": {
-                                            "fieldId": object_id,
+                                            "fileId": object_id,
                                             "name": file_name,
-                                            "mimeType": file_name.split(".")[-1]
+                                            "mimeType": mime_type
                                         }
                                     }
                                 ],
                             },
                         },
+                        "error": {
+                            "code": 0
+                        }
                     }
                     response = {
                         "msgType": "agent_response",
                         "agentId": self.config.agent_id,
-                        "session_id": session_id,
-                        "task_id": task_id,
+                        "sessionId": session_id,
+                        "taskId": task_id,
                         "msgDetail": json.dumps(payload)
                         }
                     await self._safe_ws_send(url_key, response)
@@ -1071,7 +1088,7 @@ class XiaoyiChannel(BaseChannel):
         """发送文件响应到指定通道."""
         try:            
             # If file is available locally, send as Base64
-            if file_info.get("fullPath") or file_info.get("path"):
+            if file_info.get("fullPath"):
                 await self._send_file_response_base64(session_id, task_id, file_info, url_key)
                 return
         except Exception as e:
