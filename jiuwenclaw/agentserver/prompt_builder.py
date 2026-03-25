@@ -884,19 +884,25 @@ def build_user_prompt(content: str, files: dict, channel: str, language: str) ->
     """Build user prompt for the agent."""
     prompt = "你收到一条消息：\n"
     if channel in ["cron", "heartbeat"]:
-        return prompt + json.dumps({
-            "source": "system",
+        return prompt + json.dumps(
+            {
+                "source": "system",
+                "preferred_response_language": language,
+                "content": content,
+                "type": channel,
+            },
+            ensure_ascii=False,
+        )
+    return prompt + json.dumps(
+        {
+            "source": channel,
             "preferred_response_language": language,
             "content": content,
-            "type": channel
-        })
-    return prompt + json.dumps({
-        "source": channel,
-        "preferred_response_language": language,
-        "content": content,
-        "files_updated_by_user": json.dumps(files),
-        "type": "user input"
-    })
+            "files_updated_by_user": json.dumps(files, ensure_ascii=False),
+            "type": "user input",
+        },
+        ensure_ascii=False,
+    )
 
 
 def _read_file(file_path: str) -> Optional[str]:
