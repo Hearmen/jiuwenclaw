@@ -404,6 +404,32 @@ class SkillManager:
             "skill": job.get("skill"),
         }
 
+    async def handle_skills_skillnet_evaluate(self, params: dict) -> dict:
+        """使用 skillnet-ai 的 evaluate，LLM 配置复用 react.model_client_config + model_name."""
+        skill_url = str(params.get("url", "")).strip()
+        if not skill_url:
+            return {"success": False, "detail": "缺少参数: url"}
+
+        try:
+            out = await asyncio.to_thread(SkillManager._skillnet_evaluate_sync, skill_url)
+        except Exception as exc:
+            logger.error("SkillNet 评估失败: %s", exc)
+            raw = str(exc).strip()
+            return {
+                "success": False,
+                "detail": raw or "评估失败，请稍后重试。",
+                "detail_key": "skills.skillNet.errors.evaluateFailedFallback",
+            }
+
+        if not out.get("ok"):
+            detail = str(out.get("detail", "")).strip() or "评估失败，请稍后重试。"
+            resp: dict[str, Any] = {"success": False, "detail": detail}
+            if out.get("detail_key"):
+                resp["detail_key"] = out["detail_key"]
+            return resp
+
+        return {"success": True, "evaluation": out.get("evaluation")}
+
     async def _skillnet_install_background(
         self,
         install_id: str,
@@ -1091,6 +1117,71 @@ class SkillManager:
     @staticmethod
     def _get_github_token() -> str:
         return (os.getenv("GITHUB_TOKEN") or "").strip()
+
+    @staticmethod
+    def _skillnet_eval_llm_params() -> dict[str, str | None]:
+        """与主对话一致的 API Key / Base URL / 模型名（config.yaml react 段）."""
+        try:
+            from jiuwenclaw.config import get_config
+        except Exception:
+            return {
+                "api_key": (os.getenv("API_KEY") or "").strip() or None,
+                "base_url": (os.getenv("API_BASE") or "").strip() or None,
+                "model": (os.getenv("MODEL_NAME") or "gpt-4o").strip(),
+            }
+
+        cfg = get_config() or {}
+        react = cfg.get("react") or {}
+        mcc = react.get("model_client_config") or {}
+        api_key = (mcc.get("api_key") or os.getenv("API_KEY") or "").strip()
+        base_url = (mcc.get("api_base") or os.getenv("API_BASE") or "").strip()
+        model = (react.get("model_name") or os.getenv("MODEL_NAME") or "gpt-4o").strip()
+        if base_url.endswith("/chat/completions"):
+            base_url = base_url.rsplit("/chat/completions", 1)[0]
+        return {
+            "api_key": api_key or None,
+            "base_url": base_url or None,
+            "model": model or "gpt-4o",
+        }
+
+    @staticmethod
+    def _skillnet_evaluate_sync(skill_url: str) -> dict[str, Any]:
+        """同步 evaluate，供 asyncio.to_thread 调用."""
+        try:
+            from skillnet_ai import SkillNetClient
+            from skillnet_ai.client import SkillNetError
+        except Exception as exc:
+            return {
+                "ok": False,
+                "detail": "未安装 skillnet-ai，请先安装依赖: pip install skillnet-ai",
+                "detail_key": "skills.skillNet.errors.skillnetAiMissing",
+            }
+
+        llm = SkillManager._skillnet_eval_llm_params()
+        if not llm.get("api_key"):
+            return {
+                "ok": False,
+                "detail": "",
+                "detail_key": "skills.skillNet.errors.evaluateNoApiKey",
+            }
+
+        kwargs: dict[str, Any] = {
+            "api_key": llm["api_key"],
+            "base_url": llm["base_url"],
+            "github_token": SkillManager._get_github_token() or None,
+        }
+        try:
+            client = SkillNetClient(**kwargs)
+            result = client.evaluate(target=skill_url, model=str(llm["model"]))
+        except SkillNetError as exc:
+            return {"ok": False, "detail": str(exc).strip() or "评估失败。"}
+        except Exception as exc:
+            logger.exception("SkillNet evaluate 异常")
+            return {"ok": False, "detail": str(exc).strip() or "评估失败。"}
+
+        if not isinstance(result, dict):
+            return {"ok": True, "evaluation": result}
+        return {"ok": True, "evaluation": result}
 
     @staticmethod
     def _skillnet_search_sync(search_kwargs: dict[str, Any]) -> list[Any]:

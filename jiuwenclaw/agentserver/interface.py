@@ -136,6 +136,7 @@ _SKILL_ROUTES: dict[ReqMethod, str] = {
     ReqMethod.SKILLS_SKILLNET_SEARCH: "handle_skills_skillnet_search",
     ReqMethod.SKILLS_SKILLNET_INSTALL: "handle_skills_skillnet_install",
     ReqMethod.SKILLS_SKILLNET_INSTALL_STATUS: "handle_skills_skillnet_install_status",
+    ReqMethod.SKILLS_SKILLNET_EVALUATE: "handle_skills_skillnet_evaluate",
 }
 
 

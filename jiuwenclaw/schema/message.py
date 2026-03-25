@@ -46,6 +46,7 @@ class ReqMethod(Enum):
     SKILLS_SKILLNET_SEARCH = "skills.skillnet.search"
     SKILLS_SKILLNET_INSTALL = "skills.skillnet.install"
     SKILLS_SKILLNET_INSTALL_STATUS = "skills.skillnet.install_status"
+    SKILLS_SKILLNET_EVALUATE = "skills.skillnet.evaluate"
 
     HEARTBEAT_GET_CONF = "heartbeat.get_conf"
     HEARTBEAT_SET_CONF = "heartbeat.set_conf"

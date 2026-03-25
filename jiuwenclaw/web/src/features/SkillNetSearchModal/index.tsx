@@ -5,11 +5,69 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Trans, useTranslation } from "react-i18next";
 import { webRequest } from "../../services/webClient";
+import type { WebError } from "../../types/websocket";
 import { normalizeSkillNetUrl } from "../../utils/skillNetUrl";
 
 const SKILLNET_UPSTREAM_REPO_URL = "https://github.com/zjunlp/SkillNet";
 /** 同时进行的 SkillNet 安装任务上限（与后端 asyncio 能力匹配，避免前端狂点拖垮） */
 const SKILLNET_MAX_CONCURRENT_INSTALLS = 5;
+
+/** 评估结果展示顺序（与 skillnet-ai 五维一致） */
+const EVAL_DIMENSION_KEYS = [
+  "safety",
+  "completeness",
+  "executability",
+  "maintainability",
+  "cost_awareness",
+] as const;
+
+function isEvaluateRequestAborted(err: unknown): boolean {
+  return (
+    typeof err === "object" &&
+    err !== null &&
+    "code" in err &&
+    (err as WebError).code === "REQUEST_ABORTED"
+  );
+}
+
+function levelPillClass(level: string | undefined): string {
+  const l = (level || "").toLowerCase();
+  if (
+    l.includes("good") ||
+    l.includes("excellent") ||
+    l.includes("优") ||
+    l.includes("佳")
+  ) {
+    return "border-[color:var(--border-ok)] bg-ok-subtle text-ok";
+  }
+  if (
+    l.includes("poor") ||
+    l.includes("bad") ||
+    l.includes("差") ||
+    l.includes("critical")
+  ) {
+    return "border-danger/40 bg-danger/10 text-danger";
+  }
+  if (
+    l.includes("average") ||
+    l.includes("fair") ||
+    l.includes("moderate") ||
+    l.includes("中")
+  ) {
+    return "border-amber-500/45 bg-amber-500/15 text-amber-900 dark:text-amber-400";
+  }
+  return "border-border bg-secondary text-text-muted";
+}
+
+type EvaluateOverlayState =
+  | { phase: "loading"; item: SkillNetItem }
+  | {
+      phase: "result";
+      item: SkillNetItem;
+      ok: true;
+      evaluation: SkillNetEvaluation;
+    }
+  | { phase: "result"; item: SkillNetItem; ok: false; message: string };
 
 type SkillNetItem = {
   skill_name: string;
@@ -19,6 +77,14 @@ type SkillNetItem = {
   skill_url: string;
   category: string;
 };
+
+/** skillnet-ai evaluate 返回的五维结构 */
+type SkillNetEvalDimension = {
+  level?: string;
+  reason?: string;
+};
+
+type SkillNetEvaluation = Record<string, SkillNetEvalDimension | undefined>;
 
 type LoadState = "idle" | "loading" | "success" | "error";
 
@@ -58,6 +124,22 @@ export function SkillNetSearchModal({
   const [installErrorByUrl, setInstallErrorByUrl] = useState<Record<string, string>>({});
   const [installedSuccess, setInstalledSuccess] = useState<string | null>(null);
   const installedSuccessTimerRef = useRef<number | null>(null);
+  /** 仅允许同时进行一条评估（SkillNet 会调 LLM，较慢） */
+  const [evaluatingUrl, setEvaluatingUrl] = useState<string | null>(null);
+  /** 评估过程与结果：独立叠层弹窗 */
+  const [evaluateOverlay, setEvaluateOverlay] =
+    useState<EvaluateOverlayState | null>(null);
+  /** 用于取消评估请求、避免关闭叠层后仍全局禁用「评估」按钮 */
+  const evaluateSeqRef = useRef(0);
+  const evaluateAbortRef = useRef<AbortController | null>(null);
+
+  const dismissEvaluateOverlay = useCallback(() => {
+    evaluateSeqRef.current += 1;
+    evaluateAbortRef.current?.abort();
+    evaluateAbortRef.current = null;
+    setEvaluateOverlay(null);
+    setEvaluatingUrl(null);
+  }, []);
 
   const withSession = useCallback(
     (params?: Record<string, unknown>) => ({
@@ -68,13 +150,29 @@ export function SkillNetSearchModal({
   );
 
   useEffect(() => {
+    if (!open) {
+      evaluateSeqRef.current += 1;
+      evaluateAbortRef.current?.abort();
+      evaluateAbortRef.current = null;
+      setEvaluateOverlay(null);
+      setEvaluatingUrl(null);
+    }
+  }, [open]);
+
+  useEffect(() => {
     if (!open) return;
     const onKeyDown = (e: KeyboardEvent) => {
-      if (e.key === "Escape") onClose();
+      if (e.key !== "Escape") return;
+      if (evaluateOverlay) {
+        e.preventDefault();
+        dismissEvaluateOverlay();
+        return;
+      }
+      onClose();
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [open, onClose]);
+  }, [open, onClose, evaluateOverlay, dismissEvaluateOverlay]);
 
   useEffect(() => {
     return () => {
@@ -115,6 +213,7 @@ export function SkillNetSearchModal({
       setResults(data.skills || []);
       setLoadState("success");
       setExpandedUrl(null);
+      dismissEvaluateOverlay();
     } catch (err) {
       console.error(err);
       setResults([]);
@@ -128,7 +227,85 @@ export function SkillNetSearchModal({
         t("skills.errors.skillNetSearchErrorBanner", { detail })
       );
     }
-  }, [query, t, withSession]);
+  }, [query, t, withSession, dismissEvaluateOverlay]);
+
+  const handleEvaluate = useCallback(
+    async (item: SkillNetItem) => {
+      const url = item.skill_url;
+      if (!url || evaluatingUrl) return;
+      const seq = ++evaluateSeqRef.current;
+      const ac = new AbortController();
+      evaluateAbortRef.current = ac;
+      setEvaluatingUrl(url);
+      setEvaluateOverlay({ phase: "loading", item });
+      try {
+        const data = await webRequest<{
+          success: boolean;
+          evaluation?: SkillNetEvaluation;
+          detail?: string;
+          detail_key?: string;
+          detail_params?: Record<string, unknown>;
+        }>("skills.skillnet.evaluate", withSession({ url }), {
+          timeoutMs: 120_000,
+          signal: ac.signal,
+        });
+        if (!data.success) {
+          const message = data.detail_key
+            ? t(
+                data.detail_key,
+                data.detail_params as Record<string, string> | undefined
+              )
+            : (data.detail?.trim() || t("skills.skillNet.evaluateFailed"));
+          setEvaluateOverlay({
+            phase: "result",
+            item,
+            ok: false,
+            message,
+          });
+          return;
+        }
+        const ev = data.evaluation;
+        if (ev && typeof ev === "object" && !Array.isArray(ev)) {
+          setEvaluateOverlay({
+            phase: "result",
+            item,
+            ok: true,
+            evaluation: ev,
+          });
+        } else {
+          setEvaluateOverlay({
+            phase: "result",
+            item,
+            ok: false,
+            message: t("skills.skillNet.evaluateEmptyResult"),
+          });
+        }
+      } catch (err) {
+        if (isEvaluateRequestAborted(err)) {
+          return;
+        }
+        console.error(err);
+        const message =
+          err instanceof Error && err.message.trim()
+            ? err.message.trim()
+            : t("skills.skillNet.evaluateFailed");
+        setEvaluateOverlay({
+          phase: "result",
+          item,
+          ok: false,
+          message,
+        });
+      } finally {
+        if (evaluateAbortRef.current === ac) {
+          evaluateAbortRef.current = null;
+        }
+        if (seq === evaluateSeqRef.current) {
+          setEvaluatingUrl(null);
+        }
+      }
+    },
+    [evaluatingUrl, t, withSession]
+  );
 
   const syncInstallingState = useCallback(() => {
     setInstallingUrls(new Set(installingUrlsRef.current));
@@ -376,6 +553,8 @@ export function SkillNetSearchModal({
                     atConcurrentLimit && !isInstalling;
                   const isExpanded = expandedUrl === item.skill_url;
                   const rowInstallError = installErrorByUrl[item.skill_url];
+                  const evalBusy = evaluatingUrl === item.skill_url;
+                  const evalGloballyBusy = evaluatingUrl !== null;
                   return (
                     <div
                       key={item.skill_url}
@@ -460,6 +639,23 @@ export function SkillNetSearchModal({
                               : t("skills.skillNet.installFromResult")}
                           </button>
                         )}
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            void handleEvaluate(item);
+                          }}
+                          disabled={evalGloballyBusy}
+                          className={`px-3 py-1.5 rounded-md text-xs whitespace-nowrap transition-colors border border-border ${
+                            evalGloballyBusy
+                              ? "bg-secondary text-text-muted cursor-not-allowed"
+                              : "bg-secondary text-text hover:bg-tertiary"
+                          }`}
+                        >
+                          {evalBusy
+                            ? t("skills.skillNet.evaluating")
+                            : t("skills.skillNet.evaluateSkill")}
+                        </button>
                         {rowInstallError ? (
                           <p
                             className="text-[11px] text-danger text-right leading-snug break-words"
@@ -477,6 +673,162 @@ export function SkillNetSearchModal({
             </div>
           )}
         </div>
+
+        {evaluateOverlay ? (
+          <div
+            className="absolute inset-0 z-[60] flex items-end justify-center sm:items-center p-3 sm:p-5 rounded-xl"
+            role="presentation"
+          >
+            <button
+              type="button"
+              className="absolute inset-0 z-0 m-0 cursor-pointer rounded-xl border-0 bg-bg-muted/50 p-0 appearance-none backdrop-brightness-[0.92] backdrop-saturate-[0.55] focus:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-accent/35"
+              aria-label={t("skills.skillNet.evaluateModalBackdrop")}
+              onClick={dismissEvaluateOverlay}
+            />
+            <div
+              role="dialog"
+              aria-modal="true"
+              aria-labelledby="skillnet-eval-dialog-title"
+              className="relative z-10 mb-2 sm:mb-0 flex w-full max-w-lg max-h-[min(82vh,640px)] flex-col rounded-2xl border border-border/80 bg-card shadow-[0_25px_80px_-16px_rgba(0,0,0,0.55)] overflow-hidden ring-1 ring-black/5 dark:ring-white/10"
+              onClick={(e) => e.stopPropagation()}
+            >
+              {evaluateOverlay.phase === "loading" ? (
+                <>
+                  <div className="flex-shrink-0 flex items-center justify-between gap-3 px-4 py-3 sm:px-5 border-b border-border/80 bg-panel/40">
+                    <h2
+                      id="skillnet-eval-dialog-title"
+                      className="text-sm font-semibold text-text truncate min-w-0"
+                    >
+                      {t("skills.skillNet.evaluating")}
+                    </h2>
+                    <button
+                      type="button"
+                      onClick={dismissEvaluateOverlay}
+                      className="flex-shrink-0 px-3 py-1.5 rounded-lg text-xs font-medium bg-secondary text-text-muted hover:text-text hover:bg-tertiary border border-border transition-colors"
+                    >
+                      {t("skills.skillNet.evaluateCancel")}
+                    </button>
+                  </div>
+                  <div className="px-6 py-10 flex flex-col items-center gap-5 text-center">
+                    <div
+                      className="h-11 w-11 rounded-full border-[3px] border-accent/25 border-t-accent animate-spin"
+                      aria-hidden
+                    />
+                    <p className="text-xs text-text-muted line-clamp-2 px-2">
+                      {evaluateOverlay.item.skill_name}
+                    </p>
+                  </div>
+                </>
+              ) : evaluateOverlay.ok ? (
+                <>
+                  <div className="flex-shrink-0 px-5 pt-5 pb-3 border-b border-border/80 bg-gradient-to-b from-accent/8 to-transparent">
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="min-w-0">
+                        <h2
+                          id="skillnet-eval-dialog-title"
+                          className="text-lg font-semibold text-text tracking-tight"
+                        >
+                          {t("skills.skillNet.evaluateModalTitle")}
+                        </h2>
+                        <p className="text-xs text-text-muted mt-1 leading-relaxed">
+                          {t("skills.skillNet.evaluateModalSubtitle")}
+                        </p>
+                        <p className="text-sm font-medium text-text mt-2.5 truncate">
+                          {evaluateOverlay.item.skill_name}
+                        </p>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={dismissEvaluateOverlay}
+                        className="flex-shrink-0 px-3 py-1.5 rounded-lg text-xs font-medium bg-secondary text-text-muted hover:text-text hover:bg-tertiary border border-border transition-colors"
+                      >
+                        {t("skills.skillNet.evaluateModalClose")}
+                      </button>
+                    </div>
+                  </div>
+                  <div className="flex-1 min-h-0 overflow-y-auto px-5 py-4 space-y-3">
+                    {EVAL_DIMENSION_KEYS.map((key) => {
+                      const dim = evaluateOverlay.evaluation[key];
+                      if (!dim) return null;
+                      return (
+                        <div
+                          key={key}
+                          className="rounded-xl border border-border/90 bg-secondary/40 px-3.5 py-3 shadow-sm"
+                        >
+                          <div className="flex items-center justify-between gap-2 mb-2">
+                            <span className="text-sm font-semibold text-text">
+                              {t(`skills.skillNet.evalDim.${key}`, {
+                                defaultValue: key,
+                              })}
+                            </span>
+                            {dim.level ? (
+                              <span
+                                className={`text-[11px] font-semibold px-2 py-0.5 rounded-md border ${levelPillClass(dim.level)}`}
+                              >
+                                {dim.level}
+                              </span>
+                            ) : null}
+                          </div>
+                          {dim.reason ? (
+                            <p className="text-xs text-text-muted leading-relaxed whitespace-pre-wrap">
+                              {dim.reason}
+                            </p>
+                          ) : null}
+                        </div>
+                      );
+                    })}
+                  </div>
+                  <div className="flex-shrink-0 px-5 py-3 border-t border-border/80 bg-panel/50">
+                    <button
+                      type="button"
+                      onClick={dismissEvaluateOverlay}
+                      className="w-full py-2.5 rounded-xl text-sm font-medium bg-accent text-white hover:bg-accent-hover transition-colors"
+                    >
+                      {t("skills.skillNet.evaluateModalClose")}
+                    </button>
+                  </div>
+                </>
+              ) : (
+                <>
+                  <div className="px-5 pt-5 pb-3 border-b border-border/80">
+                    <div className="flex items-start justify-between gap-3">
+                      <h2
+                        id="skillnet-eval-dialog-title"
+                        className="text-lg font-semibold text-danger"
+                      >
+                        {t("skills.skillNet.evaluateFailed")}
+                      </h2>
+                      <button
+                        type="button"
+                        onClick={dismissEvaluateOverlay}
+                        className="flex-shrink-0 px-3 py-1.5 rounded-lg text-xs font-medium bg-secondary text-text-muted hover:text-text border border-border"
+                      >
+                        {t("skills.skillNet.evaluateModalClose")}
+                      </button>
+                    </div>
+                    <p className="text-sm font-medium text-text mt-2 truncate">
+                      {evaluateOverlay.item.skill_name}
+                    </p>
+                  </div>
+                  <div className="px-5 py-4 flex-1 min-h-0 overflow-y-auto">
+                    <p className="text-sm text-text-muted leading-relaxed whitespace-pre-wrap break-words">
+                      {evaluateOverlay.message}
+                    </p>
+                  </div>
+                  <div className="px-5 py-3 border-t border-border/80">
+                    <button
+                      type="button"
+                      onClick={dismissEvaluateOverlay}
+                      className="w-full py-2.5 rounded-xl text-sm font-medium bg-secondary text-text hover:bg-tertiary border border-border transition-colors"
+                    >
+                      {t("skills.skillNet.evaluateModalClose")}
+                    </button>
+                  </div>
+                </>
+              )}
+            </div>
+          </div>
+        ) : null}
       </div>
     </div>
   );
