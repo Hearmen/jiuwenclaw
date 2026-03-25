@@ -23,6 +23,7 @@ browser:
 from __future__ import annotations
 
 import argparse
+import importlib.util
 import os
 import platform
 import shutil
@@ -42,6 +43,58 @@ def _config_path(custom_path: str = "") -> Path:
     if custom_path:
         return Path(custom_path).expanduser().resolve()
     return _repo_root() / "config" / "config.yaml"
+
+
+def _browser_move_root() -> Path:
+    return _repo_root() / "jiuwenclaw" / "agentserver" / "tools" / "browser-move"
+
+
+def _profile_store_path() -> Path:
+    configured = (os.getenv("BROWSER_PROFILE_STORE_PATH") or "").strip()
+    if configured:
+        return Path(configured).expanduser()
+    return _browser_move_root() / ".browser" / "profiles.json"
+
+
+def _profile_name(profile_directory: str) -> str:
+    configured = (os.getenv("BROWSER_PROFILE_NAME") or "").strip()
+    if configured:
+        return configured
+    fallback = (profile_directory or "").strip()
+    return fallback or "jiuwenclaw"
+
+
+def _load_profile_store_types() -> tuple[type[Any], type[Any]]:
+    module_path = _browser_move_root() / "src" / "playwright_runtime" / "profiles.py"
+    spec = importlib.util.spec_from_file_location("jiuwenclaw_browser_profiles", module_path)
+    if spec is None or spec.loader is None:
+        raise RuntimeError(f"Failed to load browser profile module: {module_path}")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module.BrowserProfile, module.BrowserProfileStore
+
+
+def _persist_browser_profile(
+    *,
+    host: str,
+    port: int,
+    chrome_exec: str,
+    user_data_dir: str,
+    profile_directory: str,
+) -> None:
+    browser_profile_cls, browser_profile_store_cls = _load_profile_store_types()
+    store = browser_profile_store_cls(_profile_store_path())
+    profile = browser_profile_cls(
+        name=_profile_name(profile_directory),
+        driver_type="remote",
+        cdp_url=f"http://{host}:{port}",
+        browser_binary=chrome_exec,
+        user_data_dir=user_data_dir,
+        debug_port=port,
+        host=host,
+        extra_args=[f"--profile-directory={profile_directory}"] if profile_directory else [],
+    )
+    store.upsert_profile(profile, select=True)
 
 
 def _load_browser_config(config_file: str = "") -> dict[str, Any]:
@@ -207,6 +260,13 @@ def start_browser(*, dry_run: bool = False, config_file: str = "") -> int:
         return 0
 
     proc = subprocess.Popen(args, **kwargs)
+    _persist_browser_profile(
+        host=host,
+        port=port,
+        chrome_exec=chrome_exec,
+        user_data_dir=user_data_dir,
+        profile_directory=profile_directory,
+    )
     print(f"Chrome started (pid={proc.pid}) at {host}:{port}")
     print(f"Executable: {chrome_exec}")
     print(f"Profile dir: {user_data_dir}")

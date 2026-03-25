@@ -16,6 +16,7 @@ import shutil
 import uuid
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
+from urllib.request import urlopen
 
 from jiuwenclaw.browser_timeout_policy import (
     allow_short_timeout_override,
@@ -165,6 +166,80 @@ class BrowserService:
             return explicit
         return "remote"
 
+    def _refresh_profile_store(self) -> None:
+        self._profile_store = BrowserProfileStore(self._resolve_profile_store_path())
+
+    @staticmethod
+    def _is_cdp_endpoint_ready(endpoint: str) -> bool:
+        base = str(endpoint or "").strip().rstrip("/")
+        if not base:
+            return False
+        try:
+            with urlopen(f"{base}/json/version", timeout=1.5) as response:  # nosec B310
+                payload = json.loads(response.read().decode("utf-8", errors="ignore"))
+                if isinstance(payload, dict):
+                    return bool(payload.get("webSocketDebuggerUrl") or payload.get("Browser"))
+        except (OSError, ValueError):
+            return False
+        return False
+
+    def _resolve_existing_cdp_profile(self) -> Optional[BrowserProfile]:
+        self._refresh_profile_store()
+        candidates: List[BrowserProfile] = []
+        selected = self._profile_store.selected_profile()
+        if selected is not None:
+            candidates.append(selected)
+        named = self._profile_store.get_profile(self._profile_name)
+        if named is not None and all(named.name != item.name for item in candidates):
+            candidates.append(named)
+        for profile in candidates:
+            endpoint = str(profile.cdp_url or "").strip()
+            if endpoint and self._is_cdp_endpoint_ready(endpoint):
+                return profile
+        return None
+
+    def _should_replace_managed_driver(self, profile: BrowserProfile) -> bool:
+        if self._managed_driver is None:
+            return False
+        if profile.driver_type != "managed":
+            return True
+        if self._active_profile is None:
+            return True
+        current_endpoint = str(self._active_profile.cdp_url or "").strip()
+        target_endpoint = str(profile.cdp_url or "").strip()
+        return current_endpoint != target_endpoint
+
+    @staticmethod
+    def _env_truthy(name: str, default: bool = False) -> bool:
+        raw = (os.getenv(name) or "").strip().lower()
+        if not raw:
+            return default
+        return raw in {"1", "true", "yes", "on"}
+
+    def _should_close_browser_after_task(self) -> bool:
+        return self._driver_mode == "managed" and self._env_truthy(
+            "BROWSER_MANAGED_CLOSE_AFTER_TASK",
+            default=False,
+        )
+
+    @staticmethod
+    def _is_browser_connection_error_text(value: Any) -> bool:
+        text = str(value or "").strip().lower()
+        if not text:
+            return False
+        markers = (
+            "connectovercdp",
+            "econnrefused",
+            "browsertype.connectovercdp",
+            "????????",
+            "cdp ??",
+            "browser service may not be started",
+            "browser has been closed",
+            "target page, context or browser has been closed",
+            "failed to connect to browser",
+        )
+        return any(marker in text for marker in markers)
+
     def _resolve_effective_timeout(self, timeout_s: Optional[int]) -> int:
         effective_timeout = resolve_browser_task_timeout(timeout_s, self.guardrails.timeout_s)
         requested_timeout = None
@@ -263,10 +338,27 @@ class BrowserService:
         self.mcp_cfg.params = params
 
     async def _ensure_managed_driver_started(self) -> None:
+        existing_profile = self._resolve_existing_cdp_profile()
+        if existing_profile is not None:
+            if self._should_replace_managed_driver(existing_profile):
+                await self._stop_managed_driver()
+            self._active_profile = existing_profile
+            self._inject_cdp_endpoint(existing_profile.cdp_url)
+            self._profile_store.upsert_profile(existing_profile, select=True)
+            return
+
         if self._driver_mode != "managed":
             return
         if self._managed_driver is not None:
-            return
+            try:
+                endpoint = await asyncio.to_thread(self._managed_driver.start, 10.0, False)
+                self._inject_cdp_endpoint(endpoint)
+                if self._active_profile is not None:
+                    self._active_profile.cdp_url = endpoint
+                    self._profile_store.upsert_profile(self._active_profile, select=True)
+                return
+            except Exception:
+                await self._stop_managed_driver()
 
         profile = self._profile_store.get_profile(self._profile_name)
         if (
@@ -298,6 +390,24 @@ class BrowserService:
         driver = self._managed_driver
         self._managed_driver = None
         await asyncio.to_thread(driver.stop)
+
+    async def _reset_browser_runtime(self) -> None:
+        try:
+            if self.started:
+                server_resource_id = (self.mcp_cfg.server_id or "").strip() or self.mcp_cfg.server_name
+                await Runner.resource_mgr.remove_tool_server(server_resource_id, ignore_not_exist=True)
+        except Exception:
+            pass
+        self.started = False
+        self._browser_agent = None
+        await self._stop_managed_driver()
+
+    async def _restart_browser_runtime(self) -> None:
+        from openjiuwen.core.common.logging import logger as _logger
+
+        _logger.warning("BrowserService: restarting browser runtime")
+        await self._reset_browser_runtime()
+        await self.ensure_started()
 
     def _ensure_screenshots_dir(self) -> None:
         self._screenshots_dir.mkdir(parents=True, exist_ok=True)
@@ -464,6 +574,7 @@ class BrowserService:
 
     async def ensure_started(self) -> None:
         if self.started:
+            await self._ensure_managed_driver_started()
             return
 
         if shutil.which("npx") is None:
@@ -498,19 +609,8 @@ class BrowserService:
         self.started = True
 
     async def _restart(self) -> None:
-        """Tear down and reinitialize the browser service (e.g. after stdio subprocess dies)."""
-        from openjiuwen.core.common.logging import logger as _logger
-        _logger.warning("BrowserService: restarting due to broken MCP connection")
-        try:
-            server_resource_id = (self.mcp_cfg.server_id or "").strip() or self.mcp_cfg.server_name
-            await Runner.resource_mgr.remove_tool_server(
-                server_resource_id, ignore_not_exist=True
-            )
-        except Exception:
-            pass
-        self.started = False
-        self._browser_agent = None
-        await self.ensure_started()
+        """Tear down and reinitialize the browser service (e.g. after browser/CDP/MCP failure)."""
+        await self._restart_browser_runtime()
 
     async def _run_task_once(self, task: str, session_id: str, request_id: str) -> Dict[str, Any]:
         if self._browser_agent is None:
@@ -704,6 +804,18 @@ class BrowserService:
 
                         if (
                             not parsed_ok
+                            and self._is_browser_connection_error_text(parsed.get("error") or parsed.get("final"))
+                            and attempt_idx < attempts
+                        ):
+                            try:
+                                await self._restart_browser_runtime()
+                                next_task = base_task
+                                continue
+                            except Exception as restart_exc:
+                                last_error = f"browser_restart_failed: {restart_exc!r}"
+
+                        if (
+                            not parsed_ok
                             and self._is_max_iteration_result(parsed)
                             and not used_max_iteration_resume
                         ):
@@ -784,7 +896,11 @@ class BrowserService:
                         if attempt_idx >= attempts:
                             break
                         # Restart before retry on known transport/session failures.
-                        if (not str(exc)) or self._is_retryable_transport_error(exc):
+                        if (
+                            (not str(exc))
+                            or self._is_retryable_transport_error(exc)
+                            or self._is_browser_connection_error_text(exc)
+                        ):
                             try:
                                 await self._restart()
                             except Exception as restart_exc:
@@ -819,6 +935,11 @@ class BrowserService:
             finally:
                 if current_task is not None:
                     self._unregister_inflight_task(sid, rid, current_task)
+                if self._should_close_browser_after_task():
+                    try:
+                        await self._reset_browser_runtime()
+                    except Exception:
+                        pass
 
     async def shutdown(self) -> None:
         try:
