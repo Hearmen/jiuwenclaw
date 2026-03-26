@@ -400,7 +400,8 @@ class CronSchedulerService:
             from jiuwenclaw.config import get_config_raw
 
             cfg = get_config_raw() or {}
-            ch_cfg = (cfg.get("channels") or {}).get(channel_id) or {}
+            channels_cfg = cfg.get("channels") or {}
+            ch_cfg = channels_cfg.get(channel_id) or {}
             if channel_id == "feishu":
                 last_chat_id = str(ch_cfg.get("last_chat_id") or "").strip()
                 last_open_id = str(ch_cfg.get("last_open_id") or "").strip()
@@ -409,6 +410,24 @@ class CronSchedulerService:
                         "feishu_chat_id": last_chat_id,
                         "feishu_open_id": last_open_id,
                     }
+            elif channel_id.startswith("feishu_enterprise:"):
+                app_id = channel_id.split(":", 1)[1].strip()
+                enterprise_cfg = channels_cfg.get("feishu_enterprise") or {}
+                if isinstance(enterprise_cfg, dict) and app_id:
+                    for _, bot_cfg in enterprise_cfg.items():
+                        if not isinstance(bot_cfg, dict):
+                            continue
+                        bot_app_id = str(bot_cfg.get("app_id") or "").strip()
+                        if bot_app_id != app_id:
+                            continue
+                        last_chat_id = str(bot_cfg.get("last_chat_id") or "").strip()
+                        last_open_id = str(bot_cfg.get("last_open_id") or "").strip()
+                        if last_chat_id or last_open_id:
+                            metadata = {
+                                "feishu_chat_id": last_chat_id,
+                                "feishu_open_id": last_open_id,
+                            }
+                        break
             elif channel_id == "xiaoyi":
                 last_session_id = str(ch_cfg.get("last_session_id") or "").strip()
                 last_task_id = str(ch_cfg.get("last_task_id") or "").strip()

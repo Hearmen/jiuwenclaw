@@ -129,6 +129,27 @@ def update_channel_in_config(channel_id: str, conf: dict[str, Any]) -> None:
     _dump_yaml_round_trip(_CONFIG_YAML_PATH, data)
 
 
+def update_channel_subsection_in_config(
+    channel_id: str,
+    subsection_id: str,
+    conf: dict[str, Any],
+) -> None:
+    """更新 channels[channel_id][subsection_id] 并写回。"""
+    data = _load_yaml_round_trip(_CONFIG_YAML_PATH)
+    if "channels" not in data:
+        data["channels"] = {}
+    channels = data["channels"]
+    if channel_id not in channels:
+        channels[channel_id] = {}
+    section = channels[channel_id]
+    if subsection_id not in section:
+        section[subsection_id] = {}
+    subsection = section[subsection_id]
+    for k, v in conf.items():
+        subsection[k] = v
+    _dump_yaml_round_trip(_CONFIG_YAML_PATH, data)
+
+
 def update_preferred_language_in_config(lang: str) -> None:
     """只更新顶层 preferred_language 并写回。"""
     data = _load_yaml_round_trip(_CONFIG_YAML_PATH)

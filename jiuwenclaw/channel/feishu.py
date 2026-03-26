@@ -28,6 +28,8 @@ class FeishuConfig(BaseModel):
     allow_from: list[str] = Field(default_factory=list)  # 允许的用户的open_id列表
     enable_streaming: bool = True  # 是否开启流式/过程消息下发
     chat_id: str = ""  # 可选：固定推送目标 chat_id（群聊 oc_xxx 或个人 open_id）
+    channel_id: str = "feishu"  # ChannelManager 路由键，支持多实例
+    bot_key: str = ""  # 企业飞书多 bot 配置键（仅 feishu_enterprise 使用）
 
 
 try:
@@ -56,6 +58,25 @@ MSG_TYPE_MAP = {
 }
 
 
+class _ThreadLocalLoopProxy:
+    """Provide a thread-local event loop proxy for lark_oapi ws client."""
+
+    @staticmethod
+    def _get_loop() -> asyncio.AbstractEventLoop:
+        try:
+            return asyncio.get_event_loop()
+        except RuntimeError:
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            return loop
+
+    def run_until_complete(self, coro):
+        return self._get_loop().run_until_complete(coro)
+
+    def create_task(self, coro):
+        return self._get_loop().create_task(coro)
+
+
 class FeishuChannel(BaseChannel):
     """
     飞书/飞书IM通道实现，基于WebSocket长连接。
@@ -73,6 +94,8 @@ class FeishuChannel(BaseChannel):
     """
 
     name = "feishu"
+    _ws_loop_proxy_lock = threading.Lock()
+    _ws_loop_proxy_installed = False
 
     def __init__(self, config: FeishuConfig, router: RobotMessageRouter):
         """
@@ -84,6 +107,7 @@ class FeishuChannel(BaseChannel):
         """
         super().__init__(config, router)
         self.config: FeishuConfig = config
+        self._channel_id = str(getattr(config, "channel_id", "") or self.name).strip() or self.name
         self._api_client: Any = None  # 飞书API客户端（用于发送消息）
         self._websocket_client: Any = None  # WebSocket客户端（用于接收消息）
         self._websocket_thread: threading.Thread | None = None  # WebSocket运行线程
@@ -98,7 +122,7 @@ class FeishuChannel(BaseChannel):
     @property
     def channel_id(self) -> str:
         """返回通道唯一标识符，用于ChannelManager注册与消息派发。"""
-        return self.name
+        return self._channel_id
 
     def on_message(self, callback: Callable[[Message], None]) -> None:
         """
@@ -131,7 +155,7 @@ class FeishuChannel(BaseChannel):
         msg = Message(
             id=message_id,
             type="req",
-            channel_id=self.name,
+            channel_id=self.channel_id,
             session_id=str(chat_id),
             params={"content": content, "query": content},
             timestamp=time.time(), ok=True,
@@ -213,11 +237,8 @@ class FeishuChannel(BaseChannel):
         asyncio.set_event_loop(loop)
         self._ws_thread_loop = loop
 
-        # 临时替换lark_oapi.ws.client模块的事件循环，避免"already running"错误
-        import lark_oapi.ws.client as _ws_client_mod
-
-        _saved_loop = getattr(_ws_client_mod, "loop", None)
-        _ws_client_mod.loop = loop
+        # 将 SDK 的模块级 loop 替换为线程内代理，避免多实例时相互覆盖。
+        self._ensure_thread_local_ws_loop_proxy()
 
         ws_client = None
         try:
@@ -241,23 +262,23 @@ class FeishuChannel(BaseChannel):
             ws_client.start()
         except Exception as e:
             if self._stopping or not self._running:
-                logger.info("飞书WebSocket线程退出: {}", e)
+                logger.info("飞书WebSocket线程退出: %s", e)
             else:
-                logger.error("飞书WebSocket连接建立失败: {}", e)
+                logger.error("飞书WebSocket连接建立失败: %s", e)
         finally:
-            self._cleanup_websocket_thread(_saved_loop, ws_client, loop)
+            self._cleanup_websocket_thread(ws_client, loop)
 
-    def _cleanup_websocket_thread(
-        self,
-        saved_loop: Any,
-        ws_client: Any,
-        loop: asyncio.AbstractEventLoop,
-    ) -> None:
+    @classmethod
+    def _ensure_thread_local_ws_loop_proxy(cls) -> None:
+        with cls._ws_loop_proxy_lock:
+            if cls._ws_loop_proxy_installed:
+                return
+            import lark_oapi.ws.client as _ws_client_mod
+            _ws_client_mod.loop = _ThreadLocalLoopProxy()
+            cls._ws_loop_proxy_installed = True
+
+    def _cleanup_websocket_thread(self, ws_client: Any, loop: asyncio.AbstractEventLoop) -> None:
         """清理WebSocket线程资源。"""
-        import lark_oapi.ws.client as _ws_client_mod
-
-        if saved_loop is not None:
-            _ws_client_mod.loop = saved_loop
 
         if ws_client is None:
             self._websocket_client = None
@@ -991,20 +1012,37 @@ class FeishuChannel(BaseChannel):
             )
 
             # 将最近一次可回发的飞书身份写入 config.yaml，供 cron 推送时使用
-            try:
-                from jiuwenclaw.config import update_channel_in_config
+            if self.channel_id == self.name:
+                try:
+                    from jiuwenclaw.config import update_channel_in_config
 
-                update_channel_in_config(
-                    "feishu",
-                    {
-                        "last_chat_id": getattr(message, "chat_id", None) or "",
-                        "last_open_id": open_id or "",
-                        "last_message_id": getattr(message, "message_id", None) or "",
-                    },
-                )
-            except Exception:
-                # 不影响正常收消息
-                pass
+                    update_channel_in_config(
+                        "feishu",
+                        {
+                            "last_chat_id": getattr(message, "chat_id", None) or "",
+                            "last_open_id": open_id or "",
+                            "last_message_id": getattr(message, "message_id", None) or "",
+                        },
+                    )
+                except Exception:
+                    # 不影响正常收消息
+                    pass
+            elif self.channel_id.startswith("feishu_enterprise:") and self.config.bot_key:
+                try:
+                    from jiuwenclaw.config import update_channel_subsection_in_config
+
+                    update_channel_subsection_in_config(
+                        "feishu_enterprise",
+                        self.config.bot_key,
+                        {
+                            "last_chat_id": getattr(message, "chat_id", None) or "",
+                            "last_open_id": open_id or "",
+                            "last_message_id": getattr(message, "message_id", None) or "",
+                        },
+                    )
+                except Exception:
+                    # 不影响正常收消息
+                    pass
 
             # 处理消息：将平台身份写入 metadata，供回发时使用（与 session_id 解耦，\new_session 后仍可正确回发）
             await self._handle_message(

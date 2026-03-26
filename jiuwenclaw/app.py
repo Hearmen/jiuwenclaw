@@ -1481,6 +1481,8 @@ async def _run() -> None:
     whatsapp_task = None
     wecom_channel = None
     wecom_task = None
+    feishu_enterprise_channels: dict[str, FeishuChannel] = {}
+    feishu_enterprise_tasks: dict[str, asyncio.Task] = {}
 
     _last_channels_conf = {}  # Store previous config to detect changes
 
@@ -1540,10 +1542,11 @@ async def _run() -> None:
         nonlocal discord_channel, discord_task
         nonlocal whatsapp_channel, whatsapp_task
         nonlocal wecom_channel, wecom_task, _last_channels_conf
+        nonlocal feishu_enterprise_channels, feishu_enterprise_tasks
 
         changed_channels = [
             c
-            for c in ["feishu", "xiaoyi", "dingtalk", "telegram", "whatsapp", "discord", "wecom"]
+            for c in ["feishu", "feishu_enterprise", "xiaoyi", "dingtalk", "telegram", "whatsapp", "discord", "wecom"]
             if _should_restart_channel(c, _last_channels_conf, conf)
         ]
         _last_channels_conf = dict(conf or {})
@@ -1574,6 +1577,58 @@ async def _run() -> None:
                     logger.info("[App] 已按 config.yaml.channels.feishu 注册 FeishuChannel")
             else:
                 logger.info("[App] channels.feishu 未配置或格式错误，FeishuChannel 不启用")
+
+        if "feishu_enterprise" in changed_channels:
+            for bot_key, task in list(feishu_enterprise_tasks.items()):
+                await _stop_channel(feishu_enterprise_channels.get(bot_key), task, f"feishu_enterprise[{bot_key}]")
+            feishu_enterprise_channels = {}
+            feishu_enterprise_tasks = {}
+
+            enterprise_conf = conf.get("feishu_enterprise") if isinstance(conf, dict) else None
+            if not isinstance(enterprise_conf, dict):
+                logger.info("[App] channels.feishu_enterprise 未配置或格式错误，FeishuEnterpriseChannel 不启用")
+            else:
+                for bot_key, bot_conf_raw in enterprise_conf.items():
+                    if not isinstance(bot_key, str) or not bot_key.strip():
+                        continue
+                    bot_conf = bot_conf_raw if isinstance(bot_conf_raw, dict) else None
+                    if bot_conf is None:
+                        logger.info("[App] channels.feishu_enterprise.%s 配置格式错误，跳过", bot_key)
+                        continue
+                    enabled, reason = _is_channel_enabled(bot_conf, ["app_id", "app_secret"])
+                    if not enabled:
+                        logger.info(
+                            "[App] channels.feishu_enterprise.%s.%s，FeishuEnterpriseChannel 未启用",
+                            bot_key,
+                            reason,
+                        )
+                        continue
+
+                    bot_key = bot_key.strip()
+                    app_id = str(bot_conf.get("app_id") or "").strip()
+                    channel_id = f"feishu_enterprise:{app_id}"
+                    feishu_config = FeishuConfig(
+                        enabled=True,
+                        app_id=app_id,
+                        app_secret=str(bot_conf.get("app_secret") or "").strip(),
+                        encrypt_key=str(bot_conf.get("encrypt_key") or "").strip(),
+                        verification_token=str(bot_conf.get("verification_token") or "").strip(),
+                        allow_from=bot_conf.get("allow_from") or [],
+                        enable_streaming=bool(bot_conf.get("enable_streaming", True)),
+                        chat_id=str(bot_conf.get("chat_id") or "").strip(),
+                        channel_id=channel_id,
+                        bot_key=bot_key,
+                    )
+                    channel = FeishuChannel(feishu_config, _DummyBus())
+                    channel_manager.register_channel(channel)
+                    task = asyncio.create_task(channel.start(), name=f"feishu-enterprise-{bot_key}")
+                    feishu_enterprise_channels[bot_key] = channel
+                    feishu_enterprise_tasks[bot_key] = task
+                    logger.info(
+                        "[App] 已按 config.yaml.channels.feishu_enterprise.%s 注册 FeishuChannel(%s)",
+                        bot_key,
+                        channel_id,
+                    )
 
         if "xiaoyi" in changed_channels:
             xiaoyi_conf = conf.get("xiaoyi") if isinstance(conf, dict) else None
@@ -1806,6 +1861,15 @@ async def _run() -> None:
             except asyncio.CancelledError:
                 pass
             await feishu_channel.stop()
+        for bot_key, task in list(feishu_enterprise_tasks.items()):
+            task.cancel()
+            try:
+                await task
+            except asyncio.CancelledError:
+                pass
+            channel = feishu_enterprise_channels.get(bot_key)
+            if channel is not None:
+                await channel.stop()
         if xiaoyi_channel is not None and xiaoyi_task is not None:
             xiaoyi_task.cancel()
             try:

@@ -118,6 +118,17 @@ channels:
     allow_from:
     enable_streaming: false
     enabled: false
+  feishu_enterprise:
+    # 企业飞书多 Bot 配置（每个 bot 会注册为独立 channel: feishu_enterprise:<app_id>）
+    # bot_a:
+    #   app_id:
+    #   app_secret:
+    #   encrypt_key:
+    #   verification_token:
+    #   allow_from: []
+    #   enable_streaming: true
+    #   chat_id:
+    #   enabled: false
   xiaoyi:
     # 华为小艺 A2A 配置
     mode: xiaoyi_channel
