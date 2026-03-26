@@ -193,7 +193,11 @@ class JiuWenClaw:
         self._agent_name = agent_name
 
         # 处理 model_client_config：确保包含必需字段
-        model_configs = config.get("models", {}).copy()	 
+        model_configs = config.get("models", {})
+        if not isinstance(model_configs, dict):
+            model_configs = {}
+        else:
+            model_configs = model_configs.copy()
         react_config = {**react_config, **model_configs.get("default", {}).copy(), "prompt_template": [
             {"role": "system", "content": build_system_prompt(
                 mode="plan",
