@@ -11,6 +11,7 @@ from __future__ import annotations
 import asyncio
 import inspect
 import json
+import logging
 import os
 import secrets
 import time
@@ -20,9 +21,11 @@ from urllib.parse import parse_qs, urlparse
 
 import aiohttp
 
-from jiuwenclaw.utils import get_workspace_dir, logger
+from jiuwenclaw.utils import get_workspace_dir
 from jiuwenclaw.channel.base import BaseChannel, ChannelMetadata, RobotMessageRouter
 from jiuwenclaw.schema.message import Message, Mode, ReqMethod
+
+logger = logging.getLogger(__name__)
 
 # ── 类型别名 ──────────────────────────────────────────────
 # 方法处理器签名: (ws, req_id, params, session_id) -> None

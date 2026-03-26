@@ -13,12 +13,14 @@
 from __future__ import annotations
 
 import json
+import logging
 from typing import List, Union
 
 from openjiuwen.core.foundation.tool import LocalFunction, Tool, ToolCard
 
 from jiuwenclaw.agentserver.agent_ws_server import AgentWebSocketServer
-from jiuwenclaw.utils import logger
+
+logger = logging.getLogger(__name__)
 
 
 class SendFileToolkit:

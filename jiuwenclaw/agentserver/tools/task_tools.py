@@ -2,6 +2,7 @@
 
 """Task tools - wraps TaskMemoryService as @tool decorated functions."""
 
+import logging
 import os
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -15,7 +16,9 @@ from jiuwenclaw.agentserver.tools import (
     tool,
 )
 
-from jiuwenclaw.utils import USER_WORKSPACE_DIR, logger
+from jiuwenclaw.utils import USER_WORKSPACE_DIR
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass

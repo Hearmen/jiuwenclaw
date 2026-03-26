@@ -8,16 +8,18 @@
 
 from __future__ import annotations
 
+import logging
 from typing import Any, Dict
 
 from openjiuwen.core.foundation.tool import tool
 
-from jiuwenclaw.utils import logger
 from .base import (
     execute_device_command,
     format_success_response,
     ToolInputError,
 )
+
+logger = logging.getLogger(__name__)
 
 
 @tool(

@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+import logging
 import asyncio
 import secrets
 import time
@@ -12,7 +13,9 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import TYPE_CHECKING, Any, Dict
 
-from jiuwenclaw.utils import logger
+
+
+logger = logging.getLogger(__name__)
 
 
 class ChannelMode(str, Enum):

@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+import logging
 import asyncio
 import json
 import os
@@ -16,7 +17,9 @@ from pathlib import Path
 from typing import Any, Awaitable, Callable
 from urllib.parse import urlparse
 
-from jiuwenclaw.utils import get_agent_root_dir, get_agent_skills_dir, logger
+from jiuwenclaw.utils import get_agent_root_dir, get_agent_skills_dir
+
+logger = logging.getLogger(__name__)
 
 _SKILLNET_DOWNLOAD_TIMEOUT: int = int(os.environ.get("SKILLNET_DOWNLOAD_TIMEOUT", "60"))
 _SKILLNET_MAX_RETRIES: int = int(os.environ.get("SKILLNET_MAX_RETRIES", "3"))

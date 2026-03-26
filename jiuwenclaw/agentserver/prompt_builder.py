@@ -1,11 +1,14 @@
 # Copyright (c) Huawei Technologies Co., Ltd. 2025. All rights reserved.
+import logging
 import json
 import os
 from datetime import datetime, timezone, timedelta
 from typing import Optional
 
-from jiuwenclaw.utils import USER_WORKSPACE_DIR, logger
+from jiuwenclaw.utils import USER_WORKSPACE_DIR
 
+
+logger = logging.getLogger(__name__)
 CONFIG_DIR = USER_WORKSPACE_DIR / "config"
 HOME_DIR = USER_WORKSPACE_DIR / "agent" / "home"
 MEMORY_DIR = USER_WORKSPACE_DIR / "agent" / "memory"

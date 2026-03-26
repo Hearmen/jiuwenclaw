@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+import logging
 import asyncio
 import base64
 import hmac
@@ -19,7 +20,6 @@ from urllib.parse import urlparse
 
 import aiohttp
 
-from jiuwenclaw.utils import logger
 from jiuwenclaw.channel.base import BaseChannel, ChannelMetadata, RobotMessageRouter
 from jiuwenclaw.schema.message import EventType, Message, ReqMethod
 from jiuwenclaw.channel.xiaoyi_utils.push import XiaoYiPushService, PushConfig
@@ -28,6 +28,8 @@ from jiuwenclaw.channel.xiaoyi_utils.formatter import (
     get_status_text_for_event,
     should_send_as_status_update,
 )
+
+logger = logging.getLogger(__name__)
 
 
 FILE_TYPE_TO_MIME_TYPE: dict[str, str] = {
@@ -1239,7 +1241,7 @@ class XiaoyiChannel(BaseChannel):
     async def _handle_data_event(self, event: DataEvent) -> None:
         """分发 data-event 到注册的处理器."""
         logger.info(f"[XiaoyiChannel] 分发 data-event: intent={event.intent_name}, status={event.status}")
-        logger.debug(f"[XiaoyiChannel] 已注册处理器: {list(self._data_event_handlers.keys())}")
+        logger.info(f"[XiaoyiChannel] 已注册处理器: {list(self._data_event_handlers.keys())}")
 
         handlers = self._data_event_handlers.get(event.intent_name, [])
         if not handlers:
@@ -1275,7 +1277,6 @@ class XiaoyiChannel(BaseChannel):
         # 参考 xy_channel websocket.ts:569-606
         msg_type = message.get("msgType")
         method = message.get("method")
-        logger.debug(f"[XiaoyiChannel] _extract_data_event: msg_type={msg_type}, method={method}")
         if msg_type == "data":
             try:
                 # 从 msgDetail 解析 A2A JSON-RPC 请求

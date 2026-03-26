@@ -2,6 +2,7 @@
 
 """Session Toolkit
 生命周期：Agent创建新session开始，到所有session协程结束
+
 在结束后，MultiSessionToolkit所有内容
 
 Agent 可以通过以下工具操控协程
@@ -22,6 +23,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import secrets
 import time
 from enum import Enum
@@ -38,7 +40,8 @@ from jiuwenclaw.agentserver.tools.mcp_toolkits import get_mcp_tools
 from jiuwenclaw.gateway.message_handler import MessageHandler
 from jiuwenclaw.schema import AgentResponseChunk
 from jiuwenclaw.schema.message import EventType, Message
-from jiuwenclaw.utils import logger
+
+logger = logging.getLogger(__name__)
 
 
 class Status(str, Enum):

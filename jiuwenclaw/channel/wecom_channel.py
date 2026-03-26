@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+import logging
 import asyncio
 import re
 import time
@@ -11,9 +12,10 @@ from typing import Any, Callable
 
 from pydantic import BaseModel, Field
 
-from jiuwenclaw.utils import logger
 from jiuwenclaw.channel.base import BaseChannel, ChannelMetadata, RobotMessageRouter
 from jiuwenclaw.schema.message import Message, ReqMethod, EventType
+
+logger = logging.getLogger(__name__)
 
 try:
     from wecom_aibot_sdk import WSClient

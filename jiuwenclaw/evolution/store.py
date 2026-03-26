@@ -3,6 +3,7 @@
 """EvolutionStore - Pure IO layer for skill evolution data."""
 from __future__ import annotations
 
+import logging
 import json
 import re
 from datetime import datetime, timezone
@@ -15,7 +16,8 @@ from jiuwenclaw.evolution.schema import (
     EvolutionFile,
     ExperienceTarget,
 )
-from jiuwenclaw.utils import logger
+
+logger = logging.getLogger(__name__)
 
 _EVOLUTION_FILENAME = "evolutions.json"
 

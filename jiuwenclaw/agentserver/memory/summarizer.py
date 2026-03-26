@@ -1,9 +1,8 @@
 # Copyright (c) Huawei Technologies Co., Ltd. 2025. All rights reserved.
 
-"""LLM-based memory compression and summarization for JiuWenClaw.
+"""LLM-based memory compression and summarization for JiuWenClaw."""
 
-"""
-
+import logging
 import os
 import datetime
 from typing import List, Dict, Any, Optional
@@ -12,8 +11,9 @@ from pathlib import Path
 from openjiuwen.core.foundation.llm import Model
 from openjiuwen.core.foundation.llm.schema.config import ModelRequestConfig, ModelClientConfig
 
-from jiuwenclaw.utils import logger
 from jiuwenclaw.config import get_config
+
+logger = logging.getLogger(__name__)
 
 
 def format_messages_for_summary(

@@ -2,6 +2,7 @@
 
 """XiaoYi Push Message Service - 主动推送消息服务."""
 
+import logging
 import base64
 import hashlib
 import hmac
@@ -12,7 +13,8 @@ from typing import Any
 
 import aiohttp
 
-from jiuwenclaw.utils import logger
+
+logger = logging.getLogger(__name__)
 
 PUSH_URL = "https://hag.cloud.huawei.com/open-ability-agent/v1/agent-webhook"
 
@@ -75,13 +77,13 @@ class XiaoYiPushService:
                     "id": self._generate_uuid(),
                     "apiId": self.config.api_id,
                     "pushId": self.config.push_id,
-                    "pushText": push_text,
+                    "pushText": text,
                     "kind": "task",
                     "artifacts": [{
                         "artifactId": self._generate_uuid(),
                         "parts": [{
                             "kind": "text",
-                            "text": text,
+                            "text": push_text,
                         }]
                     }],
                     "status": {"state": "completed"}

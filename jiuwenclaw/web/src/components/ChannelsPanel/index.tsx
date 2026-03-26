@@ -44,6 +44,7 @@ type XiaoyiConfig = {
   ak: string;
   sk: string;
   agent_id: string;
+  api_id: string;
   enable_streaming: boolean;
 };
 
@@ -52,6 +53,7 @@ type XiaoyiDraft = {
   ak: string;
   sk: string;
   agent_id: string;
+  api_id: string;
   enable_streaming: boolean;
 };
 
@@ -164,6 +166,7 @@ const DEFAULT_XIAOYI_CONF: XiaoyiConfig = {
   ak: '',
   sk: '',
   agent_id: '',
+  api_id: '',
   enable_streaming: true,
 };
 
@@ -340,6 +343,7 @@ function normalizeXiaoyiConfig(input: unknown): XiaoyiConfig {
     ak: String(data.ak ?? '').trim(),
     sk: String(data.sk ?? '').trim(),
     agent_id: String(data.agent_id ?? '').trim(),
+    api_id: String(data.api_id ?? '').trim(),
     enable_streaming: data.enable_streaming === undefined ? true : Boolean(data.enable_streaming),
   };
 }
@@ -350,6 +354,7 @@ function draftFromXiaoyiConfig(conf: XiaoyiConfig): XiaoyiDraft {
     ak: conf.ak,
     sk: conf.sk,
     agent_id: conf.agent_id,
+    api_id: conf.api_id,
     enable_streaming: conf.enable_streaming,
   };
 }
@@ -360,6 +365,7 @@ function buildXiaoyiPayload(draft: XiaoyiDraft): Record<string, unknown> {
     ak: draft.ak.trim(),
     sk: draft.sk.trim(),
     agent_id: draft.agent_id.trim(),
+    api_id: draft.api_id.trim(),
     enable_streaming: draft.enable_streaming,
   };
 }
@@ -898,6 +904,7 @@ export function ChannelsPanel({ isConnected }: ChannelsPanelProps) {
       baseDraft.ak !== xiaoyiDraft.ak ||
       baseDraft.sk !== xiaoyiDraft.sk ||
       baseDraft.agent_id !== xiaoyiDraft.agent_id ||
+      baseDraft.api_id !== xiaoyiDraft.api_id ||
       baseDraft.enable_streaming !== xiaoyiDraft.enable_streaming
     );
   }, [xiaoyiConfig, xiaoyiDraft]);
@@ -1467,7 +1474,7 @@ export function ChannelsPanel({ isConnected }: ChannelsPanelProps) {
                                 </button>
                               </td>
                             </tr>
-                            {(['ak', 'sk', 'agent_id'] as const).map((field) => (
+                            {(['ak', 'sk', 'agent_id', 'api_id'] as const).map((field) => (
                               <tr key={field} className="border-t border-border first:border-t-0 even:bg-secondary/10">
                                 <td className="px-4 py-2.5 align-middle mono text-xs text-text-muted w-[32%]">{field}</td>
                                 <td className="px-4 py-2.5 break-all text-[13px] align-middle">

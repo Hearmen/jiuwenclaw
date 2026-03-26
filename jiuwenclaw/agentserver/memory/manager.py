@@ -2,6 +2,7 @@
 
 """Memory Index Manager - Core memory management for JiuWenClaw."""
 
+import logging
 import os
 import json
 import sqlite3
@@ -21,7 +22,8 @@ from .internal import (
 )
 from .embeddings import EmbeddingProvider, create_embedding_provider
 from .config import MemorySettings
-from jiuwenclaw.utils import logger
+
+logger = logging.getLogger(__name__)
 
 META_KEY = "memory_index_meta_v1"
 SNIPPET_MAX_CHARS = 700

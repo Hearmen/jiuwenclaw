@@ -4,14 +4,17 @@
 
 from __future__ import annotations
 
+import logging
 import asyncio
 import json
 from abc import ABC, abstractmethod
 from dataclasses import asdict
 from typing import Any, AsyncIterator
 
-from jiuwenclaw.utils import logger
 from jiuwenclaw.schema.agent import AgentRequest, AgentResponse, AgentResponseChunk
+
+
+logger = logging.getLogger(__name__)
 
 
 def _to_json(data: Any) -> str:

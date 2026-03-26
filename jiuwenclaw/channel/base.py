@@ -1,5 +1,6 @@
 # Copyright (c) Huawei Technologies Co., Ltd. 2025. All rights reserved.
 
+import logging
 import asyncio
 import time
 from abc import ABC, abstractmethod
@@ -7,9 +8,10 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import TYPE_CHECKING, Any, Callable, Awaitable
 
-from jiuwenclaw.utils import logger
 from jiuwenclaw.schema.message import Message
 
+
+logger = logging.getLogger(__name__)
 if TYPE_CHECKING:
     pass
 

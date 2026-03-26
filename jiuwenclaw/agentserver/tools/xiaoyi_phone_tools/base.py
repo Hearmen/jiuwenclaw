@@ -11,10 +11,12 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from typing import Any, Callable, Dict, Optional
 
-from jiuwenclaw.utils import logger
 from jiuwenclaw.channel.xiaoyi_channel import get_xiaoyi_channel
+
+logger = logging.getLogger(__name__)
 
 
 class ToolInputError(Exception):
@@ -102,7 +104,10 @@ async def execute_device_command(
 
             result_event.set()
         else:
-            logger.debug(f"[{intent_name}_TOOL] Intent name mismatch: expected={intent_name}, got={event.intent_name}")
+            logger.debug(
+                f"[%s_TOOL] Intent name mismatch: expected=%s, got=%s",
+                intent_name, intent_name, event.intent_name
+            )
 
     # 注册处理器
     channel.register_data_event_handler(intent_name, on_data_event)

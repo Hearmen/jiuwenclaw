@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import os
 import time
 from typing import Any, AsyncIterator
@@ -26,13 +27,13 @@ from jiuwenclaw.agentserver.tools.multi_session_toolkits import MultiSessionTool
 from jiuwenclaw.agentserver.tools import SendFileToolkit
 from jiuwenclaw.agentserver.prompt_builder import build_system_prompt, build_user_prompt
 from jiuwenclaw.gateway.cron import CronController, CronTargetChannel
+
 from jiuwenclaw.utils import (
     get_agent_root_dir,
     get_agent_home_dir,
     get_checkpoint_dir,
     get_env_file,
     get_workspace_dir,
-    logger,
 )
 from jiuwenclaw.config import get_config
 from jiuwenclaw.agentserver.react_agent import JiuClawReActAgent
@@ -90,6 +91,8 @@ from jiuwenclaw.agentserver.session_history import append_history_record
 from jiuwenclaw.schema.message import ReqMethod
 
 load_dotenv(dotenv_path=get_env_file())
+
+logger = logging.getLogger(__name__)
 
 
 SYSTEM_PROMPT = """# 角色
@@ -552,6 +555,16 @@ class JiuWenClaw:
         channels_cfg = config_base.get("channels", {})
         xiaoyi_cfg = channels_cfg.get("xiaoyi", {})
         xiaoyi_phone_tools_enabled = xiaoyi_cfg.get("phone_tools_enabled", False)
+        if xiaoyi_phone_tools_enabled:
+            # Register send file toolkit
+            send_file_toolkit = SendFileToolkit(
+                request_id=request_id,
+                session_id=effective_session_id,
+                channel_id=channel_id,
+            )
+            for tool in send_file_toolkit.get_tools():
+                Runner.resource_mgr.add_tool(tool)
+                self._instance.ability_manager.add(tool.card)
 
         if xiaoyi_phone_tools_enabled and not self._xiaoyi_phone_tools_registered:
             try:
@@ -574,7 +587,7 @@ class JiuWenClaw:
                             Runner.resource_mgr.add_tool(tool)
                             self._instance.ability_manager.add(tool.card)
                     except Exception as tool_exc:
-                        logger.debug(f"[JiuWenClaw] Tool {tool.card.name} may already exist: {tool_exc}")
+                        logger.error(f"[JiuWenClaw] Tool {tool.card.name} may already exist: {tool_exc}")
 
             except Exception as exc:
                 logger.warning(f"[JiuWenClaw] xiaoyi phone tools runtime registration skipped: {exc}")
@@ -598,21 +611,6 @@ class JiuWenClaw:
             for tool in session_toolkits.get_tools():
                 Runner.resource_mgr.add_tool(tool)
                 self._instance.ability_manager.add(tool.card)
-
-        # Register send file toolkit
-        send_file_toolkit = SendFileToolkit(
-            request_id=request_id,
-            session_id=effective_session_id,
-            channel_id=channel_id,
-        )
-        for tool in send_file_toolkit.get_tools():
-            Runner.resource_mgr.add_tool(tool)
-            self._instance.ability_manager.add(tool.card)
-            # tool_list = self._instance.ability_manager.list()
-            # for tool in tool_list:
-            #     if isinstance(tool, ToolCard):
-            #         if tool.name.startswith("todo_"):
-            #             self._instance.ability_manager.remove(tool.name)
 
         if not self._memory_tools_registered:
             await init_memory_manager_async(

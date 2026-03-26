@@ -52,7 +52,6 @@ from jiuwenclaw.utils import (
     get_config_file,
     get_env_file,
     get_root_dir,
-    logger,
 )
 from jiuwenclaw.config import (
     get_config,
@@ -67,6 +66,8 @@ from jiuwenclaw.config import (
 )
 from jiuwenclaw.updater import WindowsUpdaterService
 from jiuwenclaw.version import __version__
+
+logger = logging.getLogger(__name__)
 
 _PROJECT_ROOT = get_root_dir()
 _ENV_FILE = get_env_file()

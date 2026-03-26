@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import importlib.util
+import logging
 import re
 import sys
 import uuid
@@ -39,8 +40,10 @@ from jiuwenclaw.agentserver.permissions import (
 from jiuwenclaw.agentserver.permissions.models import PermissionLevel
 from jiuwenclaw.agentserver.tools.todo_toolkits import TodoToolkit
 from jiuwenclaw.evolution.service import EvolutionService
-from jiuwenclaw.utils import get_agent_memory_dir, get_workspace_dir, logger
+from jiuwenclaw.utils import get_agent_memory_dir, get_workspace_dir
 from jiuwenclaw.config import get_config
+
+logger = logging.getLogger(__name__)
 
 
 # 加载流式输出配置

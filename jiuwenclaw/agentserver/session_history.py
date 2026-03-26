@@ -1,13 +1,16 @@
 from __future__ import annotations
 
+import logging
 import json
 import queue
 import threading
 from pathlib import Path
 from typing import Any
 
-from jiuwenclaw.utils import get_agent_sessions_dir, logger
+from jiuwenclaw.utils import get_agent_sessions_dir
 
+
+logger = logging.getLogger(__name__)
 _FILE_LOCK = threading.Lock()
 _WRITE_QUEUE: queue.Queue[tuple[str, dict[str, Any]]] = queue.Queue(maxsize=20000)
 _WORKER_STARTED = False

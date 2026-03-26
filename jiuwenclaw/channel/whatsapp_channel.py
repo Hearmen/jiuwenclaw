@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import asyncio
 import inspect
 import json
@@ -13,7 +14,9 @@ from typing import Any, Callable
 
 from jiuwenclaw.channel.base import BaseChannel, ChannelMetadata, RobotMessageRouter
 from jiuwenclaw.schema.message import EventType, Message, ReqMethod
-from jiuwenclaw.utils import logger
+
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass

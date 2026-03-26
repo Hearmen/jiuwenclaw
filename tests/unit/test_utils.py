@@ -74,9 +74,9 @@ class TestLoggerSetup:
 
     @staticmethod
     def test_setup_logger_default():
-        """Test logger setup with default level."""
-        logger = utils.setup_logger()
-        assert logger.name == "jiuwenclaw.app"
+        """Test logger setup with default level from explicit override."""
+        logger = utils.setup_logger("INFO")
+        assert logger.name == "jiuwenclaw"
         assert logger.level == 20  # INFO level
 
     @staticmethod
@@ -93,11 +93,11 @@ class TestLoggerSetup:
 
     @staticmethod
     def test_logger_handlers():
-        """Test that logger has both console and file handlers."""
-        logger = utils.setup_logger()
+        """Test that logger has console and four rotating log files."""
+        logger = utils.setup_logger("INFO")
         handler_types = [type(h).__name__ for h in logger.handlers]
         assert "StreamHandler" in handler_types
-        assert "RotatingFileHandler" in handler_types
+        assert handler_types.count("SafeRotatingFileHandler") == 4
 
 
 class TestUserWorkspace:

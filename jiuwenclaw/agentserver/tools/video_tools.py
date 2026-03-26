@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import logging
 import asyncio
 import base64
 import mimetypes
@@ -15,9 +16,11 @@ import requests
 from openjiuwen.core.foundation.tool import tool
 
 from jiuwenclaw.config import get_config
-from jiuwenclaw.utils import get_config_file, logger
+from jiuwenclaw.utils import get_config_file
 from jiuwenclaw.agentserver.tools.multimodal_config import apply_video_model_config_from_yaml
 
+
+logger = logging.getLogger(__name__)
 _USER_AGENT = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
     "AppleWebKit/537.36 (KHTML, like Gecko) "

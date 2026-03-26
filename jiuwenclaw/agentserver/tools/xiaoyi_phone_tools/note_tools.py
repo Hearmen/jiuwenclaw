@@ -10,11 +10,11 @@
 
 from __future__ import annotations
 
+import logging
 from typing import Any, Dict, List, Optional
 
 from openjiuwen.core.foundation.tool import tool
 
-from jiuwenclaw.utils import logger
 from .base import (
     execute_device_command,
     validate_required_params,
@@ -22,6 +22,8 @@ from .base import (
     format_error_response,
     ToolInputError,
 )
+
+logger = logging.getLogger(__name__)
 
 
 @tool(

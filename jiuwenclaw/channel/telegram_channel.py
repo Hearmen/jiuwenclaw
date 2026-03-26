@@ -9,10 +9,12 @@ import time
 from dataclasses import dataclass, field
 from typing import Any, Callable
 
-from loguru import logger
+import logging
 
 from jiuwenclaw.channel.base import BaseChannel, ChannelMetadata, RobotMessageRouter
 from jiuwenclaw.schema.message import Message, ReqMethod
+
+logger = logging.getLogger(__name__)
 
 try:
     from telegram import Update
@@ -136,7 +138,7 @@ class TelegramChannel(BaseChannel):
                 await asyncio.sleep(1)
 
         except Exception as e:
-            logger.error("Telegram Bot 启动失败: {}", e)
+            logger.error("Telegram Bot 启动失败: %s", e)
             self._running = False
             raise
 
@@ -151,7 +153,7 @@ class TelegramChannel(BaseChannel):
                 await self._application.stop()
                 await self._application.shutdown()
             except Exception as e:
-                logger.warning("Error stopping Telegram Bot: {}", e)
+                logger.warning("Error stopping Telegram Bot: %s", e)
 
         logger.info("Telegram Bot 已停止")
 
@@ -198,7 +200,7 @@ class TelegramChannel(BaseChannel):
                 else:
                     raise
 
-            logger.debug(f"Telegram message sent to chat_id={chat_id}")
+            logger.debug("Telegram message sent to chat_id=%s", chat_id)
 
         except Exception as e:
             logger.error(f"Error sending Telegram message: {type(e).__name__}: {e}")
@@ -301,7 +303,8 @@ class TelegramChannel(BaseChannel):
                 # off 模式: 不响应群聊消息
                 if group_mode == "off":
                     logger.debug(
-                        f"Telegram group chat mode is 'off', ignoring message from chat_id={chat_id}"
+                        "Telegram group chat mode is 'off', ignoring message from chat_id=%s",
+                        chat_id
                     )
                     return
 
@@ -346,7 +349,7 @@ class TelegramChannel(BaseChannel):
             try:
                 await update.message.set_reaction("👀")  # 使用眼睛表情表示"正在查看"
             except Exception as e:
-                logger.debug(f"Failed to set reaction: {e}")
+                logger.debug("Failed to set reaction: %s", e)
 
             # 生成或获取 session_id
             session_id = self._chat_sessions.get(chat_id)

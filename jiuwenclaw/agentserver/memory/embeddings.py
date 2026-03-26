@@ -2,11 +2,13 @@
 
 """Embedding providers for memory system."""
 
+import logging
 import os
 from abc import ABC, abstractmethod
 from typing import List, Optional
 
-from jiuwenclaw.utils import logger
+
+logger = logging.getLogger(__name__)
 
 class EmbeddingProvider(ABC):
     """Base class for embedding providers."""

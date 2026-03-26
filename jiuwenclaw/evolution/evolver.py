@@ -3,6 +3,7 @@
 """SkillEvolver - LLM-based experience generation with deduplication."""
 from __future__ import annotations
 
+import logging
 import json
 import re
 from typing import Any, List, Optional
@@ -15,7 +16,8 @@ from jiuwenclaw.evolution.schema import (
     ExperienceTarget,
     VALID_SECTIONS,
 )
-from jiuwenclaw.utils import logger
+
+logger = logging.getLogger(__name__)
 
 _GENERATE_PROMPT = """\
 你是一个 Skill 优化专家。根据对话中发现的问题信号和对话历史，为 Skill 生成演进经验。

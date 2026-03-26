@@ -6,6 +6,7 @@ Configuration is loaded from config/config.yaml.
 Embedding API settings are in the 'embed' section.
 """
 
+import logging
 import os
 import re
 from typing import Any, Optional, Dict, List
@@ -14,8 +15,9 @@ from pathlib import Path
 
 import yaml
 
-from jiuwenclaw.utils import get_config_file, get_agent_root_dir, logger
+from jiuwenclaw.utils import get_config_file, get_agent_root_dir
 
+logger = logging.getLogger(__name__)
 
 DEFAULT_CONFIG_PATH = str(get_config_file())
 DEFAULT_WORKSPACE_DIR = str(get_agent_root_dir())

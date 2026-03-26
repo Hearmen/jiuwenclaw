@@ -1,5 +1,6 @@
 # Copyright (c) Huawei Technologies Co., Ltd. 2025. All rights reserved.
 
+import logging
 import asyncio
 import concurrent.futures
 import types
@@ -12,9 +13,12 @@ from typing import Any, Callable
 
 from pydantic import BaseModel, Field
 
-from jiuwenclaw.utils import logger
 from jiuwenclaw.channel.base import RobotMessageRouter, BaseChannel
 from jiuwenclaw.schema.message import Message, ReqMethod, EventType
+
+
+
+logger = logging.getLogger(__name__)
 
 
 class FeishuConfig(BaseModel):
@@ -408,7 +412,7 @@ class FeishuChannel(BaseChannel):
                     f"添加消息反应失败: 错误码={response.code}, 消息={response.msg}"
                 )
             else:
-                logger.debug(f"已为消息 {message_id} 添加 {emoji_type} 表情")
+                logger.debug("已为消息 %s 添加 %s 表情", message_id, emoji_type)
         except Exception as e:
             logger.warning(f"添加消息反应时发生异常: {e}")
 
@@ -964,7 +968,7 @@ class FeishuChannel(BaseChannel):
                 f"消息={response.msg}, 日志ID={response.get_log_id()}"
             )
         else:
-            logger.debug(f"已向 {msg_id} 发送飞书消息")
+            logger.debug("已向 %s 发送飞书消息", msg_id)
 
     def _on_message_sync(self, data: "P2ImMessageReceiveV1") -> None:
         """

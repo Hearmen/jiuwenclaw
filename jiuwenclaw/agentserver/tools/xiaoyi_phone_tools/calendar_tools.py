@@ -9,10 +9,13 @@
 
 from __future__ import annotations
 
+import logging
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 
 from openjiuwen.core.foundation.tool import tool
+
+logger = logging.getLogger(__name__)
 
 
 def _format_timestamp_to_datetime(timestamp_ms: int) -> str:
@@ -46,7 +49,6 @@ def _convert_event_timestamps(event: Dict[str, Any]) -> Dict[str, Any]:
         result["dtEnd"] = _format_timestamp_to_datetime(result["dtEnd"])
     return result
 
-from jiuwenclaw.utils import logger
 from .base import (
     execute_device_command,
     validate_required_params,

@@ -1,15 +1,17 @@
 import asyncio
 import json
+import logging
 import time
 from typing import Any, Callable
 
-from loguru import logger
 from pydantic import BaseModel, Field
 import httpx
 
 
 from jiuwenclaw.channel.base import RobotMessageRouter, BaseChannel
 from jiuwenclaw.schema.message import Message, ReqMethod
+
+logger = logging.getLogger(__name__)
 
 
 class DingTalkConfig(BaseModel):
@@ -420,7 +422,7 @@ class DingTalkChannel(BaseChannel):
             if resp.status_code != 200:
                 logger.error(f"钉钉消息发送失败: {resp.text}")
             else:
-                logger.debug(f"钉钉消息已发送至 {chat_id}")
+                logger.debug("钉钉消息已发送至 %s", chat_id)
         except Exception as e:
             logger.error(f"发送钉钉消息时出错: {e}")
 

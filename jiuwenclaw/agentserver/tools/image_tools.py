@@ -16,15 +16,15 @@ from openjiuwen.core.foundation.tool import McpServerConfig, tool
 from openjiuwen.core.runner import Runner
 import requests
 
-from jiuwenclaw.utils import logger
 from jiuwenclaw.agentserver.tools.multimodal_config import apply_vision_model_config_from_yaml
 
+
+logger = logging.getLogger(__name__)
 load_dotenv(verbose=True)
 
 _SANDBOX_MARKER = "home/user"
 
 mcp = FastMCP("vision-mcp-server")
-_log = logging.getLogger(__name__)
 
 
 class _PathHelper:
@@ -283,15 +283,15 @@ async def visual_question_answering(image_path_or_url: str, question: str) -> st
     try:
         apply_vision_model_config_from_yaml(get_config())
     except Exception:
-        _log.debug("Failed to apply vision model config from yaml", exc_info=True)
+        logger.debug("Failed to apply vision model config from yaml", exc_info=True)
 
     vision_api_key, vision_api_base, vision_model = _get_vision_api_credentials()
     logger.info("[visual_question_answering] using model: %s (api_base: %s)", vision_model, vision_api_base)
 
     ocr_out = await _invoke_openai_vision(image_path_or_url, _OCR_INSTRUCTIONS)
     vqa_out = await _invoke_openai_vision(image_path_or_url, _build_vqa_prompt(ocr_out, question))
-    _log.info("Visual Question Answering tool called via OpenRouter (Gemini model)")
-    _log.info(f"OCR results: {ocr_out}")
-    _log.info(f"VQA results: {vqa_out}")
+    logger.info("Visual Question Answering tool called via OpenRouter (Gemini model)")
+    logger.info(f"OCR results: {ocr_out}")
+    logger.info(f"VQA results: {vqa_out}")
     return f"OCR results:\n{ocr_out}\n\nVQA result:\n{vqa_out}"
 

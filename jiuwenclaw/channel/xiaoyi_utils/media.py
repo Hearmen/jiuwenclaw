@@ -7,12 +7,15 @@
 import asyncio
 import base64
 from dataclasses import dataclass
+import logging
 import os
 from typing import Any
 
 import aiohttp
 
-from jiuwenclaw.utils import logger, get_xy_tmp_dir
+from jiuwenclaw.utils import get_xy_tmp_dir
+
+logger = logging.getLogger(__name__)
 
 _TMP_MEDIA_PATH = get_xy_tmp_dir()
 

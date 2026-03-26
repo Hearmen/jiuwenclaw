@@ -9,6 +9,7 @@ from __future__ import annotations
 import importlib
 import importlib.abc
 import importlib.util
+import inspect
 import logging
 import os
 import sys
@@ -360,8 +361,20 @@ def _patch_base_model_client(base_model_client_mod: Any) -> None:
 
     original_convert_tools = base_cls._convert_tools_to_dict
 
+    try:
+        sig = inspect.signature(original_convert_tools)
+        param_count = len(sig.parameters)
+        needs_self = param_count == 2 and "self" in sig.parameters
+    except Exception:
+        # Fallback: try with self first
+        needs_self = True
+
     def _convert_tools_to_dict_dedup(self: Any, tools: Any) -> Any:
-        tool_dicts = original_convert_tools(self, tools)
+        if needs_self:
+            tool_dicts = original_convert_tools(self, tools)
+        else:
+            tool_dicts = original_convert_tools(tools)
+
         if not tool_dicts:
             return tool_dicts
 

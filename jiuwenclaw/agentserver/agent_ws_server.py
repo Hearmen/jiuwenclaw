@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+import logging
 import asyncio
 import json
 import math
@@ -11,8 +12,11 @@ from dataclasses import asdict
 from pathlib import Path
 from typing import Any, ClassVar
 
-from jiuwenclaw.utils import get_agent_sessions_dir, get_config_file, logger
+from jiuwenclaw.utils import get_agent_sessions_dir, get_config_file
 from jiuwenclaw.schema.agent import AgentRequest, AgentResponse, AgentResponseChunk
+
+
+logger = logging.getLogger(__name__)
 
 
 def _payload_to_request(data: dict[str, Any]) -> AgentRequest:

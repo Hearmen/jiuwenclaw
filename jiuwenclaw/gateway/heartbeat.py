@@ -4,13 +4,15 @@
 
 from __future__ import annotations
 
+import logging
 import asyncio
 import time
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
-from jiuwenclaw.utils import logger
+logger = logging.getLogger(__name__)
+
 if TYPE_CHECKING:
     from jiuwenclaw.gateway.agent_client import AgentServerClient
     from jiuwenclaw.gateway.message_handler import MessageHandler

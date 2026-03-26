@@ -21,9 +21,10 @@ from openjiuwen.core.foundation.tool import McpServerConfig, tool
 from openjiuwen.core.runner import Runner
 import requests
 
-from jiuwenclaw.utils import logger
 from jiuwenclaw.agentserver.tools.multimodal_config import apply_audio_model_config_from_yaml
 
+
+logger = logging.getLogger(__name__)
 ACR_ACCESS_KEY = os.environ.get("ACR_ACCESS_KEY", "")
 ACR_ACCESS_SECRET = os.environ.get("ACR_ACCESS_SECRET", "")
 ACR_BASE_URL = os.environ.get(
@@ -37,8 +38,6 @@ DEFAULT_USER_AGENT = (
 )
 
 mcp = FastMCP("audio-mcp-server")
-
-_log = logging.getLogger(__name__)
 
 _AUDIO_EXT_MAP = {
     ".mp3": "mp3", ".wav": "wav", ".m4a": "m4a",
@@ -74,7 +73,7 @@ def _compute_audio_length_seconds(file_path: str) -> float:
             if secs > 0:
                 return secs
     except (wave.Error, OSError):
-        _log.debug("wave module failed to read %s, trying mutagen", file_path)
+        logger.debug("wave module failed to read %s, trying mutagen", file_path)
     try:
         audio_obj = MutagenFile(file_path)
         if audio_obj is not None and hasattr(audio_obj, "info"):
@@ -83,7 +82,7 @@ def _compute_audio_length_seconds(file_path: str) -> float:
                 if secs > 0:
                     return secs
     except Exception:
-        _log.debug("mutagen failed to read %s", file_path, exc_info=True)
+        logger.debug("mutagen failed to read %s", file_path, exc_info=True)
     raise ValueError("Unable to determine audio duration")
 
 
@@ -160,7 +159,7 @@ async def audio_question_answering(audio_path_or_url: str, question: str) -> str
     try:
         apply_audio_model_config_from_yaml(get_config())
     except Exception:
-        _log.debug("Failed to apply audio model config from yaml", exc_info=True)
+        logger.debug("Failed to apply audio model config from yaml", exc_info=True)
 
     api_key, api_base, client = _create_openai_client_for_audio()
     if not api_key:

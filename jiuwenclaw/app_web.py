@@ -136,7 +136,7 @@ class _SpaStaticHandler(SimpleHTTPRequestHandler):
     project_root = Path(".").resolve()
     workspace_root = Path(".").resolve()
     logs_root = Path(".").resolve()
-    logger = logging.getLogger("jiuwenclaw.web.static")
+    logger = logging.getLogger(__name__)
 
     _HOP_BY_HOP_HEADERS = {
         "connection",
@@ -770,25 +770,22 @@ def _normalize_ws_target(value: str) -> str:
 
 def _setup_logger(logs_root: Path, log_level: str) -> logging.Logger:
     logs_root.mkdir(parents=True, exist_ok=True)
-    logger = logging.getLogger("jiuwenclaw.web.static")
-    logger.setLevel(getattr(logging, log_level.upper(), logging.INFO))
-    logger.propagate = False
-    logger.handlers.clear()
+    lg = logging.getLogger(__name__)
+    lg.setLevel(getattr(logging, log_level.upper(), logging.INFO))
+    lg.propagate = True
+    for h in lg.handlers[:]:
+        h.close()
+        lg.removeHandler(h)
 
     formatter = logging.Formatter(
         fmt="%(asctime)s.%(msecs)03d %(levelname)s %(name)s: %(message)s",
         datefmt="%Y-%m-%d %H:%M:%S",
     )
 
-    stream_handler = logging.StreamHandler()
-    stream_handler.setFormatter(formatter)
-
     file_handler = logging.FileHandler(logs_root / "ws-dev.log", mode="w", encoding="utf-8")
     file_handler.setFormatter(formatter)
-
-    logger.addHandler(stream_handler)
-    logger.addHandler(file_handler)
-    return logger
+    lg.addHandler(file_handler)
+    return lg
 
 
 def main() -> None:
