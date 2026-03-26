@@ -37,6 +37,7 @@ from jiuwenclaw.utils import (
 )
 from jiuwenclaw.config import get_config
 from jiuwenclaw.agentserver.react_agent import JiuClawReActAgent
+from jiuwenclaw.agentserver.permissions.checker import TOOL_PERMISSION_CHANNEL_ID
 from jiuwenclaw.agentserver.tools.browser_tools import register_browser_runtime_mcp_server
 from jiuwenclaw.agentserver.tools.audio_tools import (
     audio_question_answering,
@@ -1062,6 +1063,7 @@ class JiuWenClaw:
         result_future = asyncio.get_event_loop().create_future()
 
         async def run_agent_task():
+            token_cid = TOOL_PERMISSION_CHANNEL_ID.set((request.channel_id or "").strip())
             try:
                 await self._register_runtime_tools(
                     request.session_id,
@@ -1076,6 +1078,8 @@ class JiuWenClaw:
             except Exception as e:
                 logger.error("[JiuWenClaw] Agent 任务执行异常: %s", e)
                 raise
+            finally:
+                TOOL_PERMISSION_CHANNEL_ID.reset(token_cid)
 
         # 包装任务，完成后将结果放入 future
         async def task_wrapper():
@@ -1205,6 +1209,7 @@ class JiuWenClaw:
         # 创建流式任务函数
         async def run_stream_task():
             """执行流式任务，将产生的 chunk 放入队列."""
+            token_cid = TOOL_PERMISSION_CHANNEL_ID.set((request.channel_id or "").strip())
             try:
                 await self._register_runtime_tools(
                     request.session_id,
@@ -1224,6 +1229,7 @@ class JiuWenClaw:
                 logger.exception("[JiuWenClaw] 流式任务异常: %s", exc)
                 await stream_queue.put(("error", exc))
             finally:
+                TOOL_PERMISSION_CHANNEL_ID.reset(token_cid)
                 stream_done.set()
 
         # 包装任务

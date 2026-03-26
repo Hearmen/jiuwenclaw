@@ -37,6 +37,7 @@ from jiuwenclaw.agentserver.permissions import (
     persist_external_directory_allow,
     persist_permission_allow_rule,
 )
+from jiuwenclaw.agentserver.permissions.checker import TOOL_PERMISSION_CHANNEL_ID
 from jiuwenclaw.agentserver.permissions.models import PermissionLevel
 from jiuwenclaw.agentserver.tools.todo_toolkits import TodoToolkit
 from jiuwenclaw.evolution.service import EvolutionService
@@ -423,7 +424,7 @@ class JiuClawReActAgent(ReActAgent):
 
                 allowed_tool_calls, denied_results = await check_tool_permissions(
                     ai_message.tool_calls,
-                    channel_id=getattr(session, "channel_id", "web") if session else "web",
+                    channel_id=TOOL_PERMISSION_CHANNEL_ID.get(),
                     session_id=session_id or None,
                     session=session,
                     request_approval_callback=self._request_permission_approval,

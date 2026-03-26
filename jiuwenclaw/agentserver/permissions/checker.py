@@ -16,6 +16,7 @@
 
 from __future__ import annotations
 
+import contextvars
 import json
 import logging
 import re
@@ -36,13 +37,24 @@ from jiuwenclaw.agentserver.permissions.patterns import (
 
 logger = logging.getLogger(__name__)
 
+# 当前 asyncio Task 的 channel_id（供工具权限判断）；由 interface 在 run_agent 前 set、结束后 reset。
+# 不放入 Runner inputs，避免扩展对外契约。
+TOOL_PERMISSION_CHANNEL_ID: contextvars.ContextVar[str] = contextvars.ContextVar(
+    "jiuwenclaw_tool_permission_channel_id",
+    default="",
+)
+
+# 与 jiuwenclaw.channel.web_channel.WebChannel.name / channel_id 一致。
+# 仅当 TOOL_PERMISSION_CHANNEL_ID strip 后等于本常量时才做工具权限与 ask 审批；其它通道跳过。
+WEB_TOOL_PERMISSIONS_CHANNEL_ID = "web"
+
 
 # ---------- 工具调用守卫 ----------
 
 
 async def check_tool_permissions(
     tool_calls: List[Any],
-    channel_id: str = "web",
+    channel_id: str = "",
     session_id: str | None = None,
     session: Any = None,
     request_approval_callback: Callable[[Any, Any, Any], Awaitable[str]] | None = None,
@@ -51,7 +63,7 @@ async def check_tool_permissions(
 
     Args:
         tool_calls: 待执行的工具调用列表
-        channel_id: 频道 ID
+        channel_id: 频道 ID；仅 strip 后等于 WEB_TOOL_PERMISSIONS_CHANNEL_ID 时执行校验，否则全量放行
         session_id: 会话 ID
         session: 会话对象，用于发起审批弹窗
         request_approval_callback: 当 needs_approval 时的回调 -> "allow_always"|"allow_once"|"deny"
@@ -64,6 +76,14 @@ async def check_tool_permissions(
     from jiuwenclaw.agentserver.permissions.core import get_permission_engine
     engine = get_permission_engine()
     if not engine.enabled:
+        return list(tool_calls), []
+
+    normalized_channel_id = (channel_id or "").strip()
+    if normalized_channel_id != WEB_TOOL_PERMISSIONS_CHANNEL_ID:
+        logger.info(
+            "Tool permissions check skipped for channel=%s",
+            normalized_channel_id or "(empty)",
+        )
         return list(tool_calls), []
 
     allowed: List[Any] = []
@@ -81,7 +101,7 @@ async def check_tool_permissions(
         result = await engine.check_permission(
             tool_name=tool_name,
             tool_args=tool_args,
-            channel_id=channel_id,
+            channel_id=normalized_channel_id,
             session_id=session_id,
         )
 
