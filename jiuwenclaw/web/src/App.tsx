@@ -496,6 +496,110 @@ function AppContent() {
       .catch(() => {});
   }, [isConnected]);
 
+  // 当会话 ID 变化或页面加载时，自动加载历史会话
+  useEffect(() => {
+    if (!isConnected || !sessionId || sessionId === 'new') return;
+    
+    // 仅处理以 sess_ 开头的会话 ID
+    if (!sessionId.startsWith('sess_')) return;
+    
+    // 清理之前的历史加载句柄
+    disposeInFlightHistoryHandles();
+    setHistoryPagerMeta(null);
+    setHistoryLoadingMore(false);
+    
+    // 开始历史会话加载
+    const restoreHandle = beginHistoryRestore({
+      sessionId: sessionId,
+      onReady: (messages, totalPages) => {
+        if (sessionIdRef.current !== sessionId) {
+          return;
+        }
+        clearMessages();
+        messages.forEach((message) => addMessage(message));
+        setHistoryPagerMeta({
+          loadedPages: 1,
+          totalPages: totalPages ?? 1,
+        });
+        queueMicrotask(() => {
+          historyRestoreHandleRef.current = null;
+        });
+      },
+      onEmpty: (emptyTotalPages) => {
+        if (sessionIdRef.current !== sessionId) {
+          return;
+        }
+        clearMessages();
+        setHistoryPagerMeta({
+          loadedPages: 1,
+          totalPages: emptyTotalPages ?? 1,
+        });
+        historyRestoreHandleRef.current = null;
+      },
+      onToolReplay: (items) => {
+        if (sessionIdRef.current !== sessionId) {
+          return;
+        }
+        clearSubtasks();
+        for (const item of items) {
+          if (item.kind === 'tool_call') {
+            const n = normalizeToolCallPayload(item.payload);
+            addToolCall(
+              {
+                id: n.id,
+                name: n.name,
+                arguments: n.arguments,
+                description: n.description,
+                formatted_args: n.formatted_args,
+              },
+              { startedAt: item.at }
+            );
+          } else {
+            const n = normalizeToolResultPayload(item.payload);
+            addToolResult(
+              {
+                toolName: n.toolName,
+                result: n.result,
+                success: n.success,
+                toolCallId: n.toolCallId,
+                summary: n.summary,
+              },
+              { updatedAt: item.at }
+            );
+          }
+        }
+      },
+      onError: (message) => {
+        console.warn('[history.restore]', message);
+      },
+    });
+    historyRestoreHandleRef.current = restoreHandle;
+
+    // 调用历史会话接口
+    void (async () => {
+      try {
+        await request(HISTORY_GET_METHOD, {
+          session_id: sessionId,
+          page_idx: 1,
+        });
+      } catch (error) {
+        restoreHandle.dispose();
+        historyRestoreHandleRef.current = null;
+        setHistoryPagerMeta(null);
+        console.error('Failed to load history:', error);
+        if (sessionIdRef.current === sessionId) {
+          clearMessages();
+          addMessage({
+            id: `history-load-failed-${Date.now()}`,
+            role: 'system',
+            content: t('sessions.errors.restoreFailed', { sessionId }),
+            timestamp: new Date().toISOString(),
+          });
+        }
+      }
+    })();
+  }, [isConnected, sessionId, request, t, addMessage, addToolCall, addToolResult, clearMessages, clearSubtasks, disposeInFlightHistoryHandles]);
+
   // 新建会话：立即生成可用的 session_id，避免停留在 'new' 导致无法发送消息
   const handleNewSession = useCallback(async () => {
     disposeInFlightHistoryHandles();
