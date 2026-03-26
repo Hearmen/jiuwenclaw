@@ -26,7 +26,11 @@ class ReqMethod(Enum):
     PATH_SET = "path.set"
 
     BROWSER_START = "browser.start"
-    
+    BROWSER_RUNTIME_RESTART = "browser.runtime_restart"
+
+    CONFIG_CACHE_CLEAR = "config.cache_clear"
+    AGENT_RELOAD_CONFIG = "agent.reload_config"
+
     MEMORY_COMPUTE = "memory.compute"
     
     FILES_LIST = "files.list"

@@ -14,7 +14,6 @@ import sys
 import time
 import re
 
-from pathlib import Path
 from dotenv import load_dotenv
 from typing import Any
 import psutil
@@ -53,7 +52,6 @@ from jiuwenclaw.utils import (
     get_config_file,
     get_env_file,
     get_root_dir,
-    is_package_installation,
     logger,
 )
 from jiuwenclaw.config import (
@@ -70,18 +68,6 @@ from jiuwenclaw.config import (
 _PROJECT_ROOT = get_root_dir()
 _ENV_FILE = get_env_file()
 load_dotenv(dotenv_path=_ENV_FILE)
-
-
-def _get_package_dir() -> Path:
-    """Get the jiuwenclaw package directory (for accessing package-internal files)."""
-    if is_package_installation():
-        # In package mode, app.py is at site-packages/jiuwenclaw/app.py
-        # So parent is site-packages/jiuwenclaw/
-        return Path(__file__).resolve().parent
-    else:
-        # In source mode, app.py is at project root
-        # So parent.parent is project root/jiuwenclaw/
-        return Path(__file__).resolve().parent.parent / "jiuwenclaw"
 
 
 # 仅满足 Channel 构造所需，不入队、不路由；仅用 channel_manager + message_handler 做入站/出站
@@ -181,11 +167,21 @@ CONFIG_KEYS = tuple(_CONFIG_SET_ENV_MAP.keys())
 _CONFIG_YAML_KEYS = frozenset({"context_engine_enabled", "permissions_enabled"})
 
 
-def _clear_agent_config_cache() -> None:
+async def _clear_agent_config_cache(agent_client=None) -> None:
     """写回 config.yaml 后清除 agent 侧配置缓存，使下次读取时得到最新文件内容。"""
     try:
-        from jiuwenclaw.agentserver.memory.config import clear_config_cache
-        clear_config_cache()
+        if agent_client is not None:
+            from jiuwenclaw.schema.agent import AgentRequest
+            from jiuwenclaw.schema.message import ReqMethod
+            import uuid
+            req = AgentRequest(
+                request_id=f"cfg-cache-clear-{uuid.uuid4().hex[:8]}",
+                channel_id="",
+                req_method=ReqMethod.CONFIG_CACHE_CLEAR,
+            )
+            await agent_client.send_request(req)
+        else:
+            get_config()
     except Exception:  # noqa: BLE001
         pass
 
@@ -362,7 +358,7 @@ def _register_web_handlers(
             _persist_env_updates(env_updates)
             logger.info("[config.set] 已更新 .env: %s", list(env_updates.keys()))
         if yaml_updated:
-            _clear_agent_config_cache()
+            await _clear_agent_config_cache(_resolve(agent_client))
             logger.info("[config.set] 已更新 config.yaml: %s", yaml_updated)
 
         if env_updates or yaml_updated:
@@ -506,7 +502,7 @@ def _register_web_handlers(
 
         try:
             update_browser_in_config({"chrome_path": chrome_path})
-            _clear_agent_config_cache()
+            await _clear_agent_config_cache(_resolve(agent_client))
         except Exception as e:  # noqa: BLE001
             logger.warning("[path.set] 写回 config.yaml 失败: %s", e)
             await channel.send_response(ws, req_id, ok=False, error=str(e), code="INTERNAL_ERROR")
@@ -657,7 +653,7 @@ def _register_web_handlers(
             payload = dict(hb.get_heartbeat_conf())
             try:
                 update_heartbeat_in_config(payload)
-                _clear_agent_config_cache()
+                await _clear_agent_config_cache(_resolve(agent_client))
             except Exception as e:  # noqa: BLE001
                 logger.warning("[heartbeat.set_conf] 写回 config.yaml 失败: %s", e)
             await channel.send_response(ws, req_id, ok=True, payload=payload)
@@ -712,7 +708,7 @@ def _register_web_handlers(
             conf = cm.get_conf("feishu")
             try:
                 update_channel_in_config("feishu", conf)
-                _clear_agent_config_cache()
+                await _clear_agent_config_cache(_resolve(agent_client))
             except Exception as e:  # noqa: BLE001
                 logger.warning("[channel.feishu.set_conf] 写回 config.yaml 失败: %s", e)
             await channel.send_response(ws, req_id, ok=True, payload={"config": conf})
@@ -765,7 +761,7 @@ def _register_web_handlers(
             conf = cm.get_conf("xiaoyi")
             try:
                 update_channel_in_config("xiaoyi", conf)
-                _clear_agent_config_cache()
+                await _clear_agent_config_cache(_resolve(agent_client))
             except Exception as e:  # noqa: BLE001
                 logger.warning("[channel.xiaoyi.set_conf] 写回 config.yaml 失败: %s", e)
             await channel.send_response(ws, req_id, ok=True, payload={"config": conf})
@@ -818,7 +814,7 @@ def _register_web_handlers(
             conf = cm.get_conf("telegram")
             try:
                 update_channel_in_config("telegram", conf)
-                _clear_agent_config_cache()
+                await _clear_agent_config_cache(_resolve(agent_client))
             except Exception as e:  # noqa: BLE001
                 logger.warning("[channel.telegram.set_conf] 写回 config.yaml 失败: %s", e)
             await channel.send_response(ws, req_id, ok=True, payload={"config": conf})
@@ -869,7 +865,7 @@ def _register_web_handlers(
             conf = cm.get_conf("dingtalk")
             try:
                 update_channel_in_config("dingtalk", conf)
-                _clear_agent_config_cache()
+                await _clear_agent_config_cache(_resolve(agent_client))
             except Exception as e:  # noqa: BLE001
                 logger.warning("[channel.dingtalk.set_conf] 写回 config.yaml 失败: %s", e)
             await channel.send_response(ws, req_id, ok=True, payload={"config": conf})
@@ -919,7 +915,7 @@ def _register_web_handlers(
             conf = cm.get_conf("whatsapp")
             try:
                 update_channel_in_config("whatsapp", conf)
-                _clear_agent_config_cache()
+                await _clear_agent_config_cache(_resolve(agent_client))
             except Exception as e:  # noqa: BLE001
                 logger.warning("[channel.whatsapp.set_conf] 写回 config.yaml 失败: %s", e)
             await channel.send_response(ws, req_id, ok=True, payload={"config": conf})
@@ -970,7 +966,7 @@ def _register_web_handlers(
             conf = cm.get_conf("discord")
             try:
                 update_channel_in_config("discord", conf)
-                _clear_agent_config_cache()
+                await _clear_agent_config_cache(_resolve(agent_client))
             except Exception as e:  # noqa: BLE001
                 logger.warning("[channel.discord.set_conf] 写回 config.yaml 失败: %s", e)
             await channel.send_response(ws, req_id, ok=True, payload={"config": conf})
@@ -1021,7 +1017,7 @@ def _register_web_handlers(
             conf = cm.get_conf("wecom")
             try:
                 update_channel_in_config("wecom", conf)
-                _clear_agent_config_cache()
+                await _clear_agent_config_cache(_resolve(agent_client))
             except Exception as e:  # noqa: BLE001
                 logger.warning("[channel.wecom.set_conf] 写回 config.yaml 失败: %s", e)
             await channel.send_response(ws, req_id, ok=True, payload={"config": conf})
@@ -1225,7 +1221,6 @@ def _register_web_handlers(
 
 
 async def _run() -> None:
-    from jiuwenclaw.agentserver.interface import JiuWenClaw
     from jiuwenclaw.channel.feishu import FeishuChannel, FeishuConfig
     from jiuwenclaw.channel.web_channel import WebChannel, WebChannelConfig
     from jiuwenclaw.channel.xiaoyi_channel import XiaoyiChannel, XiaoyiChannelConfig
@@ -1242,8 +1237,6 @@ async def _run() -> None:
     from jiuwenclaw.gateway.cron import CronController, CronJobStore, CronSchedulerService
     from jiuwenclaw.gateway.message_handler import MessageHandler
     from jiuwenclaw.schema.message import Message, EventType, ReqMethod
-    from jiuwenclaw.agentserver.memory.config import _load_config as _load_agent_config
-    from jiuwenclaw.agentserver.tools.browser_tools import restart_local_browser_runtime_server
 
     agent_port = int(os.getenv("AGENT_PORT", "18092"))
     web_host = os.getenv("WEB_HOST", "127.0.0.1")
@@ -1263,11 +1256,7 @@ async def _run() -> None:
         except RuntimeError:
             _do_restart()
 
-    # ---------- 一次启动所有服务 ----------
-    agent = JiuWenClaw()
-
     server = AgentWebSocketServer.get_instance(
-        agent=agent,
         host="127.0.0.1",
         port=agent_port,
         ping_interval=20.0,
@@ -1286,15 +1275,12 @@ async def _run() -> None:
     cron_scheduler = CronSchedulerService(store=cron_store, agent_client=client, message_handler=message_handler)
     cron_controller = CronController.get_instance(store=cron_store, scheduler=cron_scheduler)
 
-    # agent实例化需要在定时任务后
-    await agent.create_instance()
-
-    # 探活：周期性向 AgentServer 发送心跳，便于检测连接与 Agent 可用性
+    # 探活：周期性向 AgentServer 发送心跳，便于检测连接与 Agent 可用性 
     # 优先从 config/config.yaml 的 heartbeat 段读取配置，其次回退到环境变量/默认值
     heartbeat_cfg: dict | None = None
     channels_cfg: dict | None = None
     try:
-        full_cfg = _load_agent_config()
+        full_cfg = get_config()
         heartbeat_cfg = full_cfg.get("heartbeat") if isinstance(full_cfg, dict) else None
         channels_cfg = full_cfg.get("channels") if isinstance(full_cfg, dict) else None
     except Exception as e:  # noqa: BLE001
@@ -1337,7 +1323,7 @@ async def _run() -> None:
 
     channel_manager = ChannelManager(message_handler, config=initial_channels_conf)
 
-    def _on_config_saved(updated_env_keys: set[str] | None = None) -> bool:
+    async def _on_config_saved(updated_env_keys: set[str] | None = None) -> bool:
         """先尝试热更新，失败则安排延迟重启。返回 True 表示已热更新未重启，False 表示已安排重启。"""
         browser_runtime_keys = {
             "MODEL_PROVIDER", "MODEL_NAME", "API_BASE", "API_KEY",
@@ -1346,9 +1332,23 @@ async def _run() -> None:
             "VISION_PROVIDER", "VISION_MODEL_NAME", "VISION_API_BASE", "VISION_API_KEY",
         }
         try:
-            agent.reload_agent_config()
+            from jiuwenclaw.schema.agent import AgentRequest
+            import uuid
+
+            reload_req = AgentRequest(
+                request_id=f"agent-reload-{uuid.uuid4().hex[:8]}",
+                channel_id="",
+                req_method=ReqMethod.AGENT_RELOAD_CONFIG,
+            )
+            await client.send_request(reload_req)
+
             if updated_env_keys and (browser_runtime_keys & set(updated_env_keys)):
-                restart_local_browser_runtime_server()
+                restart_req = AgentRequest(
+                    request_id=f"browser-restart-{uuid.uuid4().hex[:8]}",
+                    channel_id="",
+                    req_method=ReqMethod.BROWSER_RUNTIME_RESTART,
+                )
+                await client.send_request(restart_req)
             return True
         except Exception as e:  # noqa: BLE001
             logger.warning("[App] 配置热更新失败，将延迟重启: %s", e)

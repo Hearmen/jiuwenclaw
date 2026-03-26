@@ -60,7 +60,7 @@ class AgentWebSocketServer:
 
     def __init__(
         self,
-        agent,
+        agent=None,
         host: str = "127.0.0.1",
         port: int = 18000,
         *,
@@ -89,18 +89,11 @@ class AgentWebSocketServer:
     ) -> "AgentWebSocketServer":
         """返回单例实例。
 
-        首次调用时 agent 必填，host/port/ping_* 可选。
+        首次调用时 agent 可选（若未提供则在 start() 时自动创建 JiuWenClaw 实例）。
         后续调用可省略所有参数，返回已存在的实例。
-
-        Raises:
-            RuntimeError: 首次调用未提供 agent。
         """
         if cls._instance is not None:
             return cls._instance
-        if agent is None:
-            raise RuntimeError(
-                "AgentWebSocketServer 未初始化。首次调用需传入 agent=..."
-            )
         cls._instance = cls(
             agent=agent,
             host=host,
@@ -127,6 +120,12 @@ class AgentWebSocketServer:
 
     async def start(self) -> None:
         """启动 WebSocket 服务端，开始监听连接。优先使用 legacy.server.serve 以与 Gateway 的 legacy client 握手兼容."""
+        if self._agent is None:
+            from jiuwenclaw.agentserver.interface import JiuWenClaw
+            self._agent = JiuWenClaw()
+            await self._agent.create_instance()
+            logger.info("[AgentWebSocketServer] 已自动创建 JiuWenClaw 实例")
+
         if self._server is not None:
             logger.warning("[AgentWebSocketServer] 服务端已在运行")
             return
@@ -239,6 +238,15 @@ class AgentWebSocketServer:
                 return
             if request.req_method == ReqMethod.BROWSER_START:
                 await self._handle_browser_start(ws, request, send_lock)
+                return
+            if request.req_method == ReqMethod.BROWSER_RUNTIME_RESTART:
+                await self._handle_browser_runtime_restart(ws, request, send_lock)
+                return
+            if request.req_method == ReqMethod.CONFIG_CACHE_CLEAR:
+                await self._handle_config_cache_clear(ws, request, send_lock)
+                return
+            if request.req_method == ReqMethod.AGENT_RELOAD_CONFIG:
+                await self._handle_agent_reload_config(ws, request, send_lock)
                 return
             if request.is_stream:
                 await self._handle_stream(ws, request, send_lock)
@@ -375,6 +383,73 @@ class AgentWebSocketServer:
             )
         except Exception as e:  # noqa: BLE001
             logger.exception("[AgentWebSocketServer] browser.start failed: %s", e)
+            resp = AgentResponse(
+                request_id=request.request_id,
+                channel_id=request.channel_id,
+                ok=False,
+                payload={"error": str(e)},
+            )
+
+        async with send_lock:
+            await ws.send(json.dumps(_response_to_payload(resp), ensure_ascii=False))
+
+    async def _handle_browser_runtime_restart(self, ws: Any, request: AgentRequest, send_lock: asyncio.Lock) -> None:
+        try:
+            from jiuwenclaw.agentserver.tools.browser_tools import restart_local_browser_runtime_server
+
+            result = restart_local_browser_runtime_server()
+            resp = AgentResponse(
+                request_id=request.request_id,
+                channel_id=request.channel_id,
+                ok=True,
+                payload={"result": result},
+            )
+        except Exception as e:  # noqa: BLE001
+            logger.exception("[AgentWebSocketServer] browser.runtime_restart failed: %s", e)
+            resp = AgentResponse(
+                request_id=request.request_id,
+                channel_id=request.channel_id,
+                ok=False,
+                payload={"error": str(e)},
+            )
+
+        async with send_lock:
+            await ws.send(json.dumps(_response_to_payload(resp), ensure_ascii=False))
+
+    async def _handle_config_cache_clear(self, ws: Any, request: AgentRequest, send_lock: asyncio.Lock) -> None:
+        try:
+            from jiuwenclaw.agentserver.memory.config import clear_config_cache
+
+            clear_config_cache()
+            resp = AgentResponse(
+                request_id=request.request_id,
+                channel_id=request.channel_id,
+                ok=True,
+                payload={"cleared": True},
+            )
+        except Exception as e:  # noqa: BLE001
+            logger.exception("[AgentWebSocketServer] config.cache_clear failed: %s", e)
+            resp = AgentResponse(
+                request_id=request.request_id,
+                channel_id=request.channel_id,
+                ok=False,
+                payload={"error": str(e)},
+            )
+
+        async with send_lock:
+            await ws.send(json.dumps(_response_to_payload(resp), ensure_ascii=False))
+
+    async def _handle_agent_reload_config(self, ws: Any, request: AgentRequest, send_lock: asyncio.Lock) -> None:
+        try:
+            self._agent.reload_agent_config()
+            resp = AgentResponse(
+                request_id=request.request_id,
+                channel_id=request.channel_id,
+                ok=True,
+                payload={"reloaded": True},
+            )
+        except Exception as e:  # noqa: BLE001
+            logger.exception("[AgentWebSocketServer] agent.reload_config failed: %s", e)
             resp = AgentResponse(
                 request_id=request.request_id,
                 channel_id=request.channel_id,
