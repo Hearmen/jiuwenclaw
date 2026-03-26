@@ -21,7 +21,6 @@ export function InputArea({
   isProcessing,
   onNewSession,
 }: InputAreaProps) {
-  const [value, setValue] = useState('');
   const [pendingVoiceText, setPendingVoiceText] = useState('');
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const autoSendTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -29,7 +28,7 @@ export function InputArea({
   const activePointerIdRef = useRef<number | null>(null);
   const isVoicePressingRef = useRef(false);
   const { t } = useTranslation();
-  const { isPaused, taskQueue, addToTaskQueue, removeFromTaskQueue } = useChatStore();
+  const { isPaused, taskQueue, addToTaskQueue, removeFromTaskQueue, inputValue, setInputValue } = useChatStore();
   const { mode } = useSessionStore();
   const isInterruptible = isProcessing || isPaused;
   const isAgentMode = mode === 'agent';
@@ -73,9 +72,9 @@ export function InputArea({
 
   useEffect(() => {
     if (!isListening && pendingVoiceText) {
-      const finalText = (value + pendingVoiceText).trim();
+      const finalText = (inputValue + pendingVoiceText).trim();
       if (finalText) {
-        setValue(finalText);
+        setInputValue(finalText);
         setPendingVoiceText('');
 
         setTimeout(() => {
@@ -84,14 +83,14 @@ export function InputArea({
           } else {
             onSubmit(finalText);
           }
-          setValue('');
+          setInputValue('');
           if (textareaRef.current) {
             textareaRef.current.style.height = 'auto';
           }
         }, 150);
       }
     }
-  }, [isListening, pendingVoiceText, value, isInterruptible, onSubmit, onInterrupt]);
+  }, [isListening, pendingVoiceText, inputValue, isInterruptible, onSubmit, onInterrupt, setInputValue]);
 
   useEffect(() => {
     return () => {
@@ -102,7 +101,7 @@ export function InputArea({
   }, []);
 
   const handleSubmit = useCallback(() => {
-    const trimmed = (value + pendingVoiceText).trim();
+    const trimmed = (inputValue + pendingVoiceText).trim();
     if (!trimmed) return;
 
     if (isListening) {
@@ -120,13 +119,13 @@ export function InputArea({
     } else {
       onSubmit(trimmed);
     }
-    setValue('');
+    setInputValue('');
     setPendingVoiceText('');
 
     if (textareaRef.current) {
       textareaRef.current.style.height = 'auto';
     }
-  }, [value, pendingVoiceText, isInterruptible, isListening, onSubmit, onInterrupt, stopListening, isAgentMode, addToTaskQueue]);
+  }, [inputValue, pendingVoiceText, isInterruptible, isListening, onSubmit, onInterrupt, stopListening, isAgentMode, addToTaskQueue, setInputValue]);
 
   const handleKeyDown = useCallback(
     (e: KeyboardEvent<HTMLTextAreaElement>) => {
@@ -199,19 +198,19 @@ export function InputArea({
 
   const handleNewSession = useCallback(() => {
     if (isListening || isInterruptible) return;
-    setValue('');
+    setInputValue('');
     setPendingVoiceText('');
     if (textareaRef.current) {
       textareaRef.current.style.height = 'auto';
     }
     onNewSession();
-  }, [isListening, isInterruptible, onNewSession]);
+  }, [isListening, isInterruptible, onNewSession, setInputValue]);
 
   const displayValue = isListening
-    ? value + pendingVoiceText + interimTranscript
-    : value + pendingVoiceText;
+    ? inputValue + pendingVoiceText + interimTranscript
+    : inputValue + pendingVoiceText;
 
-  const canSend = value.trim().length > 0 || isListening;
+  const canSend = inputValue.trim().length > 0 || isListening;
   const modeIndex = Math.max(0, modes.findIndex((m) => m.value === mode));
 
   return (
@@ -260,7 +259,7 @@ export function InputArea({
       <textarea
         ref={textareaRef}
         value={displayValue}
-        onChange={(e) => setValue(e.target.value)}
+        onChange={(e) => setInputValue(e.target.value)}
         onKeyDown={handleKeyDown}
         onCompositionStart={() => { isComposingRef.current = true; }}
         onCompositionEnd={() => { isComposingRef.current = false; }}

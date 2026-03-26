@@ -68,6 +68,8 @@ interface ChatState {
   taskQueue: TaskItem[];
   // 用户问题相关
   pendingQuestion: AskUserQuestionPayload | null;  // 待回答的问题
+  // 输入框内容
+  inputValue: string;
 
   // Actions
   addMessage: (message: Message) => void;
@@ -93,6 +95,8 @@ interface ChatState {
   removeFromTaskQueue: (id: string) => void;
   // 用户问题相关
   setPendingQuestion: (question: AskUserQuestionPayload | null) => void;
+  // 输入框相关
+  setInputValue: (value: string) => void;
 }
 
 export const useChatStore = create<ChatState>((set, get) => ({
@@ -115,6 +119,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
   },
   taskQueue: [],
   pendingQuestion: null,
+  inputValue: '',
 
   addMessage: (message) => {
     set((state) => ({
@@ -508,5 +513,9 @@ export const useChatStore = create<ChatState>((set, get) => ({
 
   setPendingQuestion: (question) => {
     set({ pendingQuestion: question });
+  },
+  
+  setInputValue: (value) => {
+    set({ inputValue: value });
   },
 }));
