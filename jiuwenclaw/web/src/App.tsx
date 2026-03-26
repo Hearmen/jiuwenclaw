@@ -800,7 +800,7 @@ function AppContent() {
     : heartbeatToastPreviewRaw;
 
   return (
-    <div className="shell">
+    <div className="shell" data-testid="app-shell" data-session-id={sessionId}>
       {/* Topbar */}
       <header className="topbar">
         <div className="flex items-center gap-4">
@@ -912,7 +912,7 @@ function AppContent() {
         )}
         {activeNav === 'cron' && (
           <div className="app-section">
-            <CronPanel />
+            <CronPanel sessionId={sessionId} />
           </div>
         )}
         {activeNav === 'configpanel' && (

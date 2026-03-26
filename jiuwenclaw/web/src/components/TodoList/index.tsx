@@ -29,7 +29,7 @@ export function TodoList() {
   const completed = todos.filter((t) => t.status === 'completed');
 
   return (
-    <div className="p-4 space-y-4">
+    <div data-testid="todo-list" className="p-4 space-y-4">
       <h3 className="text-[11px] font-medium text-text-muted uppercase tracking-wider flex items-center justify-between">
         <span>{t('todoList.title')}</span>
         <span className="px-1.5 py-0.5 bg-secondary rounded text-[10px]">{todos.length}</span>

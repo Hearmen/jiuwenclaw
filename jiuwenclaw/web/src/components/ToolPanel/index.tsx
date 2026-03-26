@@ -102,6 +102,7 @@ export function ToolPanel() {
 
   return (
     <div
+      data-testid="tool-panel"
       className="bg-panel border-l border-border h-full overflow-hidden py-4 px-3 shrink-0"
       style={{ width: 'var(--tool-panel-width)' }}
     >

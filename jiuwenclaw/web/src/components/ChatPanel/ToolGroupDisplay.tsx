@@ -33,7 +33,12 @@ export function ToolExecutionItem({ execution }: { execution: ToolExecution }) {
     : '';
 
   return (
-    <div className="tool-pair-item animate-rise">
+    <div
+      className="tool-pair-item animate-rise"
+      data-testid={`tool-execution-${toolCall.id}`}
+      data-tool-name={toolCall.name}
+      data-tool-status={status}
+    >
       <div className="tool-pair-header" onClick={() => setIsExpanded(!isExpanded)}>
         <span className={clsx(
           'tool-pair-icon',
@@ -156,7 +161,7 @@ export function ToolGroupDisplay({ executions }: ToolGroupDisplayProps) {
   }, [scrollInner]);
 
   return (
-    <div className="tool-group-container animate-rise">
+    <div className="tool-group-container animate-rise" data-testid="tool-group">
       <div className="tool-group-header">
         <div className="tool-group-header-left">
           <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={1.5}>

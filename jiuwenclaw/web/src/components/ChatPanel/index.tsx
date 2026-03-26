@@ -127,7 +127,7 @@ export function ChatPanel({
   );
 
   return (
-    <div className="flex flex-col h-full">
+    <div className="flex flex-col h-full" data-testid="chat-panel">
       <div ref={scrollContainerRef} className="flex-1 overflow-y-auto px-3 py-4">
         {historyPager && messages.length > 0 ? (
           <HistoryPagerBar

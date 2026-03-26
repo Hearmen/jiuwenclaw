@@ -276,6 +276,7 @@ export function InputArea({
         }
         className="chat-input-textarea"
         rows={1}
+        data-testid="chat-input"
       />
 
       <div className="chat-input-toolbar">
@@ -298,6 +299,7 @@ export function InputArea({
                   'chat-mode-btn',
                   mode === m.value ? 'chat-mode-btn--active' : 'chat-mode-btn--inactive'
                 )}
+                data-testid={`chat-mode-${m.value}`}
               >
                 {m.icon}
                 {m.label}
@@ -356,6 +358,7 @@ export function InputArea({
               canSend ? 'chat-input-btn--send-active' : 'chat-input-btn--disabled',
             )}
             title={t('chat.send')}
+            data-testid="chat-send"
           >
             <svg className="chat-input-btn-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2}>
               <path strokeLinecap="round" strokeLinejoin="round" d="M4.5 10.5L12 3m0 0l7.5 7.5M12 3v18" />

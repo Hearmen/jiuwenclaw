@@ -362,6 +362,8 @@
     "cancelCreate": "Cancel Create",
     "update": "Update",
     "delete": "Delete",
+    "runNow": "Run Now",
+    "previewAction": "Preview",
     "enable": "Enable",
     "disable": "Disable",
     "loading": "Loading scheduled tasks...",
@@ -399,7 +401,13 @@
       "created": "Task created successfully",
       "updated": "Task updated successfully",
       "deleted": "Task deleted successfully",
-      "statusUpdated": "Task status updated successfully"
+      "statusUpdated": "Task status updated successfully",
+      "runNow": "Task triggered successfully"
+    },
+    "preview": {
+      "loading": "Loading next runs...",
+      "empty": "No upcoming runs",
+      "label": "Run {{index}}"
     },
     "errors": {
       "loadJobs": "Failed to load scheduled tasks",
@@ -407,6 +415,8 @@
       "updateFailed": "Failed to update task",
       "deleteFailed": "Failed to delete task",
       "toggleFailed": "Failed to update task status",
+      "previewFailed": "Failed to preview next runs",
+      "runNowFailed": "Failed to trigger the task immediately",
       "loadDetailFailed": "Failed to load task details",
       "nameRequired": "Task name is required",
       "cronRequired": "Cron expression is required",

@@ -39,6 +39,8 @@ export function TodoItem({ todo }: TodoItemProps) {
 
   return (
     <div
+      data-testid={`todo-item-${todo.id}`}
+      data-todo-status={todo.status}
       className={clsx(
         'flex items-start gap-2 py-1.5 px-2 rounded-md text-sm transition-colors',
         todo.status === 'in_progress' && 'bg-accent-subtle',

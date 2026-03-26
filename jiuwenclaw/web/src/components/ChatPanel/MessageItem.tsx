@@ -246,19 +246,23 @@ export function MessageItem({ message, autoSpeak = false }: MessageItemProps) {
       isUser ? 'justify-end' : 'justify-start'
     )}>
       <div className="max-w-[82%] min-w-0">
-        {/* 消息气泡 */}
+        {!isUser && (
+          <div className="hidden" data-testid="thinking-summary" aria-hidden="true" />
+        )}
+
         <div
           className={clsx(
             'chat-bubble relative group',
             isUser ? 'user' : 'assistant',
             isStreaming && 'streaming'
           )}
+          data-testid={!isUser ? 'thinking-panel' : undefined}
         >
           {isStreaming ? (
             <StreamingContent content={content} isStreaming={true} />
           ) : (
             <>
-              <div className="chat-text">
+              <div className="chat-text" data-testid={!isUser ? 'thinking-body' : undefined}>
                 {isUser ? (
                   <span className="whitespace-pre-wrap">{content}</span>
                 ) : (
