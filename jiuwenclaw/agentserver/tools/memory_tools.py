@@ -3,6 +3,7 @@
 """Memory tools for JiuWenClaw - Using @tool decorator for openjiuwen."""
 
 import os
+import re
 from typing import Optional, Dict, Any, List
 
 from openjiuwen.core.foundation.tool.tool import tool
@@ -24,19 +25,26 @@ _global_agent_id: str = "default"
 def _validate_memory_path(path: str) -> tuple[bool, str]:
     """Validate that path is within memory directory.
     
+    Only allows:
+    - memory/YYYY-MM-DD.md (date format files)
+    - USER.md
+    - MEMORY.md
+    
     Returns:
         (is_valid, resolved_path_or_error)
     """
     if ".." in path or path.startswith("/"):
         return (False, "Invalid path: directory traversal not allowed")
     
-    if path.startswith("memory/"):
-        return (True, path)
-    
     if path in ("USER.md", "MEMORY.md"):
         return (True, f"memory/{path}")
     
-    return (False, f"Path must be in memory/ directory. Got: {path}")
+    if path.startswith("memory/"):
+        filename = path[7:]
+        if re.match(r"^\d{4}-\d{2}-\d{2}\.md$", filename):
+            return (True, path)
+    
+    return (False, f"Path must be memory/YYYY-MM-DD.md, USER.md, or MEMORY.md. Got: {path}")
 
 
 def set_global_memory_manager(
