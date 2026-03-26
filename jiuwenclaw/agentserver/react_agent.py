@@ -417,6 +417,7 @@ class JiuClawReActAgent(ReActAgent):
                         await self._emit_tool_call(session, tc)
 
                 # ---- 权限检查：在执行工具前逐一检查权限 ----
+
                 allowed_tool_calls, denied_results = await check_tool_permissions(
                     ai_message.tool_calls,
                     channel_id=getattr(session, "channel_id", "web") if session else "web",

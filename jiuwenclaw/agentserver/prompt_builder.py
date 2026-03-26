@@ -345,9 +345,17 @@ def _tool_prompt(mode, language: str) -> str:
 
 | 工具名称 | 功能说明 |
 |---------|---------|
-| `execute_python_code` | 执行 Python 代码 |
+| `execute_python_code` | 执行 Python 代码（不要用相对路径写文件；若写文件需写入绝对路径） |
 | `run_command` | 执行 Linux bash 命令 |
 | `mcp_exec_command` | 跨平台命令执行，支持后台运行 |
+
+### 代码交付与落盘
+
+当用户请求“生成代码/脚本/配置/测试”等**需要以文件形式交付**的内容时，遵循以下通用规则：
+
+1. **必须落盘**：不要只把代码打印在回复里或只在内存里生成；必须写入文件。
+
+
 
 ### 搜索与网页
 
@@ -431,9 +439,16 @@ Tools are built-in methods.
 
 | Tool Name | Description |
 |-----------|-------------|
-| `execute_python_code` | Execute Python code |
+| `execute_python_code` | Execute Python code (avoid relative file writes; if writing files, use absolute paths) |
 | `run_command` | Execute Linux bash commands |
 | `mcp_exec_command` | Cross-platform command execution with background run support |
+
+### Code deliverables & persistence
+
+When the user requests code/scripts/config/tests that must be delivered **as files**, follow these general rules:
+
+1. **Must persist**: do not only print code in the chat or keep it in memory; write it to files.
+
 
 ### Search & Web
 
