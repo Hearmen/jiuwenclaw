@@ -12,10 +12,11 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from enum import Enum
 from typing import TYPE_CHECKING, Any, Dict
-
-
+from jiuwenclaw.channel.base import ChannelType
+from jiuwenclaw.gateway.session_map import SessionMap
 
 logger = logging.getLogger(__name__)
+
 
 
 class ChannelMode(str, Enum):
@@ -64,9 +65,17 @@ class MessageHandler(ABC):
         self._stream_tasks: dict[str, asyncio.Task] = {}  # request_id -> task
         self._stream_sessions: dict[str, str | None] = {}  # request_id -> session_id
 
-        # per-channel 控制状态：支持 \new_session / \mode 指令（feishu/xiaoyi/dingding/whatsapp/wecom）
-        self._control_channels = {"feishu", "xiaoyi", "dingtalk", "whatsapp", "wecom"}
+        # per-channel 控制状态：支持 \new_session / \mode 指令。
+        # 使用 ChannelType 的 value 作为标准键，避免散落的硬编码字符串。
+        self._control_channel_types = {
+            ChannelType.FEISHU.value,
+            ChannelType.XIAOYI.value,
+            ChannelType.DINGTALK.value,
+            ChannelType.WHATSAPP.value,
+            ChannelType.WECOM.value,
+        }
         self._channel_states: Dict[str, ChannelControlState] = {}
+        self._session_map = SessionMap()
 
         # 直接使用 jiuwenclaw.config 的 get_config_raw/set_config/update_channel_in_config
         # 避免在此处重复实现 config 模块加载逻辑。
@@ -141,6 +150,9 @@ class MessageHandler(ABC):
 
         # 否则从 config 加载默认值，并缓存
         state = self._get_channel_default_state(ch)
+        identity_key = self._extract_identity_tuple(msg)
+        if identity_key:
+            state.session_id = self._session_map.get_session_id(*identity_key)
         self._channel_states[key] = state
         return state
 
@@ -169,6 +181,25 @@ class MessageHandler(ABC):
         suffix = secrets.token_hex(3)
         return f"{channel_id}_{ts}_{suffix}"
 
+    @staticmethod
+    def _extract_identity_tuple(msg: "Message") -> tuple[str, str, str, str] | None:
+        provider = str(getattr(msg, "provider", None) or "").strip()
+        chat_id = str(getattr(msg, "chat_id", None) or "").strip()
+        bot_id = str(getattr(msg, "bot_id", None) or "").strip()
+        user_id = str(getattr(msg, "user_id", None) or "").strip()
+        identity_parts = (provider, chat_id, bot_id, user_id)
+        if all(identity_parts):
+            return (provider, chat_id, bot_id, user_id)
+        return None
+
+    def _resolve_control_channel_type(self, msg: "Message") -> str:
+        """Resolve control channel type key: prefer provider, fallback to channel_id."""
+        provider_raw = getattr(msg, "provider", None)
+        provider = str(getattr(provider_raw, "value", provider_raw) or "").strip()
+        if provider:
+            return provider
+        return str(getattr(msg, "channel_id", "") or "")
+
     async def _send_channel_notice(self, channel_id: str, session_id: str | None, text: str) -> None:
         """向指定 channel 发送一条系统提示消息."""
         from jiuwenclaw.schema.message import Message, EventType
@@ -194,7 +225,8 @@ class MessageHandler(ABC):
             False: 非控制指令，继续正常处理。
         """
         ch = msg.channel_id
-        if ch not in self._control_channels:
+        channel_type = self._resolve_control_channel_type(msg)
+        if channel_type not in self._control_channel_types:
             return False
 
         params = msg.params or {}
@@ -202,14 +234,23 @@ class MessageHandler(ABC):
         if not text:
             return False
 
-        logger.info('this is in _handle_channel_control, channel id is %s, text is %s, "\\new_session" in text is %s', ch, text, str("\\new_session" in text))
+        logger.info(
+            'this is in _handle_channel_control, channel id is %s, text is %s, "\\new_session" in text is %s',
+            channel_type,
+            text,
+            str("\\new_session" in text),
+        )
 
         # 获取当前会话的状态（使用复合键）
         state = self._get_or_create_channel_state(msg)
 
         # \new_session：重置当前会话的 session_id
         if "/new_session" == text:
-            new_sid = self._generate_channel_session_id(ch)
+            identity_key = self._extract_identity_tuple(msg)
+            if identity_key:
+                new_sid = self._session_map.get_session_id(*identity_key, rotate=True)
+            else:
+                new_sid = self._generate_channel_session_id(channel_type)
             state.session_id = new_sid
             # 给当前会话回复提示（用原有 session_id）
             asyncio.create_task(
@@ -241,14 +282,18 @@ class MessageHandler(ABC):
 
     def _apply_channel_state(self, msg: "Message") -> None:
         """将当前 Channel 的控制状态应用到消息上（session_id / mode）."""
-        ch = msg.channel_id
-        if ch not in self._control_channels:
+        channel_type = self._resolve_control_channel_type(msg)
+        if channel_type not in self._control_channel_types:
             return
-
         state = self._get_or_create_channel_state(msg)
 
-        # 对 feishu/xiaoyi/dingtalk/whatsapp 强制覆盖 session_id；web 等保持原有行为
-        if state.session_id:
+        # 仅受控通道优先使用 provider/chat_id/bot_id/user_id 映射；其它通道保持原有行为。
+        identity_key = self._extract_identity_tuple(msg)
+        if identity_key:
+            sid = self._session_map.get_session_id(*identity_key)
+            state.session_id = sid
+            msg.session_id = sid
+        elif state.session_id:
             msg.session_id = state.session_id
 
         # 将 mode 写入 params，后续 AgentRequest 会从 params["mode"] 里读取

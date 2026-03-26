@@ -10,6 +10,7 @@ import re
 import threading
 import time
 from collections import OrderedDict
+from dataclasses import dataclass
 from typing import Any, Callable
 
 from pydantic import BaseModel, Field
@@ -86,6 +87,18 @@ class _ThreadLocalLoopProxy:
         return self._get_loop().create_task(coro)
 
 
+@dataclass
+class FeishuInboundMessage:
+    """Feishu 入站消息载体，避免参数列表持续膨胀。"""
+
+    message_id: str
+    chat_id: str
+    content: str
+    user_id: str | None = None
+    bot_id: str | None = None
+    metadata: dict[str, Any] | None = None
+
+
 class FeishuChannel(BaseChannel):
     """
     飞书/飞书IM通道实现，基于WebSocket长连接。
@@ -146,10 +159,7 @@ class FeishuChannel(BaseChannel):
 
     async def _handle_message(
         self,
-        message_id: str,
-        chat_id: str,
-        content: str,
-        metadata: dict[str, Any] | None = None,
+        inbound: FeishuInboundMessage,
     ) -> None:
         """
         处理接收到的消息并分发。
@@ -157,20 +167,22 @@ class FeishuChannel(BaseChannel):
         若已通过on_message注册网关回调，则直接回调；否则通过router路由消息。
 
         Args:
-            chat_id: 聊天ID
-            content: 消息内容
-            metadata: 额外的元数据
+            inbound: Feishu 入站消息
         """
         msg = Message(
-            id=message_id,
+            id=inbound.message_id,
             type="req",
             channel_id=self.channel_id,
-            session_id=str(chat_id),
-            params={"content": content, "query": content},
+            session_id=str(inbound.chat_id),
+            params={"content": inbound.content, "query": inbound.content},
             timestamp=time.time(), ok=True,
+            provider=self.name,
+            chat_id=str(inbound.chat_id or ""),
+            user_id=str(inbound.user_id or ""),
+            bot_id=str(inbound.bot_id or self.config.app_id or ""),
             req_method=ReqMethod.CHAT_SEND,
             is_stream=True,
-            metadata=metadata
+            metadata=inbound.metadata,
         )
         if self._message_callback:
             self._message_callback(msg)
@@ -1167,10 +1179,12 @@ class FeishuChannel(BaseChannel):
                     pass
 
             # 处理消息：将平台身份写入 metadata，供回发时使用（与 session_id 解耦，\new_session 后仍可正确回发）
-            await self._handle_message(
+            inbound = FeishuInboundMessage(
                 message_id=message.message_id,
                 chat_id=message.chat_id,
                 content=content,
+                user_id=open_id,
+                bot_id=self.config.app_id or "",
                 metadata={
                     "message_id": message.message_id,
                     "chat_type": message.chat_type,
@@ -1180,6 +1194,7 @@ class FeishuChannel(BaseChannel):
                     "feishu_chat_id": getattr(message, "chat_id", None) or "",
                 },
             )
+            await self._handle_message(inbound)
 
         except Exception as e:
             logger.error(f"处理飞书消息时发生异常: {e}")
