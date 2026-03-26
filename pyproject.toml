@@ -37,6 +37,8 @@ dependencies = [
 
 [project.scripts]
 jiuwenclaw-app = "jiuwenclaw.app:main"
+jiuwenclaw-agentserver = "jiuwenclaw.app_agentserver:main"
+jiuwenclaw-gateway = "jiuwenclaw.app_gateway:main"
 jiuwenclaw-web = "jiuwenclaw.app_web:main"
 jiuwenclaw-start = "jiuwenclaw.start_services:main"
 jiuwenclaw-init = "jiuwenclaw.init_workspace:main"
