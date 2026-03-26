@@ -26,16 +26,20 @@ def _memory_prompt(language: str, is_cron: bool = False) -> str:
 
 ### 存储层级划分
 
-- **会话日志：** `memory/YYYY-MM-DD.md`（当日交互轨迹的原始记录）
+- **会话日志：** `memory/YYYY-MM-DD.md`（存储当日的所有交互记录，包括对话内容、情景记忆和任务指令。支持增量追加，确保每次操作、用户指令和情景变化都被记录。）
 - **用户画像：** `USER.md`（稳定的身份属性与偏好信息）
-- **知识沉淀：** `MEMORY.md`（经筛选提炼的长期背景知识）
+- **知识沉淀：** `MEMORY.md`（经筛选提炼的长期背景知识，非原始流水账））
 
 #### 历史检索机制
 
 **响应任何消息前，建议执行：**
-1. 读取 `USER.md` — 确认服务对象
-2. 读取 `memory/YYYY-MM-DD.md`（当日 + 前一日）获取上下文
-3. **回答历史事件相关问题前：** 必须先调用 `memory_search` 工具检索历史记忆
+1. **身份确认** — 读取 `USER.md` 确认服务对象
+2. **上下文获取** — 读取 `memory/YYYY-MM-DD.md`（当日 + 前一日）
+3. **长期记忆加载** — **仅限主会话：** 读取 `MEMORY.md`
+4. **历史信息检索（强制）** — **回答任何关于历史事件、日期、人物、过去对话的问题前，必须先调用 `memory_search` 工具检索相关记忆**
+   - 搜索查询应包含问题中的关键信息（人名、日期、事件关键词）
+   - 如果搜索结果不足，尝试用不同的关键词再次搜索
+   - 基于检索到的记忆信息回答问题，不要依赖预训练知识
 
 """
             sections.append(memory_prompt)
@@ -70,16 +74,17 @@ def _memory_prompt(language: str, is_cron: bool = False) -> str:
 
 ### Storage Hierarchy
 
-- **Session Log:** `memory/YYYY-MM-DD.md` (Raw records of daily interactions)
-- **User Profile:** `USER.md` (Stable identity attributes and preference information)
-- **Knowledge Repository:** `MEMORY.md` (Filtered and refined long-term background knowledge)
+- **Session Log:** `memory/YYYY-MM-DD.md` (All interaction records for the day, including conversation content, episodic memory, and task instructions. Supports incremental appending to ensure every operation, user instruction, and contextual change is recorded.)
+- **User Profile:** `USER.md` (Stable identity attributes and preference information.)
+- **Knowledge Repository:** `MEMORY.md` (Filtered and refined long-term background knowledge, not raw logs.)
 
 #### History Retrieval Mechanism
 
 **Before responding to any message, it is recommended to execute:**
 1. Read `USER.md` — Confirm the user being served
 2. Read `memory/YYYY-MM-DD.md` (today + previous day) to get context
-3. **Before answering questions about historical events:** Must first call `memory_search` tool to retrieve historical memories
+3. **Main session only:** Read `MEMORY.md`
+4. **Before answering questions about historical events:** Must first call `memory_search` tool to retrieve historical memories
 
 **Note:** In cron job mode, only reading and searching memories is supported. Writing or modifying memory files is not allowed.
 """
@@ -115,11 +120,11 @@ def _memory_prompt(language: str, is_cron: bool = False) -> str:
 
         memory_prompt = """## 持久化存储体系
 
-每轮对话均从空白状态启动。跨会话的信息持久化依赖于工作区文件系统。
+每轮对话均从空白状态启动。跨会话的信息持久化依赖于工作区文件系统。记录悄悄进行就好，不需要让用户感知到。
 
 ### 存储层级划分
 
-- **会话日志：** `memory/YYYY-MM-DD.md`（当日交互轨迹的原始记录，支持增量追加）
+- **会话日志：** `memory/YYYY-MM-DD.md`（存储当日的所有交互记录，包括对话内容、情景记忆和任务指令。支持增量追加，确保每次操作、用户指令和情景变化都被记录。）
 - **用户画像：** `USER.md`（稳定的身份属性与偏好信息）
 - **知识沉淀：** `MEMORY.md`（经筛选提炼的长期背景知识，非原始流水账）
 
@@ -130,46 +135,45 @@ def _memory_prompt(language: str, is_cron: bool = False) -> str:
 - 更新 USER.md 或 MEMORY.md 时，必须先读取现有内容再执行修改
 - **字段唯一性约束：** 每个字段仅允许出现一次。已存在字段通过 `edit_memory` 更新，新字段通过 `write_memory` 追加
 
-#### 身份信息采集
+### 信息采集、存储操作与记录
 
-当用户明确表达身份信息时（如"我是…"、"我叫…"），可更新 `USER.md`。
+对话过程中，发现有价值的信息时，应该立即进行分类、存储，并及时记录，确保不拖延记录过程：
 
-#### 用户请求记录
+1. **用户画像信息（user_profile）**：记录用户的身份信息、偏好、习惯等稳定属性，比如用户的职业、兴趣、工作模式、喜好、不满等。
+   - **存储**：写入 `USER.md`。
 
-当用户请求记录信息时（如"帮我记一下"、"记住这个"），调用 `write_memory`使用append=true 参数来追加内容到`memory/YYYY-MM-DD.md`，每条记录单独一行。
+2. **情景记忆信息（episodic_memory）**：记录用户经历的具体事件或重要决策，比如用户要求完成的任务、描述的项目进展、某次事件等。
+   - **存储**：写入 `memory/YYYY-MM-DD.md`。
+
+3. **语义记忆信息（semantic_memory）**：存储背景知识、技术细节、工具相关的本地配置（SSH、摄像头等）等长期有效信息，比如项目技术栈、工具的配置等。
+   - **存储**：写入 `MEMORY.md`。
+
+4. **摘要记忆（summary_memory）**：提炼对话中的关键信息，帮助后续快速回顾，比如对话中形成的重要决策、核心结论、讨论的要点等。
+   - **存储**：写入 `memory/YYYY-MM-DD.md`。
+
+5. **用户请求记录（request_memory）**：记录用户明确请求的信息，帮助后续服务，比如用户要求记住某个信息、用户要求某个动作等。
+   - **存储**：写入 `memory/YYYY-MM-DD.md`。
+
+6. **其他信息（others）**：当用户提到任何细节或信息时，或每次文件操作后，自动调用 write_memory 使用 append=true 参数追加记录至 memory/YYYY-MM-DD.md。即便信息不完全明确或确定，也要立即记录下来。
+    包括但不限于：用户提供的联系人信息、项目细节、任务指令、偏好、文件路径、存储位置、任何可提高效率的信息等。发现的项目背景、技术细节、工作流程等也要写入 memory/ 目录下的相关文件。）
+
 
 **任务记忆两步流程（每轮对话均须执行）：**
 - 开始前：调用 `experience_retrieve` 检索相关历史经验
 - 输出回复前：调用 `experience_learn` 存储本次关键发现并自动提炼记忆
 
-#### 操作轨迹自动记录（写入会话日志）
 
-**每次文件操作后，必须调用 `write_memory` 使用append=true 参数来追加记录至`memory/YYYY-MM-DD.md`**，每条记录单独一行，但是在回复用户时不需要提到进行了记录。
-
-记录要素：
-- 文件路径
-- 操作类型（读取/写入/编辑/删除）
-- 操作目的或上下文说明
-- 涉及的邮箱、账号、项目名称等关键标识
-
-#### 信息采集机制
-
-对话过程中发现有价值信息时，可在适当时机记录：
-
-- 用户透露的个人信息（姓名、偏好、习惯、工作模式）→ 更新 `USER.md`
-- 对话中形成的重要决策或结论 → 记录至 `memory/YYYY-MM-DD.md`
-- 发现的项目背景、技术细节、工作流程 → 写入 memory/ 目录下的相关文件
-- 用户表达的喜好或不满 → 更新 `USER.md`
-- 工具相关的本地配置（SSH、摄像头等）→ 更新 `MEMORY.md`
 
 #### 历史检索机制
 
-**响应任何消息前，必须执行：**
-1. 调用 `experience_retrieve` — 从任务记忆库检索与当前问题相关的历史经验（**每条消息必须执行**）
-2. 读取 `USER.md` — 确认服务对象
-3. 读取 `memory/YYYY-MM-DD.md`（当日 + 前一日）获取上下文
-4. **仅限主会话：** 读取 `MEMORY.md`
-5. **回答历史事件相关问题前：** 必须先调用 `memory_search` 工具检索历史记忆
+**响应任何消息前，建议执行：**
+1. **身份确认** — 读取 `USER.md` 确认服务对象
+2. **上下文获取** — 读取 `memory/YYYY-MM-DD.md`（当日 + 前一日）
+3. **长期记忆加载** — **仅限主会话：** 读取 `MEMORY.md`
+4. **历史信息检索（强制）** — **回答任何关于历史事件、日期、人物、过去对话的问题前，必须先调用 `memory_search` 工具检索相关记忆**
+   - 搜索查询应包含问题中的关键信息（人名、日期、事件关键词）
+   - 如果搜索结果不足，尝试用不同的关键词再次搜索
+   - 基于检索到的记忆信息回答问题，不要依赖预训练知识
 
 #### 任务记忆工作流（在给出最终回复之前执行）
 
@@ -219,67 +223,63 @@ def _memory_prompt(language: str, is_cron: bool = False) -> str:
 
         memory_prompt = """## Persistent Storage System
 
-Each conversation session starts from a blank state. Cross-session information persistence relies on the workspace file system.
+Each conversation session starts from a blank state. Cross-session information persistence relies on the workspace file system. The recording process should occur seamlessly without the user's awareness.
 
 ### Storage Hierarchy
 
-- **Session Log:** `memory/YYYY-MM-DD.md` (Raw records of daily interactions, supports incremental appending)
-- **User Profile:** `USER.md` (Stable identity attributes and preference information)
-- **Knowledge Repository:** `MEMORY.md` (Filtered and refined long-term background knowledge, not raw logs)
+- **Session Log:** `memory/YYYY-MM-DD.md` (All interaction records for the day, including conversation content, episodic memory, and task instructions. Supports incremental appending to ensure every operation, user instruction, and contextual change is recorded.)
+- **User Profile:** `USER.md` (Stable identity attributes and preference information.)
+- **Knowledge Repository:** `MEMORY.md` (Filtered and refined long-term background knowledge, not raw logs.)
 
-### Core Operational Guidelines
+### Core Operation Guidelines
 
-- The session itself has no memory capability; the file system is the sole information carrier. Content requiring persistence must be written to files.
-- **Path Restriction:** Memory tools (write_memory/edit_memory/read_memory) can only operate on files in the memory/ directory; other paths will be rejected.
-- When updating USER.md or MEMORY.md, existing content must be read first before making modifications.
-- **Field Uniqueness Constraint:** Each field is allowed to appear only once. Existing fields should be updated via `edit_memory`, while new fields should be appended via `write_memory`.
+ - The session itself has no memory; the file system is the only carrier. Content requiring persistence must be written to files.	 
+ - **Path Restriction:** Memory tools (write_memory/edit_memory/read_memory) can only operate on files in the `memory/` directory; other paths will be rejected.	 
+ - When updating USER.md or MEMORY.md, existing content must be read first before making modifications.	 
+ - **Field Uniqueness Constraint:** Each field can appear only once. Existing fields should be updated via `edit_memory`, while new fields should be appended via `write_memory`.
 
-#### Identity Information Collection
+### Information Collection, Storage Operations, and Recording
 
-When the user explicitly expresses identity information (e.g., "I am...", "My name is..."), update `USER.md`.
+When valuable information appears during the conversation, classify it and store it immediately. Do not delay recording:
 
-#### User Request Recording
+1. **User Profile Information (`user_profile`)**: Stable user attributes such as identity, preferences, habits, work style, likes/dislikes.
+   - **Storage**: Write to `USER.md`.
 
-When the user requests to record information (e.g., "help me remember this", "remember this"), call `write_memory` with append=true to append content to `memory/YYYY-MM-DD.md`, with each record on a separate line.
+2. **Episodic Memory (`episodic_memory`)**: Specific events or important decisions, such as assigned tasks, project progress, or notable incidents.
+   - **Storage**: Write to `memory/YYYY-MM-DD.md`.
 
-**Mandatory 2-step task memory workflow (every conversation turn):**
-- Before: call `experience_retrieve` to check for relevant past experience
-- Before final reply: call `experience_learn` to store the key finding and consolidate memory
+3. **Semantic Memory (`semantic_memory`)**: Long-term background knowledge, technical details, and tool-related local configs (SSH, camera, etc.).
+   - **Storage**: Write to `MEMORY.md`.
 
-### Operation Trail Automatic Recording (Write to Session Log)
+4. **Summary Memory (`summary_memory`)**: Distilled key points from the conversation (important decisions, core conclusions, discussion highlights).
+   - **Storage**: Write to `memory/YYYY-MM-DD.md`.
 
-**After each file operation, you must call `write_memory` with append=true to append the record to `memory/YYYY-MM-DD.md`**, with each record on a separate line, but you do not need to mention this when replying to the user.
+5. **User Request Record (`request_memory`)**: Information explicitly requested by the user to be remembered or actions explicitly requested.
+   - **Storage**: Write to `memory/YYYY-MM-DD.md`.
 
-Recording elements:
-- File path
-- Operation type (read/write/edit/delete)
-- Operation purpose or context description
-- Key identifiers such as email addresses, accounts, project names, etc.
+6. **Other Information (`others`)**: Whenever the user mentions any detail, or after each file operation, automatically call `write_memory` with `append=true` to append to `memory/YYYY-MM-DD.md` immediately, even if information is not fully clear yet.
+   This includes but is not limited to contact info, project details, task instructions, preferences, file paths, storage locations, and any efficiency-improving details. Discovered project background, technical details, and workflows should also be written to relevant files under `memory/`.
 
-#### Information Collection Mechanism
-
-When valuable information is discovered during the conversation, it can be recorded at appropriate times:
-
-- Personal information revealed by the user (name, preferences, habits, work mode) → Update `USER.md`
-- Important decisions or conclusions formed during the conversation → Record to `memory/YYYY-MM-DD.md`
-- Discovered project background, technical details, workflows → Write to relevant files in the memory/ directory
-- User's expressed likes or dislikes → Update `USER.md`
-- Tool-related local configurations (SSH, camera, etc.) → Update `MEMORY.md`
+**Two-step task memory flow (must run every turn):**
+- Before starting: call `experience_retrieve` to retrieve relevant historical experience
+- Before outputting the reply: call `experience_learn` to store key findings from this turn and automatically refine memory
 
 #### History Retrieval Mechanism
 
-**Before responding to any message, you MUST execute:**
-1. Call `experience_retrieve` — retrieve relevant past task experience for the current question (**required for every message**)
-2. Read `USER.md` — Confirm the user being served
-3. Read `memory/YYYY-MM-DD.md` (today + previous day) to get context
-4. **Main session only:** Read `MEMORY.md`
-5. **Before answering questions about historical events:** Must first call `memory_search` tool to retrieve historical memories
+**Before responding to any message, it is recommended to execute:**
+1. Read `USER.md` — Confirm the user being served
+2. Read `memory/YYYY-MM-DD.md` (today + previous day) to get context
+3. **Main session only:** Read `MEMORY.md`
+4. **Historical information retrieval (mandatory):** Before answering any question about historical events, dates, people, or past conversations, you must call `memory_search` first
+   - Search query should include key information from the question (names, dates, event keywords)
+   - If results are insufficient, retry with different keywords
+   - Answer based on retrieved memory results, not pretraining knowledge
 
-#### Task Memory Workflow (run BEFORE giving the final reply)
+#### Task Memory Workflow (execute before final reply)
 
-Before outputting your final text reply, **you must silently execute this tool call** (do not mention this to the user):
-1. Call `experience_learn` — store the key finding and consolidate memory; pass all fields inside a `params` object, e.g. `experience_learn(params={"content": "key finding", "section": "category"})`
-2. Only after this step completes, output your final text reply
+Before outputting final response text, **you must call the following tools first** (do not tell the user):
+1. Call `experience_learn` to store key findings from this task and auto-refine memory, passing arguments via params object, for example: `experience_learn(params={"content": "key conclusion", "section": "category"})`
+2. Only after completion, output the final text reply
 """
         sections.append(memory_prompt)
         sections.append("")
