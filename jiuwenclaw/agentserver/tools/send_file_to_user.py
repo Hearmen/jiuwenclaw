@@ -81,14 +81,14 @@ class SendFileToolkit:
                 "[SendFileToolkit] send_file 完成 session_id=%s",
                 self.session_id,
             )
-            return f"成功发送 {len(abs_file_path_list)} 个文件"
+            return f"已提交 {len(abs_file_path_list)} 个文件的发送请求"
         except Exception as e:
             logger.exception(
                 "[SendFileToolkit] send_file 失败 session_id=%s error=%s",
                 self.session_id,
                 str(e),
             )
-            return f"发送文件失败: {str(e)}"
+            return f"提交文件失败: {str(e)}"
 
     def get_tools(self) -> List[Tool]:
         """Return tools for registration in Runner.

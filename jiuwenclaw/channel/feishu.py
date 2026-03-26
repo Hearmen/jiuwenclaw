@@ -3,6 +3,7 @@
 import logging
 import asyncio
 import concurrent.futures
+import os
 import types
 import json
 import re
@@ -39,6 +40,10 @@ class FeishuConfig(BaseModel):
 try:
     import lark_oapi as lark
     from lark_oapi.api.im.v1 import (
+        CreateImageRequest,
+        CreateImageRequestBody,
+        CreateFileRequest,
+        CreateFileRequestBody,
         CreateMessageRequest,
         CreateMessageRequestBody,
         CreateMessageReactionRequest,
@@ -624,6 +629,33 @@ class FeishuChannel(BaseChannel):
             stream_key = str(getattr(msg, "id", "") or "")
             streaming_enabled = bool(self.config.enable_streaming)
 
+            # P1: 处理 chat.file 事件 — 上传文件到飞书
+            if event_name == "chat.file":
+                files = payload.get("files", [])
+                if not files:
+                    return
+                receive_id, id_type = self._extract_receive_info(msg)
+                for file_path in files:
+                    if not isinstance(file_path, str):
+                        continue
+                    if self._is_image_file(file_path):
+                        image_key = self._upload_image(file_path)
+                        if image_key:
+                            content = json.dumps({"image_key": image_key})
+                            await self._send_feishu_message(receive_id, id_type, content, msg.id, msg_type="image")
+                        else:
+                            fallback = self._build_card_content(f"[文件发送失败] {os.path.basename(file_path)}")
+                            await self._send_feishu_message(receive_id, id_type, fallback, msg.id)
+                    else:
+                        file_key = self._upload_file(file_path)
+                        if file_key:
+                            content = json.dumps({"file_key": file_key})
+                            await self._send_feishu_message(receive_id, id_type, content, msg.id, msg_type="file")
+                        else:
+                            fallback = self._build_card_content(f"[文件发送失败] {os.path.basename(file_path)}")
+                            await self._send_feishu_message(receive_id, id_type, fallback, msg.id)
+                return
+
             # 流式增量：先缓存；若开启流式则实时发送，否则仅缓存不发送。
             if event_name == "chat.delta":
                 delta = self._extract_message_content(msg)
@@ -918,6 +950,88 @@ class FeishuChannel(BaseChannel):
                 return str(value)
         return str(value)
 
+    _IMAGE_EXTENSIONS = frozenset({".jpg", ".jpeg", ".png", ".gif", ".bmp"})
+
+    @staticmethod
+    def _is_image_file(path: str) -> bool:
+        """Check if file path has an image extension supported by Feishu."""
+        ext = os.path.splitext(path)[1].lower()
+        return ext in FeishuChannel._IMAGE_EXTENSIONS
+
+    def _upload_image(self, abs_path: str) -> str | None:
+        """Upload an image to Feishu and return the image_key, or None on failure."""
+        if not self._api_client:
+            return None
+        try:
+            with open(abs_path, "rb") as f:
+                request = (
+                    CreateImageRequest.builder()
+                    .request_body(
+                        CreateImageRequestBody.builder()
+                        .image_type("message")
+                        .image(f)
+                        .build()
+                    )
+                    .build()
+                )
+                response = self._api_client.im.v1.image.create(request)
+
+            if not response.success():
+                logger.warning(
+                    "飞书图片上传失败: code=%s msg=%s path=%s",
+                    response.code, response.msg, abs_path,
+                )
+                return None
+
+            image_key = getattr(response.data, "image_key", None)
+            if image_key:
+                logger.info("飞书图片上传成功: image_key=%s", image_key)
+            return image_key
+        except FileNotFoundError:
+            logger.warning("飞书图片上传失败: 文件不存在 path=%s", abs_path)
+            return None
+        except Exception as e:
+            logger.error("飞书图片上传异常: %s path=%s", e, abs_path)
+            return None
+
+    def _upload_file(self, abs_path: str) -> str | None:
+        """Upload a file to Feishu and return the file_key, or None on failure."""
+        if not self._api_client:
+            return None
+        try:
+            file_name = os.path.basename(abs_path)
+            with open(abs_path, "rb") as f:
+                request = (
+                    CreateFileRequest.builder()
+                    .request_body(
+                        CreateFileRequestBody.builder()
+                        .file_type("stream")
+                        .file_name(file_name)
+                        .file(f)
+                        .build()
+                    )
+                    .build()
+                )
+                response = self._api_client.im.v1.file.create(request)
+
+            if not response.success():
+                logger.warning(
+                    "飞书文件上传失败: code=%s msg=%s path=%s",
+                    response.code, response.msg, abs_path,
+                )
+                return None
+
+            file_key = getattr(response.data, "file_key", None)
+            if file_key:
+                logger.info("飞书文件上传成功: file_key=%s", file_key)
+            return file_key
+        except FileNotFoundError:
+            logger.warning("飞书文件上传失败: 文件不存在 path=%s", abs_path)
+            return None
+        except Exception as e:
+            logger.error("飞书文件上传异常: %s path=%s", e, abs_path)
+            return None
+
     def _build_card_content(self, content_str: str) -> str:
         """
         构建飞书卡片内容。
@@ -936,16 +1050,18 @@ class FeishuChannel(BaseChannel):
         return json.dumps(card, ensure_ascii=False)
 
     async def _send_feishu_message(
-        self, receive_id: str, id_type: str, card_content: str, msg_id: str
-    ) -> None:
+        self, receive_id: str, id_type: str, content: str, msg_id: str,
+        msg_type: str = "interactive",
+    ) -> Any:
         """
         发送飞书消息。
 
         Args:
             receive_id: 接收者ID
             id_type: ID类型
-            card_content: 卡片内容
+            content: 消息内容（JSON字符串）
             msg_id: 发送消息ID（用于日志）
+            msg_type: 消息类型（默认interactive，也支持image/file等）
         """
         request = (
             CreateMessageRequest.builder()
@@ -953,8 +1069,8 @@ class FeishuChannel(BaseChannel):
             .request_body(
                 CreateMessageRequestBody.builder()
                 .receive_id(receive_id)
-                .msg_type("interactive")
-                .content(card_content)
+                .msg_type(msg_type)
+                .content(content)
                 .build()
             )
             .build()
@@ -967,8 +1083,10 @@ class FeishuChannel(BaseChannel):
                 f"发送飞书消息失败: 错误码={response.code}, "
                 f"消息={response.msg}, 日志ID={response.get_log_id()}"
             )
+            return None
         else:
             logger.debug("已向 %s 发送飞书消息", msg_id)
+            return response
 
     def _on_message_sync(self, data: "P2ImMessageReceiveV1") -> None:
         """
