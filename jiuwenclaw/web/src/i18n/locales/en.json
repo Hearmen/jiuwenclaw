@@ -116,6 +116,7 @@
       "xiaoyi": "Xiaoyi",
       "dingtalk": "DingTalk",
       "wecom": "WeCom",
+      "discord": "Discord",
       "heartbeat": "Heartbeat",
       "unknown": "Unknown"
     },
@@ -272,7 +273,7 @@
       "feishuSubtitle": "Configure Lark channel service settings",
       "discordTitle": "Discord Channel Configuration",
       "discordSubtitle": "Configure Discord bot service settings",
-      "discordHint": "Discord Bot messaging is supported. Enable Message Content Intent in Developer Portal and set the target channel.",
+      "discordHint": "Discord Bot messaging is supported. Enable Message Content Intent in Developer Portal and optionally set the target channel, the block_dm toggle can be used to block direct message.",
       "telegramTitle": "Telegram Channel Configuration",
       "telegramSubtitle": "Configure Telegram Bot service settings",
       "whatsappTitle": "WhatsApp Channel Configuration",
@@ -300,7 +301,9 @@
       "telegramUserIds": "One Telegram user_id per line (comma-separated is also supported)",
       "whatsappJids": "One WhatsApp JID per line (comma-separated is also supported)",
       "wecomDefaultChatId": "userid or chatid (group)",
-      "wecomDefaultChatIdHint": "Target for heartbeat/scheduled push. Leave empty to use last chatid"
+      "wecomDefaultChatIdHint": "Target for heartbeat/scheduled push. Leave empty to use last chatid",
+      "discordGuildId": "Enter the Discord server ID (direct message still works without this)",
+      "discordChannelId": "Enter the Discord server's channel ID (direct message still works without this)"
     },
     "saved": {
       "feishu": "Lark settings saved",

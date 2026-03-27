@@ -116,6 +116,7 @@
       "xiaoyi": "小艺",
       "dingtalk": "钉钉",
       "wecom": "企业微信",
+      "discord": "Discord",
       "heartbeat": "心跳",
       "unknown": "未知"
     },
@@ -272,7 +273,7 @@
       "feishuSubtitle": "配置飞书频道服务相关参数",
       "discordTitle": "Discord 频道参数配置",
       "discordSubtitle": "配置 Discord Bot 服务相关参数",
-      "discordHint": "支持 Discord Bot 消息收发，请确保已在开发者后台开启 Message Content Intent 并配置目标频道。",
+      "discordHint": "支持 Discord Bot 消息收发，请确保已在开发者后台开启 Message Content Intent 并配置目标频道，可使用block_dm开关屏蔽私信。",
       "telegramTitle": "Telegram 频道参数配置",
       "telegramSubtitle": "配置 Telegram Bot 服务相关参数",
       "whatsappTitle": "WhatsApp 频道参数配置",
@@ -300,7 +301,9 @@
       "telegramUserIds": "每行一个 Telegram user_id（也支持逗号分隔）",
       "whatsappJids": "每行一个 WhatsApp JID（也支持逗号分隔）",
       "wecomDefaultChatId": "userid 或 chatid（群聊）",
-      "wecomDefaultChatIdHint": "心跳/定时推送目标。不填则自动使用最近一次聊天的 chatid"
+      "wecomDefaultChatIdHint": "心跳/定时推送目标。不填则自动使用最近一次聊天的 chatid",
+      "discordGuildId": "请填入Discord的服务器ID（留空则仅接收私信）",
+      "discordChannelId": "请填入Discord服务器的频道ID（留空则仅接收私信）"
     },
     "saved": {
       "feishu": "飞书配置已保存",

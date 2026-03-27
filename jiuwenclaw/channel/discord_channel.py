@@ -1,9 +1,7 @@
 """Discord channel implementation based on discord.py."""
 
-from __future__ import annotations
-
-import logging
 import asyncio
+import logging
 import time
 from dataclasses import dataclass, field
 from typing import Any, Callable
@@ -29,6 +27,7 @@ class DiscordChannelConfig:
     application_id: str = ""
     guild_id: str = ""
     channel_id: str = ""
+    block_dm: bool = False
     allow_from: list[str] = field(default_factory=list)
 
 
@@ -71,6 +70,7 @@ class DiscordChannel(BaseChannel):
         intents = discord.Intents.default()
         intents.guilds = True
         intents.messages = True
+        intents.dm_messages = True
         intents.message_content = True
 
         app_id: int | None = None
@@ -154,20 +154,36 @@ class DiscordChannel(BaseChannel):
         if channel is None:
             return
 
+        author_name = str(getattr(message.author, "name", "") or "")
+        author_nickname = str(getattr(message.author, "global_name", "") or "")
         guild_id = str(getattr(guild, "id", "") or "")
         channel_id = str(getattr(channel, "id", "") or "")
         cfg_guild = (self.config.guild_id or "").strip()
         cfg_channel = (self.config.channel_id or "").strip()
-
-        if cfg_guild:
-            if not guild_id or guild_id != cfg_guild:
+        # Guild/channel filters apply only to server messages. DMs have no guild
+        if guild_id:  # message from server
+            if cfg_guild and guild_id != cfg_guild:
                 return
-        if cfg_channel and channel_id != cfg_channel:
+            if cfg_channel and channel_id != cfg_channel:
+                return
+        elif self.config.block_dm:  # blocked direct message
+            logger.info(
+                "Discord direct message ignored, from user %s (name=%s, id=%s)", author_nickname, author_name, author_id
+            )
+            await self._add_reaction_emoji(message, emoji="🚫")
             return
 
         text = str(getattr(message, "content", "") or "").strip()
         if not text:
             return
+
+        add_emoji_exception = await self._add_reaction_emoji(message, emoji="👀")
+        if add_emoji_exception is not None:
+            logger.error(
+                "Discord add reaction to message from user %s (name=%s, id=%s) failed: %s",
+                author_nickname, author_name, author_id, add_emoji_exception,
+            )
+        del add_emoji_exception
 
         session_id = f"discord_{channel_id}_{author_id}"
         req = Message(
@@ -181,8 +197,8 @@ class DiscordChannel(BaseChannel):
             req_method=ReqMethod.CHAT_SEND,
             metadata={
                 "discord_user_id": author_id,
-                "discord_username": str(getattr(message.author, "name", "") or ""),
-                "discord_global_name": str(getattr(message.author, "global_name", "") or ""),
+                "discord_username": author_name,
+                "discord_global_name": author_nickname,
                 "discord_channel_id": channel_id,
                 "discord_channel_name": str(getattr(channel, "name", "") or ""),
                 "discord_guild_id": guild_id,
@@ -233,6 +249,14 @@ class DiscordChannel(BaseChannel):
         if isinstance(msg.payload, str):
             return msg.payload.strip()
         return ""
+
+    @staticmethod
+    async def _add_reaction_emoji(message: Any, emoji: str = "👀") -> Exception | None:
+        try:
+            await message.add_reaction(emoji)
+            return None
+        except Exception as e:
+            return e
 
     def get_metadata(self) -> ChannelMetadata:
         return ChannelMetadata(

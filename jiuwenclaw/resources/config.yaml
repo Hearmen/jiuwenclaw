@@ -181,6 +181,7 @@ channels:
     enabled: false
   discord:
     # Discord Bot 配置（当前版本仅支持参数管理）
+    # 可与用户私聊（DM）：仍受 allow_from 约束
     # Bot Token（Discord Developer Portal -> Bot）
     bot_token:
     # Application ID（Discord Developer Portal -> General Information）
@@ -191,6 +192,8 @@ channels:
     channel_id:
     # 用户白名单（Discord user_id），为空则允许所有用户
     allow_from: []
+    # 是否关闭私信功能
+    block_dm: false
     enabled: false
   whatsapp:
     # WhatsApp 配置（通过本地 Baileys bridge）

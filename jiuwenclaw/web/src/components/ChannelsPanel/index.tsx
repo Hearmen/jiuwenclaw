@@ -93,6 +93,7 @@ type DiscordConfig = {
   application_id: string;
   guild_id: string;
   channel_id: string;
+  block_dm: boolean;
   allow_from: string[];
 };
 
@@ -102,6 +103,7 @@ type DiscordDraft = {
   application_id: string;
   guild_id: string;
   channel_id: string;
+  block_dm: boolean;
   allow_from: string;
 };
 
@@ -191,6 +193,7 @@ const DEFAULT_DISCORD_CONF: DiscordConfig = {
   application_id: '',
   guild_id: '',
   channel_id: '',
+  block_dm: false,
   allow_from: [],
 };
 
@@ -447,6 +450,14 @@ function isSensitiveDiscordField(field: keyof DiscordDraft): boolean {
   return field === 'bot_token';
 }
 
+/** Match backend discord_conf bool parsing (true / 1 / "true" / "1"). */
+function parseDiscordBoolFlag(value: unknown): boolean {
+  if (value === true || value === 1) return true;
+  if (value === false || value === 0) return false;
+  const s = String(value).trim().toLowerCase();
+  return s === 'true' || s === '1';
+}
+
 function normalizeDiscordConfig(input: unknown): DiscordConfig {
   if (!input || typeof input !== 'object') {
     return DEFAULT_DISCORD_CONF;
@@ -462,6 +473,7 @@ function normalizeDiscordConfig(input: unknown): DiscordConfig {
     application_id: String(data.application_id ?? '').trim(),
     guild_id: String(data.guild_id ?? '').trim(),
     channel_id: String(data.channel_id ?? '').trim(),
+    block_dm: parseDiscordBoolFlag(data.block_dm),
     allow_from: allowFrom,
   };
 }
@@ -473,6 +485,7 @@ function draftFromDiscordConfig(conf: DiscordConfig): DiscordDraft {
     application_id: conf.application_id,
     guild_id: conf.guild_id,
     channel_id: conf.channel_id,
+    block_dm: conf.block_dm,
     allow_from: conf.allow_from.join('\n'),
   };
 }
@@ -484,6 +497,7 @@ function buildDiscordPayload(draft: DiscordDraft): Record<string, unknown> {
     application_id: draft.application_id.trim(),
     guild_id: draft.guild_id.trim(),
     channel_id: draft.channel_id.trim(),
+    block_dm: draft.block_dm,
     allow_from: normalizeAllowFromText(draft.allow_from),
   };
 }
@@ -936,6 +950,7 @@ export function ChannelsPanel({ isConnected }: ChannelsPanelProps) {
       baseDraft.application_id !== discordDraft.application_id ||
       baseDraft.guild_id !== discordDraft.guild_id ||
       baseDraft.channel_id !== discordDraft.channel_id ||
+      baseDraft.block_dm !== discordDraft.block_dm ||
       normalizeAllowFromText(baseDraft.allow_from).join('\n') !== normalizeAllowFromText(discordDraft.allow_from).join('\n')
     );
   }, [discordConfig, discordDraft]);
@@ -2000,6 +2015,26 @@ export function ChannelsPanel({ isConnected }: ChannelsPanelProps) {
                                   </button>
                                 </td>
                               </tr>
+                              <tr className="border-t border-border first:border-t-0 even:bg-secondary/10">
+                                <td className="px-4 py-2.5 align-middle mono text-xs text-text-muted w-[32%]">block_dm</td>
+                                <td className="px-4 py-2.5 align-middle">
+                                  <button
+                                    type="button"
+                                    role="switch"
+                                    aria-checked={discordDraft.block_dm}
+                                    onClick={() => handleDiscordFieldChange('block_dm', !discordDraft.block_dm)}
+                                    className={`relative inline-flex h-5 w-9 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 focus:outline-none ${
+                                      discordDraft.block_dm ? 'bg-ok' : 'bg-secondary'
+                                    }`}
+                                  >
+                                    <span
+                                      className={`pointer-events-none inline-block h-4 w-4 transform rounded-full bg-white shadow transition duration-200 ${
+                                        discordDraft.block_dm ? 'translate-x-4' : 'translate-x-0'
+                                      }`}
+                                    />
+                                  </button>
+                                </td>
+                              </tr>
                               {(['bot_token', 'application_id', 'guild_id', 'channel_id'] as const).map((field) => (
                                 <tr key={field} className="border-t border-border first:border-t-0 even:bg-secondary/10">
                                   <td className="px-4 py-2.5 align-middle mono text-xs text-text-muted w-[32%]">{field}</td>
@@ -2009,7 +2044,13 @@ export function ChannelsPanel({ isConnected }: ChannelsPanelProps) {
                                         type={isSensitiveDiscordField(field) && !discordVisibleFields[field] ? 'password' : 'text'}
                                         value={discordDraft[field]}
                                         onChange={(e) => handleDiscordFieldChange(field, e.target.value)}
-                                        placeholder={t('channels.placeholders.configValue')}
+                                        placeholder={
+                                          field === 'guild_id'
+                                            ? t('channels.placeholders.discordGuildId')
+                                            : field === 'channel_id'
+                                              ? t('channels.placeholders.discordChannelId')
+                                              : t('channels.placeholders.configValue')
+                                        }
                                         className={`w-full rounded-md border border-border bg-bg px-3 py-2 text-[13px] outline-none focus:border-accent ${
                                           isSensitiveDiscordField(field) ? 'pr-10' : ''
                                         }`}

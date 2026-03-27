@@ -1743,6 +1743,7 @@ async def _run() -> None:
                         guild_id=str(discord_conf.get("guild_id") or "").strip(),
                         channel_id=str(discord_conf.get("channel_id") or "").strip(),
                         allow_from=discord_conf.get("allow_from") or [],
+                        block_dm=(str(discord_conf.get("block_dm")).lower() in ["true", "1"]) or False,
                     )
                     discord_channel = DiscordChannel(discord_config, _DummyBus())
                     channel_manager.register_channel(discord_channel)

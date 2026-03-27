@@ -42,6 +42,15 @@ function isPlausibleDate(date: Date): boolean {
   return year >= 2020 && year <= 2100;
 }
 
+/** Shorten Discord IDs for list labels*/
+function shortenDiscordIDForLabel(id: string): string {
+  const s = id.trim();
+  if (s.length <= 12) {
+    return s;
+  }
+  return `${s.slice(0, 4)}…${s.slice(-4)}`;
+}
+
 function parseSessionDisplayLabel(sessionId: string, t: (key: string, options?: Record<string, unknown>) => string): string {
   if (!sessionId) return t('sessions.unknownSession');
 
@@ -76,6 +85,17 @@ function parseSessionDisplayLabel(sessionId: string, t: (key: string, options?: 
   if (sessionId.startsWith('heartbeat_')) {
     const rawBody = sessionId.slice('heartbeat_'.length);
     return rawBody ? `${t('sessions.prefixes.heartbeat')}-${rawBody}` : t('sessions.prefixes.heartbeat');
+  }
+
+  // discord_{channel_id}_{user_id} from Discord Channel (not hex timestamps)
+  if (sessionId.startsWith('discord_')) {
+    const parts = sessionId.split('_');
+    const discordLabel = t('sessions.prefixes.discord');
+    if (parts.length >= 3) {
+      const ch = shortenDiscordIDForLabel(parts[1]);
+      const user = shortenDiscordIDForLabel(parts[2]);
+      return `${discordLabel}-${ch}/${user}`;
+    }
   }
 
   // 解析会话ID中可能包含的时间戳格式，如 YYYYMMDD_HHMMSS_xxxx
