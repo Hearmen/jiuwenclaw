@@ -63,7 +63,7 @@ _VALID_SHELL_TYPES = {"auto", "cmd", "powershell", "bash", "sh"}
 
 
 def _clip_text(value: str, max_chars: int) -> str:
-    if len(value) <= max_chars:
+    if max_chars <= 0 or len(value) <= max_chars:
         return value
     return f"{value[:max_chars]}\n...[truncated]"
 
@@ -216,14 +216,16 @@ def _run_command_background(
         "Supports Windows cmd/PowerShell and macOS/Linux bash/sh. "
         "Optional shell_type=auto|cmd|powershell|bash|sh. "
         "Set background=True to run non-blocking (e.g. start a server); returns immediately on success, error on failure. "
+        "Set max_output_chars=0 to disable output clipping. "
+        "Use a larger timeout_seconds for long-running commands. "
         "Returns JSON: exit_code/stdout/stderr (blocking) or pid/status (background)."
     ),
 )
 async def mcp_exec_command(
     command: str,
-    timeout_seconds: int = 15,
+    timeout_seconds: int = 300,
     workdir: str = ".",
-    max_output_chars: int = 8000,
+    max_output_chars: int = 0,
     shell_type: str = "auto",
     background: bool = False,
 ) -> str:
@@ -240,8 +242,23 @@ async def mcp_exec_command(
     except Exception:
         return "[ERROR]: workdir is outside project workspace."
 
-    timeout_seconds = max(1, min(timeout_seconds, 60))
-    max_output_chars = max(200, min(max_output_chars, 20000))
+    try:
+        timeout_seconds = int(timeout_seconds)
+    except (TypeError, ValueError):
+        timeout_seconds = 300
+    try:
+        max_timeout_seconds = int(os.getenv("MCP_EXEC_COMMAND_MAX_TIMEOUT_SECONDS") or "3600")
+    except ValueError:
+        max_timeout_seconds = 3600
+    max_timeout_seconds = max(1, max_timeout_seconds)
+    timeout_seconds = max(1, min(timeout_seconds, max_timeout_seconds))
+
+    try:
+        max_output_chars = int(max_output_chars)
+    except (TypeError, ValueError):
+        max_output_chars = 0
+    if max_output_chars < 0:
+        max_output_chars = 0
     normalized_shell_type = _normalize_shell_type(shell_type)
 
     if background:

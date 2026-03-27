@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 import shlex
 import socket
@@ -14,10 +15,12 @@ import time
 import importlib.util
 from urllib.parse import urlparse
 from pathlib import Path
-from typing import Any
+from typing import IO, Any
 
 from openjiuwen.core.foundation.tool import McpServerConfig
 from openjiuwen.core.runner import Runner
+
+from jiuwenclaw.utils import get_logs_dir
 
 _BROWSER_MCP_DEFAULT_ID = "playwright_runtime_wrapper"
 _BROWSER_MCP_DEFAULT_NAME = "playwright-runtime-wrapper"
@@ -32,7 +35,40 @@ _AUTO_SSE_PATH = "BROWSER_RUNTIME_MCP_SSE_PATH"
 _PROXY_BLOCKLIST = {"http://127.0.0.1:9", "http://localhost:9"}
 _BROWSER_RUNTIME_PROCESS: subprocess.Popen[str] | None = None
 _BROWSER_RUNTIME_SERVER_URL: str | None = None
+_browser_runtime_stdout_handle: IO[str] | None = None
+_browser_runtime_stderr_handle: IO[str] | None = None
 _BROWSER_MOVE_CLIENT_PATCHED = False
+_BROWSER_RUNTIME_STDOUT_LOG = "browser_runtime_stdout.log"
+_BROWSER_RUNTIME_STDERR_LOG = "browser_runtime_stderr.log"
+
+logger = logging.getLogger(__name__)
+
+
+def _browser_runtime_log_paths() -> tuple[Path, Path]:
+    logs_dir = get_logs_dir()
+    logs_dir.mkdir(parents=True, exist_ok=True)
+    return (
+        logs_dir / _BROWSER_RUNTIME_STDOUT_LOG,
+        logs_dir / _BROWSER_RUNTIME_STDERR_LOG,
+    )
+
+
+def _close_browser_runtime_log_handles() -> None:
+    global _browser_runtime_stdout_handle
+    global _browser_runtime_stderr_handle
+
+    for attr_name in (
+        "_browser_runtime_stdout_handle",
+        "_browser_runtime_stderr_handle",
+    ):
+        handle = globals().get(attr_name)
+        if handle is None:
+            continue
+        try:
+            handle.close()
+        except Exception:
+            pass
+        globals()[attr_name] = None
 
 
 def _env_bool(name: str, default: bool = False) -> bool:
@@ -307,15 +343,40 @@ def _start_local_server(transport: str, host: str, port: int, path: str) -> str:
         path,
         "--no-banner",
     ]
-    _BROWSER_RUNTIME_PROCESS = subprocess.Popen(
-        cmd,
-        cwd=str(_repo_root()),
-        env=env,
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-        text=True,
+    stdout_log_path, stderr_log_path = _browser_runtime_log_paths()
+    _close_browser_runtime_log_handles()
+    stdout_handle = stdout_log_path.open("a", encoding="utf-8")
+    stderr_handle = stderr_log_path.open("a", encoding="utf-8")
+    try:
+        _BROWSER_RUNTIME_PROCESS = subprocess.Popen(
+            cmd,
+            cwd=str(_repo_root()),
+            env=env,
+            stdout=stdout_handle,
+            stderr=stderr_handle,
+            text=True,
+        )
+    except Exception:
+        stdout_handle.close()
+        stderr_handle.close()
+        raise
+
+    _browser_runtime_stdout_handle = stdout_handle
+    _browser_runtime_stderr_handle = stderr_handle
+    logger.info(
+        "Started browser runtime subprocess: transport=%s url=http://%s:%s%s stdout_log=%s stderr_log=%s",
+        normalized,
+        host,
+        port,
+        path,
+        stdout_log_path,
+        stderr_log_path,
     )
-    _wait_port_open(host, port)
+    try:
+        _wait_port_open(host, port)
+    except Exception:
+        stop_local_browser_runtime_server()
+        raise
     _BROWSER_RUNTIME_SERVER_URL = f"http://{host}:{port}{path}"
     return _BROWSER_RUNTIME_SERVER_URL
 
@@ -336,6 +397,7 @@ def stop_local_browser_runtime_server() -> None:
     _BROWSER_RUNTIME_SERVER_URL = None
 
     if proc is None or proc.poll() is not None:
+        _close_browser_runtime_log_handles()
         return
 
     try:
@@ -347,6 +409,8 @@ def stop_local_browser_runtime_server() -> None:
             proc.wait(timeout=2)
         except Exception:
             pass
+    finally:
+        _close_browser_runtime_log_handles()
 
 
 def restart_local_browser_runtime_server() -> str | None:

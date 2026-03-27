@@ -23,6 +23,7 @@ browser:
 from __future__ import annotations
 
 import argparse
+import logging
 import os
 import platform
 import shutil
@@ -32,6 +33,9 @@ from pathlib import Path
 from typing import Any
 
 import yaml
+
+
+logger = logging.getLogger(__name__)
 
 
 def _repo_root() -> Path:
@@ -78,7 +82,8 @@ def _persist_browser_profile(
     profile_directory: str,
 ) -> None:
     browser_profile_cls, browser_profile_store_cls = _load_profile_store_types()
-    store = browser_profile_store_cls(_profile_store_path())
+    store_path = _profile_store_path()
+    store = browser_profile_store_cls(store_path)
     profile = browser_profile_cls(
         name=_profile_name(profile_directory),
         driver_type="remote",
@@ -90,6 +95,10 @@ def _persist_browser_profile(
         extra_args=[f"--profile-directory={profile_directory}"] if profile_directory else [],
     )
     store.upsert_profile(profile, select=True)
+    logger.info(
+        "Persisted browser profile for manual browser start: "
+        f"profile={profile.name}, cdp_url={profile.cdp_url}, store_path={store_path}"
+    )
 
 
 def _load_browser_config(config_file: str = "") -> dict[str, Any]:
@@ -208,6 +217,10 @@ def _creation_flags_for_windows() -> int:
 def start_browser(*, dry_run: bool = False, config_file: str = "") -> int:
     browser_cfg = _load_browser_config(config_file)
     os_name = _os_key()
+    logger.info(
+        "Starting browser service from browser_start_client: "
+        f"config_file={_config_path(config_file)}, os={os_name}"
+    )
 
     chrome_cfg = _resolve_chrome_path(browser_cfg.get("chrome_path"), os_name)
     if not chrome_cfg:
@@ -219,6 +232,10 @@ def start_browser(*, dry_run: bool = False, config_file: str = "") -> int:
             "or CHROME_PATH env."
         )
     chrome_exec = _normalize_chrome_executable(chrome_cfg, os_name)
+    logger.info(
+        "Resolved Chrome executable for browser service: "
+        f"configured={chrome_cfg}, resolved={chrome_exec or '(not found)'}"
+    )
     if not chrome_exec:
         raise FileNotFoundError(
             f"Chrome executable not found for configured path: {chrome_cfg}"
@@ -230,6 +247,12 @@ def start_browser(*, dry_run: bool = False, config_file: str = "") -> int:
 
     user_data_dir = _resolve_user_data_dir(browser_cfg.get("user_data_dir"), os_name)
     profile_directory = str(browser_cfg.get("profile_directory") or "Default").strip()
+
+    logger.info(
+        "Resolved browser launch parameters: "
+        f"host={host}, port={port}, user_data_dir={user_data_dir}, "
+        f"profile_directory={profile_directory or '(empty)'}"
+    )
 
     args = [
         chrome_exec,
@@ -254,7 +277,12 @@ def start_browser(*, dry_run: bool = False, config_file: str = "") -> int:
         print(" ".join(args))
         return 0
 
+    logger.info(
+        "Launching browser process with remote debugging enabled: "
+        f"command={args}"
+    )
     proc = subprocess.Popen(args, **kwargs)
+    logger.info(f"Browser process launched successfully: pid={proc.pid}")
     _persist_browser_profile(
         host=host,
         port=port,

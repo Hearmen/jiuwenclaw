@@ -18,6 +18,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 from urllib.request import urlopen
 
+from openjiuwen.core.common.logging import logger
 from openjiuwen.core.foundation.store.base_kv_store import BaseKVStore
 from openjiuwen.core.foundation.store.kv.in_memory_kv_store import InMemoryKVStore
 from openjiuwen.core.foundation.tool import McpServerConfig
@@ -139,6 +140,13 @@ class BrowserService:
         self._registered_cdp_endpoint: str = ""
         self._failure_context_by_session: Dict[str, str] = {}
 
+        logger.info(
+            "BrowserService initialized: "
+            f"driver_mode={self._driver_mode}, profile_name={self._profile_name}, "
+            f"profile_store={self._resolve_profile_store_path()}, mcp_server={self._server_resource_id()}, "
+            f"mcp_cwd={self._mcp_cwd}"
+        )
+
     @staticmethod
     def _parse_env_args(value: str) -> List[str]:
         raw = (value or "").strip()
@@ -168,7 +176,9 @@ class BrowserService:
         return "remote"
 
     def _refresh_profile_store(self) -> None:
-        self._profile_store = BrowserProfileStore(self._resolve_profile_store_path())
+        store_path = self._resolve_profile_store_path()
+        self._profile_store = BrowserProfileStore(store_path)
+        logger.info(f"BrowserService: refreshed profile store from {store_path}")
 
     @staticmethod
     def _is_cdp_endpoint_ready(endpoint: str) -> bool:
@@ -193,10 +203,24 @@ class BrowserService:
         named = self._profile_store.get_profile(self._profile_name)
         if named is not None and all(named.name != item.name for item in candidates):
             candidates.append(named)
+        candidate_names = [profile.name for profile in candidates]
+        logger.info(
+            "BrowserService: checking existing CDP profiles "
+            f"for reuse, candidates={candidate_names or ['(none)']}"
+        )
         for profile in candidates:
             endpoint = str(profile.cdp_url or "").strip()
             if endpoint and self._is_cdp_endpoint_ready(endpoint):
+                logger.info(
+                    "BrowserService: reusing existing CDP profile "
+                    f"name={profile.name}, endpoint={endpoint}, driver_type={profile.driver_type}"
+                )
                 return profile
+            logger.info(
+                "BrowserService: existing CDP profile not ready "
+                f"name={profile.name}, endpoint={endpoint or '(empty)'}"
+            )
+        logger.info("BrowserService: no reusable existing CDP profile found")
         return None
 
     def _should_replace_managed_driver(self, profile: BrowserProfile) -> bool:
@@ -346,6 +370,7 @@ class BrowserService:
         )
 
     def _inject_cdp_endpoint(self, endpoint: str) -> None:
+        previous_endpoint = self._configured_cdp_endpoint()
         params = dict(getattr(self.mcp_cfg, "params", {}) or {})
         env_map = dict(params.get("env", {}) or {})
         env_map["PLAYWRIGHT_MCP_CDP_ENDPOINT"] = endpoint
@@ -353,6 +378,11 @@ class BrowserService:
         env_map.pop("PLAYWRIGHT_MCP_DEVICE", None)
         params["env"] = env_map
         self.mcp_cfg.params = params
+        if previous_endpoint != endpoint:
+            logger.info(
+                "BrowserService: updated MCP CDP endpoint "
+                f"from {previous_endpoint or '(empty)'} to {endpoint or '(empty)'}"
+            )
 
     def _configured_cdp_endpoint(self) -> str:
         params = dict(getattr(self.mcp_cfg, "params", {}) or {})
@@ -365,22 +395,27 @@ class BrowserService:
     async def _remove_registered_mcp_server(self) -> None:
         resource_mgr = Runner.resource_mgr
         server_id = self._server_resource_id()
+        logger.info(f"BrowserService: removing registered MCP server server_id={server_id}")
 
-        async def _invoke(method) -> None:
+        async def _invoke(method, method_name: str) -> None:
+            logger.info(
+                "BrowserService: invoking MCP server removal method "
+                f"server_id={server_id}, method={method_name}"
+            )
             try:
                 await method(server_id, ignore_not_exist=True)
                 return
             except TypeError:
                 await method(server_id)
 
-        direct_method = getattr(resource_mgr, "remove_tool_server", None)
-        if callable(direct_method):
-            await _invoke(direct_method)
-            return
-
         direct_method = getattr(resource_mgr, "remove_mcp_server", None)
         if callable(direct_method):
-            await _invoke(direct_method)
+            await _invoke(direct_method, "ResourceMgr.remove_mcp_server")
+            return
+
+        direct_method = getattr(resource_mgr, "remove_tool_server", None)
+        if callable(direct_method):
+            await _invoke(direct_method, "ResourceMgr.remove_tool_server")
             return
 
         for attr_name in ("tool_mgr", "_tool_mgr", "tool_manager", "_tool_manager"):
@@ -389,14 +424,19 @@ class BrowserService:
                 continue
             nested_method = getattr(manager, "remove_tool_server", None)
             if callable(nested_method):
-                await _invoke(nested_method)
+                await _invoke(nested_method, f"{attr_name}.remove_tool_server")
                 return
             nested_method = getattr(manager, "remove_mcp_server", None)
             if callable(nested_method):
-                await _invoke(nested_method)
+                await _invoke(nested_method, f"{attr_name}.remove_mcp_server")
                 return
 
     async def _register_mcp_server(self) -> None:
+        endpoint = self._configured_cdp_endpoint()
+        logger.info(
+            "BrowserService: registering MCP server "
+            f"server_id={self._server_resource_id()}, endpoint={endpoint or '(empty)'}"
+        )
         register_result = await Runner.resource_mgr.add_mcp_server(self.mcp_cfg, tag="browser.service")
         if register_result is not None and not getattr(register_result, "is_ok", lambda: False)():
             error_value = getattr(register_result, "value", register_result)
@@ -405,16 +445,37 @@ class BrowserService:
                 raise RuntimeError(
                     f"Failed to register Playwright MCP server: {self._extract_error_text(error_value)}"
                 )
+            logger.warning(
+                "BrowserService: MCP server already registered, reusing existing registration "
+                f"server_id={self._server_resource_id()}, endpoint={endpoint or '(empty)'}, error={error_text}"
+            )
         self._registered_cdp_endpoint = self._configured_cdp_endpoint()
+        logger.info(
+            "BrowserService: MCP server registration ready "
+            f"server_id={self._server_resource_id()}, endpoint={self._registered_cdp_endpoint or '(empty)'}"
+        )
 
     async def _refresh_mcp_server_binding(self) -> None:
+        logger.warning(
+            "BrowserService: refreshing MCP server binding "
+            f"server_id={self._server_resource_id()}, old_endpoint={self._registered_cdp_endpoint or '(empty)'}, "
+            f"new_endpoint={self._configured_cdp_endpoint() or '(empty)'}"
+        )
         await self._remove_registered_mcp_server()
         await self._register_mcp_server()
 
     async def _ensure_managed_driver_started(self) -> None:
+        logger.info(
+            "BrowserService: ensuring managed driver is ready "
+            f"driver_mode={self._driver_mode}, active_profile={getattr(self._active_profile, 'name', None)}"
+        )
         existing_profile = self._resolve_existing_cdp_profile()
         if existing_profile is not None:
             if self._should_replace_managed_driver(existing_profile):
+                logger.warning(
+                    "BrowserService: existing CDP profile requires managed driver replacement "
+                    f"name={existing_profile.name}, endpoint={existing_profile.cdp_url}"
+                )
                 await self._stop_managed_driver()
             self._active_profile = existing_profile
             self._inject_cdp_endpoint(existing_profile.cdp_url)
@@ -422,16 +483,20 @@ class BrowserService:
             return
 
         if self._driver_mode != "managed":
+            logger.info("BrowserService: driver mode is not managed; skip auto-start")
             return
         if self._managed_driver is not None:
             try:
+                logger.info("BrowserService: reusing existing managed driver instance")
                 endpoint = await asyncio.to_thread(self._managed_driver.start, 10.0, False)
                 self._inject_cdp_endpoint(endpoint)
                 if self._active_profile is not None:
                     self._active_profile.cdp_url = endpoint
                     self._profile_store.upsert_profile(self._active_profile, select=True)
+                logger.info(f"BrowserService: managed driver reused at endpoint={endpoint}")
                 return
-            except Exception:
+            except Exception as exc:
+                logger.warning(f"BrowserService: existing managed driver reuse failed: {exc}")
                 await self._stop_managed_driver()
 
         profile = self._profile_store.get_profile(self._profile_name)
@@ -451,30 +516,46 @@ class BrowserService:
         kill_existing_raw = (os.getenv("BROWSER_MANAGED_KILL_EXISTING") or "").strip().lower()
         kill_existing = kill_existing_raw in {"1", "true", "yes", "on"}
 
+        logger.info(
+            "BrowserService: starting managed browser driver "
+            f"profile={profile.name}, host={profile.host}, port={profile.debug_port}, "
+            f"user_data_dir={profile.user_data_dir}, kill_existing={kill_existing}"
+        )
         driver = ManagedBrowserDriver(profile=profile)
         endpoint = await asyncio.to_thread(driver.start, 20.0, kill_existing)
         self._inject_cdp_endpoint(endpoint)
         profile.cdp_url = endpoint
         self._profile_store.upsert_profile(profile, select=True)
         self._managed_driver = driver
+        logger.info(
+            "BrowserService: managed browser driver started "
+            f"profile={profile.name}, endpoint={endpoint}"
+        )
 
     async def _stop_managed_driver(self) -> None:
         if self._managed_driver is None:
             return
         driver = self._managed_driver
         self._managed_driver = None
+        logger.info("BrowserService: stopping managed browser driver")
         await asyncio.to_thread(driver.stop)
+        logger.info("BrowserService: managed browser driver stopped")
 
     async def _reset_browser_runtime(self) -> None:
+        logger.warning(
+            "BrowserService: resetting browser runtime "
+            f"started={self.started}, registered_endpoint={self._registered_cdp_endpoint or '(empty)'}"
+        )
         try:
             if self.started:
                 await self._remove_registered_mcp_server()
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.warning(f"BrowserService: failed to remove registered MCP server during reset: {exc}")
         self.started = False
         self._registered_cdp_endpoint = ""
         self._browser_agent = None
         await self._stop_managed_driver()
+        logger.info("BrowserService: browser runtime reset complete")
 
     async def _restart_browser_runtime(self) -> None:
         from openjiuwen.core.common.logging import logger as _logger
@@ -647,9 +728,19 @@ class BrowserService:
         return sid
 
     async def ensure_started(self) -> None:
+        logger.info(
+            "BrowserService.ensure_started called "
+            f"started={self.started}, configured_endpoint={self._configured_cdp_endpoint() or '(empty)'}, "
+            f"registered_endpoint={self._registered_cdp_endpoint or '(empty)'}"
+        )
         if self.started:
             await self._ensure_managed_driver_started()
             if self._configured_cdp_endpoint() != self._registered_cdp_endpoint:
+                logger.warning(
+                    "BrowserService: detected MCP endpoint drift while already started "
+                    f"configured={self._configured_cdp_endpoint() or '(empty)'}, "
+                    f"registered={self._registered_cdp_endpoint or '(empty)'}"
+                )
                 await self._refresh_mcp_server_binding()
             return
 
@@ -658,6 +749,7 @@ class BrowserService:
 
         await self._ensure_managed_driver_started()
         self._ensure_screenshots_dir()
+        logger.info("BrowserService: starting Runner and registering browser MCP server")
         await Runner.start()
         await self._register_mcp_server()
 
@@ -678,6 +770,10 @@ class BrowserService:
             self._browser_agent.register_callback(event, callback, priority=priority)
         self._pending_callbacks.clear()
         self.started = True
+        logger.info(
+            "BrowserService: started successfully "
+            f"registered_endpoint={self._registered_cdp_endpoint or '(empty)'}"
+        )
 
     async def _restart(self) -> None:
         """Tear down and reinitialize the browser service (e.g. after browser/CDP/MCP failure)."""
@@ -687,6 +783,10 @@ class BrowserService:
         if self._browser_agent is None:
             raise RuntimeError("BrowserService is not started")
 
+        logger.info(
+            "BrowserService: running browser task once "
+            f"session_id={session_id}, request_id={request_id}, task_excerpt={self._trim_text(task, 160)}"
+        )
         task_body = augment_browser_task_prompt(task)
         task_prompt = (
             f"Session id: {session_id}\n"
@@ -703,9 +803,18 @@ class BrowserService:
         output_text = result.get("output") if isinstance(result, dict) else result
         parsed = extract_json_object(output_text)
         if parsed:
+            logger.info(
+                "BrowserService: browser task produced JSON result "
+                f"session_id={session_id}, request_id={request_id}, ok={bool(parsed.get('ok', False))}, "
+                f"error={self._trim_text(parsed.get('error'), 120)}"
+            )
             return parsed
 
         output_str = str(output_text) if output_text is not None else ""
+        logger.warning(
+            "BrowserService: browser task did not return JSON "
+            f"session_id={session_id}, request_id={request_id}, output_excerpt={self._trim_text(output_str, 240)}"
+        )
         output_lower = output_str.lower()
         if MAX_ITERATION_MESSAGE.lower() in output_lower:
             return {
@@ -833,6 +942,12 @@ class BrowserService:
         base_task = (task or "").strip()
         previous_failure_summary = self._failure_context_by_session.get(sid, "")
 
+        logger.info(
+            "BrowserService.run_task starting "
+            f"session_id={sid}, request_id={rid}, timeout={effective_timeout}s, attempts={attempts}, "
+            f"driver_mode={self._driver_mode}, prior_failure_context={bool(previous_failure_summary)}"
+        )
+
         async with self._locks[sid]:
             current_task = asyncio.current_task()
             if current_task is not None:
@@ -861,6 +976,11 @@ class BrowserService:
                 last_failure_page: Dict[str, Any] = {}
                 last_failure_screenshot: Any = None
                 while attempt_idx < max_attempts:
+                    logger.info(
+                        "BrowserService.run_task attempt starting "
+                        f"session_id={sid}, request_id={rid}, attempt={attempt_idx + 1}, max_attempts={max_attempts}, "
+                        f"task_excerpt={self._trim_text(next_task, 180)}"
+                    )
                     try:
                         parsed = await asyncio.wait_for(
                             self._run_task_once(task=next_task, session_id=sid, request_id=rid),
@@ -880,11 +1000,19 @@ class BrowserService:
                             and attempt_idx < attempts
                         ):
                             try:
+                                logger.warning(
+                                    "BrowserService.run_task detected browser connection error; restarting runtime "
+                                    f"session_id={sid}, request_id={rid}, attempt={attempt_idx}, error={last_error}"
+                                )
                                 await self._restart_browser_runtime()
                                 next_task = base_task
                                 continue
                             except Exception as restart_exc:
                                 last_error = f"browser_restart_failed: {restart_exc!r}"
+                                logger.error(
+                                    "BrowserService.run_task failed to restart browser runtime after connection error "
+                                    f"session_id={sid}, request_id={rid}, attempt={attempt_idx}, error={restart_exc!r}"
+                                )
 
                         if (
                             not parsed_ok
@@ -894,6 +1022,10 @@ class BrowserService:
                             used_max_iteration_resume = True
                             next_task = self._build_resume_task(next_task, str(parsed.get("final", "")))
                             last_error = str(parsed.get("error") or MAX_ITERATION_MESSAGE)
+                            logger.warning(
+                                "BrowserService.run_task hit max iterations; scheduling continuation "
+                                f"session_id={sid}, request_id={rid}, attempt={attempt_idx}, error={last_error}"
+                            )
                             continue
 
                         page = parsed.get("page") if isinstance(parsed.get("page"), dict) else {}
@@ -912,6 +1044,11 @@ class BrowserService:
                             "attempt": attempt_idx,
                         }
                         if parsed_ok:
+                            logger.info(
+                                "BrowserService.run_task succeeded "
+                                f"session_id={sid}, request_id={rid}, attempt={attempt_idx}, "
+                                f"page_url={response['page']['url']}, page_title={response['page']['title']}"
+                            )
                             self._failure_context_by_session.pop(sid, None)
                             response["failure_summary"] = None
                             return response
@@ -927,10 +1064,18 @@ class BrowserService:
                         )
                         self._failure_context_by_session[sid] = failure_summary
                         response["failure_summary"] = failure_summary
+                        logger.warning(
+                            "BrowserService.run_task returned non-ok result "
+                            f"session_id={sid}, request_id={rid}, attempt={attempt_idx}, error={response['error']}"
+                        )
                         return response
                     except TimeoutError:
                         attempt_idx += 1
                         last_error = f"task_timeout: exceeded {effective_timeout}s"
+                        logger.warning(
+                            "BrowserService.run_task attempt timed out "
+                            f"session_id={sid}, request_id={rid}, attempt={attempt_idx}, timeout={effective_timeout}s"
+                        )
                         if attempt_idx >= attempts:
                             break
                     except asyncio.CancelledError:
@@ -965,6 +1110,10 @@ class BrowserService:
                     except Exception as exc:
                         attempt_idx += 1
                         last_error = str(exc) or repr(exc)
+                        logger.warning(
+                            "BrowserService.run_task caught exception "
+                            f"session_id={sid}, request_id={rid}, attempt={attempt_idx}, error={last_error}"
+                        )
                         if attempt_idx >= attempts:
                             break
                         # Restart before retry on known transport/session failures.
@@ -974,9 +1123,17 @@ class BrowserService:
                             or self._is_browser_connection_error_text(exc)
                         ):
                             try:
+                                logger.warning(
+                                    "BrowserService.run_task restarting service after retryable exception "
+                                    f"session_id={sid}, request_id={rid}, attempt={attempt_idx}, error={last_error}"
+                                )
                                 await self._restart()
                             except Exception as restart_exc:
                                 last_error = f"restart_failed: {restart_exc!r}"
+                                logger.error(
+                                    "BrowserService.run_task failed to restart after retryable exception "
+                                    f"session_id={sid}, request_id={rid}, attempt={attempt_idx}, error={restart_exc!r}"
+                                )
                                 break
 
                 await self.clear_cancel(sid, rid)
@@ -993,6 +1150,10 @@ class BrowserService:
                     attempt=min(attempt_idx, max_attempts),
                 )
                 self._failure_context_by_session[sid] = failure_summary
+                logger.error(
+                    "BrowserService.run_task exhausted attempts "
+                    f"session_id={sid}, request_id={rid}, attempts={min(attempt_idx, max_attempts)}, error={last_error}"
+                )
                 return {
                     "ok": False,
                     "session_id": sid,
