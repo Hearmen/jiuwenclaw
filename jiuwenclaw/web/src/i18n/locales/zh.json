@@ -116,6 +116,7 @@
       "xiaoyi": "小艺",
       "dingtalk": "钉钉",
       "wecom": "企业微信",
+      "wechat": "微信",
       "discord": "Discord",
       "heartbeat": "心跳",
       "unknown": "未知"
@@ -252,7 +253,8 @@
       "telegram": "Telegram",
       "discord": "Discord",
       "whatsapp": "WhatsApp",
-      "wecom": "企业微信"
+      "wecom": "企业微信",
+      "wechat": "微信"
     },
     "status": {
       "loadFailed": "加载失败",
@@ -279,7 +281,9 @@
       "whatsappTitle": "WhatsApp 频道参数配置",
       "whatsappSubtitle": "配置 WhatsApp Baileys Bridge 服务相关参数",
       "wecomTitle": "企业微信频道参数配置",
-      "wecomSubtitle": "配置企业微信频道相关参数"
+      "wecomSubtitle": "配置企业微信频道相关参数",
+      "wechatTitle": "微信频道参数配置",
+      "wechatSubtitle": "配置微信 iLink Bot 通道参数"
     },
     "loading": {
       "xiaoyi": "正在加载小艺配置...",
@@ -288,7 +292,8 @@
       "telegram": "正在加载 Telegram 配置...",
       "discord": "正在加载 Discord 配置...",
       "whatsapp": "正在加载 WhatsApp 配置...",
-      "wecom": "正在加载企业微信配置..."
+      "wecom": "正在加载企业微信配置...",
+      "wechat": "正在加载微信配置..."
     },
     "placeholders": {
       "configValue": "请输入配置值",
@@ -303,7 +308,8 @@
       "wecomDefaultChatId": "userid 或 chatid（群聊）",
       "wecomDefaultChatIdHint": "心跳/定时推送目标。不填则自动使用最近一次聊天的 chatid",
       "discordGuildId": "请填入Discord的服务器ID（留空则仅接收私信）",
-      "discordChannelId": "请填入Discord服务器的频道ID（留空则仅接收私信）"
+      "discordChannelId": "请填入Discord服务器的频道ID（留空则仅接收私信）",
+      "allowFrom": "每行一个 chatid/userid（也支持逗号分隔）"
     },
     "saved": {
       "feishu": "飞书配置已保存",
@@ -312,7 +318,23 @@
       "telegram": "Telegram 配置已保存",
       "discord": "Discord 配置已保存",
       "whatsapp": "WhatsApp 配置已保存",
-      "wecom": "企业微信配置已保存"
+      "wecom": "企业微信配置已保存",
+      "wechat": "微信配置已保存"
+    },
+    "notices": {
+      "wechatAutoLogin": "已启用且 bot_token 为空时，点击「保存」后将自动弹出扫码。若无「保存」按钮（与后端已一致），可临时切换 auto_login 或微调任一字段后再保存；再次扫码请清空 bot_token 后保存。"
+    },
+    "wechatLogin": {
+      "title": "微信扫码登录（iLink）",
+      "hintAfterSave": "配置已保存，通道正在启动。请稍候，下方将出现二维码；请使用微信扫码，并在手机上确认登录。",
+      "close": "关闭",
+      "waitBackend": "正在等待后端返回二维码… 若长时间无响应，请查看后端日志或稍后清空 bot_token 再保存一次。",
+      "qrTextHint": "接口未返回图片，仅提供二维码内容，请用手机微信按官方流程扫码（或查看后端日志）。",
+      "qrHostedPageHint": "微信不允许在其它站点内嵌该页，故无法用 iframe 展示。请用微信扫描下方二维码，或点击链接在浏览器中打开（与官方扫码页一致）。",
+      "openQrInNewTab": "在新窗口打开扫码页",
+      "filledDraft": "登录信息已填回下方表单",
+      "savePrompt": "登录成功。凭据已填入表单，请点击「保存」写入配置（与后端持久化一致）。",
+      "savePromptFromFile": "已从本地凭据文件读取并填入表单（非扫码流程）。请点击「保存」将 token 写入配置；若需重新扫码，请先删除或清空凭据文件后再保存。"
     },
     "errors": {
       "loadChannels": "获取 channels 失败",
@@ -323,6 +345,7 @@
       "loadDiscord": "获取 Discord 配置失败",
       "loadWhatsApp": "获取 WhatsApp 配置失败",
       "loadWecom": "获取企业微信配置失败",
+      "loadWechat": "获取微信配置失败",
       "saveGeneric": "保存失败，请稍后重试"
     }
   },

@@ -36,6 +36,8 @@ from jiuwenclaw.channel import (
     DingTalkConfig,
     WhatsAppChannel,
     WhatsAppChannelConfig,
+    WechatChannel,
+    WechatConfig,
 )
 
 # Ensure workspace initialized
@@ -256,6 +258,8 @@ async def _run(agent_server_url: str, web_host: str, web_port: int, web_path: st
     discord_task = None
     whatsapp_channel = None
     whatsapp_task = None
+    wechat_channel = None
+    wechat_task = None
 
     _last_channels_conf: dict = {}
 
@@ -310,12 +314,15 @@ async def _run(agent_server_url: str, web_host: str, web_port: int, web_path: st
     async def _apply_channel_config(conf: dict) -> None:
         nonlocal feishu_channel, feishu_task, xiaoyi_channel, xiaoyi_task
         nonlocal dingtalk_channel, dingtalk_task, telegram_channel, telegram_task
-        nonlocal discord_channel, discord_task, whatsapp_channel, whatsapp_task, _last_channels_conf
+        nonlocal discord_channel, discord_task
+        nonlocal whatsapp_channel, whatsapp_task
+        nonlocal wechat_channel, wechat_task
+        nonlocal _last_channels_conf
         nonlocal feishu_enterprise_channels, feishu_enterprise_tasks
 
         changed = [
             c
-            for c in ["feishu", "feishu_enterprise", "xiaoyi", "dingtalk", "telegram", "discord", "whatsapp"]
+            for c in ["feishu", "feishu_enterprise", "xiaoyi", "dingtalk", "telegram", "discord", "whatsapp", "wechat"]
             if _should_restart_channel(c, _last_channels_conf, conf)
         ]
         _last_channels_conf = dict(conf or {})
@@ -505,6 +512,33 @@ async def _run(agent_server_url: str, web_host: str, web_port: int, web_path: st
                     channel_manager.register_channel(whatsapp_channel)
                     whatsapp_task = asyncio.create_task(whatsapp_channel.start(), name="whatsapp")
 
+        if "wechat" in changed:
+            wechat_conf = conf.get("wechat") if isinstance(conf, dict) else None
+            await _stop_channel(wechat_channel, wechat_task, "wechat")
+            wechat_channel, wechat_task = None, None
+            if isinstance(wechat_conf, dict):
+                enabled, _ = _is_channel_enabled(wechat_conf, [])
+                if enabled:
+                    wechat_config = WechatConfig(
+                        enabled=True,
+                        base_url=str(wechat_conf.get("base_url") or "https://ilinkai.weixin.qq.com").strip(),
+                        bot_token=str(wechat_conf.get("bot_token") or "").strip(),
+                        ilink_bot_id=str(wechat_conf.get("ilink_bot_id") or "").strip(),
+                        ilink_user_id=str(wechat_conf.get("ilink_user_id") or "").strip(),
+                        allow_from=wechat_conf.get("allow_from") or [],
+                        auto_login=bool(wechat_conf.get("auto_login", True)),
+                        qrcode_poll_interval_sec=float(wechat_conf.get("qrcode_poll_interval_sec", 2.0)),
+                        long_poll_timeout_sec=int(wechat_conf.get("long_poll_timeout_sec", 45)),
+                        backoff_base_sec=float(wechat_conf.get("backoff_base_sec", 1.0)),
+                        backoff_max_sec=float(wechat_conf.get("backoff_max_sec", 30.0)),
+                        credential_file=str(
+                            wechat_conf.get("credential_file") or "~/.wx-ai-bridge/credentials.json"
+                        ).strip(),
+                    )
+                    wechat_channel = WechatChannel(wechat_config, _DummyBus())
+                    channel_manager.register_channel(wechat_channel)
+                    wechat_task = asyncio.create_task(wechat_channel.start(), name="wechat")
+
     channel_manager.set_config_callback(_apply_channel_config)
     await channel_manager.set_config(initial_channels_conf)
 
@@ -539,6 +573,7 @@ async def _run(agent_server_url: str, web_host: str, web_port: int, web_path: st
             (telegram_channel, telegram_task, "telegram"),
             (discord_channel, discord_task, "discord"),
             (whatsapp_channel, whatsapp_task, "whatsapp"),
+            (wechat_channel, wechat_task, "wechat"),
         ]:
             if ch is not None and task is not None:
                 task.cancel()

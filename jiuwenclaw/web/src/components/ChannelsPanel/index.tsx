@@ -1,6 +1,18 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { webRequest } from '../../services/webClient';
+import { WechatQrModal } from './WechatQrModal';
+import {
+  DEFAULT_WECHAT_CONF,
+  buildWechatPayload,
+  draftFromWechatConfig,
+  isSensitiveWechatField,
+  normalizeWechatConfig,
+  normalizeWechatLoginUi,
+  type WechatConfig,
+  type WechatDraft,
+  type WechatLoginUiState,
+} from './wechatTypes';
 import './ChannelsPanel.css';
 
 interface ChannelsPanelProps {
@@ -14,7 +26,17 @@ type ChannelItem = {
 };
 
 type LoadState = 'idle' | 'loading' | 'success' | 'error';
-type SupportedChannelId = 'web' | 'xiaoyi' | 'feishu' | 'dingtalk' | 'telegram' | 'discord' | 'whatsapp'| 'wecom';
+type SupportedChannelId =
+  | 'web'
+  | 'xiaoyi'
+  | 'feishu'
+  | 'dingtalk'
+  | 'telegram'
+  | 'discord'
+  | 'whatsapp'
+  | 'wecom'
+  | 'wechat';
+
 const ADAPTING_CHANNEL_IDS = new Set<SupportedChannelId>([]);
 
 type FeishuConfig = {
@@ -228,6 +250,7 @@ const SUPPORTED_CHANNELS: Array<{ channel_id: SupportedChannelId; logo_src: stri
   { channel_id: 'discord', logo_src: '/discord.webp' },
   { channel_id: 'whatsapp', logo_src: '/whatsapp.png' },
   { channel_id: 'wecom', logo_src: '/wecom.webp' },
+  { channel_id: 'wechat', logo_src: '/wechat.png' },
 ];
 
 
@@ -710,6 +733,17 @@ export function ChannelsPanel({ isConnected }: ChannelsPanelProps) {
   const [wecomSaving, setWecomSaving] = useState(false);
   const [wecomSaveError, setWecomSaveError] = useState<string | null>(null);
   const [wecomSuccess, setWecomSuccess] = useState<string | null>(null);
+  const [wechatConfig, setWechatConfig] = useState<WechatConfig>(DEFAULT_WECHAT_CONF);
+  const [wechatDraft, setWechatDraft] = useState<WechatDraft>(draftFromWechatConfig(DEFAULT_WECHAT_CONF));
+  const [wechatVisibleFields, setWechatVisibleFields] = useState<Record<string, boolean>>({});
+  const [wechatLoading, setWechatLoading] = useState(false);
+  const [wechatSaving, setWechatSaving] = useState(false);
+  const [wechatSaveError, setWechatSaveError] = useState<string | null>(null);
+  const [wechatSuccess, setWechatSuccess] = useState<string | null>(null);
+  const [wechatQrModalOpen, setWechatQrModalOpen] = useState(false);
+  const [wechatLoginUi, setWechatLoginUi] = useState<WechatLoginUiState | null>(null);
+  const wechatLoginPollAppliedAt = useRef<number | null>(null);
+  const wechatLoginPollInFlight = useRef(false);
 
   const fetchChannels = useCallback(async () => {
     setLoadState('loading');
@@ -848,6 +882,23 @@ export function ChannelsPanel({ isConnected }: ChannelsPanelProps) {
     }
   }, [t]);
 
+  const fetchWechatConfig = useCallback(async () => {
+    setWechatLoading(true);
+    setWechatSaveError(null);
+    setWechatSuccess(null);
+    try {
+      const payload = await webRequest<{ config?: unknown }>('channel.wechat.get_conf');
+      const normalized = normalizeWechatConfig(payload?.config);
+      setWechatConfig(normalized);
+      setWechatDraft(draftFromWechatConfig(normalized));
+      setWechatVisibleFields({});
+    } catch (err) {
+      setWechatSaveError(err instanceof Error ? err.message : t('channels.errors.loadWechat'));
+    } finally {
+      setWechatLoading(false);
+    }
+  }, [t]);
+
   const handleSelectChannel = useCallback(
     (channelId: SupportedChannelId) => {
       if (ADAPTING_CHANNEL_IDS.has(channelId)) {
@@ -884,8 +935,69 @@ export function ChannelsPanel({ isConnected }: ChannelsPanelProps) {
     }
     if (activeChannelId === 'wecom') {
       void fetchWecomConfig();
+      return;
     }
-  }, [activeChannelId, fetchDiscordConfig, fetchDingtalkConfig, fetchFeishuConfig, fetchTelegramConfig, fetchWhatsAppConfig,fetchXiaoyiConfig, fetchWecomConfig]);
+    if (activeChannelId === 'wechat') {
+      void fetchWechatConfig();
+    }
+  }, [
+    activeChannelId,
+    fetchDiscordConfig,
+    fetchDingtalkConfig,
+    fetchFeishuConfig,
+    fetchTelegramConfig,
+    fetchWhatsAppConfig,
+    fetchWechatConfig,
+    fetchXiaoyiConfig,
+    fetchWecomConfig,
+  ]);
+
+  useEffect(() => {
+    if (!wechatQrModalOpen || !isConnected) {
+      return;
+    }
+    let cancelled = false;
+    const poll = async () => {
+      if (wechatLoginPollInFlight.current) {
+        return;
+      }
+      wechatLoginPollInFlight.current = true;
+      try {
+        const raw = await webRequest<unknown>('channel.wechat.get_login_ui');
+        if (cancelled) return;
+        const data = normalizeWechatLoginUi(raw);
+        setWechatLoginUi(data);
+        if (data.phase === 'success' && data.credentials) {
+          const at = data.updated_at;
+          if (wechatLoginPollAppliedAt.current !== at) {
+            wechatLoginPollAppliedAt.current = at;
+            const c = data.credentials;
+            setWechatDraft((prev) => ({
+              ...prev,
+              bot_token: c.bot_token !== undefined ? c.bot_token : prev.bot_token,
+              base_url: (c.base_url !== undefined ? String(c.base_url).trim() || prev.base_url : prev.base_url).trim(),
+              ilink_bot_id: c.ilink_bot_id !== undefined ? c.ilink_bot_id : prev.ilink_bot_id,
+              ilink_user_id: c.ilink_user_id !== undefined ? c.ilink_user_id : prev.ilink_user_id,
+            }));
+            setWechatSuccess(t('channels.wechatLogin.filledDraft'));
+          }
+        }
+      } catch {
+        if (!cancelled) {
+          setWechatLoginUi(null);
+        }
+      } finally {
+        wechatLoginPollInFlight.current = false;
+      }
+    };
+    void poll();
+    const id = window.setInterval(poll, 1500);
+    return () => {
+      cancelled = true;
+      wechatLoginPollInFlight.current = false;
+      window.clearInterval(id);
+    };
+  }, [wechatQrModalOpen, isConnected, t]);
 
   const statusText = useMemo(() => {
     const enabledCount = channels.filter((channel) => channel.enabled).length;
@@ -977,6 +1089,26 @@ export function ChannelsPanel({ isConnected }: ChannelsPanelProps) {
       normalizeAllowFromText(baseDraft.allow_from).join('\n') !== normalizeAllowFromText(wecomDraft.allow_from).join('\n')
     );
   }, [wecomConfig, wecomDraft]);
+
+  const hasWechatConfigChanges = useMemo(() => {
+    const baseDraft = draftFromWechatConfig(wechatConfig);
+    return (
+      baseDraft.enabled !== wechatDraft.enabled ||
+      baseDraft.base_url !== wechatDraft.base_url ||
+      baseDraft.bot_token !== wechatDraft.bot_token ||
+      baseDraft.ilink_bot_id !== wechatDraft.ilink_bot_id ||
+      baseDraft.ilink_user_id !== wechatDraft.ilink_user_id ||
+      normalizeAllowFromText(baseDraft.allow_from).join('\n') !==
+        normalizeAllowFromText(wechatDraft.allow_from).join('\n') ||
+      baseDraft.auto_login !== wechatDraft.auto_login ||
+      baseDraft.qrcode_poll_interval_sec !== wechatDraft.qrcode_poll_interval_sec ||
+      baseDraft.long_poll_timeout_sec !== wechatDraft.long_poll_timeout_sec ||
+      baseDraft.backoff_base_sec !== wechatDraft.backoff_base_sec ||
+      baseDraft.backoff_max_sec !== wechatDraft.backoff_max_sec ||
+      baseDraft.credential_file !== wechatDraft.credential_file
+    );
+  }, [wechatConfig, wechatDraft]);
+
   const handleFieldChange = <K extends keyof FeishuDraft>(key: K, value: FeishuDraft[K]) => {
     setDraft((prev) => ({ ...prev, [key]: value }));
     if (saveError) {
@@ -1135,6 +1267,27 @@ export function ChannelsPanel({ isConnected }: ChannelsPanelProps) {
     setWecomVisibleFields((prev) => ({ ...prev, [field]: !prev[field] }));
   };
 
+  const handleWechatFieldChange = <K extends keyof WechatDraft>(key: K, value: WechatDraft[K]) => {
+    setWechatDraft((prev) => ({ ...prev, [key]: value }));
+    if (wechatSaveError) {
+      setWechatSaveError(null);
+    }
+    if (wechatSuccess) {
+      setWechatSuccess(null);
+    }
+  };
+
+  const handleCancelWechatConfig = () => {
+    if (!hasWechatConfigChanges) return;
+    setWechatDraft(draftFromWechatConfig(wechatConfig));
+    setWechatSaveError(null);
+    setWechatSuccess(null);
+  };
+
+  const toggleWechatFieldVisible = (field: keyof WechatDraft) => {
+    setWechatVisibleFields((prev) => ({ ...prev, [field]: !prev[field] }));
+  };
+
   const handleSaveConfig = async () => {
     if (!hasConfigChanges || saving) return;
     setSaving(true);
@@ -1249,16 +1402,65 @@ export function ChannelsPanel({ isConnected }: ChannelsPanelProps) {
     }
   };
 
-  const isConfigRefreshing = feishuLoading || xiaoyiLoading || dingtalkLoading || telegramLoading || discordLoading || whatsappLoading || wecomLoading;
+  const handleSaveWechatConfig = async () => {
+    if (!hasWechatConfigChanges || wechatSaving) return;
+    setWechatSaving(true);
+    setWechatSaveError(null);
+    const payload = buildWechatPayload(wechatDraft);
+    const shouldOpenWechatQr = Boolean(payload.enabled) && !String(payload.bot_token ?? '').trim();
+    try {
+      const result = await webRequest<{ config?: unknown }>('channel.wechat.set_conf', payload);
+      const normalized = normalizeWechatConfig(result?.config);
+      setWechatConfig(normalized);
+      setWechatDraft(draftFromWechatConfig(normalized));
+      setWechatSuccess(t('channels.saved.wechat'));
+      if (shouldOpenWechatQr) {
+        wechatLoginPollAppliedAt.current = null;
+        setWechatQrModalOpen(true);
+      }
+    } catch (saveErr) {
+      const message = saveErr instanceof Error ? saveErr.message : t('channels.errors.saveGeneric');
+      setWechatSaveError(message);
+    } finally {
+      setWechatSaving(false);
+    }
+  };
+
+  const isConfigRefreshing =
+    feishuLoading ||
+    xiaoyiLoading ||
+    dingtalkLoading ||
+    telegramLoading ||
+    discordLoading ||
+    whatsappLoading ||
+    wecomLoading ||
+    wechatLoading;
   const configErrorNotice = useMemo(() => {
     return Array.from(
       new Set(
-        [saveError, xiaoyiSaveError, dingtalkSaveError, telegramSaveError, discordSaveError, whatsappSaveError, wecomSaveError].filter(
-          (message): message is string => Boolean(message),
-        ),
+        [
+          saveError,
+          xiaoyiSaveError,
+          dingtalkSaveError,
+          telegramSaveError,
+          discordSaveError,
+          whatsappSaveError,
+          wecomSaveError,
+          wechatSaveError,
+        ].filter((message): message is string => Boolean(message)),
       ),
     ).join(t('common.and'));
-  }, [discordSaveError, dingtalkSaveError, saveError, t, telegramSaveError, whatsappSaveError, wecomSaveError, xiaoyiSaveError]);
+  }, [
+    discordSaveError,
+    dingtalkSaveError,
+    saveError,
+    t,
+    telegramSaveError,
+    whatsappSaveError,
+    wechatSaveError,
+    wecomSaveError,
+    xiaoyiSaveError,
+  ]);
   useEffect(() => {
     if (!configErrorNotice) {
       return;
@@ -1271,6 +1473,7 @@ export function ChannelsPanel({ isConnected }: ChannelsPanelProps) {
       setDiscordSaveError(null);
       setWhatsappSaveError(null);
       setWecomSaveError(null);
+      setWechatSaveError(null);
     }, 2000);
     return () => {
       window.clearTimeout(timer);
@@ -1279,6 +1482,11 @@ export function ChannelsPanel({ isConnected }: ChannelsPanelProps) {
 
   return (
     <div className="flex-1 min-h-0 relative">
+      <WechatQrModal
+        open={wechatQrModalOpen}
+        onClose={() => setWechatQrModalOpen(false)}
+        loginUi={wechatLoginUi}
+      />
       <div className="card w-full h-full flex flex-col">
         {configErrorNotice ? (
           <div className="pointer-events-none absolute top-3 left-1/2 -translate-x-1/2 z-20">
@@ -2228,6 +2436,184 @@ export function ChannelsPanel({ isConnected }: ChannelsPanelProps) {
                                 </button>
                               </td>
                             </tr>
+                          </tbody>
+                        </table>
+                      )}
+                    </div>
+                  </div>
+                ) : null}
+
+                {activeChannelId === 'wechat' ? (
+                  <div className="w-full h-full rounded-xl border border-border bg-card/70 backdrop-blur-sm overflow-hidden shadow-sm flex flex-col">
+                    <div className="px-4 py-3 bg-secondary/30 border-b border-border">
+                      <div className="flex items-center justify-between gap-4">
+                        <div className="flex items-center gap-3">
+                          <ChannelHeaderLogo channelId="wechat" label={getChannelLabel(t, 'wechat')} />
+                          <div>
+                            <h4 className="text-sm font-medium text-text">{t('channels.config.wechatTitle')}</h4>
+                            <p className="text-xs text-text-muted mt-1">{t('channels.config.wechatSubtitle')}</p>
+                          </div>
+                        </div>
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <button
+                            type="button"
+                            onClick={() => void fetchWechatConfig()}
+                            disabled={wechatSaving || isConfigRefreshing}
+                            className="btn !px-3 !py-1.5 disabled:opacity-50 disabled:cursor-not-allowed"
+                          >
+                            {wechatLoading ? t('common.refreshing') : t('common.refresh')}
+                          </button>
+                          <button
+                            type="button"
+                            onClick={handleCancelWechatConfig}
+                            disabled={!hasWechatConfigChanges || wechatSaving}
+                            className="btn !px-3 !py-1.5 disabled:opacity-50 disabled:cursor-not-allowed"
+                          >
+                            {t('common.cancel')}
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => void handleSaveWechatConfig()}
+                            disabled={!hasWechatConfigChanges || wechatSaving || !isConnected}
+                            className="btn primary !px-3 !py-1.5 disabled:opacity-50 disabled:cursor-not-allowed"
+                          >
+                            {wechatSaving ? t('common.saving') : t('common.save')}
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+
+                    {wechatSuccess ? (
+                      <div className="mx-4 mt-4 rounded-md border border-[var(--border-ok)] bg-ok-subtle px-3 py-2 text-sm text-ok">
+                        {wechatSuccess}
+                      </div>
+                    ) : null}
+                    {wechatDraft.enabled && !wechatDraft.bot_token.trim() ? (
+                      <div className="mx-4 mt-4 rounded-md border border-border bg-secondary/30 px-3 py-2 text-sm text-text-muted">
+                        {t('channels.notices.wechatAutoLogin')}
+                      </div>
+                    ) : null}
+
+                    <div className="p-4 pt-3 flex-1 overflow-auto">
+                      {wechatLoading ? (
+                        <div className="text-sm text-text-muted">{t('channels.loading.wechat')}</div>
+                      ) : (
+                        <table className="w-full text-sm">
+                          <tbody>
+                            <tr className="border-t border-border first:border-t-0 even:bg-secondary/10">
+                              <td className="px-4 py-2.5 align-middle mono text-xs text-text-muted w-[32%]">enabled</td>
+                              <td className="px-4 py-2.5 align-middle">
+                                <button
+                                  type="button"
+                                  role="switch"
+                                  aria-checked={wechatDraft.enabled}
+                                  onClick={() => handleWechatFieldChange('enabled', !wechatDraft.enabled)}
+                                  className={`relative inline-flex h-5 w-9 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 focus:outline-none ${
+                                    wechatDraft.enabled ? 'bg-ok' : 'bg-secondary'
+                                  }`}
+                                >
+                                  <span
+                                    className={`pointer-events-none inline-block h-4 w-4 transform rounded-full bg-white shadow transition duration-200 ${
+                                      wechatDraft.enabled ? 'translate-x-4' : 'translate-x-0'
+                                    }`}
+                                  />
+                                </button>
+                              </td>
+                            </tr>
+
+                            {(['base_url', 'bot_token', 'ilink_bot_id', 'ilink_user_id', 'credential_file'] as const).map(
+                              (field) => (
+                                <tr key={field} className="border-t border-border first:border-t-0 even:bg-secondary/10">
+                                  <td className="px-4 py-2.5 align-middle mono text-xs text-text-muted w-[32%]">{field}</td>
+                                  <td className="px-4 py-2.5 break-all text-[13px] align-middle">
+                                    <div className="relative">
+                                      <input
+                                        type={
+                                          isSensitiveWechatField(field) && !wechatVisibleFields[field]
+                                            ? 'password'
+                                            : 'text'
+                                        }
+                                        value={String(wechatDraft[field])}
+                                        onChange={(e) => handleWechatFieldChange(field, e.target.value)}
+                                        placeholder={t('channels.placeholders.configValue')}
+                                        className={`w-full rounded-md border border-border bg-bg px-3 py-2 text-[13px] outline-none focus:border-accent ${
+                                          isSensitiveWechatField(field) ? 'pr-10' : ''
+                                        }`}
+                                      />
+                                      {isSensitiveWechatField(field) ? (
+                                        <button
+                                          type="button"
+                                          onClick={() => toggleWechatFieldVisible(field)}
+                                          className="channels-panel__visibility-toggle"
+                                          aria-label={wechatVisibleFields[field] ? t('channels.hideValue') : t('channels.showValue')}
+                                          title={wechatVisibleFields[field] ? t('channels.hideValue') : t('channels.showValue')}
+                                        >
+                                          <VisibilityIcon visible={Boolean(wechatVisibleFields[field])} />
+                                        </button>
+                                      ) : null}
+                                    </div>
+                                  </td>
+                                </tr>
+                              ),
+                            )}
+
+                            <tr className="border-t border-border first:border-t-0 even:bg-secondary/10">
+                              <td className="px-4 py-2.5 align-top mono text-xs text-text-muted w-[32%]">allow_from</td>
+                              <td className="px-4 py-2.5 break-all text-[13px] align-middle">
+                                <textarea
+                                  value={wechatDraft.allow_from}
+                                  onChange={(e) => handleWechatFieldChange('allow_from', e.target.value)}
+                                  placeholder={t('channels.placeholders.allowFrom')}
+                                  className="w-full min-h-[86px] resize-y rounded-md border border-border bg-bg px-3 py-2 text-[13px] outline-none focus:border-accent"
+                                />
+                              </td>
+                            </tr>
+
+                            {(['auto_login'] as const).map((field) => (
+                              <tr key={field} className="border-t border-border first:border-t-0 even:bg-secondary/10">
+                                <td className="px-4 py-2.5 align-middle mono text-xs text-text-muted w-[32%]">{field}</td>
+                                <td className="px-4 py-2.5 align-middle">
+                                  <button
+                                    type="button"
+                                    role="switch"
+                                    aria-checked={wechatDraft[field]}
+                                    onClick={() => handleWechatFieldChange(field, !wechatDraft[field])}
+                                    className={`relative inline-flex h-5 w-9 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 focus:outline-none ${
+                                      wechatDraft[field] ? 'bg-ok' : 'bg-secondary'
+                                    }`}
+                                  >
+                                    <span
+                                      className={`pointer-events-none inline-block h-4 w-4 transform rounded-full bg-white shadow transition duration-200 ${
+                                        wechatDraft[field] ? 'translate-x-4' : 'translate-x-0'
+                                      }`}
+                                    />
+                                  </button>
+                                </td>
+                              </tr>
+                            ))}
+
+                            {(
+                              [
+                                'qrcode_poll_interval_sec',
+                                'long_poll_timeout_sec',
+                                'backoff_base_sec',
+                                'backoff_max_sec',
+                              ] as const
+                            ).map((field) => (
+                              <tr key={field} className="border-t border-border first:border-t-0 even:bg-secondary/10">
+                                <td className="px-4 py-2.5 align-middle mono text-xs text-text-muted w-[32%]">{field}</td>
+                                <td className="px-4 py-2.5 break-all text-[13px] align-middle">
+                                  <input
+                                    type="number"
+                                    step={field === 'long_poll_timeout_sec' ? 1 : 0.1}
+                                    value={wechatDraft[field]}
+                                    onChange={(e) => handleWechatFieldChange(field, Number(e.target.value) || 0)}
+                                    placeholder={t('channels.placeholders.configValue')}
+                                    className="w-full rounded-md border border-border bg-bg px-3 py-2 text-[13px] outline-none focus:border-accent"
+                                  />
+                                </td>
+                              </tr>
+                            ))}
                           </tbody>
                         </table>
                       )}

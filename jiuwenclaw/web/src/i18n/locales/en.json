@@ -116,6 +116,7 @@
       "xiaoyi": "Xiaoyi",
       "dingtalk": "DingTalk",
       "wecom": "WeCom",
+      "wechat": "WeChat",
       "discord": "Discord",
       "heartbeat": "Heartbeat",
       "unknown": "Unknown"
@@ -252,7 +253,8 @@
       "telegram": "Telegram",
       "discord": "Discord",
       "whatsapp": "WhatsApp",
-      "wecom": "WeCom"
+      "wecom": "WeCom",
+      "wechat": "WeChat"
     },
     "status": {
       "loadFailed": "Load failed",
@@ -279,7 +281,9 @@
       "whatsappTitle": "WhatsApp Channel Configuration",
       "whatsappSubtitle": "Configure WhatsApp Baileys Bridge service settings",
       "wecomTitle": "WeCom Channel Configuration",
-      "wecomSubtitle": "Configure WeCom channel service settings"
+      "wecomSubtitle": "Configure WeCom channel service settings",
+      "wechatTitle": "WeChat Channel Configuration",
+      "wechatSubtitle": "Configure WeChat iLink bot channel settings"
     },
     "loading": {
       "xiaoyi": "Loading Xiaoyi settings...",
@@ -288,7 +292,8 @@
       "telegram": "Loading Telegram settings...",
       "discord": "Loading Discord settings...",
       "whatsapp": "Loading WhatsApp settings...",
-      "wecom": "Loading WeCom settings..."
+      "wecom": "Loading WeCom settings...",
+      "wechat": "Loading WeChat settings..."
     },
     "placeholders": {
       "configValue": "Enter a configuration value",
@@ -303,7 +308,8 @@
       "wecomDefaultChatId": "userid or chatid (group)",
       "wecomDefaultChatIdHint": "Target for heartbeat/scheduled push. Leave empty to use last chatid",
       "discordGuildId": "Enter the Discord server ID (direct message still works without this)",
-      "discordChannelId": "Enter the Discord server's channel ID (direct message still works without this)"
+      "discordChannelId": "Enter the Discord server's channel ID (direct message still works without this)",
+      "allowFrom": "One chatid/userid per line (comma-separated is also supported)"
     },
     "saved": {
       "feishu": "Lark settings saved",
@@ -312,7 +318,23 @@
       "telegram": "Telegram settings saved",
       "discord": "Discord settings saved",
       "whatsapp": "WhatsApp settings saved",
-      "wecom": "WeCom settings saved"
+      "wecom": "WeCom settings saved",
+      "wechat": "WeChat settings saved"
+    },
+    "notices": {
+      "wechatAutoLogin": "When enabled with an empty bot_token, Save opens the QR dialog. If Save is disabled (already in sync), toggle auto_login or tweak any field, then Save. To scan again, clear bot_token and Save."
+    },
+    "wechatLogin": {
+      "title": "WeChat QR login (iLink)",
+      "hintAfterSave": "Settings saved; the channel is starting. A QR code will appear below—scan with WeChat and confirm on your phone.",
+      "close": "Close",
+      "waitBackend": "Waiting for the QR code… If this takes too long, check server logs or clear bot_token and Save again.",
+      "qrTextHint": "No image from API; only raw QR payload is available. Use WeChat to scan per vendor flow or check server logs.",
+      "qrHostedPageHint": "WeChat blocks embedding this page in other sites (no iframe). Scan the QR below with WeChat, or open the link—same as the official flow.",
+      "openQrInNewTab": "Open scan page in new tab",
+      "filledDraft": "Credentials filled into the form below",
+      "savePrompt": "Login succeeded. Fields are filled in—click Save to persist configuration.",
+      "savePromptFromFile": "Credentials were loaded from the local file (not QR). Click Save to write them into config; to scan again, delete or clear the credential file first, then Save."
     },
     "errors": {
       "loadChannels": "Failed to load channels",
@@ -323,6 +345,7 @@
       "loadDiscord": "Failed to load Discord settings",
       "loadWhatsApp": "Failed to load WhatsApp settings",
       "loadWecom": "Failed to load WeCom settings",
+      "loadWechat": "Failed to load WeChat settings",
       "saveGeneric": "Save failed, please try again later"
     }
   },

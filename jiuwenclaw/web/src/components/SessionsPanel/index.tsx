@@ -54,6 +54,16 @@ function shortenDiscordIDForLabel(id: string): string {
 function parseSessionDisplayLabel(sessionId: string, t: (key: string, options?: Record<string, unknown>) => string): string {
   if (!sessionId) return t('sessions.unknownSession');
 
+  // 微信 iLink：形如 userhash@im.wechat，以 .wechat 结尾
+  if (sessionId.endsWith('.wechat')) {
+    const wechatLabel = t('sessions.prefixes.wechat');
+    const at = sessionId.lastIndexOf('@');
+    const local =
+      at >= 0 ? sessionId.slice(0, at) : sessionId.replace(/\.wechat$/i, '').trim();
+    const idPart = local.trim() || sessionId;
+    return `${wechatLabel}-${shortenDiscordIDForLabel(idPart)}`;
+  }
+
   // 处理以 sess_、cron_、feishu_、xiaoyi_、dingtalk_ 开头的会话ID
   const prefixes = ['sess_', 'cron_', 'feishu_', 'xiaoyi_', 'dingtalk_', 'wecom_'];
   const prefixMap: Record<string, string> = {

@@ -223,6 +223,20 @@ channels:
     bridge_command: node scripts/whatsapp-bridge.js
     bridge_workdir:
     enabled: false
+  wechat:
+    # 个人微信 iLink Bot API 配置
+    base_url: https://ilinkai.weixin.qq.com
+    bot_token:
+    ilink_bot_id:
+    ilink_user_id:
+    allow_from: []
+    auto_login: true
+    qrcode_poll_interval_sec: 2.0
+    long_poll_timeout_sec: 45
+    backoff_base_sec: 1.0
+    backoff_max_sec: 30.0
+    credential_file: ~/.wx-ai-bridge/credentials.json
+    enabled: true
   wecom:
     # 企业微信 AI 机器人配置
     bot_id:

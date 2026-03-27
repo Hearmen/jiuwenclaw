@@ -32,6 +32,8 @@ from jiuwenclaw.channel import (
     DingTalkConfig,
     WhatsAppChannel,
     WhatsAppChannelConfig,
+    WechatChannel,
+    WechatConfig,
 )
 
 for logger in LogManager.get_all_loggers().values():
@@ -1087,6 +1089,70 @@ def _register_web_handlers(
         except Exception as e:  # noqa: BLE001
             logger.exception("[channel.wecom.set_conf] %s", e)
             await channel.send_response(ws, req_id, ok=False, error=str(e), code="INTERNAL_ERROR")
+
+    async def _channel_wechat_get_conf(ws, req_id, params, session_id):
+        cm = _resolve(channel_manager)
+        if cm is None:
+            await channel.send_response(
+                ws,
+                req_id,
+                ok=False,
+                error="channel manager not available",
+                code="SERVICE_UNAVAILABLE",
+            )
+            return
+        try:
+            conf = cm.get_conf("wechat")
+            await channel.send_response(ws, req_id, ok=True, payload={"config": conf})
+        except Exception as e:  # noqa: BLE001
+            logger.exception("[channel.wechat.get_conf] %s", e)
+            await channel.send_response(ws, req_id, ok=False, error=str(e), code="INTERNAL_ERROR")
+
+    async def _channel_wechat_set_conf(ws, req_id, params, session_id):
+        cm = _resolve(channel_manager)
+        if cm is None:
+            await channel.send_response(
+                ws,
+                req_id,
+                ok=False,
+                error="channel manager not available",
+                code="SERVICE_UNAVAILABLE",
+            )
+            return
+        if not isinstance(params, dict):
+            await channel.send_response(
+                ws,
+                req_id,
+                ok=False,
+                error="params must be object",
+                code="BAD_REQUEST",
+            )
+            return
+        try:
+            await cm.set_conf("wechat", params)
+            conf = cm.get_conf("wechat")
+            try:
+                update_channel_in_config("wechat", conf)
+                await _clear_agent_config_cache(_resolve(agent_client))
+            except Exception as e:  # noqa: BLE001
+                logger.warning("[channel.wechat.set_conf] 写回 config.yaml 失败: %s", e)
+            await channel.send_response(ws, req_id, ok=True, payload={"config": conf})
+        except Exception as e:  # noqa: BLE001
+            logger.exception("[channel.wechat.set_conf] %s", e)
+            await channel.send_response(ws, req_id, ok=False, error=str(e), code="INTERNAL_ERROR")
+
+    async def _channel_wechat_get_login_ui(ws, req_id, params, session_id):
+        from jiuwenclaw.channel.wechat_channel import snapshot_wechat_login_ui_state
+
+        try:
+            ui = await snapshot_wechat_login_ui_state()
+            if "updated_at" in ui and isinstance(ui["updated_at"], (int, float)):
+                ui["updated_at"] = int(ui["updated_at"])
+            await channel.send_response(ws, req_id, ok=True, payload=ui)
+        except Exception as e:  # noqa: BLE001
+            logger.exception("[channel.wechat.get_login_ui] %s", e)
+            await channel.send_response(ws, req_id, ok=False, error=str(e), code="INTERNAL_ERROR")
+
     # ----- cron jobs -----
 
     def _get_cron():
@@ -1278,6 +1344,9 @@ def _register_web_handlers(
     channel.register_method("channel.discord.set_conf", _channel_discord_set_conf)
     channel.register_method("channel.wecom.get_conf", _channel_wecom_get_conf)
     channel.register_method("channel.wecom.set_conf", _channel_wecom_set_conf)
+    channel.register_method("channel.wechat.get_conf", _channel_wechat_get_conf)
+    channel.register_method("channel.wechat.set_conf", _channel_wechat_set_conf)
+    channel.register_method("channel.wechat.get_login_ui", _channel_wechat_get_login_ui)
     channel.register_method("cron.job.list", _cron_job_list)
     channel.register_method("cron.job.get", _cron_job_get)
     channel.register_method("cron.job.create", _cron_job_create)
@@ -1490,6 +1559,8 @@ async def _run() -> None:
     whatsapp_task = None
     wecom_channel = None
     wecom_task = None
+    wechat_channel = None
+    wechat_task = None
     feishu_enterprise_channels: dict[str, FeishuChannel] = {}
     feishu_enterprise_tasks: dict[str, asyncio.Task] = {}
 
@@ -1550,14 +1621,25 @@ async def _run() -> None:
         nonlocal dingtalk_channel, dingtalk_task, telegram_channel, telegram_task
         nonlocal discord_channel, discord_task
         nonlocal whatsapp_channel, whatsapp_task
-        nonlocal wecom_channel, wecom_task, _last_channels_conf
+        nonlocal wecom_channel, wecom_task
+        nonlocal wechat_channel, wechat_task
+        nonlocal _last_channels_conf
         nonlocal feishu_enterprise_channels, feishu_enterprise_tasks
 
-        changed_channels = [
-            c
-            for c in ["feishu", "feishu_enterprise", "xiaoyi", "dingtalk", "telegram", "whatsapp", "discord", "wecom"]
-            if _should_restart_channel(c, _last_channels_conf, conf)
-        ]
+        changed_channels: list[str] = []
+        for channel_name in [
+            "feishu",
+            "feishu_enterprise",
+            "xiaoyi",
+            "dingtalk",
+            "telegram",
+            "whatsapp",
+            "discord",
+            "wecom",
+            "wechat",
+        ]:
+            if _should_restart_channel(channel_name, _last_channels_conf, conf):
+                changed_channels.append(channel_name)
         _last_channels_conf = dict(conf or {})
 
         if "feishu" in changed_channels:
@@ -1833,6 +1915,40 @@ async def _run() -> None:
             else:
                 logger.info("[App] channels.wecom 未配置或格式错误，WecomChannel 不启用")
 
+        # ----- WechatChannel -----
+        if "wechat" in changed_channels:
+            wechat_conf = conf.get("wechat") if isinstance(conf, dict) else None
+            await _stop_channel(wechat_channel, wechat_task, "wechat")
+            wechat_channel, wechat_task = None, None
+
+            if isinstance(wechat_conf, dict):
+                enabled, reason = _is_channel_enabled(wechat_conf, [])
+                if not enabled:
+                    logger.info("[App] channels.wechat.%s，WechatChannel 未启用", reason)
+                else:
+                    wechat_config = WechatConfig(
+                        enabled=True,
+                        base_url=str(wechat_conf.get("base_url") or "https://ilinkai.weixin.qq.com").strip(),
+                        bot_token=str(wechat_conf.get("bot_token") or "").strip(),
+                        ilink_bot_id=str(wechat_conf.get("ilink_bot_id") or "").strip(),
+                        ilink_user_id=str(wechat_conf.get("ilink_user_id") or "").strip(),
+                        allow_from=wechat_conf.get("allow_from") or [],
+                        auto_login=bool(wechat_conf.get("auto_login", True)),
+                        qrcode_poll_interval_sec=float(wechat_conf.get("qrcode_poll_interval_sec", 2.0)),
+                        long_poll_timeout_sec=int(wechat_conf.get("long_poll_timeout_sec", 45)),
+                        backoff_base_sec=float(wechat_conf.get("backoff_base_sec", 1.0)),
+                        backoff_max_sec=float(wechat_conf.get("backoff_max_sec", 30.0)),
+                        credential_file=str(
+                            wechat_conf.get("credential_file") or "~/.wx-ai-bridge/credentials.json"
+                        ).strip(),
+                    )
+                    wechat_channel = WechatChannel(wechat_config, _DummyBus())
+                    channel_manager.register_channel(wechat_channel)
+                    wechat_task = asyncio.create_task(wechat_channel.start(), name="wechat")
+                    logger.info("[App] 已按 config.yaml.channels.wechat 注册 WechatChannel")
+            else:
+                logger.info("[App] channels.wechat 未配置或格式错误，WechatChannel 不启用")
+
     # 将「配置更新时如何重新实例化 Channel」逻辑注册到 ChannelManager
     channel_manager.set_config_callback(_apply_channel_config)
     # 使用初始配置实例化一次（启动时，针对动态管理的各 Channel）
@@ -1922,6 +2038,13 @@ async def _run() -> None:
             except asyncio.CancelledError:
                 pass
             await wecom_channel.stop()
+        if wechat_channel is not None and wechat_task is not None:
+            wechat_task.cancel()
+            try:
+                await wechat_task
+            except asyncio.CancelledError:
+                pass
+            await wechat_channel.stop()
         await cron_scheduler.stop()
         await channel_manager.stop_dispatch()
         await heartbeat_service.stop()

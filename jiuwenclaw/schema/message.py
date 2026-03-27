@@ -68,6 +68,9 @@ class ReqMethod(Enum):
 
     CHANNEL_WHATSAPP_GET_CONF = "channel.whatsapp.get_conf"
     CHANNEL_WHATSAPP_SET_CONF = "channel.whatsapp.set_conf"
+    CHANNEL_WECHAT_GET_CONF = "channel.wechat.get_conf"
+    CHANNEL_WECHAT_SET_CONF = "channel.wechat.set_conf"
+    CHANNEL_WECHAT_GET_LOGIN_UI = "channel.wechat.get_login_ui"
 
     UPDATER_GET_STATUS = "updater.get_status"
     UPDATER_CHECK = "updater.check"

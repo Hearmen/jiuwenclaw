@@ -444,3 +444,58 @@ channels:
 | `channel_id` | Limit listen/reply to one channel (optional) |
 | `allow_from` | Allowed Discord user ids; empty = all |
 | `enabled` | Enable Discord channel |
+
+# Personal WeChat
+
+## 1. Prerequisites
+
+- You are an **Android** or **iOS** user.
+- Or, you are a **HarmonyOS** user and can use **ZhuoYiTong**.
+
+## 2. Android / iOS Setup
+
+### Step 1: Upgrade WeChat
+
+- In WeChat, go to **Me** -> **Settings** -> **About WeChat** -> **Version Update**, then upgrade to the latest `8.0.70` version.
+
+![wechat_update](../assets/images/wechat_update.png)
+
+### Step 2: Install OpenClaw Runtime
+
+- In the working directory of the machine where JiuwenClaw is installed, create a new empty folder and run:
+
+``````
+mkdir wechat_channel
+cd wechat_channel
+npx -y @tencent-weixin/openclaw-weixin-cli@latest install
+``````
+
+![wechat_claw_install](../assets/images/wechat_claw_install.png)
+
+***Note***
+- JiuwenClaw connects to WeChat through a lower-level protocol bridge, so OpenClaw must be installed first.
+- After the command succeeds, a QR code will be generated. **Do not scan that QR code.**
+
+### Step 3: Connect via WeChat QR Scan
+
+- In the latest JiuwenClaw frontend, go to **Channels** -> **WeChat**, enable WeChat configuration, and click **Save**. A QR code will be displayed.
+
+![jiuwenclaw_enable_wechat](../assets/images/jiuwenclaw_enable_wechat.png)
+
+- On your phone, open WeChat and go to **Me** -> **Settings** -> **Plugins**. Find **WeChat ClawBot** and open its details page for guidance. Since Step 1 is already complete, tap **Start Scanning** and scan the QR code generated in the previous step to finish the connection.
+
+![wechat_qrcode](../assets/images/wechat_qrcode.png)
+
+## 3. HarmonyOS Setup
+
+Native HarmonyOS WeChat does not currently support **ClawBot**. You can still connect through **ZhuoYiTong** as follows:
+
+### Step 1: Install WeChat Dual-App
+
+- Download and install **WeifenShen Dual-App** via **ZhuoYiTong**, then sign in to WeChat again.
+
+![wechat_harmony](../assets/images/wechat_harmony.png)
+
+### Step 2: Upgrade and Connect
+
+- Follow the same upgrade and connection steps as in **Android / iOS Setup**.
