@@ -74,6 +74,9 @@ _PROJECT_ROOT = get_root_dir()
 _ENV_FILE = get_env_file()
 load_dotenv(dotenv_path=_ENV_FILE)
 
+from jiuwenclaw.telemetry import init_telemetry
+init_telemetry()
+
 
 # 仅满足 Channel 构造所需，不入队、不路由；仅用 channel_manager + message_handler 做入站/出站
 class _DummyBus:

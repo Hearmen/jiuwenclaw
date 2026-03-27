@@ -55,6 +55,26 @@ models:
       model_config_obj:
         temperature: 0.95
 
+telemetry:
+  enabled: false                    # 总开关（环境变量 OTEL_ENABLED 优先）
+  exporter: otlp                    # otlp / console / none
+  endpoint: http://localhost:4317   # OTLP endpoint
+  protocol: grpc                    # grpc / http
+  headers: {}                       # 公共 OTLP headers，可被 traces/metrics 覆盖
+  log_messages: true                # 是否在 span event 中记录完整消息内容
+  service_name: jiuwenclaw
+  provider_factory:                 # 自定义 provider factory，格式：module:function
+  traces:
+    exporter:                       # trace exporter，默认回退到 telemetry.exporter
+    endpoint:                       # trace endpoint，默认回退到 telemetry.endpoint
+    protocol:                       # trace protocol，默认回退到 telemetry.protocol
+    headers: {}                     # trace headers，默认回退到 telemetry.headers
+  metrics:
+    exporter:                       # metrics exporter，默认回退到 telemetry.exporter
+    endpoint:                       # metrics endpoint，默认回退到 telemetry.endpoint
+    protocol:                       # metrics protocol，默认回退到 telemetry.protocol
+    headers: {}                     # metrics headers，默认回退到 telemetry.headers
+
 react:
   agent_name: main_agent
   max_iterations: 100
