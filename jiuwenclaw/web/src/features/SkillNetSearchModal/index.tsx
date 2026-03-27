@@ -11,6 +11,8 @@ import { normalizeSkillNetUrl } from "../../utils/skillNetUrl";
 const SKILLNET_UPSTREAM_REPO_URL = "https://github.com/zjunlp/SkillNet";
 /** 同时进行的 SkillNet 安装任务上限（与后端 asyncio 能力匹配，避免前端狂点拖垮） */
 const SKILLNET_MAX_CONCURRENT_INSTALLS = 5;
+/** SkillNet「评估」入口：暂时隐藏；后端 `skills.skillnet.evaluate` 仍可用，改回 true 即恢复按钮 */
+const SKILLNET_EVALUATE_BUTTON_ENABLED = false;
 
 /** 评估结果展示顺序（与 skillnet-ai 五维一致） */
 const EVAL_DIMENSION_KEYS = [
@@ -639,23 +641,25 @@ export function SkillNetSearchModal({
                               : t("skills.skillNet.installFromResult")}
                           </button>
                         )}
-                        <button
-                          type="button"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            void handleEvaluate(item);
-                          }}
-                          disabled={evalGloballyBusy}
-                          className={`px-3 py-1.5 rounded-md text-xs whitespace-nowrap transition-colors border border-border ${
-                            evalGloballyBusy
-                              ? "bg-secondary text-text-muted cursor-not-allowed"
-                              : "bg-secondary text-text hover:bg-tertiary"
-                          }`}
-                        >
-                          {evalBusy
-                            ? t("skills.skillNet.evaluating")
-                            : t("skills.skillNet.evaluateSkill")}
-                        </button>
+                        {SKILLNET_EVALUATE_BUTTON_ENABLED ? (
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              void handleEvaluate(item);
+                            }}
+                            disabled={evalGloballyBusy}
+                            className={`px-3 py-1.5 rounded-md text-xs whitespace-nowrap transition-colors border border-border ${
+                              evalGloballyBusy
+                                ? "bg-secondary text-text-muted cursor-not-allowed"
+                                : "bg-secondary text-text hover:bg-tertiary"
+                            }`}
+                          >
+                            {evalBusy
+                              ? t("skills.skillNet.evaluating")
+                              : t("skills.skillNet.evaluateSkill")}
+                          </button>
+                        ) : null}
                         {rowInstallError ? (
                           <p
                             className="text-[11px] text-danger text-right leading-snug break-words"
