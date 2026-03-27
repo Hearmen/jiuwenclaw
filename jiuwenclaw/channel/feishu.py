@@ -169,8 +169,10 @@ class FeishuChannel(BaseChannel):
         Args:
             inbound: Feishu 入站消息
         """
+        # Message 的 id 必须全局唯一；多 bot 同群时飞书消息 message_id 相同，需加上 channel_id 防止冲突。
+        msg_id = f"{self.channel_id}:{inbound.message_id}"
         msg = Message(
-            id=inbound.message_id,
+            id=msg_id,
             type="req",
             channel_id=self.channel_id,
             session_id=str(inbound.chat_id),
