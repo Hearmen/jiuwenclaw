@@ -59,9 +59,9 @@
     "newSessionDisabled": "处理中或录音中不可新建",
     "historyPager": {
       "loadedOfTotal": "历史已加载 {{loaded}} / {{total}} 页",
-      "loadMore": "加载更早的消息",
       "loadingMore": "加载中…",
-      "allLoaded": "已显示全部历史"
+      "allLoaded": "已显示全部历史",
+      "wheelToLoadMore": "向上滚动加载更多"
     }
   },
   "connection": {

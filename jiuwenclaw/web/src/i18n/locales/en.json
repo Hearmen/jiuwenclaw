@@ -59,9 +59,9 @@
     "newSessionDisabled": "Cannot create session while processing or recording",
     "historyPager": {
       "loadedOfTotal": "History loaded {{loaded}} / {{total}} pages",
-      "loadMore": "Load older messages",
       "loadingMore": "Loading…",
-      "allLoaded": "All history loaded"
+      "allLoaded": "All history loaded",
+      "wheelToLoadMore": "Scroll up to load more"
     }
   },
   "connection": {

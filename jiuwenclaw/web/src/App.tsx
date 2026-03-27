@@ -276,7 +276,7 @@ function AppContent() {
 
   useEffect(() => () => disposeInFlightHistoryHandles(), [disposeInFlightHistoryHandles]);
 
-  const { setCurrentSession, setSessions, heartbeatMessage, heartbeatUpdatedAt } = useSessionStore();
+  const { setCurrentSession, setSessions, mode, heartbeatMessage, heartbeatUpdatedAt } = useSessionStore();
   const {
     clearMessages,
     clearSubtasks,
@@ -587,7 +587,9 @@ function AppContent() {
         historyRestoreHandleRef.current = null;
         setHistoryPagerMeta(null);
         console.error('Failed to load history:', error);
-        if (sessionIdRef.current === sessionId) {
+        // 忽略 "invalid page_idx or session history not found" 错误，因为这是新会话的正常情况
+        const errorMessage = error instanceof Error ? error.message : String(error);
+        if (sessionIdRef.current === sessionId && !errorMessage.includes('invalid page_idx or session history not found')) {
           clearMessages();
           addMessage({
             id: `history-load-failed-${Date.now()}`,
@@ -622,6 +624,14 @@ function AppContent() {
       setSessionId(createdSid);
       setCurrentSession(null);
       storeSessionId(createdSid);
+      // 保持当前模式
+      if (switchMode) {
+        try {
+          await switchMode(createdSid, mode);
+        } catch (error) {
+          console.error('Failed to set mode for new session:', error);
+        }
+      }
       await fetchSessions();
     } catch (error) {
       console.error('Failed to create session:', error);
@@ -639,11 +649,13 @@ function AppContent() {
     clearTodos,
     disposeInFlightHistoryHandles,
     fetchSessions,
+    mode,
     request,
     setCurrentSession,
     setPaused,
     setProcessing,
     setThinking,
+    switchMode,
   ]);
 
   // 切换模式

@@ -702,6 +702,10 @@ export function useWebSocket(options: UseWebSocketOptions): UseWebSocketReturn {
         setThinking(false);
         const errorMsg =
           typeof payload.error === 'string' ? payload.error : i18n.t('network.unknownError');
+        // 忽略 "invalid page_idx or session history not found" 错误，因为这是新会话的正常情况
+        if (errorMsg.includes('invalid page_idx or session history not found')) {
+          return;
+        }
         onErrorRef.current?.(errorMsg);
         addMessage({
           id: `error-${Date.now()}`,
