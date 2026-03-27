@@ -200,12 +200,12 @@ class MessageHandler(ABC):
             return provider
         return str(getattr(msg, "channel_id", "") or "")
 
-    async def _send_channel_notice(self, channel_id: str, session_id: str | None, text: str) -> None:
+    async def _send_channel_notice(self, user_infos: dict, channel_id: str, session_id: str | None, text: str) -> None:
         """向指定 channel 发送一条系统提示消息."""
         from jiuwenclaw.schema.message import Message, EventType
 
         msg = Message(
-            id=f"sys-{int(time.time() * 1000)}",
+            id=user_infos['id'],
             type="event",
             channel_id=channel_id,
             session_id=session_id,
@@ -214,6 +214,7 @@ class MessageHandler(ABC):
             ok=True,
             payload={"content": text},
             event_type=EventType.CHAT_FINAL,
+            metadata=user_infos['meta_data']
         )
         await self.publish_robot_messages(msg)
 
@@ -224,6 +225,11 @@ class MessageHandler(ABC):
             True: 该消息是控制指令，已处理完毕，不需要转发给 Agent。
             False: 非控制指令，继续正常处理。
         """
+        # print("this is in _handle_channel_control, msg is ", msg)
+        user_infos = {}
+        user_infos['id'] = msg.id
+        user_infos['meta_data'] = msg.metadata
+
         ch = msg.channel_id
         channel_type = self._resolve_control_channel_type(msg)
         if channel_type not in self._control_channel_types:
@@ -254,12 +260,20 @@ class MessageHandler(ABC):
             state.session_id = new_sid
             # 给当前会话回复提示（用原有 session_id）
             asyncio.create_task(
-                self._send_channel_notice(ch, msg.session_id, f"[收到 CLI 指令], session_id 已变更为 {new_sid}")
+                self._send_channel_notice(
+                    user_infos, 
+                    ch, 
+                    msg.session_id, 
+                    f"[收到 CLI 指令], session_id 已变更为 {new_sid}")
             )
             return True
         elif "/new_session" in text:
             asyncio.create_task(
-                self._send_channel_notice(ch, msg.session_id, f"非法指令")
+                self._send_channel_notice(
+                    user_infos, 
+                    ch, 
+                    msg.session_id, 
+                    f"非法指令")
             )
             return True
 
@@ -269,12 +283,20 @@ class MessageHandler(ABC):
             if len(parts) >= 2 and parts[1] in ("plan", "agent"):
                 state.mode = ChannelMode.AGENT if parts[1] == "agent" else ChannelMode.PLAN
                 asyncio.create_task(
-                    self._send_channel_notice(ch, msg.session_id, f"[收到 CLI 指令], mode 已变更为 {state.mode.value}")
+                    self._send_channel_notice(
+                        user_infos, 
+                        ch, 
+                        msg.session_id, 
+                        f"[收到 CLI 指令], mode 已变更为 {state.mode.value}")
                 )
                 return True
         elif "/mode" in text:
             asyncio.create_task(
-                self._send_channel_notice(ch, msg.session_id, f"非法指令")
+                self._send_channel_notice(
+                    user_infos, 
+                    ch, 
+                    msg.session_id, 
+                    f"非法指令")
             )
             return True
 
