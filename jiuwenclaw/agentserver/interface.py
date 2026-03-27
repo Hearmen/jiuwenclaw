@@ -529,6 +529,8 @@ class JiuWenClaw:
                     self._instance.ability_manager.remove(tool.name)
                 elif tool.name.startswith("session_"):
                     self._instance.ability_manager.remove(tool.name)
+                elif tool.name.startswith("send_file_to_user"):
+                    self._instance.ability_manager.remove(tool.name)
 
         # 定时工具：按 channel 注册；优先用 channel_id，否则从 session_id 前缀推断
         channel = (channel_id or "").strip() or (
@@ -551,21 +553,23 @@ class JiuWenClaw:
                     Runner.resource_mgr.add_tool(cron_tool)
                 self._instance.ability_manager.add(cron_tool.card)
 
-        # 小艺手机端插件(xiaoyi phone tools)未生效时重新加载
         config_base = get_config()
-        channels_cfg = config_base.get("channels", {})
-        xiaoyi_cfg = channels_cfg.get("xiaoyi", {})
-        xiaoyi_phone_tools_enabled = xiaoyi_cfg.get("phone_tools_enabled", False)
-        if xiaoyi_phone_tools_enabled:
+        send_file_tool_enabled = config_base.get("channels", {}).get(channel, {}).get("send_file_allowed", False)
+        if send_file_tool_enabled:
             # Register send file toolkit
             send_file_toolkit = SendFileToolkit(
                 request_id=request_id,
-                session_id=effective_session_id,
+                session_id=session_id,
                 channel_id=channel_id,
             )
             for tool in send_file_toolkit.get_tools():
                 Runner.resource_mgr.add_tool(tool)
                 self._instance.ability_manager.add(tool.card)
+
+        # 小艺手机端插件(xiaoyi phone tools)未生效时重新加载
+        channels_cfg = config_base.get("channels", {})
+        xiaoyi_cfg = channels_cfg.get("xiaoyi", {})
+        xiaoyi_phone_tools_enabled = xiaoyi_cfg.get("phone_tools_enabled", False)
 
         if xiaoyi_phone_tools_enabled and not self._xiaoyi_phone_tools_registered:
             try:
