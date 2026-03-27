@@ -46,6 +46,7 @@ OpenAIModelClient._create_async_openai_client = PatchOpenAIModelClient._create_a
 OpenAIModelClient._parse_stream_chunk = PatchOpenAIModelClient._parse_stream_chunk
 
 from openjiuwen.core.foundation.llm import ProviderType
+from jiuwenclaw.security.base_crypto import get_crypto_provider
 
 from jiuwenclaw.utils import (
     get_agent_sessions_dir,
@@ -274,6 +275,8 @@ def _register_web_handlers(
             for param_key, env_key in _CONFIG_SET_ENV_MAP.items()
         }
         payload["app_version"] = __version__
+        if "api_key" in payload:
+            payload['api_key'] = get_crypto_provider().decrypt(payload['api_key'])
         # 合并 config.yaml 中的配置项
         try:
             raw = get_config_raw()
@@ -318,6 +321,8 @@ def _register_web_handlers(
             logger.warning("[config.set] 写回 .env 失败: %s", e)
 
     async def _config_set(ws, req_id, params, session_id):
+        if "api_key" in params:
+            params["api_key"] = get_crypto_provider().encrypt(params["api_key"])
         """根据前端消息内容更新配置（支持 .env 与 config.yaml 中的键），并写回对应文件。"""
         if not isinstance(params, dict):
             await channel.send_response(ws, req_id, ok=False, error="params must be object", code="BAD_REQUEST")

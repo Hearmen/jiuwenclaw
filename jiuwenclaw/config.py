@@ -10,7 +10,7 @@ import yaml
 from ruamel.yaml import YAML
 
 from jiuwenclaw.utils import get_config_file
-
+from jiuwenclaw.security.base_crypto import get_crypto_provider
 
 _CONFIG_MODULE_DIR = Path(__file__).parent
 _CONFIG_YAML_PATH = get_config_file()
@@ -44,6 +44,8 @@ def resolve_env_vars(value: Any) -> Any:
             var_name = match.group(1)
             default = match.group(2)
             current = os.getenv(var_name)
+            if var_name == "API_KEY":
+                current = get_crypto_provider().decrypt(current)
             # Bash: ${VAR:-default} uses default when VAR is unset OR empty.
             # ${VAR} (no :-) keeps getenv behavior; unset -> "".
             if default is not None:
