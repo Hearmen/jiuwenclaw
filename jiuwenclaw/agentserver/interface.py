@@ -227,10 +227,9 @@ class JiuWenClaw:
                 (
                     "MessageOffloader",
                     MessageOffloaderConfig(
-                        messages_threshold=message_offloader_config.get("messages_threshold", 40),
-                        tokens_threshold=message_offloader_config.get("tokens_threshold", 20000),
-                        large_message_threshold=message_offloader_config.get("large_message_threshold", 1000),
-                        trim_size=message_offloader_config.get("trim_size", 500),
+                        tokens_threshold=message_offloader_config.get("tokens_threshold", 5000),
+                        large_message_threshold=message_offloader_config.get("large_message_threshold", 20000),
+                        trim_size=message_offloader_config.get("trim_size", 5000),
                         offload_message_type=["tool"],
                         keep_last_round=message_offloader_config.get("keep_last_round", False),
                     )
@@ -238,8 +237,7 @@ class JiuWenClaw:
                 (
                     "DialogueCompressor",
                     DialogueCompressorConfig(
-                        messages_threshold=dialogue_compressor_config.get("messages_threshold", 40),
-                        tokens_threshold=dialogue_compressor_config.get("tokens_threshold", 50000),
+                        tokens_threshold=dialogue_compressor_config.get("tokens_threshold", 100000),
                         model=ModelRequestConfig(
                             model=model_name
                         ),
