@@ -13,6 +13,7 @@
 from __future__ import annotations
 
 import json
+import os
 import logging
 from typing import List, Union
 
@@ -59,6 +60,18 @@ class SendFileToolkit:
             except json.decoder.JSONDecodeError as e:
                 logger.info(f"send_file args error: {e}")
                 raise TypeError(f"[SendFileToolkit] send_file args error.") from e
+
+        not_exist_files = [
+            f for f in abs_file_path_list if not self.check_file_exists(f)
+        ]
+        if not_exist_files:
+            logger.warning(
+                "[SendFileToolkit] send_file 文件不存在 session_id=%s files=%s",
+                self.session_id,
+                not_exist_files,
+            )
+            return f"发送文件失败，以下文件不存在: {not_exist_files}"
+
         logger.info(
             "[SendFileToolkit] send_file 开始 session_id=%s 文件数=%d",
             self.session_id,
@@ -89,6 +102,41 @@ class SendFileToolkit:
                 str(e),
             )
             return f"提交文件失败: {str(e)}"
+
+    @staticmethod
+    def check_file_exists(self, file_path: str) -> bool:
+        """Check if a file exists at the given path.
+
+        Args:
+            file_path: Absolute path of the file to check.
+
+        Returns:
+            True if file exists and is a valid file, False otherwise.
+        """
+        if not file_path:
+            return False
+
+        if not os.path.exists(file_path):
+            logger.warning(
+                "[SendFileToolkit] check_file_exists 文件不存在 path=%s",
+                file_path,
+            )
+            return False
+
+        if not os.path.isfile(file_path):
+            logger.warning(
+                "[SendFileToolkit] check_file_exists 路径不是文件 path=%s",
+                file_path,
+            )
+            return False
+
+        file_size = os.path.getsize(file_path)
+        logger.info(
+            "[SendFileToolkit] check_file_exists 文件存在 path=%s size=%d",
+            file_path,
+            file_size,
+        )
+        return True
 
     def get_tools(self) -> List[Tool]:
         """Return tools for registration in Runner.
