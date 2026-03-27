@@ -448,8 +448,13 @@ class WecomChannel(BaseChannel):
         try:
             await client.connect()
             logger.info("WecomChannel WebSocket 已连接")
+            logger.info("WecomChannel 保活循环已启动（不因短暂断线退出，不打断 SDK 重连）")
 
-            while self._running and getattr(client, "is_connected", True):
+            # 不要把 is_connected 作为退出条件。
+            # wecom-aibot-sdk 在网络抖动/机器休眠唤醒后会先进入 disconnected，
+            # 然后在内部自动重连；若这里因短暂 disconnected 直接退出，会触发 finally
+            # 主动 disconnect，打断 SDK 的重连流程，导致通道长期停在 disconnected。
+            while self._running:
                 await asyncio.sleep(1)
         except asyncio.CancelledError:
             pass
