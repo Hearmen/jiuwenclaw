@@ -17,7 +17,11 @@ from pathlib import Path
 from typing import Any, Awaitable, Callable
 from urllib.parse import urlparse
 
-from jiuwenclaw.utils import get_agent_root_dir, get_agent_skills_dir
+from jiuwenclaw.utils import (
+    get_agent_root_dir,
+    get_agent_skills_dir,
+    get_builtin_skills_dir,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -55,6 +59,69 @@ def _is_valid_http_mirror_url(url: str) -> bool:
     if not parsed.netloc:
         return False
     return True
+
+
+def _safe_rmtree(path: Path) -> bool:
+    """安全地删除目录树，处理 Windows 上的 git 文件锁定问题.
+    """
+    if not path.exists():
+        return True
+
+    import time
+    import stat
+
+    max_retries = 3
+    retry_delay = 0.2
+
+    for attempt in range(max_retries):
+        try:
+            shutil.rmtree(path)
+            return True
+        except OSError as exc:
+            logger.debug("删除目录失败（尝试 %d/%d）: %s", attempt + 1, max_retries, exc)
+
+            # 最后一次尝试失败，直接返回 False
+            if attempt == max_retries - 1:
+                logger.warning("删除目录失败（已重试 %d 次）: %s", max_retries, path)
+                return False
+
+            # 检查是否是 Windows 上的权限问题
+            # 尝试修改文件权限
+            if os.name == 'nt':
+                try:
+                    # 尝试递归修改权限
+                    for root, dirs, files in os.walk(path):
+                        for name in files + dirs:
+                            filepath = Path(root) / name
+                            try:
+                                # 移除只读属性
+                                if os.name == 'nt':
+                                    os.chmod(filepath, stat.S_IWRITE)
+                                elif os.name == 'posix':
+                                    os.chmod(filepath, 0o777)
+                                # 对目录，尝试删除其中的文件
+                                if filepath.is_dir():
+                                    try:
+                                        shutil.rmtree(filepath)
+                                    except OSError:
+                                        pass  # 忽略子目录删除失败，外层会重试
+                                elif filepath.is_file():
+                                    try:
+                                        os.unlink(filepath)
+                                    except PermissionError:
+                                        pass  # 忽略文件删除失败
+                                # 小延迟
+                                time.sleep(0.01)
+                            except OSError:
+                                pass  # 忽略权限修改失败
+                except Exception:
+                    pass  # 忽略其他异常
+
+            # 等待后重试
+            time.sleep(retry_delay)
+            retry_delay *= 2
+
+    return False
 
 
 class SkillManager:
@@ -146,6 +213,7 @@ class SkillManager:
                 meta["content"] = meta.pop("body", "")
                 meta["file_path"] = meta.pop("path", "")
                 meta["source"] = self._resolve_skill_source(meta.get("name", ""))
+                meta["is_builtin"] = self._is_builtin_skill(meta.get("name", ""), self._get_installed_plugins())
                 return meta
 
         # 再在 marketplace 目录中查找
@@ -167,6 +235,7 @@ class SkillManager:
                         marketplace_name = repo_dir.name
                         meta["source"] = marketplace_name
                         meta["marketplace"] = marketplace_name
+                        meta["is_builtin"] = False
                         return meta
 
         raise ValueError(f"未找到 skill: {name}")
@@ -231,6 +300,10 @@ class SkillManager:
 
         # 在仓库中查找 plugin 目录
         plugin_src = repo_dir / "skills" / plugin_name
+        
+        # 兼容单skill模式
+        if not plugin_src.exists() or not plugin_src.is_dir():
+            plugin_src = repo_dir
         if not plugin_src.is_dir():
             return {"success": False, "detail": f"在 marketplace 仓库中未找到 plugin: {plugin_name}"}
 
@@ -243,7 +316,7 @@ class SkillManager:
         if dest.exists():
             if not force:
                 return {"success": False, "detail": f"skill {plugin_name} 已存在"}
-            shutil.rmtree(dest)
+            _safe_rmtree(dest)
         shutil.copytree(plugin_src, dest)
 
         # 解析元数据并记录（添加 installed_at 时间戳）
@@ -563,7 +636,7 @@ class SkillManager:
                             "detail": "该技能已安装。",
                             "detail_key": "skills.skillNet.errors.skillAlreadyInstalled",
                         }
-                    shutil.rmtree(dest)
+                    _safe_rmtree(dest)
 
                 shutil.copytree(skill_dir, dest)
                 for mirror_root in self._get_mirror_skills_dirs():
@@ -571,7 +644,7 @@ class SkillManager:
                     if mirror_dest.exists():
                         if not force:
                             continue
-                        shutil.rmtree(mirror_dest)
+                        _safe_rmtree(mirror_dest)
                     mirror_root.mkdir(parents=True, exist_ok=True)
                     shutil.copytree(skill_dir, mirror_dest)
 
@@ -609,15 +682,20 @@ class SkillManager:
         if not name:
             return {"success": False, "detail": "缺少参数: name"}
 
+        # 内置技能不允许删除
+        if self._is_builtin_skill(name, self._get_installed_plugins()):
+            return {"success": False, "detail": "内置技能不允许删除"}
+
         dest = _SKILLS_DIR / name
         if dest.exists() and dest.is_dir():
-            shutil.rmtree(dest)
+            _safe_rmtree(dest)
         for mirror_root in self._get_mirror_skills_dirs():
             mirror_dest = mirror_root / name
             if mirror_dest.exists() and mirror_dest.is_dir():
-                shutil.rmtree(mirror_dest)
+                _safe_rmtree(mirror_dest)
 
         self._remove_installed_plugin(name)
+        self._remove_local_skill(name)
         self._refresh_agent_data_indexes()
         return {"success": True}
 
@@ -647,7 +725,7 @@ class SkillManager:
             if dest.exists():
                 if not force:
                     return {"success": False, "detail": f"skill {skill_name} 已存在"}
-                shutil.rmtree(dest)
+                _safe_rmtree(dest)
             dest.mkdir(parents=True, exist_ok=True)
             shutil.copy2(src, dest / src.name)
         elif src.is_dir():
@@ -660,7 +738,7 @@ class SkillManager:
             if dest.exists():
                 if not force:
                     return {"success": False, "detail": f"skill {skill_name} 已存在"}
-                shutil.rmtree(dest)
+                _safe_rmtree(dest)
             shutil.copytree(src, dest)
         else:
             return {"success": False, "detail": f"不支持的路径类型: {raw_path}"}
@@ -711,7 +789,7 @@ class SkillManager:
             repo_dir = _MARKETPLACE_DIR / name
             if repo_dir.exists() and repo_dir.is_dir():
                 try:
-                    shutil.rmtree(repo_dir)
+                    _safe_rmtree(repo_dir)
                     cache_removed = True
                 except Exception as exc:
                     logger.warning("删除 marketplace 缓存失败: %s", exc)
@@ -769,11 +847,8 @@ class SkillManager:
         repo_dir = _MARKETPLACE_DIR / name
         cache_removed = False
         if repo_dir.exists() and repo_dir.is_dir():
-            try:
-                shutil.rmtree(repo_dir)
-                cache_removed = True
-            except Exception as exc:
-                logger.warning("禁用 marketplace 时删除缓存失败: %s", exc)
+            cache_removed = _safe_rmtree(repo_dir)
+            if not cache_removed:
                 return {"success": False, "name": name, "enabled": True, "detail": "删除本地缓存失败"}
 
         self._set_marketplace_enabled(name, False)
@@ -880,6 +955,38 @@ class SkillManager:
         return None
 
     # -----------------------------------------------------------------------
+    # 内置技能判断
+    # -----------------------------------------------------------------------
+
+    def _is_builtin_skill(self, skill_name: str, installed_plugins: list[dict]) -> bool:
+        """判断技能是否为内置技能.
+
+        内置技能的判断标准：
+        1. 不在 local_skills 中（用户本地导入）
+        2. 不在 installed_plugins 中（marketplace安装）
+        3. 存在于源码内置路径
+        """
+        try:
+            # 检查是否在 local_skills 中（用户本地导入或SkillNet下载）
+            for local_skill in self._state.get("local_skills", []):
+                if local_skill.get("name") == skill_name:
+                    return False
+
+            # 检查是否在 installed_plugins 中记录（marketplace安装的）
+            for plugin in installed_plugins:
+                if plugin.get("name") == skill_name:
+                    return False
+
+            # 不在 local_skills 和 installed_plugins 中的技能，且存在于源码目录，则为内置
+            builtin_dir = get_builtin_skills_dir()
+            if builtin_dir.exists():
+                builtin_skill_path = builtin_dir / skill_name
+                return builtin_skill_path.exists() and builtin_skill_path.is_dir()
+            return False
+        except Exception:
+            return False
+
+    # -----------------------------------------------------------------------
     # 目录扫描
     # -----------------------------------------------------------------------
 
@@ -919,6 +1026,8 @@ class SkillManager:
                     break
 
             meta["source"] = source
+            # 判断是否为内置技能
+            meta["is_builtin"] = self._is_builtin_skill(meta.get("name", ""), self._get_installed_plugins())
             # 不在列表中返回 body
             meta.pop("body", None)
             results.append(meta)
@@ -974,11 +1083,16 @@ class SkillManager:
 
             # 检查 skills 子目录是否存在
             skills_dir = repo_dir / "skills"
+            # 单skill兼容
+            is_skills_dir = True
             if not skills_dir.exists() or not skills_dir.is_dir():
                 # 如果没有 skills 子目录，尝试直接扫描 repo_dir（兼容旧结构）
-                skills_dir = repo_dir
+                skills_dir = repo_dir / _MARKETPLACE_DIR
+                is_skills_dir = False
 
             for plugin_dir in skills_dir.iterdir():
+                if not is_skills_dir and plugin_dir != repo_dir:
+                    continue
                 if not plugin_dir.is_dir():
                     continue
                 # 跳过 git 元数据和以 _ 开头的目录
@@ -998,6 +1112,7 @@ class SkillManager:
                 # source 直接返回 marketplace 名称，便于前端安装时自动拼接 spec
                 meta["source"] = marketplace_name
                 meta["marketplace"] = marketplace_name
+                meta["is_builtin"] = False
                 meta.pop("body", None)
                 results.append(meta)
 
@@ -1005,14 +1120,24 @@ class SkillManager:
 
     @staticmethod
     def _get_mirror_skills_dirs() -> list[Path]:
-        """返回需要镜像同步的 skills 目录（不包含当前运行目录）."""
+        """返回需要镜像同步的 skills 目录（不包含当前运行目录）.
+
+        注意：开发模式下不返回源码目录作为镜像目标，避免用户下载的
+        skill被复制到源码目录，重启后被误判为内置skill。
+        """
         mirrors: list[Path] = []
         try:
             source_repo_root = Path(__file__).resolve().parents[2]
             source_resources_skills_dir = (
                 source_repo_root / "jiuwenclaw" / "resources" / "agent" / "skills"
             )
-            if source_resources_skills_dir.exists() and source_resources_skills_dir.resolve() != _SKILLS_DIR.resolve():
+            # 开发模式下不将源码目录作为镜像目标
+            # 这样用户下载的skill只保存在用户目录，不会污染源码目录
+            if (
+                source_resources_skills_dir.exists()
+                and source_resources_skills_dir.resolve() != _SKILLS_DIR.resolve()
+                and source_resources_skills_dir.resolve() != get_builtin_skills_dir().resolve()
+            ):
                 mirrors.append(source_resources_skills_dir)
         except Exception:
             return []
@@ -1519,4 +1644,9 @@ class SkillManager:
                 self._save_state()
                 return
         local.append(skill)
+        self._save_state()
+
+    def _remove_local_skill(self, name: str) -> None:
+        local = self._state.get("local_skills", [])
+        self._state["local_skills"] = [s for s in local if s.get("name") != name]
         self._save_state()

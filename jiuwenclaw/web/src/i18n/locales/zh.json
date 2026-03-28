@@ -203,6 +203,7 @@
     "subtitle": "添加、删除或启用/禁用技能源",
     "addTitle": "添加源",
     "add": "添加",
+    "hint": "请提供规范的源地址（包含skills目录）；如果源地址为单一skill，源名称需要与SKILL.MD中的name一致。",
     "configuredCount": "已配置源（{{count}} 个）",
     "empty": "暂无已配置源",
     "updatedAt": "更新于 {{time}}",

@@ -25,6 +25,8 @@ type SkillItem = {
   marketplace?: string;
   /** SkillNet 等安装来源 URL，与在线搜索 skill_url 对照「已安装」 */
   origin?: string;
+  /** 是否为内置技能（不允许删除） */
+  is_builtin?: boolean;
 };
 
 type InstalledPluginItem = {
@@ -374,6 +376,41 @@ export function SkillPanel({ sessionId, onNavigateToConfig }: SkillPanelProps) {
 
   const renderActionButton = (skill: SkillItem) => {
     const plugin = installedSkillMap.get(skill.name);
+
+    // 内置技能不允许卸载
+    if (skill.is_builtin) {
+      return (
+        <button
+          className="px-3 py-1.5 rounded-md text-sm bg-secondary text-text-muted cursor-not-allowed whitespace-nowrap"
+          disabled
+        >
+          {t('skills.builtIn')}
+        </button>
+      );
+    }
+
+    // 用户本地导入的技能（source="local"）允许删除
+    if (skill.source === "local") {
+      const isLoading = actionTarget === skill.name;
+      return (
+        <button
+          onClick={(event) => {
+            event.stopPropagation();
+            handleUninstall(skill.name);
+          }}
+          className={`px-3 py-1.5 rounded-md text-sm transition-colors whitespace-nowrap ${
+            isLoading
+              ? "bg-secondary text-text-muted cursor-not-allowed"
+              : "bg-danger text-white hover:bg-danger/90"
+          }`}
+          disabled={isLoading}
+        >
+          {t('skills.actions.uninstall')}
+        </button>
+      );
+    }
+
+    // Marketplace 安装的技能
     if (plugin) {
       const pluginName = plugin.plugin_name || skill.name;
       const isLoading = actionTarget === pluginName;
@@ -395,7 +432,8 @@ export function SkillPanel({ sessionId, onNavigateToConfig }: SkillPanelProps) {
       );
     }
 
-    if (skill.source !== "local" && skill.source !== "project") {
+    // Marketplace 中未安装的技能显示安装按钮
+    if (skill.source !== "project") {
       const isLoading = Boolean(actionTarget?.startsWith(`${skill.name}@`));
       return (
         <button
@@ -415,6 +453,7 @@ export function SkillPanel({ sessionId, onNavigateToConfig }: SkillPanelProps) {
       );
     }
 
+    // 默认显示内置（兜底）
     return (
       <button
         className="px-3 py-1.5 rounded-md text-sm bg-secondary text-text-muted cursor-not-allowed whitespace-nowrap"
@@ -426,9 +465,9 @@ export function SkillPanel({ sessionId, onNavigateToConfig }: SkillPanelProps) {
   };
 
   const renderStatus = (skill: SkillItem) => {
-    const plugin = installedSkillMap.get(skill.name);
-    if (plugin) return t('skills.status.installed');
-    if (skill.source !== "local" && skill.source !== "project") return t('skills.status.notInstalled');
+    if (skill.is_builtin) return t('skills.status.installed');
+    if (skill.source === "local") return t('skills.status.installed');
+    if (skill.source !== "project") return t('skills.status.notInstalled');
     return t('skills.status.builtIn');
   };
 

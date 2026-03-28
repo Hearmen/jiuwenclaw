@@ -216,6 +216,9 @@ export function SourceManagerModal({
         <div className="p-5 overflow-auto max-h-[calc(88vh-64px)]">
           <div className="rounded-lg border border-border bg-panel p-4">
             <div className="text-sm font-medium text-text mb-3">{t("sourceManager.addTitle")}</div>
+            <div className="text-xs text-text-muted mb-3">
+              {t("sourceManager.hint")}
+            </div>
             <div className="grid grid-cols-1 md:grid-cols-[180px_1fr_auto] gap-2">
               <input
                 value={nameInput}

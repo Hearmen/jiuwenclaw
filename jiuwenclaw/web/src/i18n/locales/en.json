@@ -203,6 +203,7 @@
     "subtitle": "Add, remove, enable, or disable skill sources",
     "addTitle": "Add source",
     "add": "Add",
+    "hint": "Please provide a source path containing the skills directory. If the source is a single skill, the source name must match the name in SKILL.MD.",
     "configuredCount": "Configured sources ({{count}})",
     "empty": "No configured sources",
     "updatedAt": "Updated at {{time}}",
