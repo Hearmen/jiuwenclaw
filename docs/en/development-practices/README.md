@@ -1,8 +1,8 @@
 # Development practices
 
-In-depth write-ups from building real skills on JiuwenClaw:
+Long-form notes on designing and shipping JiuwenClaw skills in real projects.
 
-- [Advanced daily report generator](JiuwenClaw-Daily-Report-Generator.md) — multi-source data, analysis, cron, Feishu
-- [Code review assistant](JiuwenClaw-Code-Review-Assistant.md) — Ruff, Radon, Bandit, scoring, Feishu reports
+- [JiuwenClaw Daily Report Generator](JiuwenClaw-Daily-Report-Generator.md) — Multi-source daily, weekly, and monthly reports with heartbeat and Feishu delivery.
+- [JiuwenClaw Code Review Assistant](JiuwenClaw-Code-Review-Assistant.md) — Layered static analysis, scoring, and Markdown / Feishu reporting.
 
 Chinese originals: `docs/zh/开发实践/`.

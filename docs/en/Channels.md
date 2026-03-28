@@ -407,6 +407,8 @@ channels:
 
 Discord is supported. Configure in **Channel management** or edit `config.yaml`.
 
+**Step-by-step guide** (Developer Portal, intents, install link, channel management): see [Discord.md](Discord.md).
+
 - `bot_token`
 - `application_id`
 - `guild_id`

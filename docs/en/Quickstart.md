@@ -92,6 +92,7 @@ Static frontend (production build):
 ```bash
   npm run build
   cd ../../
+  uv run jiuwenclaw-init
   uv run jiuwenclaw-start
 ```
 
@@ -99,6 +100,7 @@ Dev mode (dynamic frontend):
 
 ```bash
   cd ../../
+  uv run jiuwenclaw-init
   uv run jiuwenclaw-start dev
 ```
 

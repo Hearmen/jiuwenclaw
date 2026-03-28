@@ -4,6 +4,7 @@
 - [Configuration](Configuration.md)
 - [User guide](README.md)
   - [Channels](Channels.md)
+    - [Discord](Discord.md)
     - [WhatsApp](WhatsApp.md)
   - [CLI commands](CLI.md)
   - [Heartbeat](Heartbeat.md)

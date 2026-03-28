@@ -100,19 +100,19 @@ Set up heartbeat tasks with your to-do items, and JiuwenClaw will wake up on sch
 
 | Document                                             | Description                                              |
 | :--------------------------------------------------- | :------------------------------------------------------- |
-| [📖 Quick Start](docs/Quickstart.md)                  | Get up and running with JiuwenClaw in 5 minutes          |
-| [⚙️ Configuration & Workspace](docs/配置信息.md) | Environment setup and workspace management               |
-| [📁 Workspace Structure](docs/智能体.md)               | workspace directory layout, presets, and dynamic content |
-| [🛠️ Skill System](docs/技能.md)                     | Guide to developing custom skills                        |
-| [📱 Channel Configuration](docs/频道.md)          | Integrating Feishu, Xiaoyi, and other channels           |
-| [⌨️ CLI Commands](docs/命令行指令.md)                         | Command-line tool usage guide                            |
-| [⏰ Scheduled Tasks](docs/定时任务.md)                 | Scheduled task management                                |
-| [🧠 Memory](docs/记忆.md)                           | Intelligent memory and learning capabilities             |
-| [🌐 Browser Automation](docs/浏览器.md)              | Web browsing and automation features                     |
-| [📋 Task Planning](docs/任务规划.md)                      | Chat behavior and task flow                              |
-| [🔄 Skill Self-Evolution](docs/Skill自演进.md)     | Mechanism for automatic skill evolution                  |
-| [📦 Context Compression](docs/上下文压缩卸载.md)  | Context compression and unloading                        |
-| [🚀 Development Practices](docs/开发实践/)          | Development practices and experience sharing             |
+| [📖 Quick Start](docs/en/Quickstart.md)              | Get up and running with JiuwenClaw in 5 minutes          |
+| [⚙️ Configuration & Workspace](docs/en/Configuration.md) | Environment setup and workspace management               |
+| [📁 Workspace Structure](docs/en/Agent.md)           | workspace directory layout, presets, and dynamic content |
+| [🛠️ Skill System](docs/en/Skills.md)                 | Guide to developing custom skills                        |
+| [📱 Channel Configuration](docs/en/Channels.md)      | Integrating Feishu, Xiaoyi, and other channels           |
+| [⌨️ CLI Commands](docs/en/CLI.md)                    | Command-line tool usage guide                            |
+| [⏰ Scheduled Tasks](docs/en/ScheduledTasks.md)      | Scheduled task management                                |
+| [🧠 Memory](docs/en/Memory.md)                       | Intelligent memory and learning capabilities             |
+| [🌐 Browser Automation](docs/en/Browser.md)          | Web browsing and automation features                     |
+| [📋 Task Planning](docs/en/TaskPlanning.md)          | Chat behavior and task flow                              |
+| [🔄 Skill Self-Evolution](docs/en/SkillSelfEvolution.md) | Mechanism for automatic skill evolution                  |
+| [📦 Context Compression](docs/en/ContextCompression.md) | Context compression and unloading                        |
+| [🚀 Development Practices](docs/en/development-practices/README.md) | Development practices and experience sharing             |
 
 ## 🤝 Contributing
 

@@ -92,6 +92,7 @@ jiuwenclaw-app
 ```bash
   npm run build
   cd ../../
+  uv run jiuwenclaw-init
   uv run jiuwenclaw-start
 ```
 
@@ -99,6 +100,7 @@ jiuwenclaw-app
 
 ```bash
   cd ../../
+  uv run jiuwenclaw-init
   uv run jiuwenclaw-start dev
 ```
 

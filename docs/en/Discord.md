@@ -21,7 +21,7 @@ The bot connects with your **Bot Token**, receives messages in configured guild 
 1. Open [https://discord.com/developers/applications](https://discord.com/developers/applications).
 2. Click **New Application**, choose a name, and create it.
 
-![Create a new Discord application](assets/images/discord/1_create_new_app.png)
+![Create a new Discord application](../assets/images/discord/1_create_new_app.png)
 
 You will use this application for both **OAuth2 / installation** and the **Bot** user.
 
@@ -33,7 +33,7 @@ You will use this application for both **OAuth2 / installation** and the **Bot**
 2. Under **Token**, use **Reset Token** and confirm.
 3. **Copy the token immediately** and store it somewhere safe. Discord shows it only once after a reset.
 
-![Reset and copy Bot Token](assets/images/discord/2_reset_bot_token.png)
+![Reset and copy Bot Token](../assets/images/discord/2_reset_bot_token.png)
 
 **Security**
 
@@ -53,7 +53,7 @@ JiuwenClaw reads the text of messages your bot receives. Discord requires an exp
 2. Under **Privileged Gateway Intents**, turn on **MESSAGE CONTENT INTENT**.
 3. Save changes if the portal prompts you.
 
-![Enable Message Content Intent](assets/images/discord/3_set_required_intent.png)
+![Enable Message Content Intent](../assets/images/discord/3_set_required_intent.png)
 
 Without this, the bot may connect but will not see normal message text content.
 
@@ -75,7 +75,7 @@ In the Developer Portal, use the installation / OAuth2 tools (e.g. **Installatio
 - Bot permissions that match the list above.
 - Screenshot attached below shows the recommended permissions, the mandatory ones are marked.
 
-![Guild install scopes and bot permissions](assets/images/discord/4_set_guild_install_scope_and_permissions.png)
+![Guild install scopes and bot permissions](../assets/images/discord/4_set_guild_install_scope_and_permissions.png)
 
 Exact labels may move between **Installation**, **OAuth2**, and **Bot** sections as Discord updates the portal; align your choices with the screenshot and the capabilities above.
 
@@ -90,7 +90,7 @@ Choose how users or admins can add the app:
 
 Copy the **generated URL** or **Install link** from the portal and open it in a browser to complete authorization.
 
-![Install methods and copy setup link](assets/images/discord/5_select_install_methods_and_copy_setup_link.png)
+![Install methods and copy setup link](../assets/images/discord/5_select_install_methods_and_copy_setup_link.png)
 
 After installation:
 
@@ -183,4 +183,4 @@ Discord delivery is separate from model configuration. If you see HTTP errors fr
 
 ## Related
 
-- Short overview and field table: [频道.md](频道.md) (Discord section)
+- Short overview and field table: [Channels.md](Channels.md) (Discord section)

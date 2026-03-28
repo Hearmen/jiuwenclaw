@@ -21,7 +21,7 @@ Bot 使用 **Bot Token** 登录，可在配置的服务器频道与/或私信（
 1. 打开 [https://discord.com/developers/applications](https://discord.com/developers/applications)。
 2. 点击 **New Application**，填写名称并创建。
 
-![创建 Discord 应用](assets/images/discord/1_create_new_app.png)
+![创建 Discord 应用](../assets/images/discord/1_create_new_app.png)
 
 后续 **OAuth2 / 安装** 与 **Bot** 用户均在此应用下配置。
 
@@ -33,7 +33,7 @@ Bot 使用 **Bot Token** 登录，可在配置的服务器频道与/或私信（
 2. 在 **Token** 区域点击 **Reset Token** 并确认。
 3. **立即复制 Token** 并妥善保存；重置后 Discord 通常只完整展示一次。
 
-![重置并复制 Bot Token](assets/images/discord/2_reset_bot_token.png)
+![重置并复制 Bot Token](../assets/images/discord/2_reset_bot_token.png)
 
 **安全提示**
 
@@ -53,7 +53,7 @@ JiuwenClaw 需要读取用户消息的**文本内容**。Discord 要求通过「
 2. 在 **Privileged Gateway Intents** 中打开 **MESSAGE CONTENT INTENT**。
 3. 若页面有保存提示，请保存。
 
-![开启 Message Content Intent](assets/images/discord/3_set_required_intent.png)
+![开启 Message Content Intent](../assets/images/discord/3_set_required_intent.png)
 
 未开启时，Bot 可能在线但无法读取普通消息的文本内容。
 
@@ -75,7 +75,7 @@ JiuwenClaw 需要读取用户消息的**文本内容**。Discord 要求通过「
 - 勾选与上表一致的 **Bot Permissions**。
 - 下方截图中显示了推荐的权限配置，必选内容已标出。
 
-![服务器安装范围与 Bot 权限](assets/images/discord/4_set_guild_install_scope_and_permissions.png)
+![服务器安装范围与 Bot 权限](../assets/images/discord/4_set_guild_install_scope_and_permissions.png)
 
 请以截图与上述能力为准；若菜单名称与截图略有差异，选择等效项即可。
 
@@ -90,7 +90,7 @@ JiuwenClaw 需要读取用户消息的**文本内容**。Discord 要求通过「
 
 在门户中复制生成的 **URL** 或 **Install link**，在浏览器中打开完成授权。
 
-![选择安装方式并复制设置链接](assets/images/discord/5_select_install_methods_and_copy_setup_link.png)
+![选择安装方式并复制设置链接](../assets/images/discord/5_select_install_methods_and_copy_setup_link.png)
 
 安装完成后：
 
