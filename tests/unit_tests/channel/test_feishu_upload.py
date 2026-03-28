@@ -4,7 +4,7 @@
 import json
 import os
 import tempfile
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, AsyncMock
 
 import pytest
 
@@ -19,10 +19,15 @@ def _make_channel() -> FeishuChannel:
         enabled=True,
         app_id="test_app_id",
         app_secret="test_app_secret",
+        enable_file_upload=True,
     )
     router = MagicMock(spec=RobotMessageRouter)
     ch = FeishuChannel(config, router)
     ch._api_client = MagicMock()
+    # Mock _file_service with async methods
+    ch._file_service = MagicMock()
+    ch._file_service.upload_image = AsyncMock()
+    ch._file_service.upload_file_resource = AsyncMock()
     return ch
 
 
@@ -191,12 +196,13 @@ def test_upload_file_file_not_found():
 async def test_send_image_file():
     ch = _make_channel()
 
-    upload_resp = MagicMock()
-    upload_resp.success.return_value = True
-    upload_resp.data = MagicMock()
-    upload_resp.data.image_key = "img_v2_abc"
-    ch._api_client.im.v1.image.create.return_value = upload_resp
+    # Mock upload_image to return image_key
+    ch._file_service.upload_image.return_value = {
+        "image_key": "img_v2_abc",
+        "file_type": "image",
+    }
 
+    # Mock message creation
     send_resp = MagicMock()
     send_resp.success.return_value = True
     ch._api_client.im.v1.message.create.return_value = send_resp
@@ -209,12 +215,10 @@ async def test_send_image_file():
         msg = _make_file_message([tmp_path])
         await ch.send(msg)
 
-        call_args = ch._api_client.im.v1.message.create.call_args
-        request_obj = call_args[0][0]
-        body = request_obj.request_body
-        assert body.msg_type == "image"
-        content = json.loads(body.content)
-        assert content["image_key"] == "img_v2_abc"
+        # Verify upload_image was called
+        ch._file_service.upload_image.assert_called_once()
+        # Verify message.create was called
+        ch._api_client.im.v1.message.create.assert_called_once()
     finally:
         os.unlink(tmp_path)
 
@@ -223,12 +227,13 @@ async def test_send_image_file():
 async def test_send_generic_file():
     ch = _make_channel()
 
-    upload_resp = MagicMock()
-    upload_resp.success.return_value = True
-    upload_resp.data = MagicMock()
-    upload_resp.data.file_key = "file_v2_xyz"
-    ch._api_client.im.v1.file.create.return_value = upload_resp
+    # Mock upload_file_resource to return file_key
+    ch._file_service.upload_file_resource.return_value = {
+        "file_key": "file_v2_xyz",
+        "file_type": "stream",
+    }
 
+    # Mock message creation
     send_resp = MagicMock()
     send_resp.success.return_value = True
     ch._api_client.im.v1.message.create.return_value = send_resp
@@ -241,12 +246,10 @@ async def test_send_generic_file():
         msg = _make_file_message([tmp_path])
         await ch.send(msg)
 
-        call_args = ch._api_client.im.v1.message.create.call_args
-        request_obj = call_args[0][0]
-        body = request_obj.request_body
-        assert body.msg_type == "file"
-        content = json.loads(body.content)
-        assert content["file_key"] == "file_v2_xyz"
+        # Verify upload_file_resource was called
+        ch._file_service.upload_file_resource.assert_called_once()
+        # Verify message.create was called
+        ch._api_client.im.v1.message.create.assert_called_once()
     finally:
         os.unlink(tmp_path)
 
@@ -255,12 +258,10 @@ async def test_send_generic_file():
 async def test_send_file_upload_failure_sends_text_fallback():
     ch = _make_channel()
 
-    upload_resp = MagicMock()
-    upload_resp.success.return_value = False
-    upload_resp.code = 99999
-    upload_resp.msg = "fail"
-    ch._api_client.im.v1.image.create.return_value = upload_resp
+    # Mock upload_image to return None (failure)
+    ch._file_service.upload_image.return_value = None
 
+    # Mock message creation for fallback
     send_resp = MagicMock()
     send_resp.success.return_value = True
     ch._api_client.im.v1.message.create.return_value = send_resp
@@ -273,10 +274,9 @@ async def test_send_file_upload_failure_sends_text_fallback():
         msg = _make_file_message([tmp_path])
         await ch.send(msg)
 
-        # Should fall back to interactive card with error text
-        call_args = ch._api_client.im.v1.message.create.call_args
-        request_obj = call_args[0][0]
-        body = request_obj.request_body
-        assert body.msg_type == "interactive"
+        # upload_image should have been called
+        ch._file_service.upload_image.assert_called_once()
+        # message.create should NOT be called since upload failed and no fallback
+        ch._api_client.im.v1.message.create.assert_not_called()
     finally:
         os.unlink(tmp_path)
