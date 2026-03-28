@@ -1,5 +1,5 @@
 ---
-name: skill_creation
+name: skill-creation
 description: Guide to skill creation. Use this skill when the user requests to make, create, or write a new skill.
 ---
 
@@ -9,7 +9,7 @@ This document explains how to design and build effective skills for agents.
 
 ## What is a Skill
 
-Skills are a manual of information that gives an agent focused capabilities in a specific domain. It includes instructions and reuseable resources.
+Skills are a manual of information that gives an agent focused capabilities in a specific domain. It includes instructions and reusable resources.
 
 ## Skill Design
 
