@@ -1405,8 +1405,34 @@ async def _run() -> None:
     await asyncio.sleep(0.3)
     uri = f"ws://127.0.0.1:{agent_port}"
 
-    client = WebSocketAgentServerClient(ping_interval=20.0, ping_timeout=20.0)
-    await client.connect(uri)
+    # ---------- 扩展系统初始化 ----------
+    from openjiuwen.core.runner import Runner
+    from jiuwenclaw.extensions import ExtensionManager, ExtensionRegistry
+
+    callback_framework = Runner.callback_framework
+    extension_registry = ExtensionRegistry.create_instance(
+        callback_framework=callback_framework,
+        config={},
+        logger=logger,
+    )
+
+    extension_manager = ExtensionManager(
+        registry=extension_registry,
+    )
+
+    await extension_manager.load_all_extensions()
+    logger.info("[App] 扩展加载完成，共 %d 个", len(extension_manager.list_extensions()))
+
+    # 检查是否有扩展提供 AgentServerClient
+    agent_server_ext = extension_registry.get_agent_server_client_extension()
+    if agent_server_ext is not None:
+        logger.info("[App] 使用扩展提供的 AgentServerClient: %s", agent_server_ext.metadata.name)
+        client = agent_server_ext.get_client()
+        await client.connect(uri)
+    else:
+        client = WebSocketAgentServerClient(ping_interval=20.0, ping_timeout=20.0)
+        await client.connect(uri)
+
     message_handler = MessageHandler(client)
     await message_handler.start_forwarding()
 

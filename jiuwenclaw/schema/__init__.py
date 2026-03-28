@@ -3,6 +3,7 @@
 """数据模型."""
 
 from jiuwenclaw.schema.agent import AgentRequest, AgentResponse, AgentResponseChunk
+from jiuwenclaw.schema.events import AgentServerEvents, GatewayEvents
 from jiuwenclaw.schema.message import Message
 
 __all__ = [
@@ -10,4 +11,6 @@ __all__ = [
     "AgentRequest",
     "AgentResponse",
     "AgentResponseChunk",
+    "AgentServerEvents",
+    "GatewayEvents",
 ]

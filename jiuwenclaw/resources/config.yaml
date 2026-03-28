@@ -336,3 +336,6 @@ updater:
   asset_name_pattern: "jiuwenclaw-setup-{version}.exe"
   sha256_name_pattern: "jiuwenclaw-setup-{version}.exe.sha256"
   timeout_seconds: 20
+
+extensions:
+  extension_dirs: []

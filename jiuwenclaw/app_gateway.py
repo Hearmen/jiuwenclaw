@@ -92,6 +92,7 @@ async def _connect_with_retry(
 
 
 async def _run(agent_server_url: str, web_host: str, web_port: int, web_path: str) -> None:
+    from openjiuwen.core.runner import Runner
     from jiuwenclaw.channel.discord_channel import DiscordChannel, DiscordChannelConfig
     from jiuwenclaw.channel.feishu import FeishuChannel, FeishuConfig
     from jiuwenclaw.channel.telegram_channel import TelegramChannel, TelegramChannelConfig
@@ -105,16 +106,35 @@ async def _run(agent_server_url: str, web_host: str, web_port: int, web_path: st
     from jiuwenclaw.gateway.channel_manager import ChannelManager
     from jiuwenclaw.gateway.cron import CronController, CronJobStore, CronSchedulerService
     from jiuwenclaw.gateway.message_handler import MessageHandler
+    from jiuwenclaw.extensions import ExtensionManager, ExtensionRegistry
     from jiuwenclaw.schema.message import Message, ReqMethod
     from jiuwenclaw.agentserver.memory.config import _load_config as _load_agent_config
     from jiuwenclaw.agentserver.tools.browser_tools import restart_local_browser_runtime_server
 
     logger.info("[Gateway] starting, connecting AgentServer: %s", agent_server_url)
 
+    # ---------- 扩展系统初始化 ----------
+    callback_framework = Runner.callback_framework
+    extension_registry = ExtensionRegistry.create_instance(
+        callback_framework=callback_framework,
+        config={},
+        logger=logger,
+    )
+    extension_manager = ExtensionManager(
+        registry=extension_registry,
+    )
+    await extension_manager.load_all_extensions()
+    logger.info("[Gateway] 扩展加载完成，共 %d 个", len(extension_manager.list_extensions()))
+
     max_retries = int(os.getenv("AGENT_CONNECT_RETRY", "20"))
     retry_interval = float(os.getenv("AGENT_CONNECT_RETRY_INTERVAL", "3"))
 
-    client = WebSocketAgentServerClient(ping_interval=20.0, ping_timeout=20.0)
+    agent_server_ext = extension_registry.get_agent_server_client_extension()
+    if agent_server_ext is not None:
+        logger.info("[Gateway] 使用扩展提供的 AgentServerClient: %s", agent_server_ext.metadata.name)
+        client = agent_server_ext.get_client()
+    else:
+        client = WebSocketAgentServerClient(ping_interval=20.0, ping_timeout=20.0)
     await _connect_with_retry(
         client,
         agent_server_url,

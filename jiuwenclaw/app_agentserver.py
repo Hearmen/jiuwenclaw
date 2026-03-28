@@ -51,14 +51,29 @@ class _NopCronScheduler:
 
 
 async def _run(host: str, port: int) -> None:
+    from openjiuwen.core.runner import Runner
     from jiuwenclaw.agentserver.interface import JiuWenClaw
     from jiuwenclaw.gateway import AgentWebSocketServer
     from jiuwenclaw.gateway.cron import CronController, CronJobStore
+    from jiuwenclaw.extensions import ExtensionManager, ExtensionRegistry
 
     logger.info("[AgentServer] starting: ws://%s:%s", host, port)
 
     cron_store = CronJobStore()
     CronController.get_instance(store=cron_store, scheduler=_NopCronScheduler())
+
+    # ---------- 扩展系统初始化 ----------
+    callback_framework = Runner.callback_framework
+    extension_registry = ExtensionRegistry.create_instance(
+        callback_framework=callback_framework,
+        config={},
+        logger=logger,
+    )
+    extension_manager = ExtensionManager(
+        registry=extension_registry,
+    )
+    await extension_manager.load_all_extensions()
+    logger.info("[AgentServer] 扩展加载完成，共 %d 个", len(extension_manager.list_extensions()))
 
     agent = JiuWenClaw()
     server = AgentWebSocketServer.get_instance(
