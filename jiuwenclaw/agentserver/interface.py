@@ -267,9 +267,6 @@ class JiuWenClaw:
                 - workspace_dir: 工作区目录，默认 "agent"（memory 落在 agent/memory 下）。
                 - 其余字段透传给 ReActAgentConfig。
         """
-        from jiuwenclaw.telemetry import init_telemetry
-        init_telemetry()
-
         await self.set_checkpoint()
 
         config_base = get_config()

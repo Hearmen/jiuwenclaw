@@ -40,8 +40,10 @@ def instrument_tools() -> None:
         tool_call_id = getattr(tool_call, "id", "") or ""
         arguments = getattr(tool_call, "arguments", {})
 
+        parent_ctx = getattr(self, "otel_agent_ctx", None)
         span = _tracer.start_span(
             f"gen_ai.tool.execute: {tool_name}",
+            context=parent_ctx,
             attributes={
                 GEN_AI_TOOL_NAME: tool_name,
                 GEN_AI_TOOL_CALL_ID: tool_call_id,

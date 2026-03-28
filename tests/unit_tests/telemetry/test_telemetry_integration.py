@@ -684,3 +684,122 @@ class TestConcurrentRequests:
 
         tp.shutdown()
         mp.shutdown()
+
+
+# ---------------------------------------------------------------------------
+# 8. Cross-task context propagation via instance attribute
+# ---------------------------------------------------------------------------
+
+class TestCrossTaskContextPropagation:
+    """Verify otel_agent_ctx instance attribute bridges context across asyncio tasks.
+
+    This reproduces the real architecture where:
+    - Agent span is created in generator frame (process_message_stream)
+    - LLM/tool spans run inside a separate asyncio.create_task()
+    """
+
+    @staticmethod
+    def test_llm_span_inherits_agent_trace_via_instance_attr():
+        """LLM span in a child task should share trace_id with agent span."""
+        tp, mp, exporter, _ = _setup_otel()
+        agent_tracer = tp.get_tracer("jiuwenclaw.agent")
+        llm_tracer = tp.get_tracer("jiuwenclaw.llm")
+
+        async def run():
+            # Simulate agent instrumentor: create span, store ctx on instance
+            agent_instance = types.SimpleNamespace()
+            parent_ctx = trace.set_span_in_context(trace.INVALID_SPAN)
+            agent_span = agent_tracer.start_span(
+                "jiuwenclaw.agent.invoke.stream", context=parent_ctx,
+            )
+            agent_ctx = trace.set_span_in_context(agent_span)
+            agent_instance.otel_agent_ctx = agent_ctx
+
+            # Simulate LLM running in a separate create_task
+            async def llm_task():
+                ctx = getattr(agent_instance, "otel_agent_ctx", None)
+                with llm_tracer.start_as_current_span(
+                    "gen_ai.chat", context=ctx,
+                ):
+                    await asyncio.sleep(0.001)
+
+            await asyncio.create_task(llm_task())
+            agent_span.end()
+
+        _run(run())
+
+        spans = exporter.get_finished_spans()
+        agent_spans = [s for s in spans if s.name == "jiuwenclaw.agent.invoke.stream"]
+        llm_spans = [s for s in spans if s.name == "gen_ai.chat"]
+        assert len(agent_spans) == 1
+        assert len(llm_spans) == 1
+        assert agent_spans[0].context.trace_id == llm_spans[0].context.trace_id
+        assert llm_spans[0].parent.span_id == agent_spans[0].context.span_id
+
+        tp.shutdown()
+        mp.shutdown()
+
+    @staticmethod
+    def test_consecutive_messages_isolated_across_tasks():
+        """Two sequential messages must produce separate traces even with shared instance."""
+        tp, mp, exporter, _ = _setup_otel()
+        agent_tracer = tp.get_tracer("jiuwenclaw.agent")
+        llm_tracer = tp.get_tracer("jiuwenclaw.llm")
+        tool_tracer = tp.get_tracer("jiuwenclaw.tool")
+
+        async def simulate_message(agent_instance, request_id):
+            # Agent span (generator frame)
+            parent_ctx = trace.set_span_in_context(trace.INVALID_SPAN)
+            agent_span = agent_tracer.start_span(
+                "jiuwenclaw.agent.invoke.stream", context=parent_ctx,
+                attributes={"jiuwenclaw.request.id": request_id},
+            )
+            agent_ctx = trace.set_span_in_context(agent_span)
+            agent_instance.otel_agent_ctx = agent_ctx
+
+            # LLM + tool in separate task (like real session processor)
+            async def worker():
+                ctx = getattr(agent_instance, "otel_agent_ctx", None)
+                with llm_tracer.start_as_current_span("gen_ai.chat", context=ctx):
+                    await asyncio.sleep(0.001)
+                tool_span = tool_tracer.start_span(
+                    "gen_ai.tool.execute: search", context=ctx,
+                )
+                tool_span.end()
+
+            await asyncio.create_task(worker())
+            agent_span.end()
+
+        async def run():
+            shared_instance = types.SimpleNamespace()
+            await simulate_message(shared_instance, "req_1")
+            await simulate_message(shared_instance, "req_2")
+
+        _run(run())
+
+        spans = exporter.get_finished_spans()
+        agent_spans = [s for s in spans if s.name == "jiuwenclaw.agent.invoke.stream"]
+        assert len(agent_spans) == 2
+
+        # Group all spans by trace_id
+        trace_groups: dict[int, list] = {}
+        for s in spans:
+            trace_groups.setdefault(s.context.trace_id, []).append(s)
+
+        # Must have exactly 2 distinct traces
+        assert len(trace_groups) == 2, (
+            f"Expected 2 traces, got {len(trace_groups)}"
+        )
+
+        # Each trace: 1 agent + 1 llm + 1 tool = 3 spans
+        for tid, group in trace_groups.items():
+            assert len(group) == 3, (
+                f"trace {tid:032x} has {len(group)} spans, expected 3"
+            )
+            names = {s.name for s in group}
+            assert "jiuwenclaw.agent.invoke.stream" in names
+            assert "gen_ai.chat" in names
+            assert "gen_ai.tool.execute: search" in names
+
+        tp.shutdown()
+        mp.shutdown()

@@ -115,6 +115,10 @@ async def _run(host: str, port: int) -> None:
 
 
 def main() -> None:
+    from jiuwenclaw.telemetry import init_telemetry
+
+    init_telemetry()
+
     parser = argparse.ArgumentParser(
         prog="jiuwenclaw-agentserver",
         description="Start JiuwenClaw AgentServer (standalone process for Gateway to connect).",

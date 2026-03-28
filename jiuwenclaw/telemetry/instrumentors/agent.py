@@ -44,6 +44,7 @@ def instrument_agent() -> None:
             context=parent_ctx,
             attributes=_build_attrs(self, request),
         ) as span:
+            _store_agent_ctx(self, trace.set_span_in_context(span))
             start = time.monotonic()
             try:
                 result = await _original_process_message(self, request)
@@ -68,6 +69,7 @@ def instrument_agent() -> None:
             attributes=_build_attrs(self, request),
         )
         ctx = trace.set_span_in_context(span)
+        _store_agent_ctx(self, ctx)
         token = context.attach(ctx)
         start = time.monotonic()
         try:
@@ -89,6 +91,17 @@ def instrument_agent() -> None:
 
     JiuWenClaw.process_message = _traced_process_message
     JiuWenClaw.process_message_stream = _traced_process_message_stream
+
+
+def _store_agent_ctx(jiuwenclaw_server, ctx) -> None:
+    """Store agent span context on the JiuClawReActAgent instance.
+
+    JiuWenClaw._instance is JiuClawReActAgent — LLM/tool instrumentors
+    read self.otel_agent_ctx from that same instance.
+    """
+    instance = getattr(jiuwenclaw_server, "_instance", None)
+    if instance is not None:
+        instance.otel_agent_ctx = ctx
 
 
 def _build_attrs(agent_server, request) -> dict[str, Any]:

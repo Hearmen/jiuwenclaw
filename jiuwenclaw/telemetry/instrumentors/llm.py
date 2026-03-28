@@ -72,8 +72,10 @@ def instrument_llm() -> None:
         if top_p is not None:
             span_attrs[GEN_AI_REQUEST_TOP_P] = float(top_p)
 
+        parent_ctx = getattr(self, "otel_agent_ctx", None)
         with _tracer.start_as_current_span(
             "gen_ai.chat",
+            context=parent_ctx,
             attributes=span_attrs,
         ) as span:
             # Record input messages as span events
