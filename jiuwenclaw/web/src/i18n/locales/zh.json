@@ -10,7 +10,8 @@
     "saving": "保存中...",
     "error": "错误",
     "ok": "确定",
-    "and": "和"
+    "and": "和",
+    "modify": "修改"
   },
   "nav": {
     "chat": "对话",
@@ -594,6 +595,32 @@
         "parseSkillFailed": "无法解析下载的技能文件",
         "skillAlreadyInstalled": "该技能已安装。",
         "invalidMirrorUrl": "mirror_url 不是有效的 http(s) 地址。"
+      }
+    },
+    "clawhub": {
+      "title": "ClawHub 在线搜索",
+      "search": "搜索",
+      "searchPlaceholder": "输入关键词搜索技能",
+      "noResults": "未找到相关技能，可换个关键词再试。",
+      "install": "安装",
+      "installing": "安装中…",
+      "updatedAt": "更新于 {{date}}",
+      "configTitle": "配置 ClawHub CLI Token",
+      "configDescription": "请输入从 ClawHub 平台获取的 CLI Token，用于访问 ClawHub 技能库。",
+      "tokenLabel": "CLI Token",
+      "tokenPlaceholder": "请输入 ClawHub CLI Token (clh_...)",
+      "tokenConfigured": "已配置 Token: {{token}}",
+      "messages": {
+        "tokenSaved": "Token 已保存",
+        "installed": "已安装：{{name}}"
+      },
+      "errors": {
+        "saveTokenFailed": "保存 Token 失败",
+        "searchFailed": "搜索失败",
+        "downloadFailed": "下载失败",
+        "tokenNotConfigured": "未配置 ClawHub CLI Token，请先配置",
+        "skillAlreadyInstalled": "该技能已安装",
+        "httpError": "请求失败，请检查token或者访问太频繁，稍后重试"
       }
     },
     "marketplacesAvailable": "可用 marketplace: {{names}}",

@@ -10,7 +10,8 @@
     "saving": "Saving...",
     "error": "Error",
     "ok": "OK",
-    "and": "and"
+    "and": "and",
+    "modify": "Modify"
   },
   "nav": {
     "chat": "Chat",
@@ -594,6 +595,32 @@
         "parseSkillFailed": "Could not parse the downloaded skill file.",
         "skillAlreadyInstalled": "This skill is already installed.",
         "invalidMirrorUrl": "mirror_url is not a valid http(s) URL."
+      }
+    },
+    "clawhub": {
+      "title": "ClawHub Online Search",
+      "search": "Search",
+      "searchPlaceholder": "Enter keywords to search skills",
+      "noResults": "No matching skills. Try different keywords.",
+      "install": "Install",
+      "installing": "Installing…",
+      "updatedAt": "Updated {{date}}",
+      "configTitle": "Configure ClawHub CLI Token",
+      "configDescription": "Enter the CLI Token from the ClawHub platform to access the ClawHub skill library.",
+      "tokenLabel": "CLI Token",
+      "tokenPlaceholder": "Enter ClawHub CLI Token (clh_...)",
+      "tokenConfigured": "Token configured: {{token}}",
+      "messages": {
+        "tokenSaved": "Token saved",
+        "installed": "Installed: {{name}}"
+      },
+      "errors": {
+        "saveTokenFailed": "Failed to save token",
+        "searchFailed": "Search failed",
+        "downloadFailed": "Download failed",
+        "tokenNotConfigured": "ClawHub CLI Token not configured. Please configure it first.",
+        "skillAlreadyInstalled": "This skill is already installed",
+        "httpError": "Request failed. Please check your token or try again later if you've been making frequent requests."
       }
     },
     "marketplacesAvailable": "Available marketplaces: {{names}}",

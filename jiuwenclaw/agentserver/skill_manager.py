@@ -506,6 +506,253 @@ class SkillManager:
 
         return {"success": True, "evaluation": out.get("evaluation")}
 
+    async def handle_skills_clawhub_get_token(self, params: dict) -> dict:
+        """获取 ClawHub CLI token（已掩码）."""
+        token = self._get_clawhub_token()
+        return {
+            "success": True,
+            "token": self._mask_clawhub_token(token),
+            "has_token": bool(token),
+        }
+
+    async def handle_skills_clawhub_set_token(self, params: dict) -> dict:
+        """设置 ClawHub CLI token."""
+        token = str(params.get("token", "")).strip()
+        self._set_clawhub_token(token)
+        return {
+            "success": True,
+            "token": self._mask_clawhub_token(token),
+        }
+
+    async def handle_skills_clawhub_search(self, params: dict) -> dict:
+        """从 ClawHub 搜索技能.
+
+        params:
+            q: 搜索查询字符串 (必需)
+            limit: 结果数量限制 (可选)
+        """
+        query = str(params.get("q", "")).strip()
+        if not query:
+            return {"success": False, "detail": "缺少参数: q"}
+
+        token = self._get_clawhub_token()
+        if not token:
+            return {
+                "success": False,
+                "detail": "未配置 ClawHub CLI token，请先配置",
+                "detail_key": "skills.clawhub.errors.tokenNotConfigured",
+            }
+
+        limit = params.get("limit")
+        if limit is not None:
+            try:
+                limit = int(limit)
+            except Exception:
+                return {"success": False, "detail": "参数 limit 必须是整数"}
+
+        try:
+            import httpx
+            base_url = "https://clawhub.ai"
+            search_url = f"{base_url}/api/v1/search"
+
+            headers = {}
+            if token:
+                headers["Authorization"] = f"Bearer {token}"
+
+            search_params = {"q": query}
+            if limit is not None:
+                search_params["limit"] = limit
+
+            async with httpx.AsyncClient(timeout=30.0) as client:
+                response = await client.get(
+                    search_url,
+                    params=search_params,
+                    headers=headers,
+                )
+                response.raise_for_status()
+                data = response.json()
+
+                results = data.get("results", [])
+                normalized = []
+                for item in results:
+                    normalized.append({
+                        "slug": item.get("slug", ""),
+                        "display_name": item.get("displayName", ""),
+                        "summary": item.get("summary", ""),
+                        "version": item.get("version", ""),
+                        "updated_at": item.get("updatedAt", 0),
+                    })
+
+                return {
+                    "success": True,
+                    "query": query,
+                    "count": len(normalized),
+                    "skills": normalized,
+                }
+        except httpx.HTTPStatusError as exc:
+            logger.error("ClawHub 搜索 HTTP 错误: %s", exc)
+            detail = f"HTTP {exc.response.status_code}: {exc.response.text[:200]}"
+            return {
+                "success": False,
+                "detail": detail,
+                "detail_key": "skills.clawhub.errors.httpError",
+            }
+        except Exception as exc:
+            logger.error("ClawHub 搜索失败: %s", exc)
+            return {
+                "success": False,
+                "detail": str(exc)[:500],
+                "detail_key": "skills.clawhub.errors.searchFailed",
+            }
+
+    async def handle_skills_clawhub_download(self, params: dict) -> dict:
+        """从 ClawHub 下载技能.
+
+        params:
+            slug: skill slug (必需)
+            version: 版本号 (可选，默认 latest)
+            tag: 标签 (可选，如 latest)
+            force: 强制覆盖 (可选，默认 False)
+        """
+        slug = str(params.get("slug", "")).strip()
+        if not slug:
+            return {"success": False, "detail": "缺少参数: slug"}
+
+        token = self._get_clawhub_token()
+        if not token:
+            return {
+                "success": False,
+                "detail": "未配置 ClawHub CLI token，请先配置",
+                "detail_key": "skills.clawhub.errors.tokenNotConfigured",
+            }
+
+        version = params.get("version")
+        tag = params.get("tag")
+        force = bool(params.get("force", False))
+
+        # 检查 skill 是否已安装
+        dest = _SKILLS_DIR / slug
+        if dest.exists() and not force:
+            return {
+                "success": False,
+                "detail": f"技能 {slug} 已安装",
+                "detail_key": "skills.clawhub.errors.skillAlreadyInstalled",
+            }
+
+        try:
+            import httpx
+            import zipfile
+            import io
+
+            base_url = "https://clawhub.ai"
+            download_url = f"{base_url}/api/v1/download"
+
+            headers = {}
+            if token:
+                headers["Authorization"] = f"Bearer {token}"
+
+            download_params = {"slug": slug}
+            if version:
+                download_params["version"] = version
+            if tag:
+                download_params["tag"] = tag
+
+            async with httpx.AsyncClient(timeout=120.0) as client:
+                response = await client.get(
+                    download_url,
+                    params=download_params,
+                    headers=headers,
+                )
+                response.raise_for_status()
+
+                # 解压下载的内容
+                with tempfile.TemporaryDirectory(prefix="jiuwenclari_clawhub_") as tmpdir:
+                    tmp_path = Path(tmpdir)
+
+                    # 保存 zip 文件
+                    zip_content = io.BytesIO(response.content)
+                    with zipfile.ZipFile(zip_content, "r") as zip_ref:
+                        zip_ref.extractall(tmp_path)
+
+                    # 查找 skill 目录
+                    skill_dir = self._locate_skill_dir(tmp_path)
+                    if skill_dir is None:
+                        return {
+                            "success": False,
+                            "detail": "下载内容不完整，未找到 SKILL.md",
+                            "detail_key": "skills.clawhub.errors.skillMdNotFound",
+                        }
+
+                    # 解析元数据
+                    md = self._try_find_skill_file(skill_dir)
+                    meta = self._parse_skill_md(md) if md else None
+                    if meta is None:
+                        return {
+                            "success": False,
+                            "detail": "无法解析下载的技能文件",
+                            "detail_key": "skills.clawhub.errors.parseSkillFailed",
+                        }
+
+                    # 删除已存在的
+                    if dest.exists():
+                        if not force:
+                            return {
+                                "success": False,
+                                "detail": f"技能 {slug} 已安装",
+                                "detail_key": "skills.clawhub.errors.skillAlreadyInstalled",
+                            }
+                        _safe_rmtree(dest)
+
+                    # 复制到 skills 目录
+                    shutil.copytree(skill_dir, dest)
+                    for mirror_root in self._get_mirror_skills_dirs():
+                        mirror_dest = mirror_root / slug
+                        if mirror_dest.exists():
+                            if not force:
+                                continue
+                            _safe_rmtree(mirror_dest)
+                        mirror_root.mkdir(parents=True, exist_ok=True)
+                        shutil.copytree(skill_dir, mirror_dest)
+
+                    # 记录安装信息
+                    skill_name = meta.get("name", slug)
+                    self._add_local_skill({
+                        "name": skill_name,
+                        "origin": f"clawhub:{slug}",
+                        "source": "clawhub",
+                        "installed_at": datetime.now(timezone.utc).isoformat(),
+                    })
+                    self._add_installed_plugin({
+                        "name": skill_name,
+                        "marketplace": "clawhub",
+                        "version": meta.get("version", ""),
+                        "commit": "",
+                        "source": "clawhub",
+                        "installed_at": datetime.now(timezone.utc).isoformat(),
+                    })
+                    self._refresh_agent_data_indexes()
+
+                    return {
+                        "success": True,
+                        "skill": {"name": skill_name, "source": "clawhub"},
+                    }
+
+        except httpx.HTTPStatusError as exc:
+            logger.error("ClawHub 下载 HTTP 错误: %s", exc)
+            detail = f"HTTP {exc.response.status_code}: {exc.response.text[:200]}"
+            return {
+                "success": False,
+                "detail": detail,
+                "detail_key": "skills.clawhub.errors.httpError",
+            }
+        except Exception as exc:
+            logger.error("ClawHub 下载失败: %s", exc)
+            return {
+                "success": False,
+                "detail": str(exc)[:500],
+                "detail_key": "skills.clawhub.errors.downloadFailed",
+            }
+
     async def _skillnet_install_background(
         self,
         install_id: str,
@@ -1650,3 +1897,25 @@ class SkillManager:
         local = self._state.get("local_skills", [])
         self._state["local_skills"] = [s for s in local if s.get("name") != name]
         self._save_state()
+
+    # -----------------------------------------------------------------------
+    # ClawHub 相关方法
+    # -----------------------------------------------------------------------
+
+    def _get_clawhub_token(self) -> str:
+        """获取 ClawHub CLI token."""
+        return (self._state.get("clawhub", {}).get("token") or "").strip()
+
+    def _set_clawhub_token(self, token: str) -> None:
+        """设置 ClawHub CLI token（掩码处理）。"""
+        self._state.setdefault("clawhub", {})["token"] = token.strip() if token.strip() else ""
+        self._save_state()
+
+    @staticmethod
+    def _mask_clawhub_token(self, token: str) -> str:
+        """掩码处理 ClawHub token。"""
+        if not token:
+            return ""
+        if len(token) <= 8:
+            return "*" * len(token)
+        return token[:4] + "*" * (len(token) - 8) + token[-4:]

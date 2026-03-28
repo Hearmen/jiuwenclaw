@@ -8,6 +8,7 @@ import { useTranslation } from 'react-i18next';
 import { webRequest } from "../../services/webClient";
 import { SourceManagerModal } from "../../features/SourceManagerModal";
 import { SkillNetSearchModal } from "../../features/SkillNetSearchModal";
+import { ClawHubSearchModal } from "../../features/ClawHubSearchModal";
 import { normalizeSkillNetUrl } from "../../utils/skillNetUrl";
 
 /** 刷新会 git pull marketplace，略放宽；普通进页单次 RPC 一般很快。 */
@@ -102,6 +103,7 @@ export function SkillPanel({ sessionId, onNavigateToConfig }: SkillPanelProps) {
   const [messageType, setMessageType] = useState<"success" | "error" | null>(null);
   const [sourceModalOpen, setSourceModalOpen] = useState(false);
   const [skillNetModalOpen, setSkillNetModalOpen] = useState(false);
+  const [clawHubModalOpen, setClawHubModalOpen] = useState(false);
   const withSession = useCallback(
     (params?: Record<string, unknown>) => ({
       ...(params || {}),
@@ -466,6 +468,7 @@ export function SkillPanel({ sessionId, onNavigateToConfig }: SkillPanelProps) {
 
   const renderStatus = (skill: SkillItem) => {
     if (skill.is_builtin) return t('skills.status.installed');
+    if (installedSkillMap.has(skill.name)) return t('skills.status.installed');
     if (skill.source === "local") return t('skills.status.installed');
     if (skill.source !== "project") return t('skills.status.notInstalled');
     return t('skills.status.builtIn');
@@ -512,6 +515,12 @@ export function SkillPanel({ sessionId, onNavigateToConfig }: SkillPanelProps) {
               className="px-3 py-1.5 rounded-md text-sm bg-accent text-white hover:bg-accent-hover"
             >
               {t('skills.skillNet.title')}
+            </button>
+            <button
+              onClick={() => setClawHubModalOpen(true)}
+              className="px-3 py-1.5 rounded-md text-sm bg-accent text-white hover:bg-accent-hover"
+            >
+              {t('skills.clawhub.title')}
             </button>
           </div>
         </div>
@@ -676,6 +685,15 @@ export function SkillPanel({ sessionId, onNavigateToConfig }: SkillPanelProps) {
         onNavigateToConfig={() => {
           setSkillNetModalOpen(false);
           onNavigateToConfig?.();
+        }}
+      />
+      <ClawHubSearchModal
+        open={clawHubModalOpen}
+        sessionId={sessionId}
+        installedSkillNames={installedSkillNames}
+        onClose={() => setClawHubModalOpen(false)}
+        onInstalled={async () => {
+          await fetchSkills();
         }}
       />
     </div>
