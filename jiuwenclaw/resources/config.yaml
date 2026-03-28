@@ -189,6 +189,7 @@ channels:
     client_secret:
     allow_from: []
     enabled: false
+    send_file_allowed: true
   telegram:
     # Telegram Bot 配置
     # 从 @BotFather 获取 bot_token
