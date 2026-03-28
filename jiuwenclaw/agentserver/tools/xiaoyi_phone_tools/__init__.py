@@ -8,28 +8,32 @@
 工具分类：
 - 定位: get_user_location
 - 备忘录: create_note, search_notes, modify_note
-- 日历: create_calendar_event, search_calendar
-- 联系人: search_contacts
+- 日历: create_calendar_event, search_calendar_event
+- 联系人: search_contact
 - 相册: search_photo_gallery, upload_photo
-- 文件: search_files, upload_files, send_file_to_user
+- 文件: search_file, upload_file
 - 电话: call_phone
-- 短信: send_message
-- 消息: search_messages
+- 短信/消息: send_message, search_message
 - 闹钟: create_alarm, search_alarms, modify_alarm, delete_alarm
 - 收藏: xiaoyi_collection
+- 推送记录: view_push_result
+- GUI 自动化: xiaoyi_gui_agent
+- 图像理解: image_reading
+- 本地上传公网 URL: upload_file_and_get_url
 """
 
 from .location_tool import get_user_location
 from .note_tools import create_note, search_notes, modify_note
-from .calendar_tools import create_calendar_event, search_calendar
-from .contact_tools import search_contacts
+from .calendar_tools import create_calendar_event, search_calendar_event
+from .contact_tools import search_contact
 from .photo_tools import search_photo_gallery, upload_photo
-from .file_tools import search_files, upload_files, send_file_to_user
+from .file_tools import search_file, upload_file
 from .phone_tools import call_phone
-from .send_message_tool import send_message
-from .message_tools import search_messages
+from .message_tools import send_message, search_message
 from .alarm_tools import create_alarm, search_alarms, modify_alarm, delete_alarm
-from .collection_tool import xiaoyi_collection
+from .xiaoyi_collection_tool import xiaoyi_collection
+from .xiaoyi_gui_tool import xiaoyi_gui_agent
+from .image_reading_tool import image_reading
 
 __all__ = [
     "get_user_location",
@@ -37,20 +41,21 @@ __all__ = [
     "search_notes",
     "modify_note",
     "create_calendar_event",
-    "search_calendar",
-    "search_contacts",
+    "search_calendar_event",
+    "search_contact",
     "search_photo_gallery",
     "upload_photo",
-    "search_files",
-    "upload_files",
-    "send_file_to_user",
+    "search_file",
+    "upload_file",
     "call_phone",
     "send_message",
-    "search_messages",
+    "search_message",
     "create_alarm",
     "search_alarms",
     "modify_alarm",
     "delete_alarm",
     "xiaoyi_collection",
+    "xiaoyi_gui_agent",
+    "image_reading",
 ]
 

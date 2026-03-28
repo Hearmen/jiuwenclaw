@@ -62,14 +62,16 @@ from jiuwenclaw.agentserver.tools.video_tools import video_understanding
 from jiuwenclaw.agentserver.tools.xiaoyi_phone_tools import (
     get_user_location,
     create_note, search_notes, modify_note,
-    create_calendar_event, search_calendar,
-    search_contacts,
+    create_calendar_event, search_calendar_event,
+    search_contact,
     search_photo_gallery, upload_photo,
-    search_files, upload_files, send_file_to_user,
+    search_file, upload_file,
     call_phone,
-    send_message, search_messages,
+    send_message, search_message,
     create_alarm, search_alarms, modify_alarm, delete_alarm,
     xiaoyi_collection,
+    image_reading,
+    xiaoyi_gui_agent,
 )
 from jiuwenclaw.agentserver.tools.multimodal_config import (
     apply_audio_model_config_from_yaml,
@@ -430,14 +432,16 @@ class JiuWenClaw:
                 phone_tools = [
                     get_user_location,
                     create_note, search_notes, modify_note,
-                    create_calendar_event, search_calendar,
-                    search_contacts,
+                    create_calendar_event, search_calendar_event,
+                    search_contact,
                     search_photo_gallery, upload_photo,
-                    search_files, upload_files, send_file_to_user,
+                    search_file, upload_file,
                     call_phone,
-                    send_message, search_messages,
+                    send_message, search_message,
                     create_alarm, search_alarms, modify_alarm, delete_alarm,
                     xiaoyi_collection,
+                    image_reading,
+                    xiaoyi_gui_agent,
                 ]
 
                 for tool in phone_tools:
@@ -577,14 +581,16 @@ class JiuWenClaw:
                 phone_tools = [
                     get_user_location,
                     create_note, search_notes, modify_note,
-                    create_calendar_event, search_calendar,
-                    search_contacts,
+                    create_calendar_event, search_calendar_event,
+                    search_contact,
                     search_photo_gallery, upload_photo,
-                    search_files, upload_files, send_file_to_user,
+                    search_file, upload_file,
                     call_phone,
-                    send_message, search_messages,
+                    send_message, search_message,
                     create_alarm, search_alarms, modify_alarm, delete_alarm,
                     xiaoyi_collection,
+                    image_reading,
+                    xiaoyi_gui_agent,
                 ]
 
                 for tool in phone_tools:

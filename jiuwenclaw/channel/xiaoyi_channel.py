@@ -14,6 +14,7 @@ import json
 import os
 import ssl
 import time
+import uuid
 from dataclasses import dataclass
 from typing import Any, Callable, List, Optional
 from urllib.parse import urlparse
@@ -155,17 +156,17 @@ class XYFileUploadService:
             async with self.session.post(prepare_url, json=prepare_data, headers=headers) as resp:
                 if not resp.ok:
                     raise Exception(f"Prepare failed: HTTP {resp}")
-                
+
                 prepare_resp = await resp.json()
                 if prepare_resp.get("code") != "0":
-                    raise Exception(f"Prepare failed: {prepare_resp.get('desc', 'Unknown error')}")
+                    raise RuntimeError(f"Prepare failed: {prepare_resp.get('desc', 'Unknown error')}")
             
             object_id = prepare_resp.get("objectId")
             draft_id = prepare_resp.get("draftId")
             upload_infos = prepare_resp.get("uploadInfos", [])
             
             if not upload_infos:
-                raise Exception("No upload information returned")
+                raise RuntimeError("No upload information returned")
             
             upload_info = upload_infos[0]
             upload_url = upload_info.get("url")
@@ -179,7 +180,7 @@ class XYFileUploadService:
                 headers=upload_headers
             ) as resp:
                 if not resp.ok:
-                    raise Exception(f"Upload failed: HTTP {resp.status}")
+                    raise RuntimeError(f"Upload failed: HTTP {resp.status}")
             
             complete_url = f"{self.base_url}/osms/v1/file/manager/complete"
             complete_data = {
@@ -189,11 +190,11 @@ class XYFileUploadService:
             
             async with self.session.post(complete_url, json=complete_data, headers=headers) as resp:
                 if not resp.ok:
-                    raise Exception(f"Complete failed: HTTP {resp.status}")
+                    raise RuntimeError(f"Complete failed: HTTP {resp.status}")
                 
                 complete_resp = await resp.json()
                 if complete_resp.get("code") != "0":
-                    raise Exception(f"Complete failed: {complete_resp.get('desc', 'Unknown error')}")
+                    raise RuntimeError(f"Complete failed: {complete_resp.get('desc', 'Unknown error')}")
             
             return object_id
             
@@ -258,10 +259,19 @@ class XiaoyiChannel(BaseChannel):
         self._accumulated_texts: dict[str, str] = {}  # Accumulated text per session for push notification
         # Data-event 处理器：intent_name -> list of handlers
         self._data_event_handlers: dict[str, List[Callable[[DataEvent], Any]]] = {}
+        # InvokeJarvisGUIAgentResponse 原始事件回调列表
+        self._gui_agent_handlers: List[Callable[[dict[str, Any]], Any]] = []
+        # GUI 工具互斥：避免并发注册多个 handler 导致回包串单；不影响其他工具并发
+        self._gui_tool_lock = asyncio.Lock()
 
     @property
     def channel_id(self) -> str:
         return self.name
+
+    @property
+    def gui_tool_lock(self) -> asyncio.Lock:
+        """供 xiaoyi_gui_agent 串行执行，避免多路 GUI 回包互相唤醒。"""
+        return self._gui_tool_lock
 
     @property
     def clients(self) -> set[Any]:
@@ -424,8 +434,7 @@ class XiaoyiChannel(BaseChannel):
             last_chunk = True
             final = True
         else:
-            # 流式模式 - 类似 TS 版本的实现
-            # 判断事件类型
+            # 流式模式：按事件类型计算增量与是否结束
             is_delta = msg.event_type == EventType.CHAT_DELTA
             last_chunk = msg.event_type == EventType.CHAT_FINAL
             is_final = msg.payload.get("is_complete", False)
@@ -599,8 +608,8 @@ class XiaoyiChannel(BaseChannel):
             if isinstance(raw, bytes):
                 raw = raw.decode("utf-8")
             message = json.loads(raw)
-        except (json.JSONDecodeError, UnicodeDecodeError):
-            logger.warning("XiaoyiChannel JSON 解析失败")
+        except (json.JSONDecodeError, UnicodeDecodeError) as e:
+            logger.warning(f"XiaoyiChannel JSON 解析失败: {e}")
             return
 
         msg_type = message.get("msgType")
@@ -613,6 +622,8 @@ class XiaoyiChannel(BaseChannel):
 
         if msg_type == "heartbeat":
             return
+
+        await self._dispatch_gui_agent_events(message)
 
         # 检查是否是 data-only 消息（工具执行结果）
         data_event = self._extract_data_event(message)
@@ -629,6 +640,11 @@ class XiaoyiChannel(BaseChannel):
         elif method == "tasks/cancel":
             await self._handle_tasks_cancel(message)
         else:
+            # 服务端 JSON-RPC 仅含 data parts 的工具回包（如纯 GUI 响应）无 method 字段
+            if not method and not msg_type and message.get("jsonrpc") == "2.0":
+                parts = self._get_a2a_parts(message)
+                if parts and all(p.get("kind") == "data" for p in parts):
+                    return
             logger.warning(f"XiaoyiChannel 未知方法: {method}")
 
     async def _handle_message_stream(self, message: dict[str, Any]) -> None:
@@ -715,11 +731,13 @@ class XiaoyiChannel(BaseChannel):
         try:
             from jiuwenclaw.config import update_channel_in_config
 
+            rpc_id = message.get("id")
             update_channel_in_config(
                 "xiaoyi",
                 {
                     "last_session_id": session_id or "",
                     "last_task_id": task_id or "",
+                    "last_message_id": str(rpc_id) if rpc_id is not None else "",
                 },
             )
         except Exception as config_error:
@@ -1167,7 +1185,6 @@ class XiaoyiChannel(BaseChannel):
         Returns:
             是否发送成功
         """
-        # 构建 A2A artifact-update 响应
         response = {
             "jsonrpc": "2.0",
             "id": message_id,
@@ -1175,22 +1192,22 @@ class XiaoyiChannel(BaseChannel):
                 "taskId": task_id,
                 "kind": "artifact-update",
                 "append": False,
-                "lastChunk": False,
+                "lastChunk": True,
                 "final": False,
                 "artifact": {
-                    "artifactId": f"artifact_{int(time.time() * 1000)}",
+                    "artifactId": str(uuid.uuid4()),
                     "parts": [{"kind": "data", "data": {"commands": [command]}}],
                 },
             },
         }
 
-        # 构建 WebSocket 包装消息
+        # OutboundWebSocketMessage：msgType/agentId/sessionId/taskId/msgDetail（msgDetail 为 JSON 字符串）
         wrapper = {
             "msgType": "agent_response",
             "agentId": self.config.agent_id,
             "sessionId": session_id,
             "taskId": task_id,
-            "msgDetail": json.dumps(response),
+            "msgDetail": json.dumps(response, ensure_ascii=False),
         }
 
         # 发送到所有活跃连接
@@ -1199,13 +1216,78 @@ class XiaoyiChannel(BaseChannel):
             if ws:
                 try:
                     await self._safe_ws_send(url_key, wrapper)
-                    intent_name = command.get('payload', {}).get('executeParam', {}).get('intentName', 'unknown')
+                    intent_name = command.get("payload", {}).get("executeParam", {}).get("intentName") or command.get(
+                        "header", {}
+                    ).get("name", "unknown")
                     logger.info(f"XiaoyiChannel 发送 command 成功 ({url_key}):intent={intent_name}")
                     sent = True
                 except Exception as e:
                     logger.warning(f"XiaoyiChannel 发送 command 失败 ({url_key}): {e}")
 
         return sent
+
+    def _get_a2a_parts(self, message: dict[str, Any]) -> list[dict[str, Any]]:
+        """从直连或 Wrapped A2A 消息中取出 message.parts."""
+        msg_type = message.get("msgType")
+        if msg_type == "data":
+            try:
+                a2a_request = json.loads(message.get("msgDetail", "{}"))
+            except json.JSONDecodeError:
+                return []
+            params = a2a_request.get("params", {})
+        else:
+            params = message.get("params", {})
+        msg = params.get("message", {})
+        parts = msg.get("parts", [])
+        return parts if isinstance(parts, list) else []
+
+    async def _dispatch_gui_agent_events(self, message: dict[str, Any]) -> None:
+        """分发 InvokeJarvisGUIAgentResponse（data.events 内）.
+
+        各 handler 独立 try/except，单个工具回调异常不影响同帧其他 handler 及后续 data-event。
+        """
+        if len(self._gui_agent_handlers) > 1:
+            logger.warning(
+                "XiaoyiChannel GUI handler 数量=%s，可能存在并发未串行化",
+                len(self._gui_agent_handlers),
+            )
+        for part in self._get_a2a_parts(message):
+            if part.get("kind") != "data":
+                continue
+            events = part.get("data", {}).get("events", [])
+            if not isinstance(events, list):
+                continue
+            for item in events:
+                if (
+                    item.get("header", {}).get("namespace") == "ClawAgent"
+                    and item.get("header", {}).get("name") == "InvokeJarvisGUIAgentResponse"
+                ):
+                    for h in list(self._gui_agent_handlers):
+                        try:
+                            if asyncio.iscoroutinefunction(h):
+                                await h(item)
+                            else:
+                                h(item)
+                        except Exception as e:
+                            logger.warning(
+                                "XiaoyiChannel GUI agent 处理器异常（已隔离）: %s",
+                                e,
+                                exc_info=True,
+                            )
+
+    def register_gui_agent_handler(self, handler: Callable[[dict[str, Any]], Any]) -> None:
+        """注册 InvokeJarvisGUIAgentResponse 处理器."""
+        if handler not in self._gui_agent_handlers:
+            self._gui_agent_handlers.append(handler)
+            logger.info("XiaoyiChannel 注册 GUI agent 处理器")
+
+    def unregister_gui_agent_handler(self, handler: Callable[[dict[str, Any]], Any]) -> None:
+        """注销 GUI agent 处理器."""
+        try:
+            self._gui_agent_handlers.remove(handler)
+            logger.info("XiaoyiChannel 注销 GUI agent 处理器")
+        except ValueError:
+            pass
 
     def register_data_event_handler(
         self, intent_name: str, handler: Callable[[DataEvent], Any]
@@ -1273,8 +1355,7 @@ class XiaoyiChannel(BaseChannel):
         Returns:
             DataEvent 或 None（如果不是 data-only 消息）
         """
-        # 检查是否是 Wrapped format (msgType="data")
-        # 参考 xy_channel websocket.ts:569-606
+        # Wrapped format：msgType="data"，msgDetail 为嵌套的 A2A JSON-RPC 字符串
         msg_type = message.get("msgType")
         method = message.get("method")
         if msg_type == "data":
@@ -1285,7 +1366,15 @@ class XiaoyiChannel(BaseChannel):
                 msg = params.get("message", {})
                 parts = msg.get("parts", [])
                 session_id = message.get("sessionId", "")
-            except (json.JSONDecodeError, KeyError):
+            except json.JSONDecodeError as e:
+                logger.info(
+                    f"[XiaoyiChannel] _extract_data_event: msgDetail JSON 解析失败: {e}"
+                )
+                return None
+            except KeyError as e:
+                logger.info(
+                    f"[XiaoyiChannel] _extract_data_event: Wrapped A2A 缺少字段: {e}"
+                )
                 return None
         else:
             # Direct A2A format
@@ -1295,13 +1384,11 @@ class XiaoyiChannel(BaseChannel):
             session_id = message.get("sessionId", "")
 
         if not parts:
-            logger.debug(f"[XiaoyiChannel] _extract_data_event: no parts found")
             return None
 
         # 检查是否所有 parts 都是 data 类型
         data_parts = [p for p in parts if p.get("kind") == "data"]
         if not data_parts or len(data_parts) != len(parts):
-            logger.debug(f"[XiaoyiChannel] _extract_data_event: not all parts are data kind ")
             return None
 
         # 提取 data 内容
@@ -1314,7 +1401,7 @@ class XiaoyiChannel(BaseChannel):
             for event in events:
                 intent_name = ""
                 outputs = {}
-                status = "success"  # 默认为 success（与 xy_channel 一致）
+                status = "success"  # 未显式给出时与直接格式默认一致
 
                 # 格式 1: 直接格式 (events[].intentName)
                 if event.get("intentName"):

@@ -1,6 +1,6 @@
 # Copyright (c) Huawei Technologies Co., Ltd. 2025. All rights reserved.
 
-"""Base utilities for xiaoyi handset tools.
+"""Utilities for xiaoyi handset tools.
 
 提供设备侧工具的通用功能：
 - 获取 channel 实例
@@ -11,12 +11,36 @@
 from __future__ import annotations
 
 import asyncio
-import logging
-from typing import Any, Callable, Dict, Optional
+import json
+from typing import Any, Dict, Optional
 
+from jiuwenclaw.utils import logger
 from jiuwenclaw.channel.xiaoyi_channel import get_xiaoyi_channel
+from jiuwenclaw.config import get_config
 
-logger = logging.getLogger(__name__)
+
+def _is_data_event_status_success(status: Any) -> bool:
+    """设备 data-event 的 status 是否为成功（兼容大小写及部分别名）."""
+    if status is True:
+        return True
+    if status is None or status is False:
+        return False
+    s = str(status).strip().lower()
+    return s in ("success", "succeed", "successful", "ok")
+
+
+def _outputs_top_level_code_ok(code: Any) -> bool:
+    """outputs.code 表示成功或未携带错误码（None 视为不按 code 判失败）."""
+    if code is None:
+        return True
+    if isinstance(code, bool):
+        return bool(code)
+    try:
+        if isinstance(code, (int, float)) and int(code) == 0:
+            return True
+    except (TypeError, ValueError):
+        pass
+    return str(code).strip() == "0"
 
 
 class ToolInputError(Exception):
@@ -60,13 +84,12 @@ async def execute_device_command(
             f"No active XY session found. {intent_name} tool can only be used during an active conversation."
         )
 
-    # 获取会话信息（从 config.yaml，与已验证的 location_tool.py 保持一致）
+    # 从 config 读取 xiaoyi 通道的会话与任务标识
     session_id = ""
     task_id = ""
     message_id = f"cmd_{int(asyncio.get_event_loop().time() * 1000)}"
 
     try:
-        from jiuwenclaw.config import get_config
         config = get_config()
         xiaoyi_conf = config.get("channels", {}).get("xiaoyi", {})
         session_id = xiaoyi_conf.get("last_session_id", "")
@@ -80,7 +103,10 @@ async def execute_device_command(
             f"No active XY session found. {intent_name} tool can only be used during an active conversation."
         )
 
-    logger.info(f"[{intent_name}_TOOL] Session context found: {session_id}")
+    logger.info(
+        f"[{intent_name}_TOOL] Session context: session_id={session_id!r} "
+        f"task_id={task_id!r} message_id={message_id!r}"
+    )
 
     # 创建事件等待结果
     result_event = asyncio.Event()
@@ -90,23 +116,53 @@ async def execute_device_command(
     # 定义 data-event 处理器
     def on_data_event(event):
         nonlocal result_data, error_result
-        logger.info(f"[{intent_name}_TOOL] Received data event: intent={event.intent_name}, status={event.status}")
-        
+        logger.info(
+            f"[{intent_name}_TOOL] Received data event: intent={event.intent_name}, "
+            f"status={event.status}"
+        )
+
         if event.intent_name == intent_name:
             logger.info(f"[{intent_name}_TOOL] Intent name matched! status={event.status}")
 
-            if event.status == "success" and event.outputs:
-                result_data = event.outputs
-                logger.info(f"[{intent_name}_TOOL] Execution successful, outputs={list(event.outputs.keys())}")
+            # 设备在无短信等场景常返回 outputs: {}，此处必须用「outputs is not None」判断。
+            if _is_data_event_status_success(event.status):
+                if event.outputs is None:
+                    error_result = RuntimeError(
+                        "执行失败: status=success 但 outputs 为 null"
+                    )
+                    logger.error(
+                        f"[{intent_name}_TOOL] success 但 outputs 为 null"
+                    )
+                else:
+                    result_data = event.outputs
+                    keys = (
+                        list(event.outputs.keys())
+                        if isinstance(event.outputs, dict)
+                        else []
+                    )
+                    logger.info(
+                        f"[{intent_name}_TOOL] Execution successful, outputs keys={keys}"
+                    )
             else:
                 error_result = RuntimeError(f"执行失败: {event.status}")
-                logger.error(f"[{intent_name}_TOOL] Execution failed: {event.status}")
+                out_preview = ""
+                if isinstance(event.outputs, dict):
+                    try:
+                        out_preview = json.dumps(
+                            event.outputs, ensure_ascii=False
+                        )[:600]
+                    except Exception:
+                        out_preview = str(event.outputs)[:600]
+                logger.error(
+                    f"[{intent_name}_TOOL] Execution failed: status={event.status!r} "
+                    f"outputs_preview={out_preview}"
+                )
 
             result_event.set()
         else:
             logger.debug(
-                f"[%s_TOOL] Intent name mismatch: expected=%s, got=%s",
-                intent_name, intent_name, event.intent_name
+                f"[{intent_name}_TOOL] Intent name mismatch: expected={intent_name}, "
+                f"got={event.intent_name}"
             )
 
     # 注册处理器
@@ -130,15 +186,46 @@ async def execute_device_command(
         await asyncio.wait_for(result_event.wait(), timeout=timeout)
 
         if error_result:
+            logger.info(f"[{intent_name}_TOOL] Response error_result = {error_result}")
             raise error_result
 
-        return result_data or {}
+        logger.info(f"[{intent_name}_TOOL] Response result_event = {result_event}")
+        logger.info(f"[{intent_name}_TOOL] Response result_data = {result_data}")
 
-    except asyncio.TimeoutError:
-        logger.error(f"[{intent_name}_TOOL] Timeout: No response received within {timeout} seconds")
+        # 成功时 outputs 可能为 {}，勿用「or」短路（空 dict 在 Python 中为假）
+        return {} if result_data is None else result_data
+
+    except asyncio.TimeoutError as e:
+        logger.error(
+            f"[{intent_name}_TOOL] Timeout: no response within {timeout}s"
+        )
+        raise RuntimeError(
+            f"设备命令超时（{timeout}s 内未收到 {intent_name} 响应）"
+        ) from e
 
     finally:
         channel.unregister_data_event_handler(intent_name, on_data_event)
+
+
+def raise_if_device_error(outputs: Any, what_failed: str) -> None:
+    """若设备 outputs 含失败 code 或 retErrCode，抛出 RuntimeError.
+
+    部分 Intent 使用 code，部分使用 retErrCode（字符串 \"0\" 表示成功）。
+    """
+    if not isinstance(outputs, dict):
+        return
+    code = outputs.get("code")
+    if not _outputs_top_level_code_ok(code):
+        error_msg = outputs.get("errorMsg") or outputs.get("errMsg") or "未知错误"
+        raise RuntimeError(
+            f"{what_failed}: {error_msg} (错误代码: {code})"
+        ) from None
+    ret = outputs.get("retErrCode")
+    if ret is not None and str(ret) != "0":
+        err_msg = outputs.get("errMsg", "未知错误")
+        raise RuntimeError(
+            f"{what_failed}: {err_msg} (retErrCode: {ret})"
+        ) from None
 
 
 def validate_required_params(params: Dict[str, Any], required: list[str]) -> None:
@@ -167,7 +254,6 @@ def format_success_response(data: Dict[str, Any], message: str = "") -> Dict[str
     Returns:
         包含 content 的响应字典
     """
-    import json
 
     response = {"success": True, **data}
     if message:
@@ -192,7 +278,6 @@ def format_error_response(error: str) -> Dict[str, Any]:
     Returns:
         包含 content 的错误响应字典
     """
-    import json
 
     return {
         "content": [

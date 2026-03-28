@@ -4,18 +4,24 @@
 
 包含：
 - create_calendar_event: 创建日程
-- search_calendar: 搜索日程
+- search_calendar_event: 检索日程
 """
 
 from __future__ import annotations
 
-import logging
 from datetime import datetime
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, Optional
 
 from openjiuwen.core.foundation.tool import tool
 
-logger = logging.getLogger(__name__)
+from jiuwenclaw.utils import logger
+
+from .utils import (
+    execute_device_command,
+    format_success_response,
+    raise_if_device_error,
+    ToolInputError,
+)
 
 
 def _format_timestamp_to_datetime(timestamp_ms: int) -> str:
@@ -49,33 +55,43 @@ def _convert_event_timestamps(event: Dict[str, Any]) -> Dict[str, Any]:
         result["dtEnd"] = _format_timestamp_to_datetime(result["dtEnd"])
     return result
 
-from .base import (
-    execute_device_command,
-    validate_required_params,
-    format_success_response,
-    format_error_response,
-    ToolInputError,
-)
+
+def _parse_time_string_ymd_hhmmss(time_str: str) -> int:
+    """解析 YYYYMMDD hhmmss 格式为毫秒时间戳."""
+    cleaned = " ".join(time_str.strip().split())
+    parts = cleaned.split(" ")
+    if len(parts) != 2:
+        raise ValueError(
+            f"Invalid time format: {time_str}. Expected format: YYYYMMDD hhmmss"
+        )
+    date_part, time_part = parts[0], parts[1]
+    if len(date_part) != 8 or len(time_part) != 6:
+        raise ValueError(
+            f"Invalid time format: {time_str}. Expected format: YYYYMMDD hhmmss"
+        )
+    year = int(date_part[0:4])
+    month = int(date_part[4:6])
+    day = int(date_part[6:8])
+    hours = int(time_part[0:2])
+    minutes = int(time_part[2:4])
+    seconds = int(time_part[4:6])
+    dt = datetime(year, month, day, hours, minutes, seconds)
+    return int(dt.timestamp() * 1000)
 
 
 @tool(
     name="create_calendar_event",
-    description="""在用户设备上创建日程。需要提供日程标题、开始时间和结束时间。
-
-时间格式必须为：yyyy-mm-dd hh:mm:ss（例如：2024-01-15 14:30:00）。
-
-注意：
-- 该工具执行时间较长（最多60秒），请勿重复调用
-- 超时或失败时最多重试一次
-- 使用该工具之前需获取当前真实时间
-""",
+    description=(
+        "在用户设备上创建日程。需要提供日程标题、开始时间和结束时间。"
+        "时间格式必须为：yyyy-mm-dd hh:mm:ss（例如：2024-01-15 14:30:00）。"
+        "注意：该工具执行时间较长（最多60秒），请勿重复调用，超时或失败时最多重试一次。\n"
+        "  注意事项：使用该工具之前需获取当前真实时间\n"
+    ),
 )
 async def create_calendar_event(
     title: str,
     dt_start: str,
     dt_end: str,
-    location: Optional[str] = None,
-    description: Optional[str] = None,
 ) -> Dict[str, Any]:
     """创建日程.
 
@@ -83,14 +99,15 @@ async def create_calendar_event(
         title: 日程标题/名称，必填
         dt_start: 开始时间，格式 yyyy-mm-dd hh:mm:ss
         dt_end: 结束时间，格式 yyyy-mm-dd hh:mm:ss
-        location: 地点（可选）
-        description: 描述（可选）
 
     Returns:
         包含创建结果的响应字典
     """
     try:
-        logger.info(f"[CALENDAR_TOOL]  Create calendar event - title: {title}, dt_start: {dt_start}, dt_end: {dt_end}")
+        logger.info(
+            f"[CALENDAR_TOOL] Create calendar event - title: {title}, "
+            f"dt_start: {dt_start}, dt_end: {dt_end}"
+        )
 
         # 验证参数
         if not title:
@@ -111,18 +128,13 @@ async def create_calendar_event(
                 "时间格式错误。必须使用：yyyy-mm-dd hh:mm:ss（例如：2024-01-15 14:30:00）"
             ) from ValueError
 
-        # 构建参数
         intent_param = {
             "title": title,
             "dtStart": dt_start_ms,
             "dtEnd": dt_end_ms,
         }
-        if location:
-            intent_param["location"] = location
-        if description:
-            intent_param["description"] = description
 
-        # 构建命令
+        # CreateCalendarEvent：executeParam 不含 appType、permissionId
         command = {
             "header": {
                 "namespace": "Common",
@@ -137,10 +149,8 @@ async def create_calendar_event(
                     "dimension": "",
                     "needUnlock": True,
                     "actionResponse": True,
-                    "appType": "OHOS_APP",
                     "timeOut": 5,
                     "intentParam": intent_param,
-                    "permissionId": [],
                     "achieveType": "INTENT",
                 },
                 "responses": [{"resultCode": "", "displayText": "", "ttsText": ""}],
@@ -153,10 +163,13 @@ async def create_calendar_event(
         # 执行命令
         result = await execute_device_command("CreateCalendarEvent", command)
 
+        if isinstance(result, dict):
+            raise_if_device_error(result, "创建日程失败")
+
         logger.info("[CALENDAR_TOOL] Calendar event created successfully")
         return format_success_response(
             {"title": title, "dt_start": dt_start, "dt_end": dt_end, "result": result},
-            f"日程 '{title}' 创建成功"
+            f"日程 '{title}' 创建成功",
         )
 
     except ToolInputError:
@@ -167,65 +180,60 @@ async def create_calendar_event(
 
 
 @tool(
-    name="search_calendar",
-    description="""在用户设备上搜索日程。可以按标题、时间范围搜索。
+    name="search_calendar_event",
+    description="""检索用户日历中的日程安排。根据时间范围和可选的日程标题进行检索。时间格式必须为：YYYYMMDD hhmmss（例如：20240115 143000）。
 
-时间格式：yyyy-mm-dd hh:mm:ss
+时间范围说明：
+- 查询某一天的日程：使用该天的 00:00:00 到 23:59:59（例如：20240115 000000 到 20240115 235959）
+- 查询上午的日程：使用 06:00:00 到 12:00:00
+- 查询下午的日程：使用 12:00:00 到 18:00:00
+- 查询晚上的日程：使用 18:00:00 到 23:59:59
+- 查询某个时刻附近的日程：使用该时刻前后1小时的区间（例如：查询3点左右的日程，使用 14:00:00 到 16:00:00）
 
 注意：
-- 操作超时时间为60秒，请勿重复调用
-- 如果搜索失败，最多只能重试一次
+a. 该工具执行时间较长（最多60秒），请勿重复调用，超时或失败时最多重试一次。
+b. 使用该工具之前需获取当前真实时间
 """,
 )
-async def search_calendar(
-    keyword: Optional[str] = None,
-    start_time: Optional[str] = None,
-    end_time: Optional[str] = None,
-    max_results: int = 10,
+async def search_calendar_event(
+    start_time: str,
+    end_time: str,
+    title: Optional[str] = None,
 ) -> Dict[str, Any]:
-    """搜索日程.
+    """检索日程.
 
     Args:
-        keyword: 搜索关键词（可选）
-        start_time: 开始时间范围（可选）
-        end_time: 结束时间范围（可选）
-        max_results: 最大返回结果数，默认10
+        start_time: 起始时间，格式 YYYYMMDD hhmmss
+        end_time: 结束时间，格式 YYYYMMDD hhmmss
+        title: 日程标题过滤（可选）
 
     Returns:
         包含日程列表的响应字典
     """
     try:
-        logger.info(f"[CALENDAR_TOOL] Searching calendar events - keyword: {keyword}")
+        logger.info(
+            f"[SEARCH_CALENDAR_TOOL] Searching calendar events - "
+            f"start_time: {start_time}, end_time: {end_time}, title: {title}"
+        )
 
-        # 构建参数 - 使用 timeInterval 数组格式（与 xy_channel 一致）
-        intent_param: Dict[str, Any] = {}
+        if not start_time or not end_time:
+            raise ToolInputError("缺少必填参数 start_time 与 end_time")
 
-        # 转换时间格式
-        start_time_ms = 0
-        end_time_ms = 0
+        try:
+            start_time_ms = _parse_time_string_ymd_hhmmss(start_time)
+            end_time_ms = _parse_time_string_ymd_hhmmss(end_time)
+        except ValueError as e:
+            raise ToolInputError(
+                "时间格式错误。必须使用：YYYYMMDD hhmmss（例如：20240115 143000）。"
+                f" {e}"
+            ) from e
 
-        if start_time:
-            try:
-                start_dt = datetime.strptime(start_time, "%Y-%m-%d %H:%M:%S")
-                start_time_ms = int(start_dt.timestamp() * 1000)
-            except ValueError:
-                raise ToolInputError("start_time 格式错误，必须使用：yyyy-mm-dd hh:mm:ss") from ValueError
+        intent_param: Dict[str, Any] = {
+            "timeInterval": [start_time_ms, end_time_ms],
+        }
+        if title:
+            intent_param["title"] = title
 
-        if end_time:
-            try:
-                end_dt = datetime.strptime(end_time, "%Y-%m-%d %H:%M:%S")
-                end_time_ms = int(end_dt.timestamp() * 1000)
-            except ValueError:
-                raise ToolInputError("end_time 格式错误，必须使用：yyyy-mm-dd hh:mm:ss") from ValueError
-
-        # 使用 timeInterval 数组格式
-        if start_time_ms and end_time_ms:
-            intent_param["timeInterval"] = [start_time_ms, end_time_ms]
-
-        if keyword:
-            intent_param["title"] = keyword
-
-        # 构建命令
         command = {
             "header": {
                 "namespace": "Common",
@@ -256,10 +264,7 @@ async def search_calendar(
         # 执行命令
         outputs = await execute_device_command("SearchCalendarEvent", command)
 
-        # 检查错误码
-        if outputs.get("retErrCode") and outputs.get("retErrCode") != "0":
-            err_msg = outputs.get("errMsg", "未知错误")
-            raise RuntimeError(f"检索日程失败: {err_msg} (错误代码: {outputs['retErrCode']})")
+        raise_if_device_error(outputs, "检索日程失败")
 
         # 获取结果
         result = outputs.get("result", {})
@@ -268,15 +273,15 @@ async def search_calendar(
         # 转换时间戳为可读格式
         formatted_items = [_convert_event_timestamps(item) for item in items]
 
-        logger.info(f"[CALENDAR_TOOL] Found {len(formatted_items)} events")
+        logger.info(f"[SEARCH_CALENDAR_TOOL] Found {len(formatted_items)} events")
 
         return format_success_response(
             {"events": formatted_items, "count": len(formatted_items)},
-            f"搜索到 {len(formatted_items)} 条日程"
+            f"搜索到 {len(formatted_items)} 条日程",
         )
 
     except ToolInputError:
         raise
     except Exception as e:
-        logger.error(f"[CALENDAR_TOOL] Failed to search calendar: {e}")
+        logger.error(f"[SEARCH_CALENDAR_TOOL] Failed to search calendar: {e}")
         raise RuntimeError(f"搜索日程失败: {str(e)}") from e
