@@ -44,7 +44,8 @@ def resolve_env_vars(value: Any) -> Any:
             var_name = match.group(1)
             default = match.group(2)
             current = os.getenv(var_name)
-            if var_name == "API_KEY":
+            is_need_decrypt = ("API_KEY" in var_name or "TOKEN" in var_name) and current
+            if get_crypto_provider() and is_need_decrypt:
                 current = get_crypto_provider().decrypt(current)
             # Bash: ${VAR:-default} uses default when VAR is unset OR empty.
             # ${VAR} (no :-) keeps getenv behavior; unset -> "".

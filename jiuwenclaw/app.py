@@ -280,11 +280,12 @@ def _register_web_handlers(
             for param_key, env_key in _CONFIG_SET_ENV_MAP.items()
         }
         payload["app_version"] = __version__
-        if "api_key" in payload:
-            payload['api_key'] = get_crypto_provider().decrypt(payload['api_key'])
         # 合并 config.yaml 中的配置项
         try:
             raw = get_config_raw()
+            for key, val in payload.items():
+                if ("api_key" in key or "token" in key) and get_crypto_provider():
+                    payload[key] = get_crypto_provider().decrypt(val)
             ctx_cfg = (raw.get("react") or {}).get("context_engine_config") or {}
             payload["context_engine_enabled"] = "true" if ctx_cfg.get("enabled", False) else "false"
             perm_cfg = raw.get("permissions") or {}
@@ -326,12 +327,13 @@ def _register_web_handlers(
             logger.warning("[config.set] 写回 .env 失败: %s", e)
 
     async def _config_set(ws, req_id, params, session_id):
-        if "api_key" in params:
-            params["api_key"] = get_crypto_provider().encrypt(params["api_key"])
         """根据前端消息内容更新配置（支持 .env 与 config.yaml 中的键），并写回对应文件。"""
         if not isinstance(params, dict):
             await channel.send_response(ws, req_id, ok=False, error="params must be object", code="BAD_REQUEST")
             return
+        for key, val in params.items():
+            if ("api_key" in key or "token" in key) and get_crypto_provider():
+                params[key] = get_crypto_provider().encrypt(val)
         env_updates: dict[str, str] = {}
         yaml_updated: list[str] = []
         available_model_providers = [provider.value for provider in ProviderType]
