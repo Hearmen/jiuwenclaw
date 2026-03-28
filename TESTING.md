@@ -65,13 +65,13 @@ pip install -e ".[test]"
 pytest -v
 
 # 运行特定目录
-pytest tests/unit/ -v
+pytest tests/unit_tests/ -v
 
 # 运行特定文件
-pytest tests/unit/test_config.py -v
+pytest tests/unit_tests/test_config.py -v
 
 # 运行特定测试
-pytest tests/unit/test_config.py::TestResolveEnvVars::test_resolve_string_with_env_var -v
+pytest tests/unit_tests/test_config.py::TestResolveEnvVars::test_resolve_string_with_env_var -v
 
 # 生成覆盖率报告
 pytest --cov=jiuwenclaw --cov-report=html --cov-report=term-missing
@@ -254,10 +254,10 @@ open htmlcov/index.html  # macOS
 
 ```bash
 # 1. 编写测试
-# tests/unit/test_new_feature.py
+# tests/unit_tests/test_new_feature.py
 
 # 2. 运行新测试
-pytest tests/unit/test_new_feature.py -v
+pytest tests/unit_tests/test_new_feature.py -v
 
 # 3. 查看覆盖率
 pytest --cov=jiuwenclaw.new_feature --cov-report=term-missing
@@ -284,7 +284,7 @@ python --version  # 应该是 3.11, 3.12, 或 3.13
 pip list | grep pytest
 
 # 4. 运行特定失败的测试
-pytest tests/unit/test_config.py::TestResolveEnvVars -vv
+pytest tests/unit_tests/test_config.py::TestResolveEnvVars -vv
 ```
 
 ---
@@ -354,13 +354,13 @@ def sample_messages() -> List[dict]:
 
 ```bash
 # 1. 创建测试文件
-touch tests/unit/test_new_module.py
+touch tests/unit_tests/test_new_module.py
 
 # 2. 编写测试
 # 参考 tests/README.md 中的模板
 
 # 3. 运行测试
-pytest tests/unit/test_new_module.py -v
+pytest tests/unit_tests/test_new_module.py -v
 ```
 
 ### 添加新的 Fixture

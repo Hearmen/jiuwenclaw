@@ -38,20 +38,20 @@ pytest tests/
 
 ```bash
 # 运行单个测试文件
-pytest tests/unit/test_config.py
+pytest tests/unit_tests/test_config.py
 
 # 运行特定目录的测试
-pytest tests/unit/
+pytest tests/unit_tests/
 ```
 
 ### 运行特定测试用例
 
 ```bash
 # 运行特定测试函数
-pytest tests/unit/test_config.py::TestResolveEnvVars::test_resolve_string_with_env_var
+pytest tests/unit_tests/test_config.py::TestResolveEnvVars::test_resolve_string_with_env_var
 
 # 运行特定测试类
-pytest tests/unit/test_config.py::TestResolveEnvVars
+pytest tests/unit_tests/test_config.py::TestResolveEnvVars
 ```
 
 ### 常用测试选项

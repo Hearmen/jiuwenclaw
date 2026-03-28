@@ -32,7 +32,7 @@ while [[ $# -gt 0 ]]; do
             shift
             ;;
         -u|--unit-only)
-            TEST_PATH="tests/unit/"
+            TEST_PATH="tests/unit_tests/"
             shift
             ;;
         -i|--integration-only)

@@ -14,7 +14,7 @@ import sys
 from jiuwenclaw.utils import init_user_workspace
 
 
-def main() -> None:
+def run_init() -> int:
     logging.basicConfig(
         level=logging.INFO,
         format="%(asctime)s %(levelname)s %(name)s: %(message)s",
@@ -22,9 +22,13 @@ def main() -> None:
 
     target = init_user_workspace(overwrite=True)
     if target == "cancelled":
-        sys.exit(1)
+        return 1
     print(f"[jiuwenclaw-init] initialized: {target}")
+    return 0
 
+
+def main() -> int:
+    return run_init()
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())
