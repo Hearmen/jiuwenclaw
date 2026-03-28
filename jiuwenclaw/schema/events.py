@@ -23,3 +23,5 @@ class AgentServerEvents(EventBase):
 
     AGENT_SERVER_STARTED = EventBase.get_event("agent_server_started")
     AGENT_SERVER_STOPPED = EventBase.get_event("agent_server_stopped")
+    MEMORY_BEFORE_CHAT = EventBase.get_event("memory_before_chat")
+    MEMORY_AFTER_CHAT = EventBase.get_event("memory_after_chat")

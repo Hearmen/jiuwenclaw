@@ -22,7 +22,6 @@ from openjiuwen.core.session.checkpointer import CheckpointerFactory
 from openjiuwen.core.session.checkpointer.checkpointer import CheckpointerConfig
 from openjiuwen.core.session.checkpointer.persistence import PersistenceCheckpointerProvider
 
-from jiuwenclaw.agentserver.prompt_builder import build_system_prompt
 from jiuwenclaw.agentserver.tools.multi_session_toolkits import MultiSessionToolkit
 from jiuwenclaw.agentserver.tools import SendFileToolkit
 from jiuwenclaw.agentserver.prompt_builder import build_system_prompt, build_user_prompt
@@ -38,6 +37,8 @@ from jiuwenclaw.utils import (
 from jiuwenclaw.config import get_config
 from jiuwenclaw.agentserver.react_agent import JiuClawReActAgent
 from jiuwenclaw.agentserver.permissions.checker import TOOL_PERMISSION_CHANNEL_ID
+from jiuwenclaw.schema.events import AgentServerEvents
+from jiuwenclaw.schema.hooks_context import MemoryHookContext
 from jiuwenclaw.agentserver.tools.browser_tools import register_browser_runtime_mcp_server
 from jiuwenclaw.agentserver.tools.audio_tools import (
     audio_question_answering,
@@ -79,7 +80,7 @@ from jiuwenclaw.agentserver.tools.multimodal_config import (
     apply_video_model_config_from_yaml,
 )
 from jiuwenclaw.agentserver.memory.compaction import ContextCompactionManager
-from jiuwenclaw.agentserver.memory.config import clear_config_cache
+from jiuwenclaw.agentserver.memory.config import clear_config_cache, get_memory_mode
 from jiuwenclaw.agentserver.memory import clear_memory_manager_cache
 from jiuwenclaw.agentserver.permissions import (
     init_permission_engine,
@@ -204,11 +205,13 @@ class JiuWenClaw:
             model_configs = {}
         else:
             model_configs = model_configs.copy()
+        memory_mode = get_memory_mode(config)
         react_config = {**react_config, **model_configs.get("default", {}).copy(), "prompt_template": [
             {"role": "system", "content": build_system_prompt(
                 mode="plan",
                 language=config.get("preferred_language", "en"),
-                channel="web"
+                channel="web",
+                memory_mode=memory_mode,
             )}
         ]}
 
@@ -344,15 +347,18 @@ class JiuWenClaw:
         else:
             logger.warning("[JiuWenClaw] ReActAgent has no _skill_util; skip skill registration.")
 
-        # add memory tools
-        await init_memory_manager_async(
-            workspace_dir=self._workspace_dir,
-            agent_id=self._agent_name,
-        )
-        for tool in [memory_search, memory_get, write_memory, edit_memory, read_memory]:
-            Runner.resource_mgr.add_tool(tool)
-            self._instance.ability_manager.add(tool.card)
-        self._memory_tools_registered = True
+        memory_mode = get_memory_mode(config_base)
+        if memory_mode == "local":
+            await init_memory_manager_async(
+                workspace_dir=self._workspace_dir,
+                agent_id=self._agent_name,
+            )
+            for tool in [memory_search, memory_get, write_memory, edit_memory, read_memory]:
+                Runner.resource_mgr.add_tool(tool)
+                self._instance.ability_manager.add(tool.card)
+            self._memory_tools_registered = True
+        else:
+            self._memory_tools_registered = False
 
         # add task memory tools (TaskMemoryService skill)
         if _is_task_memory_enabled():
@@ -380,7 +386,7 @@ class JiuWenClaw:
             self._instance.ability_manager.add(mcp_tool.card)
         self._mcp_tools_registered = True
 
-        if self._compaction_manager is None:
+        if memory_mode == "local" and self._compaction_manager is None:
             memory_mgr = await get_memory_manager(
                 agent_id=self._agent_name,
                 workspace_dir=self._workspace_dir
@@ -391,6 +397,8 @@ class JiuWenClaw:
                     threshold=8000,
                     keep_recent=10
                 )
+        elif memory_mode != "local":
+            self._compaction_manager = None
 
         try:
             self._browser_mcp_registered = await register_browser_runtime_mcp_server(
@@ -517,9 +525,11 @@ class JiuWenClaw:
             self, session_id: str | None,
             channel_id: str | None,
             request_id: str | None,
-            mode="plan"
+            mode="plan",
+            request_params: dict[str, Any] | None = None,
     ) -> None:
-        """Register per-request tools for current agent execution."""
+        """Register per-request tools for current agent execution.
+        """
         if self._instance is None:
             raise RuntimeError("JiuWenClaw 未初始化，请先调用 create_instance()")
 
@@ -624,15 +634,32 @@ class JiuWenClaw:
                 Runner.resource_mgr.add_tool(tool)
                 self._instance.ability_manager.add(tool.card)
 
-        if not self._memory_tools_registered:
-            await init_memory_manager_async(
+        memory_mode = get_memory_mode(config_base)
+        memory_block = ""
+        if memory_mode == "local":
+            if not self._memory_tools_registered:
+                await init_memory_manager_async(
+                    workspace_dir=self._workspace_dir,
+                    agent_id=self._agent_name,
+                )
+                for tool in [memory_search, memory_get, write_memory, edit_memory, read_memory]:
+                    Runner.resource_mgr.add_tool(tool)
+                    self._instance.ability_manager.add(tool.card)
+                self._memory_tools_registered = True
+        else:
+            self._memory_tools_registered = False
+            mem_ctx = MemoryHookContext(
+                session_id=session_id or "default",
+                request_id=request_id or "",
+                channel_id=channel_id,
+                agent_name=self._agent_name,
                 workspace_dir=self._workspace_dir,
-                agent_id=self._agent_name,
+                extra=request_params if request_params is not None else {},
             )
-            for tool in [memory_search, memory_get, write_memory, edit_memory, read_memory]:
-                Runner.resource_mgr.add_tool(tool)
-                self._instance.ability_manager.add(tool.card)
-            self._memory_tools_registered = True
+            from jiuwenclaw.extensions.registry import ExtensionRegistry
+
+            await ExtensionRegistry.get_instance().trigger(AgentServerEvents.MEMORY_BEFORE_CHAT, mem_ctx)
+            memory_block = "\n\n".join(b for b in mem_ctx.memory_blocks if b)
 
         if not self._task_memory_tools_registered and _is_task_memory_enabled():
             try:
@@ -679,14 +706,22 @@ class JiuWenClaw:
                 self._instance.ability_manager.add(mcp_tool.card)
             self._mcp_tools_registered = True
 
-        config_base = get_config()
+        system_prompt = build_system_prompt(
+            mode=mode,
+            language=config_base.get("preferred_language", "zh"),
+            channel=channel,
+            memory_block=memory_block,
+            memory_mode=memory_mode,
+        )
+        logger.debug(
+            "[JiuWenClaw] system prompt built: memory_mode=%s channel=%s\n%s",
+            memory_mode,
+            channel,
+            system_prompt,
+        )
         self._instance._config.prompt_template = [{
             "role": "system",
-            "content": build_system_prompt(
-                mode=mode,
-                language=config_base.get("preferred_language", "zh"),
-                channel=channel
-            ),
+            "content": system_prompt,
         }]
 
     async def process_interrupt(self, request: AgentRequest) -> AgentResponse:
@@ -1049,6 +1084,7 @@ class JiuWenClaw:
             request.request_id, request.channel_id, session_id,
         )
         config_base = get_config()
+        memory_mode = get_memory_mode(config_base)
         inputs = {
             "conversation_id": request.session_id,
             "query": build_user_prompt(
@@ -1059,7 +1095,7 @@ class JiuWenClaw:
             ),
         }
 
-        if self._compaction_manager:
+        if memory_mode == "local" and self._compaction_manager:
             self._compaction_manager.add_message("user", query)
 
             memory_mgr = await get_memory_manager(
@@ -1080,7 +1116,8 @@ class JiuWenClaw:
                     request.session_id,
                     request.channel_id,
                     request.request_id,
-                    request.params.get("mode", "plan")
+                    request.params.get("mode", "plan"),
+                    request_params=request.params,
                 )
                 return await Runner.run_agent(agent=self._instance, inputs=inputs)
             except asyncio.CancelledError:
@@ -1118,7 +1155,7 @@ class JiuWenClaw:
 
         content = result if isinstance(result, (str, dict)) else str(result)
 
-        if self._compaction_manager and content:
+        if memory_mode == "local" and self._compaction_manager and content:
             if isinstance(content, dict):
                 content_str = content.get("output", str(content))
             else:
@@ -1135,6 +1172,23 @@ class JiuWenClaw:
             content=assistant_content,
             timestamp=time.time(),
         )
+        if memory_mode == "cloud":
+            if isinstance(content, dict):
+                content_str = content.get("output", str(content))
+            else:
+                content_str = str(content)
+            after_ctx = MemoryHookContext(
+                session_id=request.session_id or "default",
+                request_id=request.request_id or "",
+                channel_id=request.channel_id,
+                agent_name=self._agent_name,
+                workspace_dir=self._workspace_dir,
+                assistant_message=content_str,
+                extra=request.params,
+            )
+            from jiuwenclaw.extensions.registry import ExtensionRegistry
+
+            await ExtensionRegistry.get_instance().trigger(AgentServerEvents.MEMORY_AFTER_CHAT, after_ctx)
 
         return AgentResponse(
             request_id=request.request_id,
@@ -1190,6 +1244,7 @@ class JiuWenClaw:
             request.request_id, request.channel_id, session_id,
         )
         config_base = get_config()
+        memory_mode = get_memory_mode(config_base)
         inputs = {
             "conversation_id": request.session_id,
             "query": build_user_prompt(
@@ -1201,7 +1256,7 @@ class JiuWenClaw:
         }
 
         # supplement 任务：读取现有 todo 待办，拼入 query 让 agent 知道有未完成的任务
-        if self._compaction_manager:
+        if memory_mode == "local" and self._compaction_manager:
             self._compaction_manager.add_message("user", query)
             memory_mgr = await get_memory_manager(
                 agent_id=self._agent_name,
@@ -1212,6 +1267,8 @@ class JiuWenClaw:
 
         rid = request.request_id
         cid = request.channel_id
+        final_answer_content = ""
+        final_answer_chunks: list[str] = []
 
         # 创建流式输出队列
         stream_queue = asyncio.Queue()
@@ -1226,7 +1283,8 @@ class JiuWenClaw:
                     request.session_id,
                     request.channel_id,
                     request.request_id,
-                    request.params.get("mode", "plan")
+                    request.params.get("mode", "plan"),
+                    request_params=request.params,
                 )
                 async for chunk in Runner.run_agent_streaming(self._instance, inputs):
                     parsed = self._parse_stream_chunk(chunk)
@@ -1283,17 +1341,23 @@ class JiuWenClaw:
                         is_complete=False,
                     )
                 else:
-                    if isinstance(data, dict) and isinstance(data.get("event_type"), str):
-                        append_history_record(
-                            session_id=session_id,
-                            request_id=rid,
-                            channel_id=cid,
-                            role="assistant",
-                            event_type=str(data.get("event_type")),
-                            content=data.get("content") or data.get("error") or "",
-                            timestamp=time.time(),
-                            extra={"event_payload": dict(data)},
-                        )
+                    if isinstance(data, dict):
+                        et = data.get("event_type")
+                        if isinstance(et, str):
+                            append_history_record(
+                                session_id=session_id,
+                                request_id=rid,
+                                channel_id=cid,
+                                role="assistant",
+                                event_type=et,
+                                content=data.get("content") or data.get("error") or "",
+                                timestamp=time.time(),
+                                extra={"event_payload": dict(data)},
+                            )
+                        if et == "chat.final":
+                            final_answer_content = str(data.get("content", ""))
+                        elif et == "chat.delta":
+                            final_answer_chunks.append(str(data.get("content", "")))
                     yield AgentResponseChunk(
                         request_id=rid,
                         channel_id=cid,
@@ -1303,6 +1367,21 @@ class JiuWenClaw:
         except asyncio.CancelledError:
             logger.info("[JiuWenClaw] 流式处理被中断: request_id=%s", rid)
             raise
+
+        if memory_mode == "cloud":
+            assistant_message = final_answer_content or "".join(final_answer_chunks)
+            after_ctx = MemoryHookContext(
+                session_id=request.session_id or "default",
+                request_id=request.request_id or "",
+                channel_id=request.channel_id,
+                agent_name=self._agent_name,
+                workspace_dir=self._workspace_dir,
+                assistant_message=assistant_message,
+                extra=request.params,
+            )
+            from jiuwenclaw.extensions.registry import ExtensionRegistry
+
+            await ExtensionRegistry.get_instance().trigger(AgentServerEvents.MEMORY_AFTER_CHAT, after_ctx)
 
         if request.params.get("mode", "plan") == "plan":
             # 终止 chunk

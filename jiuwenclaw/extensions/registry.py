@@ -4,7 +4,6 @@ from openjiuwen.core.runner.callback.framework import AsyncCallbackFramework
 
 from jiuwenclaw.extensions.callback_compat import unregister_callback_sync
 from jiuwenclaw.gateway.agent_client import AgentServerClient
-
 from jiuwenclaw.extensions.sdk.agent_server_client import AgentServerClientExtension
 from jiuwenclaw.extensions.sdk.crypto_utility import CryptoUtility
 from jiuwenclaw.extensions.types import ExtensionConfig
@@ -83,8 +82,14 @@ class ExtensionRegistry:
     def unregister(self, event: str, handler: Callable | None = None) -> None:
         unregister_callback_sync(self.callback_framework, event, handler)
 
-    async def trigger(self, event: str, **kwargs) -> None:
-        await self.callback_framework.trigger(event, **kwargs)
+    async def trigger(self, event: str, context: Any | None = None, **kwargs: Any) -> None:
+        """触发事件。约定由调用方传入的 context 承载回调副作用"""
+        if context is None and not kwargs:
+            await self.callback_framework.trigger(event)
+        elif context is not None:
+            await self.callback_framework.trigger(event, context, **kwargs)
+        else:
+            await self.callback_framework.trigger(event, **kwargs)
 
     @property
     def config(self) -> ExtensionConfig:

@@ -4,6 +4,7 @@
 
 from jiuwenclaw.schema.agent import AgentRequest, AgentResponse, AgentResponseChunk
 from jiuwenclaw.schema.events import AgentServerEvents, GatewayEvents
+from jiuwenclaw.schema.hooks_context import MemoryHookContext
 from jiuwenclaw.schema.message import Message
 
 __all__ = [
@@ -13,4 +14,5 @@ __all__ = [
     "AgentResponseChunk",
     "AgentServerEvents",
     "GatewayEvents",
+    "MemoryHookContext",
 ]

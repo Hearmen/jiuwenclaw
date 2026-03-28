@@ -322,7 +322,7 @@ Before outputting final response text, **you must call the following tools first
         return "\n".join(sections)
 
 
-def _tool_prompt(mode, language: str) -> str:
+def _tool_prompt(mode, language: str, include_memory_tools: bool = True) -> str:
     if language == "zh":
         if mode == "plan":
             todo_prompt = """### 任务记录与追踪 （一切用户要求必须追踪）
@@ -337,6 +337,21 @@ def _tool_prompt(mode, language: str) -> str:
 """
         else:
             todo_prompt = ""
+
+        memory_tools_prompt = """### 记忆系统
+
+| 工具名称 | 功能说明 |
+|---------|---------|
+| `memory_search` | 搜索历史记忆 |
+| `memory_get` | 读取记忆文件指定行 |
+| `read_memory` | 读取记忆文件 |
+| `write_memory` | 写入或追加记忆 |
+| `edit_memory` | 精确编辑记忆内容 |
+| `experience_retrieve` | 从任务记忆库中检索与当前任务相关的历史经验（跨会话） |
+| `experience_learn` | 记录关键发现并自动将任务条目提炼为可复用记忆 |
+| `experience_clear` | 清空 task-data.json 中存储的所有任务记忆 |
+
+""" if include_memory_tools else ""
 
         return f"""## 工具
 
@@ -374,19 +389,7 @@ def _tool_prompt(mode, language: str) -> str:
 |---------|---------|
 | `view_file` | 查看文本文件内容 |
 
-### 记忆系统
-
-| 工具名称 | 功能说明 |
-|---------|---------|
-| `memory_search` | 搜索历史记忆 |
-| `memory_get` | 读取记忆文件指定行 |
-| `read_memory` | 读取记忆文件 |
-| `write_memory` | 写入或追加记忆 |
-| `edit_memory` | 精确编辑记忆内容 |
-| `experience_retrieve` | 从任务记忆库中检索与当前任务相关的历史经验（跨会话） |
-| `experience_learn` | 记录关键发现并自动将任务条目提炼为可复用记忆 |
-| `experience_clear` | 清空 task-data.json 中存储的所有任务记忆 |
-
+{memory_tools_prompt}\
 ### 定时任务
 
 | 工具名称 | 功能说明 |
@@ -432,6 +435,21 @@ def _tool_prompt(mode, language: str) -> str:
         else:
             todo_prompt = ""
 
+        memory_tools_prompt = """### Memory System
+
+| Tool Name | Description |
+|-----------|-------------|
+| `memory_search` | Search historical memories |
+| `memory_get` | Read specified lines from a memory file |
+| `read_memory` | Read a memory file |
+| `write_memory` | Write or append to memory |
+| `edit_memory` | Edit memory content precisely |
+| `experience_retrieve` | Retrieve relevant past task memories and lessons (cross-session) |
+| `experience_learn` | Record a key finding and consolidate task entries into reusable memory |
+| `experience_clear` | Wipe all stored task memory from task-data.json |
+
+""" if include_memory_tools else ""
+
         return f"""# Tools
 
 Tools are built-in methods.
@@ -467,19 +485,7 @@ When the user requests code/scripts/config/tests that must be delivered **as fil
 |-----------|-------------|
 | `view_file` | View text file contents |
 
-### Memory System
-
-| Tool Name | Description |
-|-----------|-------------|
-| `memory_search` | Search historical memories |
-| `memory_get` | Read specified lines from a memory file |
-| `read_memory` | Read a memory file |
-| `write_memory` | Write or append to memory |
-| `edit_memory` | Edit memory content precisely |
-| `experience_retrieve` | Retrieve relevant past task memories and lessons (cross-session) |
-| `experience_learn` | Record a key finding and consolidate task entries into reusable memory |
-| `experience_clear` | Wipe all stored task memory from task-data.json |
-
+{memory_tools_prompt}\
 ### Scheduled Tasks
 
 | Tool Name | Description |
@@ -847,13 +853,21 @@ Be careful with your configuration, if changes are required, remember to restart
 """
 
 
-def build_system_prompt(mode: str, language: str, channel: str) -> str:
+def build_system_prompt(
+    mode: str,
+    language: str,
+    channel: str,
+    memory_block: Optional[str] = None,
+    memory_mode: str = "local",
+) -> str:
     """Build system prompt for the agent.
 
     Args:
         mode: plan or agent
         language: language for system prompt
         channel: channel
+        memory_block: externally injected memory content for cloud mode
+        memory_mode: local or cloud
 
     Returns:
         System prompt string
@@ -864,12 +878,20 @@ def build_system_prompt(mode: str, language: str, channel: str) -> str:
     system_prompt += _time_prompt(language) + '\n'
     system_prompt += _context_prompt(language) + '\n'
     system_prompt += _skills_prompt(language) + '\n'
-    system_prompt += _tool_prompt(mode, language) + '\n'
+    system_prompt += _tool_prompt(
+        mode,
+        language,
+        include_memory_tools=(memory_mode != "cloud"),
+    ) + '\n'
     system_prompt += _workspace_prompt(language) + '\n'
-    if channel == "corn":
-        system_prompt += _memory_prompt(language, is_cron=True) + '\n'
-    else:
-        system_prompt += _memory_prompt(language, is_cron=False) + '\n'
+    if memory_mode == "local":
+        if channel == "corn":
+            system_prompt += _memory_prompt(language, is_cron=True) + '\n'
+        else:
+            system_prompt += _memory_prompt(language, is_cron=False) + '\n'
+    elif memory_block:
+        title = "## 记忆内容:" if language == "zh" else "## Memory content:"
+        system_prompt += f"{title}\n\n{memory_block.strip()}\n"
 
     system_prompt += """\n---\n\n"""
     if mode == "plan":

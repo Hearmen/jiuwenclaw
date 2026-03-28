@@ -197,3 +197,10 @@ def is_memory_enabled() -> bool:
     config = _load_config()
     memory_config = config.get("memory", {})
     return memory_config.get("enabled", True)
+
+
+def get_memory_mode(config: Optional[Dict[str, Any]] = None) -> str:
+    """读取 ``memory.mode``：``cloud`` 或 ``local``（默认）。"""
+    memory_cfg = (config or {}).get("memory", {})
+    mode = str(memory_cfg.get("mode") or "local").strip().lower()
+    return "cloud" if mode == "cloud" else "local"

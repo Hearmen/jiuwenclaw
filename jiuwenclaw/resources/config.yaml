@@ -13,6 +13,9 @@ logging:
   agent_server: INFO
   full: INFO
 
+memory:
+  mode: local
+
 models:
   default:
       model_client_config:

@@ -19,6 +19,7 @@ from .config import (
     MemorySettings,
     create_memory_settings,
     is_memory_enabled,
+    get_memory_mode,
     get_embed_config,
     DEFAULT_WORKSPACE_DIR,
 )
@@ -83,6 +84,7 @@ __all__ = [
     "normalize_extra_memory_paths",
     "create_memory_settings",
     "is_memory_enabled",
+    "get_memory_mode",
     "get_embed_config",
     "DEFAULT_WORKSPACE_DIR",
     "LLMClient",
