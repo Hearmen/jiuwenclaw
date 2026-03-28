@@ -74,6 +74,10 @@ class MessageHandler(ABC):
             ChannelType.WHATSAPP.value,
             ChannelType.WECOM.value,
         }
+        # 使用 SessionMap（identity 四元组）的 channel 族：channel_id 等于 base 或为 base:<suffix>
+        self._session_map_channel_types = frozenset({
+            "feishu_enterprise",
+        })
         self._channel_states: Dict[str, ChannelControlState] = {}
         self._session_map = SessionMap()
 
@@ -151,7 +155,7 @@ class MessageHandler(ABC):
         # 否则从 config 加载默认值，并缓存
         state = self._get_channel_default_state(ch)
         identity_key = self._extract_identity_tuple(msg)
-        if identity_key:
+        if identity_key and self._channel_id_matches_session_map_types(str(ch or "")):
             state.session_id = self._session_map.get_session_id(*identity_key)
         self._channel_states[key] = state
         return state
@@ -191,6 +195,14 @@ class MessageHandler(ABC):
         if all(identity_parts):
             return (provider, chat_id, bot_id, user_id)
         return None
+
+    def _channel_id_matches_session_map_types(self, channel_id: str) -> bool:
+        """channel_id 是否属于 _session_map_channel_types 中某一族（精确匹配或 base: 前缀）."""
+        cid = str(channel_id or "").strip()
+        for base in self._session_map_channel_types:
+            if cid == base or cid.startswith(f"{base}:"):
+                return True
+        return False
 
     def _resolve_control_channel_type(self, msg: "Message") -> str:
         """Resolve control channel type key: prefer provider, fallback to channel_id."""
@@ -252,8 +264,9 @@ class MessageHandler(ABC):
 
         # \new_session：重置当前会话的 session_id
         if "/new_session" == text:
+            cid = str(getattr(msg, "channel_id", "") or "")
             identity_key = self._extract_identity_tuple(msg)
-            if identity_key:
+            if identity_key and self._channel_id_matches_session_map_types(cid):
                 new_sid = self._session_map.get_session_id(*identity_key, rotate=True)
             else:
                 new_sid = self._generate_channel_session_id(channel_type)
@@ -309,9 +322,10 @@ class MessageHandler(ABC):
             return
         state = self._get_or_create_channel_state(msg)
 
-        # 仅受控通道优先使用 provider/chat_id/bot_id/user_id 映射；其它通道保持原有行为。
+        # 仅 _session_map_channel_types 中的通道族使用 SessionMap；其它受控通道仍按 config/state 与入站 session_id。
+        cid = str(getattr(msg, "channel_id", "") or "")
         identity_key = self._extract_identity_tuple(msg)
-        if identity_key:
+        if identity_key and self._channel_id_matches_session_map_types(cid):
             sid = self._session_map.get_session_id(*identity_key)
             state.session_id = sid
             msg.session_id = sid
