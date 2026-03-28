@@ -403,8 +403,32 @@ class MessageHandler(ABC):
 
 
     @staticmethod
-    def _response_to_message(resp: "AgentResponse", session_id: str | None) -> "Message":
+    def _merge_agent_metadata(
+        request_metadata: dict[str, Any] | None,
+        response_metadata: dict[str, Any] | None,
+    ) -> dict[str, Any] | None:
+        """合并 Agent 响应 metadata 与网关请求 metadata。
+
+        send_push / 工具链返回的响应常不带 metadata，通道（如钉钉 batchSend）需要
+        请求侧的 dingtalk_sender_id、conversation_type 等；响应中有同名字段时优先响应。
+        """
+        req_md = request_metadata or {}
+        resp_md = response_metadata or {}
+        if not req_md and not resp_md:
+            return None
+        merged: dict[str, Any] = {**req_md, **resp_md}
+        return merged
+
+    @staticmethod
+    def _response_to_message(
+        resp: "AgentResponse",
+        session_id: str | None,
+        *,
+        request_metadata: dict[str, Any] | None = None,
+    ) -> "Message":
         from jiuwenclaw.schema.message import Message, EventType
+
+        metadata = MessageHandler._merge_agent_metadata(request_metadata, resp.metadata)
 
         # 检查 payload 中是否包含 event_type，如果包含则创建事件消息
         event_type = None
@@ -424,7 +448,7 @@ class MessageHandler(ABC):
                         ok=True,
                         payload=resp.payload,
                         event_type=event_type,
-                        metadata=resp.metadata,
+                        metadata=metadata,
                     )
                 except ValueError:
                     # 不是有效的 EventType，继续作为普通响应处理
@@ -440,7 +464,7 @@ class MessageHandler(ABC):
             timestamp=time.time(),
             ok=resp.ok,
             payload=resp.payload,
-            metadata=resp.metadata,
+            metadata=metadata,
         )
 
     @staticmethod
@@ -500,7 +524,9 @@ class MessageHandler(ABC):
         """执行单次非流式 Agent 请求并将结果写入 robot_messages（供串行或后台任务复用）。"""
         try:
             resp = await self._agent_client.send_request(req)
-            out = self._response_to_message(resp, session_id=msg.session_id)
+            out = self._response_to_message(
+                resp, session_id=msg.session_id, request_metadata=req.metadata
+            )
             await self.publish_robot_messages(out)
             logger.info(
                 "[MessageHandler] Agent 响应已写入 robot_messages: request_id=%s channel_id=%s",
@@ -695,6 +721,7 @@ class MessageHandler(ABC):
         这个方法被包装为 Task，在后台运行，可以被随时取消。
         """
         cancelled = False
+        has_processing_status_false = False  # 追踪 AgentServer 是否已发送 processing_status=false
         try:
             async for chunk in self._agent_client.send_request_stream(req):
                 # 跳过终止 chunk（仅作为流结束信号，不含实际数据）
@@ -705,6 +732,13 @@ class MessageHandler(ABC):
                     )
                     continue
                 # 携带 request metadata，供 Feishu/Xiaoyi 用平台身份回发
+                # 检查是否是 processing_status=false 事件
+                payload = chunk.payload or {}
+                if isinstance(payload, dict):
+                    if payload.get("event_type") == "chat.processing_status":
+                        if payload.get("is_processing") is False:
+                            has_processing_status_false = True
+
                 out = self._chunk_to_message(
                     chunk, session_id=session_id, metadata=req.metadata
                 )
@@ -733,7 +767,8 @@ class MessageHandler(ABC):
                 req.request_id,
             )
             # 所有流式任务正常结束后，通知前端全部处理完成
-            if not cancelled and not self._stream_tasks:
+            # 只有当 AgentServer 没有发送过 processing_status=false 时才发送
+            if not cancelled and not self._stream_tasks and not has_processing_status_false:
                 await self._send_processing_status(
                     req.request_id, session_id, req.channel_id, is_processing=False,
                 )

@@ -26,7 +26,7 @@ dependencies = [
     "python-telegram-bot>=20.0",
     "discord.py>=2.4.0",
     "dingtalk-stream>=0.24.3",
-    "wecom-aibot-sdk>=1.0.0",
+    "wecom-aibot-sdk>=1.0.5",
     "python-socks>=2.8.1",
     "greenlet>=3.3.2",
     "skillnet-ai==0.0.16",

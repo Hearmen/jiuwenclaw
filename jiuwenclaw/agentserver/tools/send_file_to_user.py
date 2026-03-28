@@ -56,45 +56,69 @@ class SendFileToolkit:
         """
         if isinstance(abs_file_path_list, str):
             try:
-                abs_file_path_list = json.loads(abs_file_path_list)
-            except json.decoder.JSONDecodeError as e:
-                logger.info(f"send_file args error: {e}")
-                raise TypeError(f"[SendFileToolkit] send_file args error.") from e
+                parsed = json.loads(abs_file_path_list)
+                if isinstance(parsed, list):
+                    abs_file_path_list = parsed
+                elif isinstance(parsed, str):
+                    abs_file_path_list = [parsed]
+                else:
+                    abs_file_path_list = [abs_file_path_list]
+            except (TypeError, ValueError):
+                abs_file_path_list = [abs_file_path_list]
 
-        not_exist_files = [
-            f for f in abs_file_path_list if not self.check_file_exists(f)
-        ]
-        if not_exist_files:
-            logger.warning(
-                "[SendFileToolkit] send_file 文件不存在 session_id=%s files=%s",
-                self.session_id,
-                not_exist_files,
-            )
-            return f"发送文件失败，以下文件不存在: {not_exist_files}"
+        if not isinstance(abs_file_path_list, list):
+            abs_file_path_list = [str(abs_file_path_list)]
+
+        valid_files = []
+        missing_files = []
+        for fp in abs_file_path_list:
+            fp = str(fp).strip()
+            if not fp:
+                continue
+            if os.path.isfile(fp):
+                valid_files.append(fp)
+            else:
+                missing_files.append(fp)
+                logger.warning("[SendFileToolkit] 文件不存在: %s", fp)
+
+        if not valid_files:
+            msg_parts = ["发送文件失败：所有文件均不存在"]
+            for mf in missing_files:
+                msg_parts.append(f"  - {mf}")
+            return "\n".join(msg_parts)
 
         logger.info(
-            "[SendFileToolkit] send_file 开始 session_id=%s 文件数=%d",
+            "[SendFileToolkit] send_file 开始 session_id=%s 有效文件=%d 缺失=%d",
             self.session_id,
-            len(abs_file_path_list),
+            len(valid_files),
+            len(missing_files),
         )
 
         try:
             server = AgentWebSocketServer.get_instance()
+            files_payload = [
+                {
+                    "path": file_path,
+                    "name": os.path.basename(file_path),
+                }
+                for file_path in valid_files
+            ]
             msg = {
                 "request_id": self.request_id,
                 "channel_id": self.channel_id,
                 "payload": {
                     "event_type": "chat.file",
-                    "files": abs_file_path_list,
+                    "files": files_payload,
                 },
                 "is_complete": False,
             }
             await server.send_push(msg)
-            logger.info(
-                "[SendFileToolkit] send_file 完成 session_id=%s",
-                self.session_id,
-            )
-            return f"已提交 {len(abs_file_path_list)} 个文件的发送请求"
+            result_parts = [f"成功发送 {len(valid_files)} 个文件"]
+            if missing_files:
+                result_parts.append("以下文件不存在，未发送：")
+                for mf in missing_files:
+                    result_parts.append(f"  - {mf}")
+            return "\n".join(result_parts)
         except Exception as e:
             logger.exception(
                 "[SendFileToolkit] send_file 失败 session_id=%s error=%s",
@@ -102,41 +126,6 @@ class SendFileToolkit:
                 str(e),
             )
             return f"提交文件失败: {str(e)}"
-
-    @staticmethod
-    def check_file_exists(self, file_path: str) -> bool:
-        """Check if a file exists at the given path.
-
-        Args:
-            file_path: Absolute path of the file to check.
-
-        Returns:
-            True if file exists and is a valid file, False otherwise.
-        """
-        if not file_path:
-            return False
-
-        if not os.path.exists(file_path):
-            logger.warning(
-                "[SendFileToolkit] check_file_exists 文件不存在 path=%s",
-                file_path,
-            )
-            return False
-
-        if not os.path.isfile(file_path):
-            logger.warning(
-                "[SendFileToolkit] check_file_exists 路径不是文件 path=%s",
-                file_path,
-            )
-            return False
-
-        file_size = os.path.getsize(file_path)
-        logger.info(
-            "[SendFileToolkit] check_file_exists 文件存在 path=%s size=%d",
-            file_path,
-            file_size,
-        )
-        return True
 
     def get_tools(self) -> List[Tool]:
         """Return tools for registration in Runner.

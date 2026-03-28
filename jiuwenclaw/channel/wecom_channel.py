@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import logging
 import asyncio
+import os
 import re
 import time
 from typing import Any, Callable
@@ -38,6 +39,12 @@ class WecomConfig(BaseModel):
     allow_from: list[str] = Field(default_factory=list)
     enable_streaming: bool = True
     send_thinking_message: bool = True
+    # 文件处理配置
+    max_download_size: int = 100 * 1024 * 1024  # 最大下载文件大小（默认 100MB）
+    download_timeout: int = 60  # 下载超时时间（秒）
+    send_file_allowed: bool = True  # 是否启用文件上传功能
+    enable_file_download: bool = True  # 是否启用文件下载功能
+    workspace_dir: str = ""  # 工作空间目录
 
 
 class WecomChannel(BaseChannel):
@@ -58,6 +65,10 @@ class WecomChannel(BaseChannel):
         self._connect_task: asyncio.Task | None = None
         # 流式回复：wecom_req_id -> {frame, stream_id, accumulated_content}
         self._pending_streams: dict[str, dict[str, Any]] = {}
+        # 文件服务
+        self._file_service: Any = None
+        # 按 request_id 记录已发送文件路径，避免重复发送
+        self._sent_file_paths_by_req: dict[str, set[str]] = {}
 
     @property
     def channel_id(self) -> str:
@@ -327,6 +338,15 @@ class WecomChannel(BaseChannel):
         if msg.event_type == EventType.CHAT_PROCESSING_STATUS:
             return
 
+        # 提取事件类型
+        payload = msg.payload if isinstance(msg.payload, dict) else {}
+        event_type = getattr(msg.event_type, "value", None) or payload.get("event_type") or ""
+
+        # 处理文件发送事件（chat.media 与 chat.file 统一走文件发送路径）
+        if event_type in ("chat.file", "chat.media"):
+            await self._send_file_message(msg)
+            return
+
         # 心跳/系统事件
         if msg.event_type == EventType.HEARTBEAT_RELAY:
             chatid = self._extract_chatid(msg)
@@ -441,9 +461,44 @@ class WecomChannel(BaseChannel):
         async def on_text(frame: dict) -> None:
             await self._handle_incoming_message(frame)
 
+        async def on_image(frame: dict) -> None:
+            await self._handle_image_message(frame)
+
+        async def on_file(frame: dict) -> None:
+            await self._handle_file_message(frame)
+
+        async def on_voice(frame: dict) -> None:
+            await self._handle_voice_message(frame)
+
+        async def on_video(frame: dict) -> None:
+            await self._handle_video_message(frame)
+
+        async def on_mixed(frame: dict) -> None:
+            await self._handle_mixed_message(frame)
+
         client.on("message.text", on_text)
+        client.on("message.image", on_image)
+        client.on("message.file", on_file)
+        client.on("message.voice", on_voice)
+        client.on("message.video", on_video)
+        client.on("message.mixed", on_mixed)
 
         self._ws_client = client
+
+        # 初始化文件服务
+        try:
+            from jiuwenclaw.channel.wecom_file_service import WecomFileService
+            workspace_dir = self.config.workspace_dir or os.path.expanduser("~/.jiuwenclaw/agent/workspace")
+            self._file_service = WecomFileService(
+                ws_client=client,
+                max_download_size=self.config.max_download_size,
+                download_timeout=self.config.download_timeout,
+                workspace_dir=workspace_dir,
+            )
+            logger.info("WecomChannel 文件服务已初始化")
+        except Exception as e:
+            logger.warning(f"WecomChannel 文件服务初始化失败: {e}")
+            self._file_service = None
 
         try:
             await client.connect()
@@ -508,6 +563,345 @@ class WecomChannel(BaseChannel):
             self._ws_client = None
 
         logger.info("WecomChannel 已停止")
+
+    # ==================== 文件消息处理方法 ====================
+
+    async def _handle_image_message(self, frame: dict) -> None:
+        """处理图片消息"""
+        if not self.config.enable_file_download:
+            logger.debug("WecomChannel 文件下载功能已禁用")
+            return
+
+        if not self._file_service:
+            logger.warning("WecomChannel 文件服务未初始化")
+            return
+
+        body = frame.get("body", {})
+        image_data = body.get("image", {})
+        url = image_data.get("url", "")
+        aes_key = image_data.get("aeskey", "")
+
+        if not url or not aes_key:
+            logger.warning("WecomChannel 图片消息缺少 url 或 aeskey")
+            return
+
+        # 提取消息信息
+        chatid, req_id, _ = self._extract_frame_info(frame)
+        message_id = req_id or f"img_{int(time.time() * 1000)}"
+
+        # 下载图片
+        file_info = await self._file_service.download_file(
+            url=url,
+            aes_key=aes_key,
+            message_id=message_id,
+            file_category="images",
+        )
+
+        if not file_info:
+            content = "[图片: 下载失败]"
+        else:
+            content = "[图片]"
+            logger.info(f"WecomChannel 图片下载成功: {file_info['path']}")
+
+        # 构建消息并发送
+        await self._send_file_message_to_handler(frame, content, [file_info] if file_info else None)
+
+    async def _handle_file_message(self, frame: dict) -> None:
+        """处理文件消息"""
+        if not self.config.enable_file_download:
+            logger.debug("WecomChannel 文件下载功能已禁用")
+            return
+
+        if not self._file_service:
+            logger.warning("WecomChannel 文件服务未初始化")
+            return
+
+        body = frame.get("body", {})
+        file_data = body.get("file", {})
+        url = file_data.get("url", "")
+        aes_key = file_data.get("aeskey", "")
+        filename = file_data.get("filename", "unknown_file")
+
+        if not url or not aes_key:
+            logger.warning("WecomChannel 文件消息缺少 url 或 aeskey")
+            return
+
+        # 提取消息信息
+        chatid, req_id, _ = self._extract_frame_info(frame)
+        message_id = req_id or f"file_{int(time.time() * 1000)}"
+
+        # 下载文件
+        file_info = await self._file_service.download_file(
+            url=url,
+            aes_key=aes_key,
+            message_id=message_id,
+            file_category="files",
+            filename=filename,
+        )
+
+        if not file_info:
+            content = f"[文件: {filename} 下载失败]"
+        else:
+            content = f"[文件: {filename}]"
+            logger.info(f"WecomChannel 文件下载成功: {file_info['path']}")
+
+        # 构建消息并发送
+        await self._send_file_message_to_handler(frame, content, [file_info] if file_info else None)
+
+    async def _handle_voice_message(self, frame: dict) -> None:
+        """处理语音消息"""
+        if not self.config.enable_file_download:
+            logger.debug("WecomChannel 文件下载功能已禁用")
+            return
+
+        if not self._file_service:
+            logger.warning("WecomChannel 文件服务未初始化")
+            return
+
+        body = frame.get("body", {})
+        voice_data = body.get("voice", {})
+        url = voice_data.get("url", "")
+        aes_key = voice_data.get("aeskey", "")
+
+        if not url or not aes_key:
+            logger.warning("WecomChannel 语音消息缺少 url 或 aeskey")
+            return
+
+        # 提取消息信息
+        chatid, req_id, _ = self._extract_frame_info(frame)
+        message_id = req_id or f"voice_{int(time.time() * 1000)}"
+
+        # 下载语音
+        file_info = await self._file_service.download_file(
+            url=url,
+            aes_key=aes_key,
+            message_id=message_id,
+            file_category="voice",
+        )
+
+        if not file_info:
+            content = "[语音: 下载失败]"
+        else:
+            content = "[语音]"
+            logger.info(f"WecomChannel 语音下载成功: {file_info['path']}")
+
+        # 构建消息并发送
+        await self._send_file_message_to_handler(frame, content, [file_info] if file_info else None)
+
+    async def _handle_video_message(self, frame: dict) -> None:
+        """处理视频消息"""
+        if not self.config.enable_file_download:
+            logger.debug("WecomChannel 文件下载功能已禁用")
+            return
+
+        if not self._file_service:
+            logger.warning("WecomChannel 文件服务未初始化")
+            return
+
+        body = frame.get("body", {})
+        video_data = body.get("video", {})
+        url = video_data.get("url", "")
+        aes_key = video_data.get("aeskey", "")
+
+        if not url or not aes_key:
+            logger.warning("WecomChannel 视频消息缺少 url 或 aeskey")
+            return
+
+        # 提取消息信息
+        chatid, req_id, _ = self._extract_frame_info(frame)
+        message_id = req_id or f"video_{int(time.time() * 1000)}"
+
+        # 下载视频
+        file_info = await self._file_service.download_file(
+            url=url,
+            aes_key=aes_key,
+            message_id=message_id,
+            file_category="video",
+        )
+
+        if not file_info:
+            content = "[视频: 下载失败]"
+        else:
+            content = "[视频]"
+            logger.info(f"WecomChannel 视频下载成功: {file_info['path']}")
+
+        # 构建消息并发送
+        await self._send_file_message_to_handler(frame, content, [file_info] if file_info else None)
+
+    async def _handle_mixed_message(self, frame: dict) -> None:
+        """处理图文混排消息"""
+        if not self.config.enable_file_download:
+            logger.debug("WecomChannel 文件下载功能已禁用")
+            # 仍然处理文本部分
+            await self._handle_incoming_message(frame)
+            return
+
+        if not self._file_service:
+            logger.warning("WecomChannel 文件服务未初始化")
+            await self._handle_incoming_message(frame)
+            return
+
+        body = frame.get("body", {})
+        mixed_data = body.get("mixed", {})
+        msg_items = mixed_data.get("msgitem", [])
+
+        if not msg_items:
+            await self._handle_incoming_message(frame)
+            return
+
+        # 提取文本和图片
+        text_parts = []
+        file_infos = []
+
+        chatid, req_id, _ = self._extract_frame_info(frame)
+        message_id = req_id or f"mixed_{int(time.time() * 1000)}"
+
+        for idx, item in enumerate(msg_items):
+            item_type = item.get("msgtype", "")
+            
+            if item_type == "text":
+                text_content = item.get("text", {}).get("content", "")
+                if text_content:
+                    text_parts.append(text_content)
+            
+            elif item_type == "image":
+                image_data = item.get("image", {})
+                url = image_data.get("url", "")
+                aes_key = image_data.get("aeskey", "")
+                
+                if url and aes_key:
+                    file_info = await self._file_service.download_file(
+                        url=url,
+                        aes_key=aes_key,
+                        message_id=f"{message_id}_{idx}",
+                        file_category="images",
+                    )
+                    if file_info:
+                        file_infos.append(file_info)
+
+        # 合并文本
+        content = " ".join(text_parts) if text_parts else "[图文混排]"
+        
+        # 构建消息并发送
+        await self._send_file_message_to_handler(frame, content, file_infos if file_infos else None)
+
+    async def _send_file_message_to_handler(
+        self, frame: dict, content: str, files: list[dict] | None
+    ) -> None:
+        """将文件消息发送到消息处理器"""
+        chatid, req_id, _ = self._extract_frame_info(frame)
+        
+        if not chatid:
+            logger.warning("WecomChannel 无法从 frame 提取 chatid，跳过文件消息")
+            return
+
+        # 权限检查
+        if not self.is_allowed(chatid):
+            logger.warning("WecomChannel 发送者 %s 未被允许", chatid)
+            return
+
+        logger.info("WecomChannel 收到文件消息: chatid=%s content=%s", chatid, content[:50])
+
+        req_id_final = req_id or f"wecom_{int(time.time() * 1000)}"
+
+        # 构建消息
+        params = {"content": content, "query": content}
+        if files:
+            params["files"] = files
+
+        msg = Message(
+            id=req_id_final,
+            type="req",
+            channel_id=self.name,
+            session_id=chatid,
+            params=params,
+            timestamp=time.time(),
+            ok=True,
+            req_method=ReqMethod.CHAT_SEND,
+            is_stream=True,
+            metadata={
+                "wecom_chat_id": chatid,
+                "wecom_req_id": req_id_final,
+            },
+        )
+
+        if self._message_callback:
+            self._message_callback(msg)
+        else:
+            await self.bus.route_user_message(msg)
+
+    # ==================== 文件发送方法 ====================
+
+    async def _send_file_message(self, msg: Message) -> None:
+        """发送文件消息"""
+        if not self._file_service or not self.config.send_file_allowed:
+            logger.warning("WecomChannel 文件发送功能未启用")
+            return
+
+        if not self._ws_client or not getattr(self._ws_client, "is_connected", False):
+            logger.warning("WecomChannel 未连接，跳过文件发送")
+            return
+
+        payload = msg.payload if isinstance(msg.payload, dict) else {}
+        files = payload.get("files", [])
+        if not files:
+            return
+
+        # 提取 chatid
+        metadata = msg.metadata or {}
+        chatid = metadata.get("wecom_chat_id") or ""
+        if not chatid:
+            chatid = getattr(msg, "session_id", None) or msg.id or ""
+        
+        if not chatid:
+            logger.warning("WecomChannel 文件发送: 未找到接收者")
+            return
+
+        # 获取当前 request_id 用于去重
+        request_id = getattr(msg, "id", "") or ""
+        if request_id not in self._sent_file_paths_by_req:
+            self._sent_file_paths_by_req[request_id] = set()
+
+        for file_info in files:
+            file_path = file_info if isinstance(file_info, str) else file_info.get("path", "")
+            if not file_path or not os.path.isfile(file_path):
+                logger.warning(f"WecomChannel 文件发送: 文件不存在 {file_path}")
+                continue
+
+            # 检查是否已发送
+            if file_path in self._sent_file_paths_by_req[request_id]:
+                continue
+
+            # 确定媒体类型
+            media_type = self._file_service.get_media_type_for_file(file_path)
+
+            try:
+                # 上传文件
+                media_id = await self._file_service.upload_file(file_path, media_type)
+                if not media_id:
+                    logger.error(f"WecomChannel 文件上传失败: {file_path}")
+                    continue
+
+                # 发送媒体消息
+                await self._ws_client.send_media_message(
+                    chatid=chatid,
+                    media_type=media_type,
+                    media_id=media_id,
+                )
+
+                # 记录已发送
+                self._sent_file_paths_by_req[request_id].add(file_path)
+                logger.info(f"WecomChannel 文件发送成功: {file_path} -> {chatid}")
+
+            except Exception as e:
+                logger.error(f"WecomChannel 文件发送失败: {file_path}, error: {e}")
+
+        # 清理过期的去重记录
+        if len(self._sent_file_paths_by_req) > 100:
+            # 删除最早的 50 个
+            keys_to_remove = list(self._sent_file_paths_by_req.keys())[:50]
+            for key in keys_to_remove:
+                del self._sent_file_paths_by_req[key]
 
     def get_metadata(self) -> ChannelMetadata:
         return ChannelMetadata(

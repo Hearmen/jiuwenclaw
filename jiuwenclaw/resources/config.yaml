@@ -249,6 +249,7 @@ channels:
     enable_streaming: true
     send_thinking_message: false
     enabled: false
+    send_file_allowed: true
 
 # ========== 细粒度权限管控 ==========
 #
