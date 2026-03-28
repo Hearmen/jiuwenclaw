@@ -538,6 +538,23 @@ Available skills:
 """
 
 
+def _cross_session_history_fallback_prompt(language: str) -> str:
+    """跨会话 history.json 检索说明：放在 memory 段之后，不作为记忆体系正文。"""
+    if language == "zh":
+        return """## **历史信息检索**：
+在回答任何关于历史事件、日期、人物、过去对话的问题时，
+如果记忆中没有相关信息或不足以回答，则需要使用跨会话检索聊天原文。
+阅读 skill **`cross-channel-history-retrieval`** 的 `SKILL.md`，
+不要用猜测代替检索结果。
+"""
+    return """## **Historical information retrieval**: 
+For questions about past events, dates, people, or earlier conversations, 
+if memory lacks relevant information or is insufficient, retrieve verbatim chat across sessions.
+Read skill **`cross-channel-history-retrieval`** `SKILL.md` 
+Do not substitute guessing for retrieved facts.
+"""
+
+
 def _context_prompt(language: str) -> str:
     if language == "zh":
         return """## 隐藏消息
@@ -893,6 +910,7 @@ def build_system_prompt(
         title = "## 记忆内容:" if language == "zh" else "## Memory content:"
         system_prompt += f"{title}\n\n{memory_block.strip()}\n"
 
+    system_prompt += _cross_session_history_fallback_prompt(language) + '\n'
     system_prompt += """\n---\n\n"""
     if mode == "plan":
         system_prompt += _todo_prompt(language) + '\n'
