@@ -8,6 +8,8 @@ import '../ChatPanel/ChatPanel.css';
 interface FileViewerProps {
   filePath: string;
   fileName: string;
+  /** 路径未变时递增，用于强制重新拉取磁盘内容（如会话页「刷新」） */
+  reloadNonce?: number;
 }
 
 function sessionIdFromAgentPath(filePath: string): string {
@@ -15,7 +17,7 @@ function sessionIdFromAgentPath(filePath: string): string {
   return m ? m[0] : 'file';
 }
 
-export function FileViewer({ filePath, fileName }: FileViewerProps) {
+export function FileViewer({ filePath, fileName, reloadNonce = 0 }: FileViewerProps) {
   const { t } = useTranslation();
   const [content, setContent] = useState<string>('');
   const [draftContent, setDraftContent] = useState<string>('');
@@ -83,7 +85,7 @@ export function FileViewer({ filePath, fileName }: FileViewerProps) {
       try {
         const encodedPath = encodeURIComponent(filePath);
         const url = `/file-api/file-content?path=${encodedPath}`;
-        const response = await fetch(url);
+        const response = await fetch(url, { cache: 'no-store' });
         
         if (!response.ok) {
           const errorData = await response.text();
@@ -102,7 +104,7 @@ export function FileViewer({ filePath, fileName }: FileViewerProps) {
     };
 
     loadFile();
-  }, [filePath, fileName, isPreviewable]);
+  }, [filePath, fileName, isPreviewable, reloadNonce]);
 
   useEffect(() => {
     if (isHistoryJson) {

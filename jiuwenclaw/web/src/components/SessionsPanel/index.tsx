@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { FileViewer } from '../AgentPanel/FileViewer';
 import { containsIgnoredDirectory } from '../../features/fileTreeFilters';
@@ -25,6 +25,21 @@ interface SessionFileItem {
 
 interface ListFilesResponse {
   files?: unknown[];
+}
+
+/** list-files 在 Windows 上可能返回反斜杠 path，与前端字面量比较前需统一 */
+function normalizeWorkspacePath(p: string): string {
+  return p.replace(/\\/g, '/').replace(/\/+/g, '/').trim();
+}
+
+function pickNextSelectedSessionId(
+  prev: string | null,
+  sessionRows: string[],
+  currentChatSessionId: string
+): string | null {
+  if (prev && sessionRows.includes(prev)) return prev;
+  if (currentChatSessionId && sessionRows.includes(currentChatSessionId)) return currentChatSessionId;
+  return sessionRows[0] ?? null;
 }
 
 function formatDateTime(date: Date): string {
@@ -171,49 +186,39 @@ export function SessionsPanel({
   const [loadingFiles, setLoadingFiles] = useState(false);
   const [filesError, setFilesError] = useState<string | null>(null);
   const [selectedFile, setSelectedFile] = useState<SessionFileItem | null>(null);
+  const [filePreviewReloadNonce, setFilePreviewReloadNonce] = useState(0);
 
-  const loadSessions = async () => {
-    setLoadingSessions(true);
-    try {
-      const payload = await webRequest<SessionListResponse>('session.list', { limit: 20 });
-      const rows = Array.isArray(payload?.sessions) ? toSessionIds(payload.sessions) : [];
-      setSessions(rows);
-      setSessionsError(null);
-      setSelectedSessionId((prev) => {
-        if (prev && rows.includes(prev)) return prev;
-        if (currentSessionId && rows.includes(currentSessionId)) return currentSessionId;
-        return rows[0] ?? null;
-      });
-    } catch (error) {
-      console.error('Failed to load sessions:', error);
-      setSessions([]);
-      setSessionsError(t('sessions.errors.loadSessions'));
-      setSelectedSessionId(null);
-    } finally {
-      setLoadingSessions(false);
-    }
-  };
+  const selectedFileRef = useRef<SessionFileItem | null>(null);
+  selectedFileRef.current = selectedFile;
+  const selectedSessionIdRef = useRef<string | null>(selectedSessionId);
+  selectedSessionIdRef.current = selectedSessionId;
+  const currentSessionIdRef = useRef(currentSessionId);
+  currentSessionIdRef.current = currentSessionId;
 
-  useEffect(() => {
-    void loadSessions();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [t]);
+  const loadSessionFilesForSession = useCallback(
+    async (
+      sessionId: string | null,
+      options?: { preserveSelectionPath?: string | null }
+    ) => {
+      const preservePath = options?.preserveSelectionPath;
+      const preserve =
+        typeof preservePath === 'string' && preservePath.length > 0;
 
-  useEffect(() => {
-    if (!selectedSessionId) {
-      setFiles([]);
-      setFilesError(null);
-      setSelectedFile(null);
-      return;
-    }
-    const loadFiles = async () => {
+      if (!sessionId) {
+        setFiles([]);
+        setFilesError(null);
+        setSelectedFile(null);
+        return;
+      }
       setLoadingFiles(true);
       setFilesError(null);
-      setSelectedFile(null);
+      if (!preserve) {
+        setSelectedFile(null);
+      }
       try {
         const fetchDirEntries = async (dir: string, depth: number): Promise<SessionFileItem[]> => {
           const encodedDir = encodeURIComponent(dir);
-          const resp = await fetch(`/file-api/list-files?dir=${encodedDir}`);
+          const resp = await fetch(`/file-api/list-files?dir=${encodedDir}`, { cache: 'no-store' });
           if (!resp.ok) {
             const text = await resp.text();
             throw new Error(`HTTP ${resp.status}: ${text.substring(0, 120)}`);
@@ -234,19 +239,78 @@ export function SessionsPanel({
           return result;
         };
 
-        const rootDir = `agent/sessions/${selectedSessionId}`;
+        const rootDir = `agent/sessions/${sessionId}`;
         const rows = await fetchDirEntries(rootDir, 0);
         setFiles(rows);
+        if (preserve && preservePath) {
+          const np = normalizeWorkspacePath(preservePath);
+          const match = rows.find(
+            (f) => !f.isDirectory && normalizeWorkspacePath(f.path) === np
+          );
+          if (match) {
+            setSelectedFile(match);
+            setFilePreviewReloadNonce((n) => n + 1);
+          } else {
+            const prev = selectedFileRef.current;
+            if (prev && normalizeWorkspacePath(prev.path) === np) {
+              setFilePreviewReloadNonce((n) => n + 1);
+            } else {
+              setSelectedFile(null);
+            }
+          }
+        }
       } catch (error) {
         console.error('Failed to load session files:', error);
         setFiles([]);
         setFilesError(t('sessions.errors.loadFiles'));
+        setSelectedFile(null);
       } finally {
         setLoadingFiles(false);
       }
-    };
-    void loadFiles();
-  }, [selectedSessionId, t]);
+    },
+    [t]
+  );
+
+  const loadSessions = useCallback(async () => {
+    setLoadingSessions(true);
+    try {
+      const payload = await webRequest<SessionListResponse>('session.list', { limit: 20 });
+      const rows = Array.isArray(payload?.sessions) ? toSessionIds(payload.sessions) : [];
+      setSessions(rows);
+      setSessionsError(null);
+      // 必须在 setState 之外同步算出 nextSelected：await 之后的函数式 setState 在 React 18+ 可能延后执行，
+      // 若依赖 updater 内对 nextSelected 的赋值，此处仍为 null，会误调 loadSessionFilesForSession(null) 并清空文件列表。
+      const nextSelected = pickNextSelectedSessionId(
+        selectedSessionIdRef.current,
+        rows,
+        currentSessionIdRef.current
+      );
+      setSelectedSessionId(nextSelected);
+      const openPath = selectedFileRef.current?.path ?? null;
+      const nOpen = openPath ? normalizeWorkspacePath(openPath) : '';
+      const sessionPrefix = nextSelected
+        ? normalizeWorkspacePath(`agent/sessions/${nextSelected}/`)
+        : '';
+      const underNext = Boolean(nOpen && sessionPrefix && nOpen.startsWith(sessionPrefix));
+      await loadSessionFilesForSession(
+        nextSelected,
+        underNext ? { preserveSelectionPath: openPath } : undefined
+      );
+    } catch (error) {
+      console.error('Failed to load sessions:', error);
+      setSessions([]);
+      setSessionsError(t('sessions.errors.loadSessions'));
+      setSelectedSessionId(null);
+    } finally {
+      setLoadingSessions(false);
+    }
+  }, [t, loadSessionFilesForSession]);
+
+  useEffect(() => {
+    void loadSessions();
+    // loadSessions 随 currentSessionId / t 更新；此处仅希望在语言切换时与首屏拉列表，避免把 loadSessions 放进 deps 引发多余轮询
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [t]);
 
   const handleDeleteSession = async (sessionId: string) => {
     const displayLabel = parseSessionDisplayLabel(sessionId, t);
@@ -343,7 +407,11 @@ export function SessionsPanel({
                           ? 'border-[var(--border-accent)] bg-accent-subtle text-text'
                           : 'border-transparent hover:bg-secondary/40 text-text-muted hover:text-text'
                       }`}
-                      onClick={() => setSelectedSessionId(sessionId)}
+                      onClick={() => {
+                        if (selectedSessionId === sessionId) return;
+                        setSelectedSessionId(sessionId);
+                        void loadSessionFilesForSession(sessionId);
+                      }}
                       title={`${parseSessionDisplayLabel(sessionId, t)} (${sessionId})`}
                     >
                       <span className="truncate block">{parseSessionDisplayLabel(sessionId, t)}</span>
@@ -393,7 +461,9 @@ export function SessionsPanel({
                           key={file.path}
                           type="button"
                           className={`w-full text-left px-3 py-2 rounded-lg border text-sm transition-colors ${
-                            canPreview && selectedFile?.path === file.path
+                            canPreview &&
+                              normalizeWorkspacePath(selectedFile?.path ?? '') ===
+                                normalizeWorkspacePath(file.path)
                               ? 'border-[var(--border-accent)] bg-accent-subtle text-text'
                               : 'border-transparent text-text-muted'
                           } ${canPreview ? 'hover:bg-secondary/40 hover:text-text' : 'cursor-default'}`}
@@ -428,7 +498,11 @@ export function SessionsPanel({
             </div>
             <div className="flex-1 min-h-0">
               {selectedFile ? (
-                <FileViewer filePath={selectedFile.path} fileName={selectedFile.name} />
+                <FileViewer
+                  filePath={selectedFile.path}
+                  fileName={selectedFile.name}
+                  reloadNonce={filePreviewReloadNonce}
+                />
               ) : (
                 <div className="h-full flex items-center justify-center text-text-muted">
                   {t('sessions.selectFile')}
