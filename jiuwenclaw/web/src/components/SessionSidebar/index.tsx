@@ -5,6 +5,7 @@
  */
 
 import { useTranslation } from 'react-i18next';
+import { FEATURE_APP_UPDATER_UI } from '../../featureFlags';
 import { OffloadFilesWidget } from './OffloadFilesWidget';
 import './SessionSidebar.css';
 
@@ -135,16 +136,18 @@ export function SessionSidebar({
           </svg>
           {t('nav.logs')}
         </button>
-        <button
-          onClick={() => onNavigate('updatepanel')}
-          className={`nav-item w-full ${activeNav === 'updatepanel' ? 'active' : ''}`}
-        >
-          <svg className="w-4 h-4 nav-item__icon" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={1.5}>
-            <path strokeLinecap="round" strokeLinejoin="round" d="M12 16.5V3.75m0 0L7.5 8.25M12 3.75l4.5 4.5" />
-            <path strokeLinecap="round" strokeLinejoin="round" d="M3.75 15.75v1.5A2.25 2.25 0 006 19.5h12a2.25 2.25 0 002.25-2.25v-1.5" />
-          </svg>
-          {t('nav.update')}
-        </button>
+        {FEATURE_APP_UPDATER_UI && (
+          <button
+            onClick={() => onNavigate('updatepanel')}
+            className={`nav-item w-full ${activeNav === 'updatepanel' ? 'active' : ''}`}
+          >
+            <svg className="w-4 h-4 nav-item__icon" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={1.5}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M12 16.5V3.75m0 0L7.5 8.25M12 3.75l4.5 4.5" />
+              <path strokeLinecap="round" strokeLinejoin="round" d="M3.75 15.75v1.5A2.25 2.25 0 006 19.5h12a2.25 2.25 0 002.25-2.25v-1.5" />
+            </svg>
+            {t('nav.update')}
+          </button>
+        )}
       </div>
 
       <div className="flex-1" />

@@ -74,21 +74,12 @@ def _build_fake_gateway_modules() -> dict[str, types.ModuleType]:
 
     class MessageHandler:
         @staticmethod
-        def _message_to_request(msg):
-            from jiuwenclaw.schema.agent import AgentRequest
+        def message_to_e2a(msg):
+            from jiuwenclaw.e2a.gateway_normalize import message_to_e2a_or_fallback
 
-            return AgentRequest(
-                request_id=msg.id,
-                channel_id=msg.channel_id,
-                session_id=msg.session_id,
-                req_method=msg.req_method,
-                params=msg.params,
-                is_stream=msg.is_stream,
-                timestamp=msg.timestamp,
-                metadata=msg.metadata,
-            )
+            return message_to_e2a_or_fallback(msg)
 
-        async def _process_stream(self, req, session_id):
+        async def process_stream(self, env, session_id, request_metadata=None):
             return None
 
     message_handler_module.MessageHandler = MessageHandler
@@ -255,14 +246,14 @@ def _patched_regression_modules():
 
 class TestTelemetryRegression:
     @staticmethod
-    def test_entry_message_to_request_preserves_fields_and_existing_metadata():
+    def test_entry_message_to_e2a_preserves_fields_and_existing_channel_context():
         with _patched_regression_modules():
             from jiuwenclaw.gateway.message_handler import MessageHandler
             from jiuwenclaw.schema.message import Message, ReqMethod
             from jiuwenclaw.telemetry.instrumentors.entry import instrument_entry
 
-            original_process_stream = MessageHandler._process_stream
-            original_message_to_request = MessageHandler._message_to_request
+            original_process_stream = MessageHandler.process_stream
+            original_message_to_e2a = MessageHandler.message_to_e2a
 
             try:
                 with patch(
@@ -284,17 +275,17 @@ class TestTelemetryRegression:
                         metadata={"source": "ui"},
                     )
 
-                    req = MessageHandler._message_to_request(msg)
+                    env = MessageHandler.message_to_e2a(msg)
 
-                    assert req.request_id == "req_001"
-                    assert req.channel_id == "web"
-                    assert req.session_id == "sess_001"
-                    assert req.params == {"query": "hello"}
-                    assert req.metadata["source"] == "ui"
-                    assert req.metadata["traceparent"] == "test-trace"
+                    assert env.request_id == "req_001"
+                    assert env.channel == "web"
+                    assert env.session_id == "sess_001"
+                    assert env.params == {"query": "hello"}
+                    assert env.channel_context["source"] == "ui"
+                    assert env.channel_context["traceparent"] == "test-trace"
             finally:
-                MessageHandler._process_stream = original_process_stream
-                MessageHandler._message_to_request = original_message_to_request
+                MessageHandler.process_stream = original_process_stream
+                MessageHandler.message_to_e2a = original_message_to_e2a
 
     @staticmethod
     def test_agent_stream_wrapper_preserves_chunk_sequence():

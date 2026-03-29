@@ -13,7 +13,7 @@ from jiuwenclaw.gateway.agent_client import AgentServerClient
 from jiuwenclaw.gateway.cron.models import CronJob, CronRunState
 from jiuwenclaw.gateway.cron.store import CronJobStore
 from jiuwenclaw.gateway.message_handler import MessageHandler
-from jiuwenclaw.schema.agent import AgentRequest
+from jiuwenclaw.e2a.gateway_normalize import e2a_from_agent_fields
 from jiuwenclaw.schema.message import EventType, Message, ReqMethod
 
 logger = logging.getLogger(__name__)
@@ -252,7 +252,7 @@ class CronSchedulerService:
             state.started_at = self._now_fn()
             try:
                 ts = format(int(time.time() * 1000), "x")
-                req = AgentRequest(
+                envelope = e2a_from_agent_fields(
                     request_id=f"cron-{run_id}",
                     channel_id="__cron__",
                     session_id=f"cron_{ts}_{job.id}",
@@ -272,7 +272,7 @@ class CronSchedulerService:
                     timestamp=self._now_fn(),
                     metadata={"cron": {"job_id": job.id, "run_id": run_id}},
                 )
-                resp = await self._agent_client.send_request(req)
+                resp = await self._agent_client.send_request(envelope)
                 text = _extract_text_from_agent_payload(resp.payload)
                 if not text:
                     text = "[cron] 任务完成，但未返回可展示文本"

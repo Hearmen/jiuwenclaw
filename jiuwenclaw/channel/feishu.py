@@ -42,6 +42,9 @@ class FeishuConfig(BaseModel):
     chat_id: str = ""  # 可选：固定推送目标 chat_id（群聊 oc_xxx 或个人 open_id）
     channel_id: str = "feishu"  # ChannelManager 路由键，支持多实例
     bot_key: str = ""  # 企业飞书多 bot 配置键（仅 feishu_enterprise 使用）
+    # 收消息时写入 config.yaml，用于无 metadata 时的回发兜底（与 session_id 解耦）
+    last_chat_id: str = ""
+    last_open_id: str = ""
 
     # 文件处理配置
     max_download_size: int = 100 * 1024 * 1024  # 最大下载文件大小（默认100MB）
@@ -883,6 +886,17 @@ class FeishuChannel(BaseChannel):
                 receive_id = cfg_chat_id
                 id_type = "chat_id" if cfg_chat_id.startswith("oc_") else "open_id"
 
+        # 2b) 最近一次会话（收消息时写入 config / 内存），避免 supplement 等路径丢 metadata 后误用 session_id
+        if not receive_id:
+            last_cid = str(getattr(self.config, "last_chat_id", "") or "").strip()
+            last_oid = str(getattr(self.config, "last_open_id", "") or "").strip()
+            if last_cid:
+                receive_id = last_cid
+                id_type = "chat_id" if last_cid.startswith("oc_") else "open_id"
+            elif last_oid:
+                receive_id = last_oid
+                id_type = "open_id"
+
         # 3) 仍然没有，则回退到 session_id / id（兼容旧逻辑）
         if not receive_id:
             receive_id = getattr(msg, "session_id", None) or msg.id or ""
@@ -1260,6 +1274,16 @@ class FeishuChannel(BaseChannel):
                 except Exception:
                     # 不影响正常收消息
                     pass
+
+            # 内存同步 last_*：无 metadata 的回发兜底立即生效，不必等通道重启从 yaml 加载
+            lc = str(getattr(message, "chat_id", None) or "").strip()
+            lo = str(open_id or "").strip()
+            try:
+                self.config = self.config.model_copy(
+                    update={"last_chat_id": lc, "last_open_id": lo},
+                )
+            except Exception:
+                pass
 
             # 构建消息参数
             params = {"content": content, "query": content}

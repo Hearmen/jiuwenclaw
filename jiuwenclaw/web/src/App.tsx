@@ -19,6 +19,7 @@ import { ChannelsPanel } from './components/ChannelsPanel';
 import { BrowserPanel } from './components/BrowserPanel';
 import { UpdatePanel } from './components/UpdatePanel';
 import { StatusBar } from './components/StatusBar';
+import { FEATURE_APP_UPDATER_UI } from './featureFlags';
 import { HeartbeatMessageModal } from './features/HeartbeatMessageModal';
 import {
   beginHistoryRestore,
@@ -249,6 +250,12 @@ function AppContent() {
       setConfigInitialExpandGroup(null);
     }
   }, [activeNav]);
+
+  useEffect(() => {
+    if (!FEATURE_APP_UPDATER_UI && activeNav === 'updatepanel') {
+      setActiveNav('chat');
+    }
+  }, [activeNav]);
   const restartAutoCloseTimerRef = useRef<number | null>(null);
   const newSessionToastTimerRef = useRef<number | null>(null);
   const heartbeatToastTimerRef = useRef<number | null>(null);
@@ -259,9 +266,13 @@ function AppContent() {
     totalPages: number;
   } | null>(null);
   const [historyLoadingMore, setHistoryLoadingMore] = useState(false);
+  /** 仅用于强制重跑「首屏 history」effect：从会话列表恢复时若 sessionId 未变，也要重新拉 history 并恢复 historyPagerMeta */
+  const [historyBootstrapKey, setHistoryBootstrapKey] = useState(0);
   const sessionIdRef = useRef(sessionId);
   const historyRestoreHandleRef = useRef<HistoryRestoreHandle | null>(null);
   const historyPageHandleRef = useRef<HistoryRestoreHandle | null>(null);
+  /** 为 true 表示刚从「会话列表」恢复；history 为空时在 useEffect 的 onEmpty 中提示一次 */
+  const historyRestoreFromPanelHintRef = useRef(false);
 
   const disposeInFlightHistoryHandles = useCallback(() => {
     historyRestoreHandleRef.current?.dispose();
@@ -360,7 +371,7 @@ function AppContent() {
   }, [request, t]);
 
   useEffect(() => {
-    if (!isConnected || startupUpdateCheckRef.current) {
+    if (!FEATURE_APP_UPDATER_UI || !isConnected || startupUpdateCheckRef.current) {
       return;
     }
     startupUpdateCheckRef.current = true;
@@ -515,6 +526,7 @@ function AppContent() {
         if (sessionIdRef.current !== sessionId) {
           return;
         }
+        historyRestoreFromPanelHintRef.current = false;
         clearMessages();
         messages.forEach((message) => addMessage(message));
         setHistoryPagerMeta({
@@ -534,6 +546,15 @@ function AppContent() {
           loadedPages: 1,
           totalPages: emptyTotalPages ?? 1,
         });
+        if (historyRestoreFromPanelHintRef.current) {
+          historyRestoreFromPanelHintRef.current = false;
+          addMessage({
+            id: `history-restore-empty-${Date.now()}`,
+            role: 'system',
+            content: t('sessions.restoreEmpty'),
+            timestamp: new Date().toISOString(),
+          });
+        }
         historyRestoreHandleRef.current = null;
       },
       onToolReplay: (items) => {
@@ -583,6 +604,7 @@ function AppContent() {
           page_idx: 1,
         });
       } catch (error) {
+        historyRestoreFromPanelHintRef.current = false;
         restoreHandle.dispose();
         historyRestoreHandleRef.current = null;
         setHistoryPagerMeta(null);
@@ -600,7 +622,19 @@ function AppContent() {
         }
       }
     })();
-  }, [isConnected, sessionId, request, t, addMessage, addToolCall, addToolResult, clearMessages, clearSubtasks, disposeInFlightHistoryHandles]);
+  }, [
+    isConnected,
+    sessionId,
+    historyBootstrapKey,
+    request,
+    t,
+    addMessage,
+    addToolCall,
+    addToolResult,
+    clearMessages,
+    clearSubtasks,
+    disposeInFlightHistoryHandles,
+  ]);
 
   // 新建会话：立即生成可用的 session_id，避免停留在 'new' 导致无法发送消息
   const handleNewSession = useCallback(async () => {
@@ -789,7 +823,7 @@ function AppContent() {
   ]);
 
   const handleRestoreSession = useCallback(
-    async (targetSessionId: string) => {
+    (targetSessionId: string) => {
       if (!targetSessionId.startsWith('sess_')) return;
 
       disposeInFlightHistoryHandles();
@@ -801,118 +835,29 @@ function AppContent() {
       clearMessages();
       clearTodos();
       clearSubtasks();
+      historyRestoreFromPanelHintRef.current = true;
       setSessionId(targetSessionId);
       setCurrentSession(null);
       storeSessionId(targetSessionId);
       setActiveNav('chat');
-
-      const restoreHandle = beginHistoryRestore({
-        sessionId: targetSessionId,
-        onReady: (messages, totalPages) => {
-          if (sessionIdRef.current !== targetSessionId) {
-            return;
-          }
-          messages.forEach((message) => addMessage(message));
-          setHistoryPagerMeta({
-            loadedPages: 1,
-            totalPages: totalPages ?? 1,
-          });
-          queueMicrotask(() => {
-            historyRestoreHandleRef.current = null;
-          });
-        },
-        onEmpty: (emptyTotalPages) => {
-          if (sessionIdRef.current !== targetSessionId) {
-            return;
-          }
-          setHistoryPagerMeta({
-            loadedPages: 1,
-            totalPages: emptyTotalPages ?? 1,
-          });
-          addMessage({
-            id: `history-restore-empty-${Date.now()}`,
-            role: 'system',
-            content: t('sessions.restoreEmpty'),
-            timestamp: new Date().toISOString(),
-          });
-          historyRestoreHandleRef.current = null;
-        },
-        onToolReplay: (items) => {
-          if (sessionIdRef.current !== targetSessionId) {
-            return;
-          }
-          for (const item of items) {
-            if (item.kind === 'tool_call') {
-              const n = normalizeToolCallPayload(item.payload);
-              addToolCall(
-                {
-                  id: n.id,
-                  name: n.name,
-                  arguments: n.arguments,
-                  description: n.description,
-                  formatted_args: n.formatted_args,
-                },
-                { startedAt: item.at }
-              );
-            } else {
-              const n = normalizeToolResultPayload(item.payload);
-              addToolResult(
-                {
-                  toolName: n.toolName,
-                  result: n.result,
-                  success: n.success,
-                  toolCallId: n.toolCallId,
-                  summary: n.summary,
-                },
-                { updatedAt: item.at }
-              );
-            }
-          }
-        },
-        onError: (message) => {
-          console.warn('[history.restore]', message);
-        },
-      });
-      historyRestoreHandleRef.current = restoreHandle;
-
-      try {
-        await request(HISTORY_GET_METHOD, {
-          session_id: targetSessionId,
-          page_idx: 1,
-        });
-      } catch (error) {
-        restoreHandle.dispose();
-        historyRestoreHandleRef.current = null;
-        setHistoryPagerMeta(null);
-        console.error('Failed to restore history:', error);
-        if (sessionIdRef.current === targetSessionId) {
-          addMessage({
-            id: `history-restore-failed-${Date.now()}`,
-            role: 'system',
-            content: t('sessions.errors.restoreFailed', { sessionId: targetSessionId }),
-            timestamp: new Date().toISOString(),
-          });
-        }
-      }
+      // 历史加载只由下方 useEffect 发起一次。若 sessionId 与当前相同，须 bump key 才会重跑 effect，
+      // 否则 historyPagerMeta 会停在 null，无法向上滚动加载更早分页。
+      setHistoryBootstrapKey((k) => k + 1);
+      // 勿在此处再 beginHistoryRestore + history.get：会与 effect 并发双份 history.get，消息重复。
     },
     [
-      addMessage,
-      addToolCall,
-      addToolResult,
       clearMessages,
       clearSubtasks,
       clearTodos,
       disposeInFlightHistoryHandles,
-      request,
       setActiveNav,
       setCurrentSession,
-      setHistoryPagerMeta,
       setHistoryLoadingMore,
+      setHistoryPagerMeta,
       setPaused,
       setProcessing,
       setSessionId,
       setThinking,
-      t,
     ]
   );
 
@@ -982,7 +927,7 @@ function AppContent() {
 
         {activeNav === 'chat' && (
           <>
-            <div className="flex-1 flex overflow-hidden">
+            <div className="flex-1 flex min-h-0 overflow-hidden">
               {/* Chat Panel */}
               <div className="flex-1 flex flex-col min-w-0 min-h-0">
                 <div className="flex-1 min-h-0">
@@ -1064,7 +1009,7 @@ function AppContent() {
             <BrowserPanel isConnected={isConnected} request={request} />
           </div>
         )}
-        {activeNav === 'updatepanel' && (
+        {FEATURE_APP_UPDATER_UI && activeNav === 'updatepanel' && (
           <div className="app-section">
             <UpdatePanel isConnected={isConnected} request={request} />
           </div>

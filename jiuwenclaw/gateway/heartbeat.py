@@ -164,8 +164,8 @@ class GatewayHeartbeatService(IHeartbeat):
                 logger.exception("Gateway heartbeat loop error: %s", e)
 
     async def _tick(self) -> None:
-        """执行一次探活：构造 AgentRequest 发往 AgentServer，不向 Channel 下发."""
-        from jiuwenclaw.schema.agent import AgentRequest
+        """执行一次探活：构造 E2A 发往 AgentServer，不向 Channel 下发."""
+        from jiuwenclaw.e2a.gateway_normalize import e2a_from_agent_fields
 
         # 若当前时间不在 active_hours 配置范围内，则跳过本次心跳
         if not self._is_active_now():
@@ -177,7 +177,7 @@ class GatewayHeartbeatService(IHeartbeat):
 
         request_id = f"heartbeat-{time.monotonic_ns()}"
         session_id = f"heartbeat_{time.monotonic_ns()}"
-        request = AgentRequest(
+        envelope = e2a_from_agent_fields(
             request_id=request_id,
             channel_id=self._config.channel_id,
             session_id=session_id,
@@ -186,11 +186,11 @@ class GatewayHeartbeatService(IHeartbeat):
         try:
             if self._config.timeout_seconds is not None and self._config.timeout_seconds > 0:
                 resp = await asyncio.wait_for(
-                    self._agent_client.send_request(request),
+                    self._agent_client.send_request(envelope),
                     timeout=self._config.timeout_seconds,
                 )
             else:
-                resp = await self._agent_client.send_request(request)
+                resp = await self._agent_client.send_request(envelope)
             self._last_tick_at = time.time()
             self._last_tick_ok = True
             payload = resp.payload if isinstance(resp.payload, dict) else {}

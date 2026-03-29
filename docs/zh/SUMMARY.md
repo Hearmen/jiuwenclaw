@@ -1,6 +1,7 @@
 # Summary
 
 - [快速开始](Quickstart.md)
+- [E2A 协议（Gateway↔Agent）](E2A-protocol.md)
 - [配置说明](配置信息.md)
 - [使用指南](README.md)
   - [频道](频道.md)

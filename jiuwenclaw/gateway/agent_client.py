@@ -11,7 +11,12 @@ from abc import ABC, abstractmethod
 from dataclasses import asdict
 from typing import Any, AsyncIterator
 
-from jiuwenclaw.schema.agent import AgentRequest, AgentResponse, AgentResponseChunk
+from jiuwenclaw.e2a.models import E2AEnvelope
+from jiuwenclaw.e2a.wire_codec import (
+    parse_agent_server_wire_chunk,
+    parse_agent_server_wire_unary,
+)
+from jiuwenclaw.schema.agent import AgentResponse, AgentResponseChunk
 
 
 logger = logging.getLogger(__name__)
@@ -39,46 +44,21 @@ class AgentServerClient(ABC):
         ...
 
     @abstractmethod
-    async def send_request(self, request: AgentRequest) -> AgentResponse:
-        """发送请求，等待完整响应."""
+    async def send_request(self, envelope: E2AEnvelope) -> AgentResponse:
+        """发送 E2A 信封，等待完整响应."""
         ...
 
     @abstractmethod
     async def send_request_stream(
-        self, request: AgentRequest
+        self, envelope: E2AEnvelope
     ) -> AsyncIterator[AgentResponseChunk]:
-        """发送请求，流式接收响应."""
+        """发送 E2A 信封，流式接收响应."""
         ...
 
 
-def _request_to_payload(request: AgentRequest) -> dict[str, Any]:
-    """将 AgentRequest 转为 WebSocket 发送的 JSON 载荷."""
-    payload = asdict(request)
-    # req_method 是 Enum，需要转为字符串值
-    if payload.get("req_method") is not None:
-        payload["req_method"] = payload["req_method"].value
-    return payload
-
-
-def _payload_to_response(data: dict[str, Any]) -> AgentResponse:
-    """将服务端返回的 JSON 转为 AgentResponse."""
-    return AgentResponse(
-        request_id=data["request_id"],
-        channel_id=data["channel_id"],
-        ok=data.get("ok", True),
-        payload=data.get("payload"),
-        metadata=data.get("metadata"),
-    )
-
-
-def _payload_to_chunk(data: dict[str, Any]) -> AgentResponseChunk:
-    """将服务端返回的 JSON 转为 AgentResponseChunk."""
-    return AgentResponseChunk(
-        request_id=data["request_id"],
-        channel_id=data["channel_id"],
-        payload=data.get("payload"),
-        is_complete=data.get("is_complete", False),
-    )
+def _e2a_to_wire(envelope: E2AEnvelope) -> dict[str, Any]:
+    """E2AEnvelope → WebSocket JSON（与 AgentServer from_dict 对齐）。"""
+    return envelope.to_dict()
 
 
 class WebSocketAgentServerClient(AgentServerClient):
@@ -86,9 +66,9 @@ class WebSocketAgentServerClient(AgentServerClient):
     基于 websockets 的 AgentServer WebSocket 客户端实现。
 
     协议约定：
-    - 发送：JSON 对象，字段为 AgentRequest 的键（含 is_stream）。
-    - 接收（非流式）：一条 JSON 对象，对应 AgentResponse。
-    - 接收（流式）：多条 JSON 对象，对应 AgentResponseChunk，最后一条 is_complete=True。
+    - 发送：JSON 对象为 E2AEnvelope.to_dict()（含 protocol_version、method、channel、params、is_stream 等）。
+    - 接收（非流式）：一条 **E2AResponse** 线 JSON（或过渡期 legacy AgentResponse 形），解析为 AgentResponse。
+    - 接收（流式）：多条 E2AResponse 线 JSON（或 legacy chunk），解析为 AgentResponseChunk。
     """
 
     def __init__(self, *, ping_interval: float | None = 30.0, ping_timeout: float | None = 300.0) -> None:
@@ -208,47 +188,69 @@ class WebSocketAgentServerClient(AgentServerClient):
         if self._ws is None:
             raise RuntimeError("未连接 AgentServer，请先调用 connect(uri)")
 
-    async def send_request(self, request: AgentRequest) -> AgentResponse:
+    async def send_request(self, envelope: E2AEnvelope) -> AgentResponse:
         self._ensure_connected()
-        logger.info("[WebSocketAgentServerClient] 发送请求(非流式) AgentRequest: %s", _to_json(asdict(request)))
+        rid = envelope.request_id or ""
+        logger.info(
+            "[E2A][out][nostream] request_id=%s channel=%s method=%s is_stream=%s",
+            rid,
+            envelope.channel,
+            envelope.method,
+            envelope.is_stream,
+        )
+        logger.debug(
+            "[WebSocketAgentServerClient] 发送请求(非流式) E2A: %s",
+            _to_json(envelope.to_dict()),
+        )
 
         # 创建该请求的消息队列
         queue = asyncio.Queue()
-        self._message_queues[request.request_id] = queue
+        self._message_queues[rid] = queue
 
         try:
             # 发送请求
             async with self._lock:
-                payload = _request_to_payload(request)
+                payload = _e2a_to_wire(envelope)
                 logger.info("[WebSocketAgentServerClient] 发送请求(非流式) payload: %s", _to_json(payload))
                 await self._ws.send(json.dumps(payload, ensure_ascii=False))
 
             # 从队列中接收响应
             data = await queue.get()
             logger.info("[WebSocketAgentServerClient] 收到响应(非流式) raw: %s", json.dumps(data, ensure_ascii=False))
-            resp = _payload_to_response(data)
+            resp = parse_agent_server_wire_unary(data)
             logger.info("[WebSocketAgentServerClient] 收到完整响应 AgentResponse: %s", _to_json(asdict(resp)))
             return resp
         finally:
             # 清理队列
-            if request.request_id in self._message_queues:
-                del self._message_queues[request.request_id]
+            if rid in self._message_queues:
+                del self._message_queues[rid]
 
     async def send_request_stream(
-        self, request: AgentRequest
+        self, envelope: E2AEnvelope
     ) -> AsyncIterator[AgentResponseChunk]:
         self._ensure_connected()
-        request.is_stream = True
-        logger.info("[WebSocketAgentServerClient] 发送请求(流式) AgentRequest: %s", _to_json(asdict(request)))
+        envelope.is_stream = True
+        rid = envelope.request_id or ""
+        logger.info(
+            "[E2A][out][stream] request_id=%s channel=%s method=%s is_stream=%s",
+            rid,
+            envelope.channel,
+            envelope.method,
+            envelope.is_stream,
+        )
+        logger.debug(
+            "[WebSocketAgentServerClient] 发送请求(流式) E2A: %s",
+            _to_json(envelope.to_dict()),
+        )
 
         # 创建该请求的消息队列
         queue = asyncio.Queue()
-        self._message_queues[request.request_id] = queue
+        self._message_queues[rid] = queue
 
         try:
             # 发送请求
             async with self._lock:
-                payload = _request_to_payload(request)
+                payload = _e2a_to_wire(envelope)
                 logger.info("[WebSocketAgentServerClient] 发送请求(流式) payload: %s", _to_json(payload))
                 await self._ws.send(json.dumps(payload, ensure_ascii=False))
 
@@ -257,7 +259,7 @@ class WebSocketAgentServerClient(AgentServerClient):
             while True:
                 data = await queue.get()
                 logger.info("[WebSocketAgentServerClient] 收到流式事件 raw: %s", json.dumps(data, ensure_ascii=False))
-                chunk = _payload_to_chunk(data)
+                chunk = parse_agent_server_wire_chunk(data)
                 chunk_count += 1
                 logger.info(
                     "[WebSocketAgentServerClient] 收到流式 chunk #%s AgentResponseChunk: %s",
@@ -266,14 +268,14 @@ class WebSocketAgentServerClient(AgentServerClient):
                 yield chunk
                 if chunk.is_complete:
                     break
-            logger.info("[WebSocketAgentServerClient] 流式响应结束: request_id=%s 共 %s 个 chunk", request.request_id, chunk_count)
+            logger.info("[WebSocketAgentServerClient] 流式响应结束: request_id=%s 共 %s 个 chunk", rid, chunk_count)
         except asyncio.CancelledError:
-            logger.info("[WebSocketAgentServerClient] 流式接收被取消: request_id=%s", request.request_id)
+            logger.info("[WebSocketAgentServerClient] 流式接收被取消: request_id=%s", rid)
             raise
         finally:
             # 清理队列
-            if request.request_id in self._message_queues:
-                del self._message_queues[request.request_id]
+            if rid in self._message_queues:
+                del self._message_queues[rid]
 
 
 # ---------------------------------------------------------------------------
@@ -283,40 +285,50 @@ class WebSocketAgentServerClient(AgentServerClient):
 
 async def mock_agent_server_handler(ws: Any) -> None:
     """
-    协议兼容的 Mock AgentServer 处理函数：根据 is_stream 回一条完整响应或多条 chunk；
-    同一连接可处理多请求。可与 websockets.serve(..., host, port) 一起使用。
+    协议兼容的 Mock AgentServer：按 is_stream 回 E2AResponse 线 JSON（与生产 AgentServer 一致）。
     """
     import websockets
+
+    from jiuwenclaw.e2a.wire_codec import (
+        encode_agent_chunk_for_wire,
+        encode_agent_response_for_wire,
+    )
+
     try:
         while True:
             raw = await ws.recv()
             data = json.loads(raw)
             req_id = data.get("request_id", "")
-            ch_id = data.get("channel_id", "")
+            ch_id = data.get("channel") or data.get("channel_id", "")
             params = data.get("params", {})
             is_stream = data.get("is_stream", False)
             params_str = json.dumps(params, ensure_ascii=False) if isinstance(params, dict) else str(params)
 
             if is_stream:
-                # 流式：发 3 个 chunk，最后 is_complete=True
                 for i, part in enumerate(["流式-1 ", "流式-2 ", "流式-3(完)"]):
-                    chunk = {
-                        "request_id": req_id,
-                        "channel_id": ch_id,
-                        "payload": {"content": part},
-                        "is_complete": i == 2,
-                    }
-                    await ws.send(json.dumps(chunk, ensure_ascii=False))
+                    chunk = AgentResponseChunk(
+                        request_id=req_id,
+                        channel_id=ch_id,
+                        payload={"content": part},
+                        is_complete=i == 2,
+                    )
+                    wire = encode_agent_chunk_for_wire(
+                        chunk, response_id=req_id, sequence=i
+                    )
+                    await ws.send(json.dumps(wire, ensure_ascii=False))
             else:
-                # 非流式：一条完整响应
-                resp = {
-                    "request_id": req_id,
-                    "channel_id": ch_id,
-                    "ok": True,
-                    "payload": {"content": f"Echo: {params_str}"},
-                    "metadata": data.get("metadata"),
-                }
-                await ws.send(json.dumps(resp, ensure_ascii=False))
+                meta = data.get("metadata") or data.get("channel_context")
+                if meta is not None and not isinstance(meta, dict):
+                    meta = None
+                resp = AgentResponse(
+                    request_id=req_id,
+                    channel_id=ch_id,
+                    ok=True,
+                    payload={"content": f"Echo: {params_str}"},
+                    metadata=dict(meta) if isinstance(meta, dict) else None,
+                )
+                wire = encode_agent_response_for_wire(resp, response_id=req_id)
+                await ws.send(json.dumps(wire, ensure_ascii=False))
     except websockets.exceptions.ConnectionClosed:
         pass
     except Exception as e:
@@ -349,6 +361,8 @@ async def run_mock_agent_server(
 
 async def _run_verification() -> None:
     """用内存 Mock 服务端验证 WebSocketAgentServerClient 的 connect/send_request/send_request_stream."""
+    from jiuwenclaw.e2a.gateway_normalize import e2a_from_agent_fields
+
     port = 18765
     uri = f"ws://127.0.0.1:{port}"
     server = await run_mock_agent_server("127.0.0.1", port)
@@ -359,7 +373,7 @@ async def _run_verification() -> None:
         await client.connect(uri)
 
         # 1. 非流式请求
-        req1 = AgentRequest(
+        req1 = e2a_from_agent_fields(
             request_id="req-1",
             channel_id="ch-1",
             session_id="sess-1",
@@ -372,7 +386,7 @@ async def _run_verification() -> None:
         logger.info("[main] 非流式验证通过: payload=%s", resp1.payload)
 
         # 2. 流式请求
-        req2 = AgentRequest(
+        req2 = e2a_from_agent_fields(
             request_id="req-2",
             channel_id="ch-1",
             session_id="sess-1",

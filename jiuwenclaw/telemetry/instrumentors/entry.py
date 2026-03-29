@@ -1,10 +1,11 @@
 # Copyright (c) Huawei Technologies Co., Ltd. 2025. All rights reserved.
 
-"""Instrumentor for MessageHandler._process_stream — ENTRY span."""
+"""Instrumentor for MessageHandler.process_stream — ENTRY span."""
 
 from __future__ import annotations
 
 import time
+from typing import Any
 
 from opentelemetry import trace
 from opentelemetry.trace import StatusCode
@@ -30,46 +31,48 @@ def instrument_entry() -> None:
         logger.debug("[Telemetry] MessageHandler not available, skipping entry instrumentor")
         return
 
-    _original_process_stream = MessageHandler._process_stream
-    _original_message_to_request = MessageHandler._message_to_request
+    _original_process_stream = MessageHandler.process_stream
+    _original_message_to_e2a = MessageHandler.message_to_e2a
 
     @staticmethod
-    def _traced_message_to_request(msg):
-        request = _original_message_to_request(msg)
-        # Inject W3C TraceContext into request.metadata for cross-WebSocket propagation
-        if request.metadata is None:
-            request.metadata = {}
-        inject_trace_context(request.metadata)
-        return request
+    def _traced_message_to_e2a(msg):
+        envelope = _original_message_to_e2a(msg)
+        # Inject W3C TraceContext into E2A channel_context for cross-WebSocket propagation
+        inject_trace_context(envelope.channel_context)
 
-    async def _traced_process_stream(self, req, session_id):
+        return envelope
+
+    async def _traced_process_stream(
+        self,
+        env,
+        session_id,
+        request_metadata: dict[str, Any] | None = None,
+    ):
         with _tracer.start_as_current_span(
             "channel.request",
             attributes={
-                JIUWENCLAW_CHANNEL_ID: req.channel_id or "",
+                JIUWENCLAW_CHANNEL_ID: env.channel or "",
                 JIUWENCLAW_SESSION_ID: session_id or "",
-                JIUWENCLAW_REQUEST_ID: req.request_id or "",
+                JIUWENCLAW_REQUEST_ID: env.request_id or "",
                 GEN_AI_SPAN_TYPE: "workflow",
             },
         ) as span:
             # Re-inject after span is created so the correct trace_id is propagated
-            if req.metadata is None:
-                req.metadata = {}
-            inject_trace_context(req.metadata)
+            inject_trace_context(env.channel_context)
 
-            request_count.add(1, {JIUWENCLAW_CHANNEL_ID: req.channel_id or ""})
+            request_count.add(1, {JIUWENCLAW_CHANNEL_ID: env.channel or ""})
             start = time.monotonic()
             try:
-                await _original_process_stream(self, req, session_id)
+                await _original_process_stream(self, env, session_id, request_metadata)
                 span.set_status(StatusCode.OK)
             except Exception as exc:
                 span.set_status(StatusCode.ERROR, str(exc)[:256])
                 span.record_exception(exc)
-                request_error_count.add(1, {JIUWENCLAW_CHANNEL_ID: req.channel_id or ""})
+                request_error_count.add(1, {JIUWENCLAW_CHANNEL_ID: env.channel or ""})
                 raise
             finally:
                 duration = time.monotonic() - start
-                request_duration.record(duration, {JIUWENCLAW_CHANNEL_ID: req.channel_id or ""})
+                request_duration.record(duration, {JIUWENCLAW_CHANNEL_ID: env.channel or ""})
 
-    MessageHandler._message_to_request = _traced_message_to_request
-    MessageHandler._process_stream = _traced_process_stream
+    MessageHandler.message_to_e2a = _traced_message_to_e2a
+    MessageHandler.process_stream = _traced_process_stream

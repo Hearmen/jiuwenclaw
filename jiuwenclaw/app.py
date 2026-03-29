@@ -186,15 +186,15 @@ async def _clear_agent_config_cache(agent_client=None) -> None:
     """写回 config.yaml 后清除 agent 侧配置缓存，使下次读取时得到最新文件内容。"""
     try:
         if agent_client is not None:
-            from jiuwenclaw.schema.agent import AgentRequest
+            from jiuwenclaw.e2a.gateway_normalize import e2a_from_agent_fields
             from jiuwenclaw.schema.message import ReqMethod
             import uuid
-            req = AgentRequest(
+            env = e2a_from_agent_fields(
                 request_id=f"cfg-cache-clear-{uuid.uuid4().hex[:8]}",
                 channel_id="",
                 req_method=ReqMethod.CONFIG_CACHE_CLEAR,
             )
-            await agent_client.send_request(req)
+            await agent_client.send_request(env)
         else:
             get_config()
     except Exception:  # noqa: BLE001
@@ -1503,23 +1503,24 @@ async def _run() -> None:
             "VISION_PROVIDER", "VISION_MODEL_NAME", "VISION_API_BASE", "VISION_API_KEY",
         }
         try:
-            from jiuwenclaw.schema.agent import AgentRequest
+            from jiuwenclaw.e2a.gateway_normalize import e2a_from_agent_fields
+            from jiuwenclaw.schema.message import ReqMethod
             import uuid
 
-            reload_req = AgentRequest(
+            reload_env = e2a_from_agent_fields(
                 request_id=f"agent-reload-{uuid.uuid4().hex[:8]}",
                 channel_id="",
                 req_method=ReqMethod.AGENT_RELOAD_CONFIG,
             )
-            await client.send_request(reload_req)
+            await client.send_request(reload_env)
 
             if updated_env_keys and (browser_runtime_keys & set(updated_env_keys)):
-                restart_req = AgentRequest(
+                restart_env = e2a_from_agent_fields(
                     request_id=f"browser-restart-{uuid.uuid4().hex[:8]}",
                     channel_id="",
                     req_method=ReqMethod.BROWSER_RUNTIME_RESTART,
                 )
-                await client.send_request(restart_req)
+                await client.send_request(restart_env)
             return True
         except Exception as e:  # noqa: BLE001
             logger.warning("[App] 配置热更新失败，将延迟重启: %s", e)
@@ -1694,6 +1695,8 @@ async def _run() -> None:
                         allow_from=feishu_conf.get("allow_from") or [],
                         enable_streaming=bool(feishu_conf.get("enable_streaming", True)),
                         chat_id=str(feishu_conf.get("chat_id") or "").strip(),
+                        last_chat_id=str(feishu_conf.get("last_chat_id") or "").strip(),
+                        last_open_id=str(feishu_conf.get("last_open_id") or "").strip(),
                     )
                     feishu_channel = FeishuChannel(feishu_config, _DummyBus())
                     channel_manager.register_channel(feishu_channel)
@@ -1742,6 +1745,8 @@ async def _run() -> None:
                         chat_id=str(bot_conf.get("chat_id") or "").strip(),
                         channel_id=channel_id,
                         bot_key=bot_key,
+                        last_chat_id=str(bot_conf.get("last_chat_id") or "").strip(),
+                        last_open_id=str(bot_conf.get("last_open_id") or "").strip(),
                     )
                     channel = FeishuChannel(feishu_config, _DummyBus())
                     channel_manager.register_channel(channel)

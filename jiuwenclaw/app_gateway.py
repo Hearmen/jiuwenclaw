@@ -363,6 +363,8 @@ async def _run(agent_server_url: str, web_host: str, web_port: int, web_path: st
                         allow_from=feishu_conf.get("allow_from") or [],
                         enable_streaming=bool(feishu_conf.get("enable_streaming", True)),
                         chat_id=str(feishu_conf.get("chat_id") or "").strip(),
+                        last_chat_id=str(feishu_conf.get("last_chat_id") or "").strip(),
+                        last_open_id=str(feishu_conf.get("last_open_id") or "").strip(),
                     )
                     feishu_channel = FeishuChannel(feishu_config, _DummyBus())
                     channel_manager.register_channel(feishu_channel)
@@ -412,6 +414,8 @@ async def _run(agent_server_url: str, web_host: str, web_port: int, web_path: st
                         chat_id=str(bot_conf.get("chat_id") or "").strip(),
                         channel_id=channel_id,
                         bot_key=bot_key,
+                        last_chat_id=str(bot_conf.get("last_chat_id") or "").strip(),
+                        last_open_id=str(bot_conf.get("last_open_id") or "").strip(),
                     )
                     channel = FeishuChannel(feishu_config, _DummyBus())
                     channel_manager.register_channel(channel)

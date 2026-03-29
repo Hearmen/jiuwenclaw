@@ -1471,7 +1471,7 @@ requires-dist = [
     { name = "ruamel-yaml", specifier = ">=0.18.0" },
     { name = "skillnet-ai", specifier = "==0.0.16" },
     { name = "websockets", specifier = ">=12.0" },
-    { name = "wecom-aibot-sdk", specifier = ">=1.0.0" },
+    { name = "wecom-aibot-sdk", specifier = ">=1.0.5" },
 ]
 provides-extras = ["desktop", "dev"]
 
@@ -4340,16 +4340,16 @@ wheels = [
 
 [[package]]
 name = "wecom-aibot-sdk"
-version = "1.0.3"
+version = "1.0.6"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "cryptography" },
     { name = "httpx" },
     { name = "websockets" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/aa/57/08f0f012a585a1e34b4d903376e9f7610f965dadec995202371883834d1f/wecom_aibot_sdk-1.0.3.tar.gz", hash = "sha256:5f81394c85e7f1d7c8de33aecf705768800509a12d3a0e571c2e7d97bf1961ad", size = 39777, upload-time = "2026-03-16T11:07:11.032Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/89/0a/38a399d70731070e990edcdf335842c844ee08b4ba7b5cb88acfae294016/wecom_aibot_sdk-1.0.6.tar.gz", hash = "sha256:16dfc5c7c35fc51708788a4dccacc6ce1137343f03e255cd33037abd6b309803", size = 61502, upload-time = "2026-03-27T16:01:16.986Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/2e/1e/686df5a8e689c5c9af5dc9b1f50cfbb51aa26c2e75ad535cc530e121db97/wecom_aibot_sdk-1.0.3-py3-none-any.whl", hash = "sha256:cd1724307c342bab8c5c652b04b3ab743d1b6542831f8847e8a893eb29db8cab", size = 21512, upload-time = "2026-03-16T11:07:09.365Z" },
+    { url = "https://files.pythonhosted.org/packages/bb/5b/d489b9a1308665d7577b36f2deb3af30045831f57dce06c9b3574b16ba57/wecom_aibot_sdk-1.0.6-py3-none-any.whl", hash = "sha256:9f4fed218d9dedc6df07b326eb2884f20220b851881c5731b111d4e4fbe7a609", size = 27609, upload-time = "2026-03-27T16:01:15.528Z" },
 ]
 
 [[package]]

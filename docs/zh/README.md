@@ -3,6 +3,7 @@
 这里汇总 JiuwenClaw 的常用使用说明与功能文档。
 
 - 从零开始安装与启动：见 [快速开始](Quickstart.md)
+- Gateway 与 AgentServer 统一请求信封（E2A）：见 [E2A 协议](E2A-protocol.md)（[English](../en/E2A-protocol.md)）
 - 配置模型与系统参数：见 [配置说明](配置信息.md)
 - 各功能专题文档：见左侧目录或直接从下列入口开始：
   - [频道](频道.md)

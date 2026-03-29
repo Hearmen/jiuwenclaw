@@ -8,11 +8,22 @@ import logging
 import asyncio
 import json
 import math
-from dataclasses import asdict
 from pathlib import Path
 from typing import Any, ClassVar
 
 from jiuwenclaw.utils import get_agent_sessions_dir, get_config_file
+from jiuwenclaw.e2a.agent_compat import e2a_to_agent_request
+from jiuwenclaw.e2a.gateway_normalize import (
+    E2A_FALLBACK_FAILED_KEY,
+    E2A_INTERNAL_CONTEXT_KEY,
+    E2A_LEGACY_AGENT_REQUEST_KEY,
+)
+from jiuwenclaw.e2a.models import E2AEnvelope
+from jiuwenclaw.e2a.wire_codec import (
+    encode_agent_chunk_for_wire,
+    encode_agent_response_for_wire,
+    encode_json_parse_error_wire,
+)
 from jiuwenclaw.schema.agent import AgentRequest, AgentResponse, AgentResponseChunk
 
 
@@ -39,25 +50,16 @@ def _payload_to_request(data: dict[str, Any]) -> AgentRequest:
     )
 
 
-def _response_to_payload(resp: AgentResponse) -> dict[str, Any]:
-    """将 AgentResponse 转为 JSON 载荷."""
-    return asdict(resp)
-
-
-def _chunk_to_payload(chunk: AgentResponseChunk) -> dict[str, Any]:
-    """将 AgentResponseChunk 转为 JSON 载荷."""
-    return asdict(chunk)
-
-
 class AgentWebSocketServer:
     """Gateway 与 AgentServer 之间的 WebSocket 服务端（单例）.
 
     监听来自 Gateway (WebSocketAgentServerClient) 的连接，按协议约定处理请求：
-    - 收到 JSON 载荷，字段为 AgentRequest（含 is_stream）
-    - is_stream=False：调用 IAgentServer.process_message()，返回一条完整 AgentResponse JSON
-    - is_stream=True：调用 IAgentServer.process_message_stream()，逐条返回 AgentResponseChunk JSON
+    - 收到 JSON：E2AEnvelope（或过渡期 legacy + 兜底信封）
+    - is_stream=False：``process_message`` → 一条 **E2AResponse** JSON（``jiuwenclaw.e2a.wire_codec``）
+    - is_stream=True：逐条 **E2AResponse** JSON（chunk/complete/error）
+    - 例外：首帧 ``connection.ack`` 仍为 ``type/event`` 事件帧
 
-    支持 send_push：AgentServer 主动向 Gateway 推送消息（需 Gateway 预注册 agent-push 队列）。
+    支持 send_push：推送帧亦为 E2AResponse 线格式（由 chunk 编码）。
     """
 
     _instance: ClassVar[AgentWebSocketServer | None] = None
@@ -212,17 +214,43 @@ class AgentWebSocketServer:
         try:
             data = json.loads(raw)
         except json.JSONDecodeError as e:
-            error_payload = {
-                "request_id": "",
-                "channel_id": "",
-                "ok": False,
-                "payload": {"error": f"JSON 解析失败: {e}"},
-            }
+            wire = encode_json_parse_error_wire(
+                request_id="",
+                channel_id="",
+                message=f"JSON 解析失败: {e}",
+            )
             async with send_lock:
-                await ws.send(json.dumps(error_payload, ensure_ascii=False))
+                await ws.send(json.dumps(wire, ensure_ascii=False))
             return
 
-        request = _payload_to_request(data)
+        try:
+            env = E2AEnvelope.from_dict(data)
+        except Exception as parse_err:
+            logger.warning(
+                "[AgentWebSocketServer] E2A from_dict 失败，按旧载荷解析: %s",
+                parse_err,
+            )
+            request = _payload_to_request(data)
+        else:
+            jw = (env.channel_context or {}).get(E2A_INTERNAL_CONTEXT_KEY)
+            if isinstance(jw, dict) and jw.get(E2A_FALLBACK_FAILED_KEY):
+                legacy = jw.get(E2A_LEGACY_AGENT_REQUEST_KEY)
+                logger.warning(
+                    "[E2A][fallback] using legacy_agent_request request_id=%s",
+                    env.request_id,
+                )
+                if not isinstance(legacy, dict):
+                    raise ValueError("legacy_agent_request missing or not a dict")
+                request = _payload_to_request(legacy)
+            else:
+                logger.info(
+                    "[E2A][in] request_id=%s channel=%s method=%s is_stream=%s",
+                    env.request_id,
+                    env.channel,
+                    env.method,
+                    env.is_stream,
+                )
+                request = e2a_to_agent_request(env)
 
         logger.info(
             "[AgentWebSocketServer] 收到请求: request_id=%s channel_id=%s is_stream=%s",
@@ -268,30 +296,35 @@ class AgentWebSocketServer:
                 ok=False,
                 payload={"error": str(e)},
             )
+            wire = encode_agent_response_for_wire(
+                error_resp, response_id=request.request_id
+            )
             async with send_lock:
-                await ws.send(
-                    json.dumps(_response_to_payload(error_resp), ensure_ascii=False)
-                )
+                await ws.send(json.dumps(wire, ensure_ascii=False))
 
     async def _handle_unary(self, ws: Any, request: AgentRequest, send_lock: asyncio.Lock) -> None:
-        """非流式处理：调用 process_message，返回一条完整 AgentResponse."""
+        """非流式处理：调用 process_message，返回一条 E2AResponse 线 JSON。"""
         resp = await self._agent.process_message(request)
-        payload = _response_to_payload(resp)
+        wire = encode_agent_response_for_wire(resp, response_id=request.request_id)
         async with send_lock:
-            await ws.send(json.dumps(payload, ensure_ascii=False))
+            await ws.send(json.dumps(wire, ensure_ascii=False))
         logger.info(
             "[AgentWebSocketServer] 非流式响应已发送: request_id=%s",
             request.request_id,
         )
 
     async def _handle_stream(self, ws: Any, request: AgentRequest, send_lock: asyncio.Lock) -> None:
-        """流式处理：调用 process_message_stream，逐条发送 AgentResponseChunk."""
+        """流式处理：调用 process_message_stream，逐条发送 E2AResponse 线 JSON。"""
         chunk_count = 0
         async for chunk in self._agent.process_message_stream(request):
             chunk_count += 1
-            payload = _chunk_to_payload(chunk)
+            wire = encode_agent_chunk_for_wire(
+                chunk,
+                response_id=request.request_id,
+                sequence=chunk_count - 1,
+            )
             async with send_lock:
-                await ws.send(json.dumps(payload, ensure_ascii=False))
+                await ws.send(json.dumps(wire, ensure_ascii=False))
         logger.info(
             "[AgentWebSocketServer] 流式响应已发送: request_id=%s 共 %s 个 chunk",
             request.request_id,
@@ -317,8 +350,9 @@ class AgentWebSocketServer:
                 ok=True,
                 payload=data,
             )
+        wire = encode_agent_response_for_wire(resp, response_id=request.request_id)
         async with send_lock:
-            await ws.send(json.dumps(_response_to_payload(resp), ensure_ascii=False))
+            await ws.send(json.dumps(wire, ensure_ascii=False))
 
     async def _handle_history_get_stream(self, ws: Any, request: AgentRequest, send_lock: asyncio.Lock) -> None:
         params = request.params if isinstance(request.params, dict) else {}
@@ -335,15 +369,20 @@ class AgentWebSocketServer:
                 },
                 is_complete=True,
             )
+            wire = encode_agent_chunk_for_wire(
+                err_chunk,
+                response_id=request.request_id,
+                sequence=0,
+            )
             async with send_lock:
-                await ws.send(json.dumps(_chunk_to_payload(err_chunk), ensure_ascii=False))
+                await ws.send(json.dumps(wire, ensure_ascii=False))
             return
 
         messages = data.get("messages", [])
         total_pages = data.get("total_pages")
         page = data.get("page_idx")
         if isinstance(messages, list):
-            for item in messages:
+            for seq, item in enumerate(messages):
                 chunk = AgentResponseChunk(
                     request_id=request.request_id,
                     channel_id=request.channel_id,
@@ -355,8 +394,13 @@ class AgentWebSocketServer:
                     },
                     is_complete=False,
                 )
+                wire = encode_agent_chunk_for_wire(
+                    chunk,
+                    response_id=request.request_id,
+                    sequence=seq,
+                )
                 async with send_lock:
-                    await ws.send(json.dumps(_chunk_to_payload(chunk), ensure_ascii=False))
+                    await ws.send(json.dumps(wire, ensure_ascii=False))
 
         done_chunk = AgentResponseChunk(
             request_id=request.request_id,
@@ -369,8 +413,14 @@ class AgentWebSocketServer:
             },
             is_complete=True,
         )
+        done_seq = len(messages) if isinstance(messages, list) else 0
+        wire_done = encode_agent_chunk_for_wire(
+            done_chunk,
+            response_id=request.request_id,
+            sequence=done_seq,
+        )
         async with send_lock:
-            await ws.send(json.dumps(_chunk_to_payload(done_chunk), ensure_ascii=False))
+            await ws.send(json.dumps(wire_done, ensure_ascii=False))
 
     async def _handle_browser_start(self, ws: Any, request: AgentRequest, send_lock: asyncio.Lock) -> None:
         """启动浏览器并返回执行结果（returncode）。"""
@@ -394,8 +444,9 @@ class AgentWebSocketServer:
                 payload={"error": str(e)},
             )
 
+        wire = encode_agent_response_for_wire(resp, response_id=request.request_id)
         async with send_lock:
-            await ws.send(json.dumps(_response_to_payload(resp), ensure_ascii=False))
+            await ws.send(json.dumps(wire, ensure_ascii=False))
 
     async def _handle_browser_runtime_restart(self, ws: Any, request: AgentRequest, send_lock: asyncio.Lock) -> None:
         try:
@@ -417,8 +468,9 @@ class AgentWebSocketServer:
                 payload={"error": str(e)},
             )
 
+        wire = encode_agent_response_for_wire(resp, response_id=request.request_id)
         async with send_lock:
-            await ws.send(json.dumps(_response_to_payload(resp), ensure_ascii=False))
+            await ws.send(json.dumps(wire, ensure_ascii=False))
 
     async def _handle_config_cache_clear(self, ws: Any, request: AgentRequest, send_lock: asyncio.Lock) -> None:
         try:
@@ -440,8 +492,9 @@ class AgentWebSocketServer:
                 payload={"error": str(e)},
             )
 
+        wire = encode_agent_response_for_wire(resp, response_id=request.request_id)
         async with send_lock:
-            await ws.send(json.dumps(_response_to_payload(resp), ensure_ascii=False))
+            await ws.send(json.dumps(wire, ensure_ascii=False))
 
     async def _handle_agent_reload_config(self, ws: Any, request: AgentRequest, send_lock: asyncio.Lock) -> None:
         try:
@@ -461,8 +514,9 @@ class AgentWebSocketServer:
                 payload={"error": str(e)},
             )
 
+        wire = encode_agent_response_for_wire(resp, response_id=request.request_id)
         async with send_lock:
-            await ws.send(json.dumps(_response_to_payload(resp), ensure_ascii=False))
+            await ws.send(json.dumps(wire, ensure_ascii=False))
 
     async def send_push(self, msg) -> None:
         """AgentServer 主动向 Gateway 推送消息。
@@ -477,10 +531,21 @@ class AgentWebSocketServer:
             return
 
         try:
+            chunk = AgentResponseChunk(
+                request_id=str(msg.get("request_id", "")),
+                channel_id=str(msg.get("channel_id", "")),
+                payload=msg.get("payload"),
+                is_complete=bool(msg.get("is_complete", False)),
+            )
+            wire = encode_agent_chunk_for_wire(
+                chunk,
+                response_id=str(msg.get("request_id", "")),
+                sequence=0,
+            )
             async with self._current_send_lock:
-                await self._current_ws.send(json.dumps(msg, ensure_ascii=False))
+                await self._current_ws.send(json.dumps(wire, ensure_ascii=False))
             logger.info(
-                "[AgentWebSocketServer] send_push 已发送: channel_id=%s",
+                "[AgentWebSocketServer] send_push 已发送(E2A wire): channel_id=%s",
                 msg["channel_id"],
             )
         except Exception as e:
