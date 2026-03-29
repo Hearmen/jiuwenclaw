@@ -32,7 +32,6 @@ from jiuwenclaw.channel.xiaoyi_utils.formatter import (
 
 logger = logging.getLogger(__name__)
 
-
 FILE_TYPE_TO_MIME_TYPE: dict[str, str] = {
     "txt": "text/plain",
     "html": "text/html",
@@ -623,6 +622,18 @@ class XiaoyiChannel(BaseChannel):
         if msg_type == "heartbeat":
             return
 
+        # 根级直连 A2A（jsonrpc 2.0）须含 params.sessionId，否则整帧丢弃
+        if message.get("jsonrpc") == "2.0":
+            params_root = message.get("params")
+            if not isinstance(params_root, dict):
+                params_root = {}
+            sid = params_root.get("sessionId")
+            if sid is None or (isinstance(sid, str) and not sid.strip()):
+                logger.warning(
+                    "XiaoyiChannel 直连 A2A 缺少有效 params.sessionId，跳过本帧（与 xy_channel 一致）"
+                )
+                return
+
         await self._dispatch_gui_agent_events(message)
 
         # 检查是否是 data-only 消息（工具执行结果）
@@ -630,6 +641,10 @@ class XiaoyiChannel(BaseChannel):
         if data_event:
             logger.info(f"XiaoyiChannel 收到 data-event: {data_event.intent_name}, status={data_event.status}")
             await self._handle_data_event(data_event)
+            return
+
+        # GUI / UploadExeResult 等已在 _dispatch_gui_agent_events 与 _extract_data_event 中处理，勿再落 unknown method。
+        if msg_type == "data":
             return
 
         method = message.get("method")

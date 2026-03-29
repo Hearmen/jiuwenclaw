@@ -17,6 +17,17 @@ from jiuwenclaw.channel.xiaoyi_channel import get_xiaoyi_channel
 from .utils import ToolInputError, format_success_response
 
 
+def _get_gui_tool_async_lock(channel: Any) -> asyncio.Lock:
+    gl = getattr(channel, "gui_tool_lock", None)
+    if gl is not None:
+        return gl
+    inner = getattr(channel, "_gui_tool_lock", None)
+    if inner is None:
+        inner = asyncio.Lock()
+        setattr(channel, "_gui_tool_lock", inner)
+    return inner
+
+
 def _payload_is_gui_final(payload: Dict[str, Any]) -> bool:
     """兼容设备 isFinal 为 bool / 1 / \"true\" 等."""
     v = payload.get("isFinal")
@@ -110,7 +121,7 @@ async def xiaoyi_gui_agent(query: str) -> Dict[str, Any]:
             done.set()
 
     # 与 channel 层锁配合：同一时间仅一单 GUI，避免多 handler 共收同一 WS 帧
-    async with channel.gui_tool_lock:
+    async with _get_gui_tool_async_lock(channel):
         channel.register_gui_agent_handler(on_gui)
         try:
             command = {
