@@ -399,7 +399,24 @@ async def mcp_paid_search(
             query=query, max_results=max_results, timeout_seconds=timeout_seconds
         ),
     }
-    order = [provider] if provider != "auto" else ["perplexity", "serper", "jina"]
+    
+    available_providers = []
+    if os.environ.get("PERPLEXITY_API_KEY"):
+        available_providers.append("perplexity")
+    if os.environ.get("SERPER_API_KEY"):
+        available_providers.append("serper")
+    if os.environ.get("JINA_API_KEY"):
+        available_providers.append("jina")
+    
+    if not available_providers:
+        return "[ERROR]: no paid search API keys configured."
+    
+    if provider != "auto":
+        if provider not in available_providers:
+            return f"[ERROR]: {provider} API key not configured. Available providers: {', '.join(available_providers)}"
+        order = [provider]
+    else:
+        order = [p for p in ["perplexity", "serper", "jina"] if p in available_providers]
 
     errors: list[str] = []
     for name in order:

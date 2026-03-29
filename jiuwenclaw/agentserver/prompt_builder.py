@@ -322,7 +322,18 @@ Before outputting final response text, **you must call the following tools first
         return "\n".join(sections)
 
 
+def _has_paid_search_api_key() -> bool:
+    """Check if any paid search API key is configured."""
+    return any([
+        os.environ.get("PERPLEXITY_API_KEY"),
+        os.environ.get("SERPER_API_KEY"),
+        os.environ.get("JINA_API_KEY"),
+    ])
+
+
 def _tool_prompt(mode, language: str, include_memory_tools: bool = True) -> str:
+    has_paid_search = _has_paid_search_api_key()
+
     if language == "zh":
         if mode == "plan":
             todo_prompt = """### 任务记录与追踪 （一切用户要求必须追踪）
@@ -353,6 +364,13 @@ def _tool_prompt(mode, language: str, include_memory_tools: bool = True) -> str:
 
 """ if include_memory_tools else ""
 
+        search_tools_section = """| `mcp_free_search` | 免费搜索（DuckDuckGo） |
+"""
+        if has_paid_search:
+            search_tools_section += """| `mcp_paid_search` | 付费搜索（Perplexity/SERPER/JINA） |
+"""
+        search_tools_section += """| `mcp_fetch_webpage` | 抓取网页文本内容 |"""
+
         return f"""## 工具
 
 工具为内置方法。
@@ -374,14 +392,11 @@ def _tool_prompt(mode, language: str, include_memory_tools: bool = True) -> str:
 1. **必须落盘**：不要只把代码打印在回复里或只在内存里生成；必须写入文件。
 
 
-
 ### 搜索与网页
 
 | 工具名称 | 功能说明 |
 |---------|---------|
-| `mcp_free_search` | 免费搜索（DuckDuckGo） |
-| `mcp_paid_search` | 付费搜索（Perplexity/SERPER/JINA） |
-| `mcp_fetch_webpage` | 抓取网页文本内容 |
+{search_tools_section}
 
 ### 文件操作
 
@@ -450,6 +465,13 @@ def _tool_prompt(mode, language: str, include_memory_tools: bool = True) -> str:
 
 """ if include_memory_tools else ""
 
+        search_tools_section = """| `mcp_free_search` | Free search (DuckDuckGo) |
+"""
+        if has_paid_search:
+            search_tools_section += """| `mcp_paid_search` | Paid search (Perplexity/SERPER/JINA) |
+"""
+        search_tools_section += """| `mcp_fetch_webpage` | Fetch webpage text content |"""
+
         return f"""# Tools
 
 Tools are built-in methods.
@@ -475,9 +497,7 @@ When the user requests code/scripts/config/tests that must be delivered **as fil
 
 | Tool Name | Description |
 |-----------|-------------|
-| `mcp_free_search` | Free search (DuckDuckGo) |
-| `mcp_paid_search` | Paid search (Perplexity/SERPER/JINA) |
-| `mcp_fetch_webpage` | Fetch webpage text content |
+{search_tools_section}
 
 ### File Operations
 
