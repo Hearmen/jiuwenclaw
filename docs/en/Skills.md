@@ -8,6 +8,7 @@ JiuwenClaw’s **Skills** system lets you extend the agent with new capabilities
 - **Local**: Imported from a path on disk (absolute or relative).
 - **Marketplace**: Downloaded from configured third-party Git repos.
 - **SkillNet**: Search and one-click install from [SkillNet](https://github.com/zjunlp/SkillNet); uses the GitHub API. Without a token, anonymous rate limits apply (~60/hour). Configure **`github_token`** (`GITHUB_TOKEN`) under **Configuration → Third-party** (`skillnet-ai>=0.0.14`).
+- **ClawHub**: Search and one-click install from [ClawHub](https://clawhub.ai/).
 
 ## 2. Skills panel (web UI)
 
@@ -91,3 +92,20 @@ SkillNet installs behave like local/marketplace installs.
    `SkillCallOperator` / `SkillOptimizer` use the same `_SKILLS_DIR`, so SkillNet skills participate in evolution like any other.
 
 **Summary**: If `workspace/agent/skills/<name>/SKILL.md` exists, the skill appears after the next agent reload; the model uses `view_file("skills/<name>/SKILL.md")` to follow the workflow.
+
+## 6. Using ClawHub
+
+ClawHub is an online platform for sharing and discovering skills. You can search and install community-contributed skills.
+
+### 6.1 How to use
+
+1. **Get Token**
+Login to [https://clawhub.ai/](https://clawhub.ai/) and obtain your access token.
+
+2. **Search and Install**
+In the **Skills** panel, click the **ClawHub Online Search** button:
+- Enter your token when prompted for first-time use
+- Search for skills by keyword
+- One-click install skills to the local workspace
+
+ClawHub installs behave like local/marketplace/SkillNet installs and are treated identically in the system.

@@ -1912,7 +1912,7 @@ class SkillManager:
         self._save_state()
 
     @staticmethod
-    def _mask_clawhub_token(self, token: str) -> str:
+    def _mask_clawhub_token(token: str) -> str:
         """掩码处理 ClawHub token。"""
         if not token:
             return ""
