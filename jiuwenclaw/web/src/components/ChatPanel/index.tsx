@@ -84,12 +84,29 @@ export function ChatPanel({
     t('chat.welcomeSuggestions.skills'),
   ];
 
+  // 跟踪用户是否正在查看历史消息（不在底部）
+  const userScrolledUpRef = useRef(false);
+
+  // 检测用户滚动位置
+  const handleScroll = useCallback(() => {
+    const el = scrollContainerRef.current;
+    if (!el) return;
+    
+    // 检查是否在底部（有 40px 的阈值）
+    const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 40;
+    userScrolledUpRef.current = !atBottom;
+  }, []);
+
   useEffect(() => {
     if (suppressNextScrollToEndRef.current) {
       suppressNextScrollToEndRef.current = false;
       return;
     }
-    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+    
+    // 只有当用户在底部时才自动滚动
+    if (!userScrolledUpRef.current) {
+      messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+    }
   }, [messages, isThinking]);
 
   useLayoutEffect(() => {
@@ -127,11 +144,8 @@ export function ChatPanel({
   );
 
   return (
-    <div className="flex flex-col h-full min-h-0" data-testid="chat-panel">
-      <div
-        ref={scrollContainerRef}
-        className="flex-1 min-h-0 overflow-y-auto overflow-x-hidden px-3 py-4"
-      >
+    <div className="flex flex-col h-full" data-testid="chat-panel">
+      <div ref={scrollContainerRef} className="flex-1 overflow-y-auto px-3 py-4" onScroll={handleScroll}>
         {historyPager && messages.length > 0 ? (
           <HistoryPagerBar
             loadedPages={historyPager.loadedPages}
