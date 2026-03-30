@@ -1101,6 +1101,7 @@ export function ChannelsPanel({ isConnected }: ChannelsPanelProps) {
       normalizeAllowFromText(baseDraft.allow_from).join('\n') !==
         normalizeAllowFromText(wechatDraft.allow_from).join('\n') ||
       baseDraft.auto_login !== wechatDraft.auto_login ||
+      baseDraft.enable_streaming !== wechatDraft.enable_streaming ||
       baseDraft.qrcode_poll_interval_sec !== wechatDraft.qrcode_poll_interval_sec ||
       baseDraft.long_poll_timeout_sec !== wechatDraft.long_poll_timeout_sec ||
       baseDraft.backoff_base_sec !== wechatDraft.backoff_base_sec ||
@@ -2569,7 +2570,7 @@ export function ChannelsPanel({ isConnected }: ChannelsPanelProps) {
                               </td>
                             </tr>
 
-                            {(['auto_login'] as const).map((field) => (
+                            {(['auto_login', 'enable_streaming'] as const).map((field) => (
                               <tr key={field} className="border-t border-border first:border-t-0 even:bg-secondary/10">
                                 <td className="px-4 py-2.5 align-middle mono text-xs text-text-muted w-[32%]">{field}</td>
                                 <td className="px-4 py-2.5 align-middle">

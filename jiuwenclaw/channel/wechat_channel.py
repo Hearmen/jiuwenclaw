@@ -101,6 +101,9 @@ class WechatConfig(BaseModel):
     # 可选：本地凭据持久化
     credential_file: str = "~/.wx-ai-bridge/credentials.json"
 
+    # 是否下发过程消息（工具调用/结果、delta 在工具边界的冲刷）；False 时仅在下发 chat.final（及 interrupt 等完结类事件）时合并发送
+    enable_streaming: bool = True
+
 
 # 供前端轮询展示扫码登录进度（与 Logger 输出互补）
 _login_ui_lock = asyncio.Lock()
@@ -384,10 +387,12 @@ class WechatChannel(BaseChannel):
         return http
 
     async def send(self, msg: Message) -> None:
-        """与 wecom 非流式路径对齐：delta 仅聚合，FINAL/工具/错误/心跳时再 sendmessage。"""
+        """delta 聚合；enable_streaming 时与原先一致：工具调用/结果会即时下发并在边界冲刷 delta；关闭时仅 chat.final / interrupt 等完结事件合并下发（对齐飞书非流式）。"""
         if not self._http or not self.config.bot_token:
             logger.warning("WechatChannel 未就绪，跳过发送")
             return
+
+        streaming = bool(self.config.enable_streaming)
 
         if msg.event_type == EventType.CHAT_PROCESSING_STATUS:
             return
@@ -405,6 +410,8 @@ class WechatChannel(BaseChannel):
             return
 
         if msg.event_type == EventType.CHAT_TOOL_CALL:
+            if not streaming:
+                return
             flushed = self._take_accumulated_delta(msg)
             await self._send_flushed_delta_if_present(msg, flushed)
             payload = msg.payload if isinstance(msg.payload, dict) else {}
@@ -412,6 +419,8 @@ class WechatChannel(BaseChannel):
             return
 
         if msg.event_type == EventType.CHAT_TOOL_RESULT:
+            if not streaming:
+                return
             flushed = self._take_accumulated_delta(msg)
             await self._send_flushed_delta_if_present(msg, flushed)
             payload = msg.payload if isinstance(msg.payload, dict) else {}

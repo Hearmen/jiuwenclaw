@@ -229,6 +229,7 @@ channels:
     enabled: false
   wechat:
     # 个人微信 iLink Bot API 配置
+    enable_streaming: false
     base_url: https://ilinkai.weixin.qq.com
     bot_token:
     ilink_bot_id:

@@ -1986,6 +1986,7 @@ async def _run() -> None:
                         credential_file=str(
                             wechat_conf.get("credential_file") or "~/.wx-ai-bridge/credentials.json"
                         ).strip(),
+                        enable_streaming=bool(wechat_conf.get("enable_streaming", True)),
                     )
                     wechat_channel = WechatChannel(wechat_config, _DummyBus())
                     channel_manager.register_channel(wechat_channel)

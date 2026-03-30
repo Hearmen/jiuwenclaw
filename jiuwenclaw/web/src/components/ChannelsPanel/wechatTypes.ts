@@ -91,6 +91,7 @@ export type WechatConfig = {
   ilink_user_id: string;
   allow_from: string[];
   auto_login: boolean;
+  enable_streaming: boolean;
   qrcode_poll_interval_sec: number;
   long_poll_timeout_sec: number;
   backoff_base_sec: number;
@@ -106,6 +107,7 @@ export type WechatDraft = {
   ilink_user_id: string;
   allow_from: string;
   auto_login: boolean;
+  enable_streaming: boolean;
   qrcode_poll_interval_sec: number;
   long_poll_timeout_sec: number;
   backoff_base_sec: number;
@@ -121,6 +123,7 @@ export const DEFAULT_WECHAT_CONF: WechatConfig = {
   ilink_user_id: '',
   allow_from: [],
   auto_login: true,
+  enable_streaming: true,
   qrcode_poll_interval_sec: 2.0,
   long_poll_timeout_sec: 45,
   backoff_base_sec: 1.0,
@@ -152,6 +155,7 @@ export function normalizeWechatConfig(input: unknown): WechatConfig {
     ilink_user_id: String(data.ilink_user_id ?? '').trim(),
     allow_from: allowFrom,
     auto_login: data.auto_login === undefined ? true : Boolean(data.auto_login),
+    enable_streaming: data.enable_streaming === undefined ? true : Boolean(data.enable_streaming),
     qrcode_poll_interval_sec: Number(data.qrcode_poll_interval_sec ?? 2.0) || 2.0,
     long_poll_timeout_sec: Number(data.long_poll_timeout_sec ?? 45) || 45,
     backoff_base_sec: Number(data.backoff_base_sec ?? 1.0) || 1.0,
@@ -170,6 +174,7 @@ export function draftFromWechatConfig(conf: WechatConfig): WechatDraft {
     ilink_user_id: conf.ilink_user_id,
     allow_from: conf.allow_from.join('\n'),
     auto_login: conf.auto_login,
+    enable_streaming: conf.enable_streaming,
     qrcode_poll_interval_sec: conf.qrcode_poll_interval_sec,
     long_poll_timeout_sec: conf.long_poll_timeout_sec,
     backoff_base_sec: conf.backoff_base_sec,
@@ -187,6 +192,7 @@ export function buildWechatPayload(draft: WechatDraft): Record<string, unknown> 
     ilink_user_id: draft.ilink_user_id.trim(),
     allow_from: normalizeAllowFromLines(draft.allow_from),
     auto_login: draft.auto_login,
+    enable_streaming: draft.enable_streaming,
     qrcode_poll_interval_sec: Number(draft.qrcode_poll_interval_sec) || 2.0,
     long_poll_timeout_sec: Number(draft.long_poll_timeout_sec) || 45,
     backoff_base_sec: Number(draft.backoff_base_sec) || 1.0,
