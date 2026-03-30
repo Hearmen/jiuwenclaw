@@ -14,6 +14,9 @@ from enum import Enum
 from typing import TYPE_CHECKING, Any, Dict
 from jiuwenclaw.channel.base import ChannelType
 from jiuwenclaw.gateway.session_map import SessionMap
+from jiuwenclaw.schema.events import GatewayEvents
+from jiuwenclaw.schema.hooks_context import GatewayChatHookContext
+from jiuwenclaw.extensions.registry import ExtensionRegistry
 
 logger = logging.getLogger(__name__)
 
@@ -543,6 +546,34 @@ class MessageHandler(ABC):
             ReqMethod.CHAT_ANSWER.value,
         )
 
+    @staticmethod
+    def _should_trigger_before_chat_request_hook(msg: "Message") -> bool:
+        from jiuwenclaw.schema.message import ReqMethod
+
+        return msg.req_method in (
+            ReqMethod.CHAT_SEND,
+            ReqMethod.CHAT_RESUME,
+            ReqMethod.CHAT_ANSWER,
+        )
+
+    async def _trigger_before_chat_request_hook(self, msg: "Message") -> None:
+        if not self._should_trigger_before_chat_request_hook(msg):
+            return
+
+        params = msg.params if isinstance(msg.params, dict) else {}
+        if not isinstance(msg.params, dict):
+            msg.params = params
+
+        ctx = GatewayChatHookContext(
+            request_id=msg.id,
+            channel_id=msg.channel_id,
+            session_id=msg.session_id,
+            req_method=msg.req_method.value if msg.req_method is not None else None,
+            params=params,
+        )
+
+        await ExtensionRegistry.get_instance().trigger(GatewayEvents.BEFORE_CHAT_REQUEST, ctx)
+
     async def _process_non_stream_request(self, msg: "Message", env: "E2AEnvelope") -> None:
         """执行单次非流式 Agent 请求并将结果写入 robot_messages（供串行或后台任务复用）。"""
         try:
@@ -702,6 +733,7 @@ class MessageHandler(ABC):
                     "[MessageHandler] 从 user_messages 取出，发往 AgentServer: id=%s channel_id=%s is_stream=%s",
                     msg.id, msg.channel_id, msg.is_stream,
                 )
+                await self._trigger_before_chat_request_hook(msg)
                 env = self.message_to_e2a(msg)
                 stream_rid = env.request_id or msg.id
                 try:

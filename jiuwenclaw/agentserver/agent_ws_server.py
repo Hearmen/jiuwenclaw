@@ -26,6 +26,9 @@ from jiuwenclaw.e2a.wire_codec import (
     encode_json_parse_error_wire,
 )
 from jiuwenclaw.schema.agent import AgentRequest, AgentResponse, AgentResponseChunk
+from jiuwenclaw.schema.events import AgentServerEvents
+from jiuwenclaw.extensions.registry import ExtensionRegistry
+from jiuwenclaw.schema.hooks_context import AgentServerChatHookContext
 
 
 logger = logging.getLogger(__name__)
@@ -263,6 +266,8 @@ class AgentWebSocketServer:
         try:
             from jiuwenclaw.schema.message import ReqMethod
 
+            await self._trigger_before_chat_request_hook(request)
+
             if request.req_method == ReqMethod.HISTORY_GET:
                 if request.is_stream:
                     await self._handle_history_get_stream(ws, request, send_lock)
@@ -302,6 +307,34 @@ class AgentWebSocketServer:
             )
             async with send_lock:
                 await ws.send(json.dumps(wire, ensure_ascii=False))
+
+    @staticmethod
+    def _should_trigger_before_chat_request_hook(request: AgentRequest) -> bool:
+        from jiuwenclaw.schema.message import ReqMethod
+
+        return request.req_method in (
+            ReqMethod.CHAT_SEND,
+            ReqMethod.CHAT_RESUME,
+            ReqMethod.CHAT_ANSWER,
+        )
+
+    async def _trigger_before_chat_request_hook(self, request: AgentRequest) -> None:
+        if not self._should_trigger_before_chat_request_hook(request):
+            return
+
+        params = request.params if isinstance(request.params, dict) else {}
+        if not isinstance(request.params, dict):
+            request.params = params
+
+        ctx = AgentServerChatHookContext(
+            request_id=request.request_id,
+            channel_id=request.channel_id,
+            session_id=request.session_id,
+            req_method=request.req_method.value if request.req_method is not None else None,
+            params=params,
+        )
+
+        await ExtensionRegistry.get_instance().trigger(AgentServerEvents.BEFORE_CHAT_REQUEST, ctx)
 
     async def _handle_unary(self, ws: Any, request: AgentRequest, send_lock: asyncio.Lock) -> None:
         """非流式处理：调用 process_message，返回一条 E2AResponse 线 JSON。"""

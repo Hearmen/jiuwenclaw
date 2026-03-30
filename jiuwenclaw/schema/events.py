@@ -11,6 +11,7 @@ class GatewayEvents(EventBase):
 
     GATEWAY_STARTED = EventBase.get_event("gateway_started")
     GATEWAY_STOPPED = EventBase.get_event("gateway_stopped")
+    BEFORE_CHAT_REQUEST = EventBase.get_event("before_chat_request")
 
 
 class AgentServerEvents(EventBase):
@@ -23,5 +24,6 @@ class AgentServerEvents(EventBase):
 
     AGENT_SERVER_STARTED = EventBase.get_event("agent_server_started")
     AGENT_SERVER_STOPPED = EventBase.get_event("agent_server_stopped")
+    BEFORE_CHAT_REQUEST = EventBase.get_event("before_chat_request")
     MEMORY_BEFORE_CHAT = EventBase.get_event("memory_before_chat")
     MEMORY_AFTER_CHAT = EventBase.get_event("memory_after_chat")

@@ -38,6 +38,7 @@ from jiuwenclaw.config import get_config
 from jiuwenclaw.agentserver.react_agent import JiuClawReActAgent
 from jiuwenclaw.agentserver.permissions.checker import TOOL_PERMISSION_CHANNEL_ID
 from jiuwenclaw.schema.events import AgentServerEvents
+from jiuwenclaw.extensions.registry import ExtensionRegistry
 from jiuwenclaw.schema.hooks_context import MemoryHookContext
 from jiuwenclaw.agentserver.tools.browser_tools import register_browser_runtime_mcp_server
 from jiuwenclaw.agentserver.tools.audio_tools import (
@@ -514,6 +515,7 @@ class JiuWenClaw:
         """从 config.yaml 重新加载配置并 reconfigure 当前实例，使模型/API 等配置生效且不重启进程。"""
         if self._instance is None:
             raise RuntimeError("JiuWenClaw 未初始化，请先调用 create_instance()")
+
         clear_config_cache()
         clear_memory_manager_cache()
 
@@ -683,7 +685,6 @@ class JiuWenClaw:
                 workspace_dir=self._workspace_dir,
                 extra=request_params if request_params is not None else {},
             )
-            from jiuwenclaw.extensions.registry import ExtensionRegistry
 
             await ExtensionRegistry.get_instance().trigger(AgentServerEvents.MEMORY_BEFORE_CHAT, mem_ctx)
             memory_block = "\n\n".join(b for b in mem_ctx.memory_blocks if b)
@@ -1314,7 +1315,6 @@ class JiuWenClaw:
                 assistant_message=content_str,
                 extra=request.params,
             )
-            from jiuwenclaw.extensions.registry import ExtensionRegistry
 
             await ExtensionRegistry.get_instance().trigger(AgentServerEvents.MEMORY_AFTER_CHAT, after_ctx)
 
@@ -1507,7 +1507,6 @@ class JiuWenClaw:
                 assistant_message=assistant_message,
                 extra=request.params,
             )
-            from jiuwenclaw.extensions.registry import ExtensionRegistry
 
             await ExtensionRegistry.get_instance().trigger(AgentServerEvents.MEMORY_AFTER_CHAT, after_ctx)
 
