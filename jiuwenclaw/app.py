@@ -470,11 +470,18 @@ def _register_web_handlers(
         if not workspace_session_dir.exists() or not workspace_session_dir.is_dir():
             sessions = []
         else:
-            sessions = sorted(
-                [d.name for d in workspace_session_dir.iterdir() if d.is_dir()],
-                reverse=True,
-            )
-            sessions = sessions[:limit]
+            sessions_with_mtime = []
+            for d in workspace_session_dir.iterdir():
+                if not d.is_dir():
+                    continue
+                try:
+                    mtime = d.stat().st_mtime
+                    sessions_with_mtime.append((d.name, mtime))
+                except OSError:
+                    continue
+            # 按修改时间倒序排序
+            sessions_with_mtime.sort(key=lambda x: x[1], reverse=True)
+            sessions = [name for name, _ in sessions_with_mtime[:limit]]
         await channel.send_response(ws, req_id, ok=True, payload={"sessions": sessions})
 
     async def _session_create(ws, req_id, params, session_id):

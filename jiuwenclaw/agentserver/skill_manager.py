@@ -213,7 +213,7 @@ class SkillManager:
                 meta["content"] = meta.pop("body", "")
                 meta["file_path"] = meta.pop("path", "")
                 meta["source"] = self._resolve_skill_source(meta.get("name", ""))
-                meta["is_builtin"] = self._is_builtin_skill(meta.get("name", ""), self._get_installed_plugins())
+                meta["is_builtin"] = self._is_builtin_skill(meta.get("name", ""), self._get_installed_plugins(), child)
                 return meta
 
         # 再在 marketplace 目录中查找
@@ -929,8 +929,9 @@ class SkillManager:
         if not name:
             return {"success": False, "detail": "缺少参数: name"}
 
-        # 内置技能不允许删除
-        if self._is_builtin_skill(name, self._get_installed_plugins()):
+        # 内置技能不允许删除（传入实际路径判断）
+        dest = _SKILLS_DIR / name
+        if self._is_builtin_skill(name, self._get_installed_plugins(), dest):
             return {"success": False, "detail": "内置技能不允许删除"}
 
         dest = _SKILLS_DIR / name
@@ -1205,13 +1206,16 @@ class SkillManager:
     # 内置技能判断
     # -----------------------------------------------------------------------
 
-    def _is_builtin_skill(self, skill_name: str, installed_plugins: list[dict]) -> bool:
+    def _is_builtin_skill(self, skill_name: str, installed_plugins: list[dict], skill_path: Path | None = None) -> bool:
         """判断技能是否为内置技能.
 
         内置技能的判断标准：
         1. 不在 local_skills 中（用户本地导入）
         2. 不在 installed_plugins 中（marketplace安装）
-        3. 存在于源码内置路径
+        3. 实际路径在源码内置路径下（通过 skill_path 参数判断）
+
+        注意：如果 skill_path 不为 None，则直接判断该路径是否在 builtin_dir 下，
+        这比仅通过 skill_name 判断更准确，避免名称冲突导致的误判。
         """
         try:
             # 检查是否在 local_skills 中（用户本地导入或SkillNet下载）
@@ -1224,7 +1228,14 @@ class SkillManager:
                 if plugin.get("name") == skill_name:
                     return False
 
-            # 不在 local_skills 和 installed_plugins 中的技能，且存在于源码目录，则为内置
+            # 如果提供了 skill_path，直接判断该路径是否在 builtin_dir 下
+            if skill_path is not None:
+                builtin_dir = get_builtin_skills_dir()
+                if builtin_dir.exists():
+                    return skill_path.resolve().parent == builtin_dir.resolve()
+                return False
+
+            # 没有提供 skill_path 时，回退到通过 skill_name 判断（兼容旧代码）
             builtin_dir = get_builtin_skills_dir()
             if builtin_dir.exists():
                 builtin_skill_path = builtin_dir / skill_name
@@ -1273,8 +1284,8 @@ class SkillManager:
                     break
 
             meta["source"] = source
-            # 判断是否为内置技能
-            meta["is_builtin"] = self._is_builtin_skill(meta.get("name", ""), self._get_installed_plugins())
+            # 判断是否为内置技能（传入 child 路径，通过实际路径判断）
+            meta["is_builtin"] = self._is_builtin_skill(meta.get("name", ""), self._get_installed_plugins(), child)
             # 不在列表中返回 body
             meta.pop("body", None)
             results.append(meta)

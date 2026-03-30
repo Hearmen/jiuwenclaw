@@ -258,6 +258,14 @@ export function SessionsPanel({
               setSelectedFile(null);
             }
           }
+        } else {
+          // 自动选择第一个可预览的文件
+          const firstPreviewableFile = rows.find(
+            (f) => !f.isDirectory && isPreviewableSessionFile(f.name)
+          );
+          if (firstPreviewableFile) {
+            setSelectedFile(firstPreviewableFile);
+          }
         }
       } catch (error) {
         console.error('Failed to load session files:', error);
