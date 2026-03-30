@@ -87,6 +87,8 @@ ACP_NOTIFICATION_NAMES: tuple[str, ...] = (
 # AgentServer → Gateway WebSocket：编码失败时整包旧 JSON 写入 E2AResponse.metadata 的键（勿与业务键冲突）
 E2A_WIRE_LEGACY_AGENT_RESPONSE_KEY = "_e2a_wire_legacy_agent_response"
 E2A_WIRE_LEGACY_AGENT_CHUNK_KEY = "_e2a_wire_legacy_agent_chunk"
+# AgentServer send_push：与 RPC 响应共用 WebSocket，须标出以免抢占 unary/stream 等待队列
+E2A_WIRE_SERVER_PUSH_KEY = "_jiuwenclaw_server_push"
 
 ACP_SESSION_UPDATE_KINDS: tuple[str, ...] = (
     "user_message_chunk",

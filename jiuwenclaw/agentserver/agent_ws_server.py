@@ -19,6 +19,7 @@ from jiuwenclaw.e2a.gateway_normalize import (
     E2A_LEGACY_AGENT_REQUEST_KEY,
 )
 from jiuwenclaw.e2a.models import E2AEnvelope
+from jiuwenclaw.e2a.constants import E2A_WIRE_SERVER_PUSH_KEY
 from jiuwenclaw.e2a.wire_codec import (
     encode_agent_chunk_for_wire,
     encode_agent_response_for_wire,
@@ -542,6 +543,13 @@ class AgentWebSocketServer:
                 response_id=str(msg.get("request_id", "")),
                 sequence=0,
             )
+            # 与同一 request_id 上的 unary/stream RPC 响应区分，避免 Gateway 将推送当作 RPC 首包解析
+            md = dict(wire.get("metadata") or {})
+            md[E2A_WIRE_SERVER_PUSH_KEY] = True
+            wire["metadata"] = md
+            sid = msg.get("session_id")
+            if sid is not None and str(sid).strip():
+                wire["session_id"] = str(sid)
             async with self._current_send_lock:
                 await self._current_ws.send(json.dumps(wire, ensure_ascii=False))
             logger.info(

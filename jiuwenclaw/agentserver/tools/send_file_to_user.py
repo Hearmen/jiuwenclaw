@@ -106,6 +106,7 @@ class SendFileToolkit:
             msg = {
                 "request_id": self.request_id,
                 "channel_id": self.channel_id,
+                "session_id": self.session_id,
                 "payload": {
                     "event_type": "chat.file",
                     "files": files_payload,

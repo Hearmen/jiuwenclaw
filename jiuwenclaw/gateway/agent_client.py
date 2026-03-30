@@ -8,9 +8,11 @@ import logging
 import asyncio
 import json
 from abc import ABC, abstractmethod
+from collections.abc import Awaitable, Callable
 from dataclasses import asdict
 from typing import Any, AsyncIterator
 
+from jiuwenclaw.e2a.constants import E2A_WIRE_SERVER_PUSH_KEY
 from jiuwenclaw.e2a.models import E2AEnvelope
 from jiuwenclaw.e2a.wire_codec import (
     parse_agent_server_wire_chunk,
@@ -20,6 +22,13 @@ from jiuwenclaw.schema.agent import AgentResponse, AgentResponseChunk
 
 
 logger = logging.getLogger(__name__)
+
+
+def _wire_request_id_key(request_id: Any) -> str:
+    """与 AgentServer 回包 ``request_id`` 对齐：统一为 str，避免 JSON 数字/字符串导致队列键不一致。"""
+    if request_id is None:
+        return ""
+    return str(request_id)
 
 
 def _to_json(data: Any) -> str:
@@ -82,6 +91,14 @@ class WebSocketAgentServerClient(AgentServerClient):
         self._message_queues: dict[str, asyncio.Queue] = {}
         self._receiver_task: asyncio.Task | None = None
         self._running = False
+        # AgentServer send_push：旁路投递，勿进入与 request_id 绑定的 RPC 等待队列
+        self._on_server_push: Callable[[dict[str, Any]], Awaitable[None]] | None = None
+
+    def set_server_push_handler(
+        self, handler: Callable[[dict[str, Any]], Awaitable[None]] | None
+    ) -> None:
+        """注册 Agent 主动推送处理回调（metadata 含 ``E2A_WIRE_SERVER_PUSH_KEY`` 的帧）。"""
+        self._on_server_push = handler
 
     @property
     def server_ready(self) -> bool:
@@ -139,7 +156,18 @@ class WebSocketAgentServerClient(AgentServerClient):
                 try:
                     raw = await self._ws.recv()
                     data = json.loads(raw)
-                    request_id = data.get("request_id")
+                    meta = data.get("metadata")
+                    if isinstance(meta, dict) and meta.get(E2A_WIRE_SERVER_PUSH_KEY):
+                        if self._on_server_push is not None:
+                            await self._on_server_push(data)
+                        else:
+                            logger.warning(
+                                "[WebSocketAgentServerClient] 收到 server_push 但未注册 handler，已丢弃: "
+                                "request_id=%s",
+                                data.get("request_id"),
+                            )
+                        continue
+                    request_id = _wire_request_id_key(data.get("request_id"))
 
                     if request_id and request_id in self._message_queues:
                         # 将消息放入对应的队列
@@ -190,7 +218,9 @@ class WebSocketAgentServerClient(AgentServerClient):
 
     async def send_request(self, envelope: E2AEnvelope) -> AgentResponse:
         self._ensure_connected()
-        rid = envelope.request_id or ""
+        # 非流式 API 必须与 AgentServer 的 unary 路径一致；忽略信封上误带的 is_stream=True。
+        envelope.is_stream = False
+        rid = _wire_request_id_key(envelope.request_id)
         logger.info(
             "[E2A][out][nostream] request_id=%s channel=%s method=%s is_stream=%s",
             rid,
@@ -202,6 +232,12 @@ class WebSocketAgentServerClient(AgentServerClient):
             "[WebSocketAgentServerClient] 发送请求(非流式) E2A: %s",
             _to_json(envelope.to_dict()),
         )
+
+        if rid in self._message_queues:
+            raise RuntimeError(
+                f"WebSocketAgentServerClient: duplicate in-flight request_id={rid!r}; "
+                "refusing to register queue (would mis-route responses, e.g. stream chunks to unary waiters)."
+            )
 
         # 创建该请求的消息队列
         queue = asyncio.Queue()
@@ -230,7 +266,7 @@ class WebSocketAgentServerClient(AgentServerClient):
     ) -> AsyncIterator[AgentResponseChunk]:
         self._ensure_connected()
         envelope.is_stream = True
-        rid = envelope.request_id or ""
+        rid = _wire_request_id_key(envelope.request_id)
         logger.info(
             "[E2A][out][stream] request_id=%s channel=%s method=%s is_stream=%s",
             rid,
@@ -242,6 +278,12 @@ class WebSocketAgentServerClient(AgentServerClient):
             "[WebSocketAgentServerClient] 发送请求(流式) E2A: %s",
             _to_json(envelope.to_dict()),
         )
+
+        if rid in self._message_queues:
+            raise RuntimeError(
+                f"WebSocketAgentServerClient: duplicate in-flight request_id={rid!r}; "
+                "refusing to register queue (would mis-route responses, e.g. stream chunks to unary waiters)."
+            )
 
         # 创建该请求的消息队列
         queue = asyncio.Queue()

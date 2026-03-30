@@ -93,6 +93,10 @@ class MessageHandler(ABC):
         self._get_config_raw = get_config_raw
         self._update_channel_in_config = update_channel_in_config
 
+        from jiuwenclaw.gateway.agent_client import WebSocketAgentServerClient
+
+        if isinstance(agent_client, WebSocketAgentServerClient):
+            agent_client.set_server_push_handler(self._handle_agent_server_push)
 
     @classmethod
     def get_instance(cls, agent_client: "AgentServerClient | None" = None) -> "MessageHandler":
@@ -461,6 +465,29 @@ class MessageHandler(ABC):
             ok=resp.ok,
             payload=resp.payload,
             metadata=metadata,
+        )
+
+    async def _handle_agent_server_push(self, wire: dict[str, Any]) -> None:
+        """AgentServer ``send_push`` 下行：与 RPC 共用连接但不得占用 unary/stream 等待队列。"""
+        from jiuwenclaw.e2a.wire_codec import parse_agent_server_wire_chunk
+
+        try:
+            chunk = parse_agent_server_wire_chunk(wire)
+        except Exception as e:
+            logger.exception("[MessageHandler] server_push 解析失败: %s", e)
+            return
+        rid = str(chunk.request_id or "")
+        sid_raw = wire.get("session_id")
+        if sid_raw is not None and str(sid_raw).strip():
+            session_id: str | None = str(sid_raw)
+        else:
+            session_id = self._stream_sessions.get(rid)
+        out = self._chunk_to_message(chunk, session_id=session_id, metadata=None)
+        await self.publish_robot_messages(out)
+        logger.info(
+            "[MessageHandler] server_push 已写入 robot_messages: request_id=%s channel_id=%s",
+            rid,
+            chunk.channel_id,
         )
 
     @staticmethod

@@ -205,6 +205,7 @@ class MultiSessionToolkit:
         msg = {
             "request_id": self.request_id,
             "channel_id": self.channel_id,
+            "session_id": self.session_id,
             "payload": payload,
             "is_complete": False,
         }
@@ -269,6 +270,7 @@ class MultiSessionToolkit:
             msg = {
                 "request_id": self.request_id,
                 "channel_id": self.channel_id,
+                "session_id": self.session_id,
                 "payload": payload,
                 "is_complete": True,
             }

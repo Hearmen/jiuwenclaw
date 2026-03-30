@@ -960,7 +960,10 @@ Be a warm person, not a cold machine. Help your user unconditionally and meet th
 
 def build_user_prompt(content: str, files: dict, channel: str, language: str) -> str:
     """Build user prompt for the agent."""
-    prompt = "你收到一条消息：\n"
+    if language == "zh":
+        prompt = "你收到一条消息：\n"
+    else:
+        prompt = "You receive a new message:\n"
     if channel in ["cron", "heartbeat"]:
         return prompt + json.dumps(
             {

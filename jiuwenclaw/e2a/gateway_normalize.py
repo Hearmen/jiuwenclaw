@@ -408,7 +408,9 @@ def e2a_response_to_agent_response(e2a: E2AResponse) -> "AgentResponse":
         )
 
     raise ValueError(
-        f"e2a_response_to_agent_response: unsupported response_kind={kind!r} status={e2a.status!r}"
+        f"e2a_response_to_agent_response: unsupported response_kind={kind!r} status={e2a.status!r}. "
+        "Streaming frames (e2a.chunk / in_progress) must use parse_agent_server_wire_chunk / send_request_stream. "
+        "If unexpected, check outbound envelope is_stream and duplicate in-flight request_id on the WebSocket client."
     )
 
 
