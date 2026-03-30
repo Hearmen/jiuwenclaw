@@ -14,7 +14,7 @@ from enum import Enum
 from typing import TYPE_CHECKING, Any, Dict
 from jiuwenclaw.channel.base import ChannelType
 from jiuwenclaw.gateway.session_map import SessionMap
-from jiuwenclaw.schema.events import GatewayEvents
+from jiuwenclaw.schema.hook_event import GatewayHookEvents
 from jiuwenclaw.schema.hooks_context import GatewayChatHookContext
 from jiuwenclaw.extensions.registry import ExtensionRegistry
 
@@ -572,7 +572,7 @@ class MessageHandler(ABC):
             params=params,
         )
 
-        await ExtensionRegistry.get_instance().trigger(GatewayEvents.BEFORE_CHAT_REQUEST, ctx)
+        await ExtensionRegistry.get_instance().trigger(GatewayHookEvents.BEFORE_CHAT_REQUEST, ctx)
 
     async def _process_non_stream_request(self, msg: "Message", env: "E2AEnvelope") -> None:
         """执行单次非流式 Agent 请求并将结果写入 robot_messages（供串行或后台任务复用）。"""

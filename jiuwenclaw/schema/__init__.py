@@ -3,7 +3,7 @@
 """数据模型."""
 
 from jiuwenclaw.schema.agent import AgentRequest, AgentResponse, AgentResponseChunk
-from jiuwenclaw.schema.events import AgentServerEvents, GatewayEvents
+from jiuwenclaw.schema.hook_event import AgentServerHookEvents, GatewayHookEvents
 from jiuwenclaw.schema.hooks_context import (
     AgentServerChatHookContext,
     GatewayChatHookContext,
@@ -16,9 +16,9 @@ __all__ = [
     "AgentRequest",
     "AgentResponse",
     "AgentResponseChunk",
-    "AgentServerEvents",
+    "AgentServerHookEvents",
     "AgentServerChatHookContext",
-    "GatewayEvents",
+    "GatewayHookEvents",
     "GatewayChatHookContext",
     "MemoryHookContext",
 ]

@@ -1,6 +1,6 @@
 # Copyright (c) Huawei Technologies Co., Ltd. 2025. All rights reserved.
 """
-与 openjiuwen 0.1.9+ ``openjiuwen.core.runner.callback.events`` 中对齐的最小 EventBase。
+与 openjiuwen 0.1.9+ ``openjiuwen.core.runner.callback.events`` 中 EventBase 对齐的最小 HookEventBase。
 
 openjiuwen 0.1.7 未包含该模块，此处内建以便扩展事件名与作用域行为一致。
 
@@ -23,8 +23,8 @@ def parse_event_name(scoped_event: str) -> tuple[str, str]:
     return DEFAULT_SCOPE, scoped_event
 
 
-class EventBase:
-    """带 scope 的事件名基类（与 openjiuwen 0.1.9 EventBase 一致）。"""
+class HookEventBase:
+    """带 scope 的钩子事件名基类（与 openjiuwen 0.1.9 EventBase 行为一致）。"""
 
     scope: str = DEFAULT_SCOPE
 

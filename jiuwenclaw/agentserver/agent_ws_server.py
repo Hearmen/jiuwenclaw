@@ -26,8 +26,7 @@ from jiuwenclaw.e2a.wire_codec import (
     encode_json_parse_error_wire,
 )
 from jiuwenclaw.schema.agent import AgentRequest, AgentResponse, AgentResponseChunk
-from jiuwenclaw.schema.events import AgentServerEvents
-from jiuwenclaw.extensions.registry import ExtensionRegistry
+from jiuwenclaw.schema.hook_event import AgentServerHookEvents
 from jiuwenclaw.schema.hooks_context import AgentServerChatHookContext
 
 
@@ -321,6 +320,7 @@ class AgentWebSocketServer:
     async def _trigger_before_chat_request_hook(self, request: AgentRequest) -> None:
         if not self._should_trigger_before_chat_request_hook(request):
             return
+        from jiuwenclaw.extensions.registry import ExtensionRegistry
 
         params = request.params if isinstance(request.params, dict) else {}
         if not isinstance(request.params, dict):
@@ -334,7 +334,7 @@ class AgentWebSocketServer:
             params=params,
         )
 
-        await ExtensionRegistry.get_instance().trigger(AgentServerEvents.BEFORE_CHAT_REQUEST, ctx)
+        await ExtensionRegistry.get_instance().trigger(AgentServerHookEvents.BEFORE_CHAT_REQUEST, ctx)
 
     async def _handle_unary(self, ws: Any, request: AgentRequest, send_lock: asyncio.Lock) -> None:
         """非流式处理：调用 process_message，返回一条 E2AResponse 线 JSON。"""

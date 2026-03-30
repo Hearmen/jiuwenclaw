@@ -37,7 +37,7 @@ from jiuwenclaw.utils import (
 from jiuwenclaw.config import get_config
 from jiuwenclaw.agentserver.react_agent import JiuClawReActAgent
 from jiuwenclaw.agentserver.permissions.checker import TOOL_PERMISSION_CHANNEL_ID
-from jiuwenclaw.schema.events import AgentServerEvents
+from jiuwenclaw.schema.hook_event import AgentServerHookEvents
 from jiuwenclaw.extensions.registry import ExtensionRegistry
 from jiuwenclaw.schema.hooks_context import MemoryHookContext
 from jiuwenclaw.agentserver.tools.browser_tools import register_browser_runtime_mcp_server
@@ -686,7 +686,7 @@ class JiuWenClaw:
                 extra=request_params if request_params is not None else {},
             )
 
-            await ExtensionRegistry.get_instance().trigger(AgentServerEvents.MEMORY_BEFORE_CHAT, mem_ctx)
+            await ExtensionRegistry.get_instance().trigger(AgentServerHookEvents.MEMORY_BEFORE_CHAT, mem_ctx)
             memory_block = "\n\n".join(b for b in mem_ctx.memory_blocks if b)
 
         if not self._task_memory_tools_registered and _is_task_memory_enabled():
@@ -1316,7 +1316,7 @@ class JiuWenClaw:
                 extra=request.params,
             )
 
-            await ExtensionRegistry.get_instance().trigger(AgentServerEvents.MEMORY_AFTER_CHAT, after_ctx)
+            await ExtensionRegistry.get_instance().trigger(AgentServerHookEvents.MEMORY_AFTER_CHAT, after_ctx)
 
         return AgentResponse(
             request_id=request.request_id,
@@ -1508,7 +1508,7 @@ class JiuWenClaw:
                 extra=request.params,
             )
 
-            await ExtensionRegistry.get_instance().trigger(AgentServerEvents.MEMORY_AFTER_CHAT, after_ctx)
+            await ExtensionRegistry.get_instance().trigger(AgentServerHookEvents.MEMORY_AFTER_CHAT, after_ctx)
 
         if request.params.get("mode", "plan") == "plan":
             # 终止 chunk
