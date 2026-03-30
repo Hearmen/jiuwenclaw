@@ -40,8 +40,8 @@ How to create and manage a simple scheduled job in JiuwenClaw and push results t
 - **Monday 09:00**: `0 9 * * 1`
 - **Every hour on the hour**: `0 * * * *`
 
-Format: `minute hour day month weekday` (5 fields, space-separated).
-
+Format: `minute hour day month weekday` (5 fields, space-separated),
+or  `minute hour day month weekday second year` (7 fields, space-separated).
 ---
 
 ### 4. Create via chat (optional)

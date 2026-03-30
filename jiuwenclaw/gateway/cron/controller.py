@@ -164,7 +164,15 @@ class CronController:
         out: list[dict[str, Any]] = []
         push_dt = base
         for _ in range(count):
-            push_dt = _cron_next_push_dt(job.cron_expr, push_dt)
+            try:
+                push_dt = _cron_next_push_dt(job.cron_expr, push_dt)
+            except Exception as exc:  # noqa: BLE001
+                # croniter 对“单次且已到/已用完”的 7 段表达式会抛错。
+                # 预览场景希望返回已有结果（通常为 1 条），而不是让工具调用失败。
+                _msg = str(exc)
+                if "CroniterBadDateError" in _msg or "failed to find next date" in _msg:
+                    break
+                raise
             wake_dt = push_dt - timedelta(seconds=max(0, int(job.wake_offset_seconds or 0)))
             out.append({"wake_at": wake_dt.isoformat(), "push_at": push_dt.isoformat()})
         return out
@@ -266,43 +274,65 @@ class CronController:
             make_tool(
                 name="cron_create_job",
                 description=(
-                    "创建定时任务。cron_expr 为 5 段（分 时 日 月 周）。"
-                    "周期任务：每天 9 点='0 9 * * *'，每周一 9 点='0 9 * * 1'。"
-                    "相对时间（自然语言）：如“过X分钟/ X分钟后提醒我”，请先用当前 timezone 的当前时间 now，计算 run_at=now+X分钟，"
-                    "再把 cron_expr 写成一次性日期形式 '分 时 日 月 周'。例如 run_at=2026-03-19 10:07，则 cron_expr='7 10 19 3 *'。"
-                    "单次任务：cron 也能表达具体日期，如今天 17 点（假设 3 月 10 日）='0 17 10 3 *'，明天 15 点（3 月 11 日）='0 15 11 3 *'。根据用户当前日期推算。"
-                    "description 只填任务内容，不要包含时间/频率。timezone 默认 Asia/Shanghai。"
+                    "Create a scheduled cron job.\n"
+                    "cron_expr:\n"
+                    "- Recurring (5 fields): minute hour day month day-of-week.\n"
+                    "  Example: daily 9:00 = '0 9 * * *', every Monday 9:00 = '0 9 * * 1'.\n"
+                    "- Relative time (e.g. \"in X minutes\"): take now in the given timezone, "
+                    "compute run_at = now + X minutes, then encode run_at as 7-field cron "
+                    "with a fixed year (minute hour day month day-of-week second year). "
+                    "Example: run_at (Mar 19, 2026 10:07:00 local) -> '0 7 10 19 3 * 2026'.\n"
+                    "- One-shot (runs only once): must use 7 fields with a fixed year: "
+                    "minute hour day month day-of-week second year. "
+                    "Example: 2026-03-28 17:00 (local) -> '0 17 28 3 * 0 2026'.\n"
+                    "Warning: if you use a 5-field expression with fixed day/month "
+                    "but year semantics implicitly '*', it will repeat every year; "
+                    "for a real one-shot, use the 7-field form with a fixed year.\n"
+                    "description should contain task content only (no time/frequency). "
+                    "timezone defaults to Asia/Shanghai."
                 ),
                 input_params={
                     "type": "object",
                     "properties": {
-                        "name": {"type": "string", "description": "任务名称"},
+                        "name": {"type": "string", "description": "Job name"},
                         "cron_expr": {
                             "type": "string",
-                            "description": "Cron 表达式（分 时 日 月 周）。周期用通配符如'0 9 * * *'；单次用具体日期如'0 17 10 3 *'表示3月10日17点",
+                            "description": (
+                                "Cron expression. "
+                                "Recurring jobs use 5 fields: minute hour dom month day-of-week. "
+                                "One-shot jobs must use 7 fields: minute hour dom month "
+                                "day-of-week second year (fixed year). "
+                                "For relative time, treat it as one-shot: compute run_at = now + X minutes, "
+                                "then encode it as a 7-field expression with a fixed year. "
+                                "Example: 2026-03-28 17:00 (local) -> '0 17 28 3 * 0 2026'."
+                            ),
                         },
                         "timezone": {
                             "type": "string",
-                            "description": "时区，如 Asia/Shanghai",
+                            "description": "Time zone (IANA), e.g. Asia/Shanghai",
                             "default": "Asia/Shanghai",
                         },
                         "targets": {
                             "type": "string",
                             "enum": [e.value for e in CronTargetChannel],
-                            "description": "推送频道：web=网页, feishu=飞书, whatsapp=WhatsApp, wecom=企业微信。不传则使用当前请求来源频道",
+                            "description": "Delivery channel: web, feishu, whatsapp, wecom, xiaoyi. "
+                                           "If omitted, use the current request source channel.",
                         },
                         "enabled": {
                             "type": "boolean",
-                            "description": "是否启用",
+                            "description": "Whether the job is enabled",
                             "default": True,
                         },
                         "description": {
                             "type": "string",
-                            "description": "具体任务内容，到点执行时发给助手。不要包含时间/频率",
+                            "description": (
+                                "Task payload text sent to the assistant at run time. "
+                                "Do not include time or frequency."
+                            ),
                         },
                         "wake_offset_seconds": {
                             "type": "integer",
-                            "description": "提前多少秒执行，默认 60",
+                            "description": "Seconds to wake before push. Default 60",
                             "default": 60,
                         },
                     },
@@ -312,14 +342,20 @@ class CronController:
             ),
             make_tool(
                 name="cron_update_job",
-                description="Update an existing cron job. Pass job_id and a patch dict with fields to update (name, enabled, cron_expr, timezone, description, wake_offset_seconds, targets).",
+                description=(
+                    "Update an existing cron job. Pass job_id and a patch dict with fields to update "
+                    "(name, enabled, cron_expr, timezone, description, wake_offset_seconds, targets)."
+                ),
                 input_params={
                     "type": "object",
                     "properties": {
                         "job_id": {"type": "string", "description": "Job id to update"},
                         "patch": {
                             "type": "object",
-                            "description": "Fields to update (name, enabled, cron_expr, timezone, description, wake_offset_seconds, targets)",
+                            "description": (
+                                "Fields to update (name, enabled, cron_expr, timezone, "
+                                "description, wake_offset_seconds, targets)"
+                            ),
                             "properties": {
                                 "targets": {
                                     "type": "string",
@@ -363,7 +399,10 @@ class CronController:
             ),
             make_tool(
                 name="cron_preview_job",
-                description="Preview next N scheduled run times for a job. Returns list of {wake_at, push_at} timestamps.",
+                description=(
+                    "Preview next N scheduled run times for a job. "
+                    "Returns list of {wake_at, push_at} timestamps."
+                ),
                 input_params={
                     "type": "object",
                     "properties": {

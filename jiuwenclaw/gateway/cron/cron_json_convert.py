@@ -43,7 +43,9 @@ import json
 import sys
 from pathlib import Path
 from typing import Any
-from datetime import datetime, timezone as dt_timezone
+from datetime import datetime
+
+from jiuwenclaw.gateway.cron.cron_expr import iso_to_seven_field_cron
 
 
 _EXTERNAL_TO_INTERNAL_CHANNELS: dict[str, str] = {
@@ -103,24 +105,15 @@ def convert_cron_job_dict_to_flat(data: dict[str, Any]) -> dict[str, Any]:
         expr = str(sched.get("expr") or "").strip()
         tz = str(sched.get("tz") or "").strip()
     elif kind == "at":
-        # 近似 one-shot：转成每年同一时刻的 cron（day/month 固定，weekday 为 *）
+        # one-shot：使用 croniter 的 7 段表达式固定到指定年份
         at_raw = str(sched.get("at") or "").strip()
         if not at_raw:
             return data
-        # 支持形如 2026-02-01T16:00:00Z / 2025-12-13T00:00:01.000Z
-        at_norm = at_raw[:-1] + "+00:00" if at_raw.endswith("Z") else at_raw
+        tz = str(sched.get("tz") or "").strip() or "UTC"
         try:
-            dt = datetime.fromisoformat(at_norm)
-        except ValueError:
+            expr = iso_to_seven_field_cron(at_raw, timezone=tz)
+        except Exception:  # noqa: BLE001
             return data
-        if dt.tzinfo is None:
-            # 不带时区则按 UTC 处理
-            dt = dt.replace(tzinfo=dt_timezone.utc)
-        else:
-            dt = dt.astimezone(dt_timezone.utc)
-
-        expr = f"{dt.minute} {dt.hour} {dt.day} {dt.month} *"
-        tz = "UTC"
     else:
         return data
 
