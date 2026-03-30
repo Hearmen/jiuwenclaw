@@ -532,7 +532,13 @@ class AgentWebSocketServer:
 
     async def _handle_agent_reload_config(self, ws: Any, request: AgentRequest, send_lock: asyncio.Lock) -> None:
         try:
-            self._agent.reload_agent_config()
+            params = request.params or {}
+            config_payload = params.get("config")
+            env_overrides = params.get("env")
+            self._agent.reload_agent_config(
+                config_base=config_payload,
+                env_overrides=env_overrides,
+            )
             resp = AgentResponse(
                 request_id=request.request_id,
                 channel_id=request.channel_id,

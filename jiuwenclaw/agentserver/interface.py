@@ -34,7 +34,7 @@ from jiuwenclaw.utils import (
     get_env_file,
     get_workspace_dir,
 )
-from jiuwenclaw.config import get_config
+from jiuwenclaw.config import get_config, resolve_env_vars
 from jiuwenclaw.agentserver.react_agent import JiuClawReActAgent
 from jiuwenclaw.agentserver.permissions.checker import TOOL_PERMISSION_CHANNEL_ID
 from jiuwenclaw.schema.hook_event import AgentServerHookEvents
@@ -511,15 +511,39 @@ class JiuWenClaw:
         )
         logger.info("[JiuWenClaw] 初始化完成: agent_name=%s", self._agent_name)
 
-    def reload_agent_config(self) -> None:
-        """从 config.yaml 重新加载配置并 reconfigure 当前实例，使模型/API 等配置生效且不重启进程。"""
+    def reload_agent_config(
+        self,
+        config_base: dict[str, Any] | None = None,
+        env_overrides: dict[str, Any] | None = None,
+    ) -> None:
+        """热更新当前 Agent 配置。
+
+        Args:
+            config_base: 可选的完整配置快照；传入时优先使用它而不是读取本地 config.yaml。
+            env_overrides: 可选的环境变量增量；仅覆盖请求中出现的 key。
+        """
         if self._instance is None:
             raise RuntimeError("JiuWenClaw 未初始化，请先调用 create_instance()")
 
         clear_config_cache()
         clear_memory_manager_cache()
 
-        config_base = get_config()
+        if env_overrides is not None:
+            if not isinstance(env_overrides, dict):
+                raise TypeError("env_overrides must be a dict when provided")
+            for env_key, env_value in env_overrides.items():
+                if env_value is None:
+                    os.environ.pop(str(env_key), None)
+                else:
+                    os.environ[str(env_key)] = str(env_value)
+
+        if config_base is None:
+            config_base = get_config()
+        elif not isinstance(config_base, dict):
+            raise TypeError("config_base must be a dict when provided")
+        else:
+            config_base = resolve_env_vars(config_base)
+
         apply_video_model_config_from_yaml(config_base)
         apply_audio_model_config_from_yaml(config_base)
         apply_vision_model_config_from_yaml(config_base)

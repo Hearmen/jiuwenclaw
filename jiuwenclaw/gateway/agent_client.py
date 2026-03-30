@@ -53,6 +53,16 @@ class AgentServerClient(ABC):
         ...
 
     @abstractmethod
+    def set_or_update_server_config(
+        self,
+        *,
+        config: dict[str, Any],
+        env: dict[str, str] | None = None,
+    ) -> None:
+        """缓存或更新服务端配置快照，供自定义 client 后续使用."""
+        ...
+
+    @abstractmethod
     async def send_request(self, envelope: E2AEnvelope) -> AgentResponse:
         """发送 E2A 信封，等待完整响应."""
         ...
@@ -99,6 +109,15 @@ class WebSocketAgentServerClient(AgentServerClient):
     ) -> None:
         """注册 Agent 主动推送处理回调（metadata 含 ``E2A_WIRE_SERVER_PUSH_KEY`` 的帧）。"""
         self._on_server_push = handler
+
+    def set_or_update_server_config(
+        self,
+        *,
+        config: dict[str, Any],
+        env: dict[str, str] | None = None,
+    ) -> None:
+        """默认 WebSocket client 不处理服务端配置缓存，留给扩展 client 自行实现."""s
+        return None
 
     @property
     def server_ready(self) -> bool:

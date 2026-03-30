@@ -205,7 +205,11 @@ class WebHandlersBindParams:
 
 def _register_web_handlers(bind: WebHandlersBindParams) -> None:
     """注册 Web 前端需要的 method 与 on_connect。
-    on_config_saved: 可选，config.set 写回 .env 后调用的回调；返回 True 表示已热更新未重启，False 表示已安排进程重启。
+    on_config_saved: 可选，config.set 写回后调用的回调；
+        updated_env_keys 为本次改动的键名集合，
+        env_updates 为本次变更的环境变量增量（仅包含更新项），
+        config_payload 为当前最新配置快照；
+        返回 True 表示已热更新未重启，False 表示已安排进程重启。
     heartbeat_service: 可选，GatewayHeartbeatService 实例，用于处理 heartbeat.get_conf / heartbeat.set_conf。
     """
     channel = bind.channel
@@ -381,7 +385,12 @@ def _register_web_handlers(bind: WebHandlersBindParams) -> None:
 
         if env_updates or yaml_updated:
             if on_config_saved:
-                callback_result = on_config_saved(set(env_updates.keys()) | set(yaml_updated))
+                config_payload = get_config()
+                callback_result = on_config_saved(
+                    set(env_updates.keys()) | set(yaml_updated),
+                    env_updates=dict(env_updates),
+                    config_payload=config_payload,
+                )
                 if inspect.isawaitable(callback_result):
                     callback_result = await callback_result
                 applied_without_restart = bool(callback_result)

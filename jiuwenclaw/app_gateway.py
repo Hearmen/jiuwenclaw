@@ -18,6 +18,7 @@ import logging
 import os
 import sys
 import time
+from typing import Any
 
 from dotenv import load_dotenv
 from openjiuwen.core.common.logging import LogManager
@@ -99,6 +100,7 @@ async def _run(agent_server_url: str, web_host: str, web_port: int, web_path: st
     from jiuwenclaw.app_web_handlers import (
         WebHandlersBindParams,
         _DummyBus,
+        _CONFIG_SET_ENV_MAP,
         _FORWARD_NO_LOCAL_HANDLER_METHODS,
         _FORWARD_REQ_METHODS,
         _register_web_handlers,
@@ -158,6 +160,7 @@ async def _run(agent_server_url: str, web_host: str, web_port: int, web_path: st
     )
     cron_controller = CronController.get_instance(store=cron_store, scheduler=cron_scheduler)
 
+    full_cfg: dict[str, Any] = {}
     heartbeat_cfg: dict | None = None
     channels_cfg: dict | None = None
     try:
@@ -168,6 +171,11 @@ async def _run(agent_server_url: str, web_host: str, web_port: int, web_path: st
         logger.warning("[App] 读取 config.yaml heartbeat 配置失败，将使用默认值: %s", e)
         heartbeat_cfg = None
         channels_cfg = None
+
+    client.set_or_update_server_config(
+        config=dict(full_cfg or {}),
+        env={env_key: (os.getenv(env_key) or "") for env_key in _CONFIG_SET_ENV_MAP.values()},
+    )
 
     if isinstance(heartbeat_cfg, dict):
         cfg_every = heartbeat_cfg.get("every")
@@ -204,7 +212,12 @@ async def _run(agent_server_url: str, web_host: str, web_port: int, web_path: st
     channel_manager = ChannelManager(message_handler, config=initial_channels_conf)
     updater_service = WindowsUpdaterService()
 
-    async def _on_config_saved(updated_env_keys: set[str] | None = None) -> bool:
+    async def _on_config_saved(
+        updated_env_keys: set[str] | None = None,
+        *,
+        env_updates: dict[str, str] | None = None,
+        config_payload: dict[str, Any] | None = None,
+    ) -> bool:
         browser_runtime_keys = {
             "MODEL_PROVIDER",
             "MODEL_NAME",
@@ -224,6 +237,11 @@ async def _run(agent_server_url: str, web_host: str, web_port: int, web_path: st
             "VISION_API_KEY",
         }
         try:
+            client.set_or_update_server_config(
+                config=dict(config_payload or {}),
+                env=dict(env_updates or {}),
+            )
+
             from jiuwenclaw.e2a.gateway_normalize import e2a_from_agent_fields
             from jiuwenclaw.schema.message import ReqMethod
             import uuid
@@ -232,6 +250,12 @@ async def _run(agent_server_url: str, web_host: str, web_port: int, web_path: st
                 request_id=f"agent-reload-{uuid.uuid4().hex[:8]}",
                 channel_id="",
                 req_method=ReqMethod.AGENT_RELOAD_CONFIG,
+                params={
+                    # config: 本次保存后的完整配置快照，Agent 优先使用它而不是本地 yaml。
+                    "config": dict(config_payload or {}),
+                    # env: 本次更新的环境变量增量；未出现的 key 表示不变。
+                    "env": dict(env_updates or {}),
+                },
             )
             await client.send_request(reload_env)
 
