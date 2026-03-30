@@ -13,17 +13,24 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import logging
 import os
 
 from dotenv import load_dotenv
+from openjiuwen.core.common.logging import LogManager
 
+from jiuwenclaw.jiuwen_core_patch import apply_openai_model_client_patch
 from jiuwenclaw.utils import USER_WORKSPACE_DIR, get_env_file, prepare_workspace, logger
 
+apply_openai_model_client_patch()
 
 # Ensure workspace initialized
 _config_file = USER_WORKSPACE_DIR / "config" / "config.yaml"
 if not _config_file.exists():
     prepare_workspace(overwrite=False)
+
+for _lg in LogManager.get_all_loggers().values():
+    _lg.set_level(logging.CRITICAL)
 
 # Load env from user workspace config/.env
 load_dotenv(dotenv_path=get_env_file())
@@ -141,7 +148,15 @@ def main() -> None:
     args = parser.parse_args()
 
     host = args.host or os.getenv("AGENT_SERVER_HOST", "127.0.0.1")
-    port = args.port or int(os.getenv("AGENT_SERVER_PORT", "18092"))
+    port = args.port
+    if port is None:
+        for key in ("AGENT_SERVER_PORT", "AGENT_PORT"):
+            raw = os.getenv(key)
+            if raw:
+                port = int(raw)
+                break
+        else:
+            port = 18092
 
     asyncio.run(_run(host=host, port=port))
 

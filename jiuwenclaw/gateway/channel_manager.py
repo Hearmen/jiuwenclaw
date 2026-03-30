@@ -60,6 +60,19 @@ class ChannelManager(ABC):
         channel.on_message(self._on_channel_message)
         logger.info("[ChannelManager] 已注册 Channel: channel_id=%s, 当前共 %d 个", cid, len(self._channels))
 
+    def register_channel_with_inbound(
+        self,
+        channel: "BaseChannel",
+        on_message: Callable[["Message"], Any],
+    ) -> None:
+        """登记 Channel 并使用自定义入站回调（不替换为默认 _on_channel_message）。"""
+        self._channels[channel.channel_id] = channel
+        channel.on_message(on_message)
+
+    def deliver_to_message_handler(self, msg: "Message") -> None:
+        """将消息交给 MessageHandler（供自定义入站路径使用）。"""
+        self._message_handler.handle_message(msg)
+
     def unregister_channel(self, channel_id: str) -> None:
         """注销指定 Channel."""
         self._channels.pop(channel_id, None)

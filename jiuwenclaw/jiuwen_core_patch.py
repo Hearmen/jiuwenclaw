@@ -110,3 +110,9 @@ class PatchOpenAIModelClient(OpenAIModelClient):
             finish_reason=choice.finish_reason or "null"
         )
 
+
+def apply_openai_model_client_patch() -> None:
+    """Monkey-patch upstream OpenAIModelClient with JiuwenClaw SSL/headers/stream behavior."""
+    _impl = PatchOpenAIModelClient.__dict__
+    setattr(OpenAIModelClient, "_create_async_openai_client", _impl["_create_async_openai_client"])
+    setattr(OpenAIModelClient, "_parse_stream_chunk", _impl["_parse_stream_chunk"])
