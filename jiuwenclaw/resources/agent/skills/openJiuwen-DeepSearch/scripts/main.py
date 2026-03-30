@@ -18,6 +18,7 @@ import subprocess
 import sys
 import uuid
 from pathlib import Path
+import shutil
 
 from dotenv import load_dotenv
 from openjiuwen_deepsearch.config.config import Config
@@ -26,6 +27,9 @@ from openjiuwen_deepsearch.framework.openjiuwen.agent.agent_factory import Agent
 from openjiuwen_deepsearch.utils.debug_utils.result_exporter import ResultExporter
 from openjiuwen_deepsearch.framework.openjiuwen.agent.workflow import parse_endnode_content
 from openjiuwen_deepsearch.utils.log_utils.log_manager import LogManager
+
+from convert_docx import convert_md_to_docx
+from convert_html import convert_md_to_html
 
 # 获取技能根目录，优先使用 SKILL_ROOT 环境变量，否则自动检测
 SKILL_ROOT = Path(os.getenv("SKILL_ROOT", Path(__file__).parent.parent))
@@ -87,11 +91,39 @@ async def run_jiuwen_workflow(query: str, agent_config: dict):
             if not full_report:
                 full_report = report_result.get("response_content", "")
 
+    output_md = f"{query}.md"
+    output_html = f"{query}.html"
+    output_docx = f"{query}.docx"
+
+    workspace = Path("..") / ".." / "workspace"
+    workspace.mkdir(parents=True, exist_ok=True)
+
+    workspace_md_path = workspace / output_md
+    workspace_html_path = workspace / output_html
+    workspace_docx_path = workspace / output_docx
+
+    output_dir = Path("output")
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    output_md_path = output_dir / output_md
+    output_html_path = output_dir / output_html
+    output_docx_path = output_dir / output_docx
+
     try:
-        with open(f"{query}.md", "w", encoding="utf-8") as f:
+        with open(output_md, "w", encoding="utf-8") as f:
             f.write(full_report)
+        convert_md_to_html(output_md, output_html)
+        convert_md_to_docx(output_md, output_docx)
+        
+        shutil.copy(output_md, workspace_md_path)
+        shutil.copy(output_html, workspace_html_path)
+        shutil.copy(output_docx, workspace_docx_path)
+
+        shutil.copy(output_md, output_md_path)
+        shutil.copy(output_html, output_html_path)
+        shutil.copy(output_docx, output_docx_path)
     except OSError as e:
-        with open("output.md", "w", encoding="utf-8") as f:
+        with open(output_md, "w", encoding="utf-8") as f:
             f.write(full_report)
 
     return full_report
@@ -152,6 +184,7 @@ def load_agent_config() -> dict:
     # 工作流配置
     config["workflow_human_in_the_loop"] = False
     config["search_mode"] = "research"
+    config["outliner_max_section_num"] = 5
 
     # 执行方式
     execution_method = os.getenv("EXECUTION_METHOD", "parallel")
@@ -204,6 +237,12 @@ def run_background():
 
     script_path = Path(__file__).resolve()
     python_executable = sys.executable
+
+    if sys.platform == "win32":
+        pyw = Path(sys.executable).with_name("pythonw.exe")
+        if pyw.exists():
+            python_executable = str(pyw)
+
     cwd = Path.cwd()  # 当前工作目录
 
     # 获取当前命令行参数（移除 --background 标志）
@@ -218,17 +257,23 @@ def run_background():
         env["SKILL_ROOT"] = str(SKILL_ROOT)
 
     if sys.platform == "win32":
-        # Windows: 使用 DETACHED_PROCESS 标志
         detached_process = 0x00000008
-        subprocess.Popen(
+        create_no_window = 0x08000000
+
+        startupinfo = subprocess.STARTUPINFO()
+        startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+        startupinfo.wShowWindow = subprocess.SW_HIDE
+
+        proc = subprocess.Popen(
             [python_executable, str(script_path)] + cmd_args,
-            creationflags=detached_process,
+            creationflags=detached_process | subprocess.CREATE_NO_WINDOW,
             cwd=str(cwd),
-            env=env
+            env=env,
+            startupinfo=startupinfo
         )
     else:
         # Linux/macOS: 使用 start_new_session 创建新会话
-        subprocess.Popen(
+        proc = subprocess.Popen(
             [python_executable, str(script_path)] + cmd_args,
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
@@ -237,10 +282,10 @@ def run_background():
             env=env
         )
 
+    with open(f"PID.info", "w", encoding="utf-8") as f:
+        f.write(f"启动成功，子进程 PID={proc.pid}")
     query_text = ' '.join(cmd_args[cmd_args.index('--query') + 1:]) if '--query' in cmd_args else 'default'
     logger.info("任务已在后台启动，查询: %s", query_text)
-    logger.info("日志位置: output/logs/")
-    logger.info("结果位置: 技能文件夹根目录")
     sys.exit(0)
 
 
@@ -284,11 +329,6 @@ def main():
 
     if result:
         logger.info("研究报告生成完成")
-        print("\n" + "=" * 80)
-        print("研究报告")
-        print("=" * 80)
-        print(result)
-        print("=" * 80 + "\n")
         sys.exit(0)
     else:
         sys.exit(1)

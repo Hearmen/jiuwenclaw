@@ -37,7 +37,7 @@ pip install uv
 ```bash
 # 使用 Python 3.11 创建虚拟环境并安装精确版本的依赖
 uv venv --python 3.11
-uv pip install openjiuwen-deepsearch==0.1.1 python-dotenv
+uv pip install openjiuwen-deepsearch==0.1.1 python-dotenv pypandoc markdown markdown_mermaid_cli -i https://pypi.tuna.tsinghua.edu.cn/simple
 ```
 
 ### 3. 配置 API Key
@@ -66,7 +66,7 @@ WEB_SEARCH_URL=https://api.tavily.com
 ### 4. 手动执行深度研究（可跳过，后续由Agent执行命令）
 
 ```bash
-uv run "scripts\main.py" --mode query --query "待生成深度调研报告的主题"
+uv run scripts\main.py --mode query --query "待生成深度调研报告的主题"
 ```
 
 
