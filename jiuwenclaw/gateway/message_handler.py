@@ -13,6 +13,7 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import TYPE_CHECKING, Any, Dict
 from jiuwenclaw.channel.base import ChannelType
+from jiuwenclaw.e2a.constants import E2A_WIRE_INTERNAL_METADATA_KEYS
 from jiuwenclaw.gateway.session_map import SessionMap
 from jiuwenclaw.schema.hook_event import GatewayHookEvents
 from jiuwenclaw.schema.hooks_context import GatewayChatHookContext
@@ -485,7 +486,19 @@ class MessageHandler(ABC):
             session_id: str | None = str(sid_raw)
         else:
             session_id = self._stream_sessions.get(rid)
-        out = self._chunk_to_message(chunk, session_id=session_id, metadata=None)
+        wmd = wire.get("metadata")
+        if isinstance(wmd, dict):
+            bus_md = {
+                k: v
+                for k, v in wmd.items()
+                if k not in E2A_WIRE_INTERNAL_METADATA_KEYS
+            }
+            bus_metadata: dict[str, Any] | None = bus_md if bus_md else None
+        else:
+            bus_metadata = None
+        out = self._chunk_to_message(
+            chunk, session_id=session_id, metadata=bus_metadata
+        )
         await self.publish_robot_messages(out)
         logger.info(
             "[MessageHandler] server_push 已写入 robot_messages: request_id=%s channel_id=%s",

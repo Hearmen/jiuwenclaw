@@ -9,6 +9,7 @@ import json
 import logging
 import os
 import time
+from dataclasses import dataclass
 from typing import Any, AsyncIterator
 
 from dotenv import load_dotenv
@@ -98,6 +99,17 @@ from jiuwenclaw.schema.message import ReqMethod
 load_dotenv(dotenv_path=get_env_file())
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass
+class RuntimeToolContext:
+    """运行时工具注册上下文，封装_register_runtime_tools的相关参数."""
+    session_id: str | None
+    channel_id: str | None
+    request_id: str | None
+    mode: str = "plan"
+    request_params: dict[str, Any] | None = None
+    metadata: dict[str, Any] | None = None
 
 
 SYSTEM_PROMPT = """# 角色
@@ -577,14 +589,11 @@ class JiuWenClaw:
             logger.warning("[JiuWenClaw] Permission config reload failed: %s", exc)
         logger.info("[JiuWenClaw] 配置已热更新，未重启进程")
 
-    async def _register_runtime_tools(
-            self, session_id: str | None,
-            channel_id: str | None,
-            request_id: str | None,
-            mode="plan",
-            request_params: dict[str, Any] | None = None,
-    ) -> None:
+    async def _register_runtime_tools(self, ctx: RuntimeToolContext) -> None:
         """Register per-request tools for current agent execution.
+        
+        Args:
+            ctx: 运行时工具注册上下文，包含session_id、channel_id、request_id等参数
         """
         if self._instance is None:
             raise RuntimeError("JiuWenClaw 未初始化，请先调用 create_instance()")
@@ -604,8 +613,8 @@ class JiuWenClaw:
                     self._instance.ability_manager.remove(tool.name)
 
         # 定时工具：按 channel 注册；优先用 channel_id，否则从 session_id 前缀推断
-        channel = (channel_id or "").strip() or (
-            (session_id or "").split("_")[0] if session_id else ""
+        channel = (ctx.channel_id or "").strip() or (
+            (ctx.session_id or "").split("_")[0] if ctx.session_id else ""
         )
         logger.info(f"[JiuwenClaw] update tool and prompt for channel {channel}")
         if channel not in ["heartbeat", "cron"]:
@@ -629,9 +638,10 @@ class JiuWenClaw:
         if send_file_tool_enabled:
             # Register send file toolkit
             send_file_toolkit = SendFileToolkit(
-                request_id=request_id,
-                session_id=session_id,
-                channel_id=channel_id,
+                request_id=ctx.request_id,
+                session_id=ctx.session_id,
+                channel_id=ctx.channel_id,
+                metadata=ctx.metadata,
             )
             for tool in send_file_toolkit.get_tools():
                 Runner.resource_mgr.add_tool(tool)
@@ -670,8 +680,8 @@ class JiuWenClaw:
             except Exception as exc:
                 logger.warning(f"[JiuWenClaw] xiaoyi phone tools runtime registration skipped: {exc}")
 
-        effective_session_id = session_id or "default"
-        if mode == "plan":
+        effective_session_id = ctx.session_id or "default"
+        if ctx.mode == "plan":
             todo_toolkit = TodoToolkit(session_id=effective_session_id)
             for tool in todo_toolkit.get_tools():
                 Runner.resource_mgr.add_tool(tool)
@@ -681,8 +691,8 @@ class JiuWenClaw:
             config_base = get_config()
             session_toolkits = MultiSessionToolkit(
                 session_id=effective_session_id,
-                channel_id=channel_id,
-                request_id=request_id,
+                channel_id=ctx.channel_id,
+                request_id=ctx.request_id,
                 sub_agent_config=self._load_react_config(config_base)
             )
             self._session_tool = session_toolkits
@@ -705,12 +715,12 @@ class JiuWenClaw:
         else:
             self._memory_tools_registered = False
             mem_ctx = MemoryHookContext(
-                session_id=session_id or "default",
-                request_id=request_id or "",
-                channel_id=channel_id,
+                session_id=ctx.session_id or "default",
+                request_id=ctx.request_id or "",
+                channel_id=ctx.channel_id,
                 agent_name=self._agent_name,
                 workspace_dir=self._workspace_dir,
-                extra=request_params if request_params is not None else {},
+                extra=ctx.request_params if ctx.request_params is not None else {},
             )
 
             await ExtensionRegistry.get_instance().trigger(AgentServerHookEvents.MEMORY_BEFORE_CHAT, mem_ctx)
@@ -863,7 +873,7 @@ class JiuWenClaw:
                 logger.debug("[JiuWenClaw] unregister MCP tool %s failed (tool may not exist): %s", tool_name, exc)
 
         system_prompt = build_system_prompt(
-            mode=mode,
+            mode=ctx.mode,
             language=config_base.get("preferred_language", "zh"),
             channel=channel,
             memory_block=memory_block,
@@ -1268,13 +1278,15 @@ class JiuWenClaw:
         async def run_agent_task():
             token_cid = TOOL_PERMISSION_CHANNEL_ID.set((request.channel_id or "").strip())
             try:
-                await self._register_runtime_tools(
-                    request.session_id,
-                    request.channel_id,
-                    request.request_id,
-                    request.params.get("mode", "plan"),
+                ctx = RuntimeToolContext(
+                    session_id=request.session_id,
+                    channel_id=request.channel_id,
+                    request_id=request.request_id,
+                    mode=request.params.get("mode", "plan"),
                     request_params=request.params,
+                    metadata=request.metadata,
                 )
+                await self._register_runtime_tools(ctx)
                 return await Runner.run_agent(agent=self._instance, inputs=inputs)
             except asyncio.CancelledError:
                 logger.info("[JiuWenClaw] Agent 任务被取消: request_id=%s session_id=%s", request.request_id, session_id)
@@ -1434,13 +1446,15 @@ class JiuWenClaw:
             """执行流式任务，将产生的 chunk 放入队列."""
             token_cid = TOOL_PERMISSION_CHANNEL_ID.set((request.channel_id or "").strip())
             try:
-                await self._register_runtime_tools(
-                    request.session_id,
-                    request.channel_id,
-                    request.request_id,
-                    request.params.get("mode", "plan"),
+                ctx = RuntimeToolContext(
+                    session_id=request.session_id,
+                    channel_id=request.channel_id,
+                    request_id=request.request_id,
+                    mode=request.params.get("mode", "plan"),
                     request_params=request.params,
+                    metadata=request.metadata,
                 )
+                await self._register_runtime_tools(ctx)
                 async for chunk in Runner.run_agent_streaming(self._instance, inputs):
                     parsed = self._parse_stream_chunk(chunk)
                     if parsed is None:

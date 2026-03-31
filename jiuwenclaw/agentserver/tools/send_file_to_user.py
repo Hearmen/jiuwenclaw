@@ -15,7 +15,7 @@ from __future__ import annotations
 import json
 import os
 import logging
-from typing import List, Union
+from typing import Any, List, Union
 
 from openjiuwen.core.foundation.tool import LocalFunction, Tool, ToolCard
 
@@ -27,22 +27,32 @@ logger = logging.getLogger(__name__)
 class SendFileToolkit:
     """Toolkit for sending files to users."""
 
-    def __init__(self, request_id: str, session_id: str, channel_id: str) -> None:
+    def __init__(
+        self,
+        request_id: str,
+        session_id: str,
+        channel_id: str,
+        *,
+        metadata: dict[str, Any] | None = None,
+    ) -> None:
         """Initialize SendFileToolkit.
 
         Args:
             request_id: Request identifier for message routing.
             session_id: Session identifier for message routing.
             channel_id: Channel identifier for message routing.
+            metadata: 与 AgentRequest.metadata 一致（E2A channel_context 映射结果），用于 send_push。
         """
         self.request_id = request_id
         self.session_id = session_id
         self.channel_id = channel_id
+        self._request_metadata = dict(metadata) if metadata else None
         logger.debug(
-            "[SendFileToolkit] 初始化 request_id=%s session_id=%s channel_id=%s",
+            "[SendFileToolkit] 初始化 request_id=%s session_id=%s channel_id=%s has_metadata=%s",
             request_id,
             session_id,
             channel_id,
+            bool(self._request_metadata),
         )
 
     async def send_file(self, abs_file_path_list: Union[List[str], str]) -> str:
@@ -113,6 +123,8 @@ class SendFileToolkit:
                 },
                 "is_complete": False,
             }
+            if self._request_metadata:
+                msg["metadata"] = dict(self._request_metadata)
             await server.send_push(msg)
             result_parts = [f"成功发送 {len(valid_files)} 个文件"]
             if missing_files:

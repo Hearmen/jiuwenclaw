@@ -19,7 +19,10 @@ from jiuwenclaw.e2a.gateway_normalize import (
     E2A_LEGACY_AGENT_REQUEST_KEY,
 )
 from jiuwenclaw.e2a.models import E2AEnvelope
-from jiuwenclaw.e2a.constants import E2A_WIRE_SERVER_PUSH_KEY
+from jiuwenclaw.e2a.constants import (
+    E2A_WIRE_INTERNAL_METADATA_KEYS,
+    E2A_WIRE_SERVER_PUSH_KEY,
+)
 from jiuwenclaw.e2a.wire_codec import (
     encode_agent_chunk_for_wire,
     encode_agent_response_for_wire,
@@ -584,6 +587,12 @@ class AgentWebSocketServer:
             )
             # 与同一 request_id 上的 unary/stream RPC 响应区分，避免 Gateway 将推送当作 RPC 首包解析
             md = dict(wire.get("metadata") or {})
+            um = msg.get("metadata")
+            if isinstance(um, dict):
+                for k, v in um.items():
+                    if k in E2A_WIRE_INTERNAL_METADATA_KEYS:
+                        continue
+                    md[k] = v
             md[E2A_WIRE_SERVER_PUSH_KEY] = True
             wire["metadata"] = md
             sid = msg.get("session_id")

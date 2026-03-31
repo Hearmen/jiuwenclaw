@@ -13,6 +13,7 @@ from jiuwenclaw.e2a.gateway_normalize import (
     message_to_e2a_or_fallback,
     message_to_legacy_agent_dict,
 )
+from jiuwenclaw.e2a.models import E2AEnvelope
 from jiuwenclaw.schema.message import Message, ReqMethod
 
 
@@ -35,6 +36,25 @@ def test_message_to_e2a_or_fallback_basic():
     assert env.method == "chat.send"
     assert env.params == {"query": "hi"}
     assert env.channel_context.get("method") == "chat.send"
+
+
+def test_envelope_from_dict_merges_metadata_when_channel_context_nonempty():
+    """telemetry 等先写入 channel_context 时，顶层 metadata 仍须并入，以便 AgentRequest.metadata 含 wecom_chat_id。"""
+    env = E2AEnvelope.from_dict(
+        {
+            "request_id": "r3",
+            "channel_id": "wecom",
+            "session_id": "s3",
+            "params": {"query": "q"},
+            "is_stream": True,
+            "method": "chat.send",
+            "channel_context": {"traceparent": "00-abc-def-01"},
+            "metadata": {"wecom_chat_id": "user1"},
+        }
+    )
+    req = e2a_to_agent_request(env)
+    assert req.metadata["traceparent"] == "00-abc-def-01"
+    assert req.metadata["wecom_chat_id"] == "user1"
 
 
 def test_e2a_to_agent_request_roundtrip():
