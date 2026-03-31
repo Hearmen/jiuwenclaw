@@ -57,14 +57,13 @@ class _NopCronScheduler:
         return False
 
 
-async def _run(host: str, port: int) -> None:
+async def _run(port: int) -> None:
     from openjiuwen.core.runner import Runner
-    from jiuwenclaw.agentserver.interface import JiuWenClaw
     from jiuwenclaw.gateway import AgentWebSocketServer
     from jiuwenclaw.gateway.cron import CronController, CronJobStore
     from jiuwenclaw.extensions import ExtensionManager, ExtensionRegistry
 
-    logger.info("[AgentServer] starting: ws://%s:%s", host, port)
+    logger.info("[AgentServer] starting: ws://127.0.0.1:%s", port)
 
     cron_store = CronJobStore()
     CronController.get_instance(store=cron_store, scheduler=_NopCronScheduler())
@@ -82,20 +81,15 @@ async def _run(host: str, port: int) -> None:
     await extension_manager.load_all_extensions()
     logger.info("[AgentServer] 扩展加载完成，共 %d 个", len(extension_manager.list_extensions()))
 
-    agent = JiuWenClaw()
     server = AgentWebSocketServer.get_instance(
-        agent=agent,
-        host=host,
+        host="127.0.0.1",
         port=port,
         ping_interval=20.0,
         ping_timeout=20.0,
     )
     await server.start()
 
-    # create_instance depends on CronController singleton being initialized
-    await agent.create_instance()
-
-    logger.info("[AgentServer] ready: ws://%s:%s  Ctrl+C to stop", host, port)
+    logger.info("[AgentServer] ready: ws://127.0.0.1:%s  Ctrl+C to stop", port)
 
     stop_event = asyncio.Event()
 
@@ -131,13 +125,6 @@ def main() -> None:
         description="Start JiuwenClaw AgentServer (standalone process for Gateway to connect).",
     )
     parser.add_argument(
-        "--host",
-        "-H",
-        default=None,
-        metavar="HOST",
-        help="Bind host (default: AGENT_SERVER_HOST env or 127.0.0.1).",
-    )
-    parser.add_argument(
         "--port",
         "-p",
         type=int,
@@ -147,7 +134,6 @@ def main() -> None:
     )
     args = parser.parse_args()
 
-    host = args.host or os.getenv("AGENT_SERVER_HOST", "127.0.0.1")
     port = args.port
     if port is None:
         for key in ("AGENT_SERVER_PORT", "AGENT_PORT"):
@@ -158,7 +144,7 @@ def main() -> None:
         else:
             port = 18092
 
-    asyncio.run(_run(host=host, port=port))
+    asyncio.run(_run(port=port))
 
 
 if __name__ == "__main__":
