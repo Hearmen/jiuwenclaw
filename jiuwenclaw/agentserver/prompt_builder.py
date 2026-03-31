@@ -181,6 +181,7 @@ def _memory_prompt(language: str, is_cron: bool = False) -> str:
 6. **其他信息（others）**：当用户提到任何细节或信息时，或每次文件操作后，自动调用 write_memory 使用 append=true 参数追加记录至 memory/YYYY-MM-DD.md。即便信息不完全明确或确定，也要立即记录下来。
     包括但不限于：用户提供的联系人信息、项目细节、任务指令、偏好、文件路径、存储位置、任何可提高效率的信息等。发现的项目背景、技术细节、工作流程等也要写入 memory/ 目录下的相关文件。）
 
+**分类互斥与去重：** 同一信息只选一个最合适的分类存储，不要用不同措辞重复写入多个分类。写入前先读取目标文件，已有相同或高度相似信息时跳过写入。
 
 **任务记忆两步流程（每轮对话均须执行）：**
 - 开始前：调用 `experience_retrieve` 检索相关历史经验
@@ -283,6 +284,8 @@ When valuable information appears during the conversation, classify it and store
 
 6. **Other Information (`others`)**: Whenever the user mentions any detail, or after each file operation, automatically call `write_memory` with `append=true` to append to `memory/YYYY-MM-DD.md` immediately, even if information is not fully clear yet.
    This includes but is not limited to contact info, project details, task instructions, preferences, file paths, storage locations, and any efficiency-improving details. Discovered project background, technical details, and workflows should also be written to relevant files under `memory/`.
+
+**Category exclusivity & dedup:** Pick only the single most appropriate category for each piece of information — never store the same fact under multiple categories with different wording. Always read the target file first; skip writing if identical or highly similar content already exists.
 
 **Two-step task memory flow (must run every turn):**
 - Before starting: call `experience_retrieve` to retrieve relevant historical experience
