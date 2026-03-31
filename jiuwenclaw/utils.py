@@ -206,9 +206,40 @@ def _resolve_logging_levels(
 
 
 
-# User home directory
-USER_HOME = Path.home()
-USER_WORKSPACE_DIR = USER_HOME / ".jiuwenclaw"
+_user_home: Path | None = None
+
+
+def get_user_home() -> Path:
+    """Get the current user home directory."""
+    global _user_home
+    if _user_home is None:
+        _user_home = Path.home()
+    return _user_home
+
+
+def set_user_home(path: Path, initialized: bool = False) -> None:
+    """Set a custom user home directory.
+
+    After calling this function, all path getters will return paths based on the new home directory.
+    
+    Args:
+        path: The new user home directory path.
+        initialized: If True, skip cache reset (use when paths are already initialized elsewhere).
+    """
+    global _user_home, _initialized, _config_dir, _workspace_dir, _root_dir
+    _user_home = Path(path)
+    if initialized:
+        return
+    _initialized = False
+    _config_dir = None
+    _workspace_dir = None
+    _root_dir = None
+
+
+def get_user_workspace_dir() -> Path:
+    """Get the user workspace directory path (~/.jiuwenclaw or custom path)."""
+    return get_user_home() / ".jiuwenclaw"
+
 
 # Cache for resolved paths
 _config_dir: Path | None = None
@@ -323,7 +354,8 @@ def prepare_workspace(overwrite: bool = True, preferred_language: Optional[str] 
     if not package_root:
         raise RuntimeError("package root not found")
 
-    USER_WORKSPACE_DIR.mkdir(parents=True, exist_ok=True)
+    workspace_dir = get_user_workspace_dir()
+    workspace_dir.mkdir(parents=True, exist_ok=True)
 
     # ----- config: copy config.yaml -----
     resources_dir = package_root / "resources"
@@ -340,7 +372,7 @@ def prepare_workspace(overwrite: bool = True, preferred_language: Optional[str] 
             + ", ".join(str(p) for p in config_yaml_src_candidates)
         )
 
-    config_dest_dir = USER_WORKSPACE_DIR / "config"
+    config_dest_dir = workspace_dir / "config"
     config_dest_dir.mkdir(parents=True, exist_ok=True)
     config_yaml_dest = config_dest_dir / "config.yaml"
 
@@ -366,18 +398,18 @@ def prepare_workspace(overwrite: bool = True, preferred_language: Optional[str] 
             "env template source not found; tried: "
             + ", ".join(str(p) for p in env_template_src_candidates)
         )
-    env_dest = USER_WORKSPACE_DIR / "config" / ".env"
+    env_dest = workspace_dir / "config" / ".env"
     if overwrite or not env_dest.exists():
         shutil.copy2(env_template_src, env_dest)
 
     # ----- copy runtime dirs (new layout) -----
-    agent_root = USER_WORKSPACE_DIR / "agent"
+    agent_root = workspace_dir / "agent"
     agent_home = agent_root / "home"
     agent_skills = agent_root / "skills"
     agent_memory = agent_root / "memory"
     agent_sessions = agent_root / "sessions"
-    (USER_WORKSPACE_DIR / ".checkpoint").mkdir(parents=True, exist_ok=True)
-    (USER_WORKSPACE_DIR / ".logs").mkdir(parents=True, exist_ok=True)
+    (workspace_dir / ".checkpoint").mkdir(parents=True, exist_ok=True)
+    (workspace_dir / ".logs").mkdir(parents=True, exist_ok=True)
 
     template_agent_workspace = template_agent_dir / "workspace"
     template_agent_memory = template_agent_dir / "memory"
@@ -451,7 +483,8 @@ def init_user_workspace(overwrite: bool = True) -> Path | Literal["cancelled"]:
 
     交互式 init 会先询问语言；首次启动 app 时非交互 prepare_workspace 则沿用模板 config 中的语言。
     """
-    if USER_WORKSPACE_DIR.exists():
+    workspace_dir = get_user_workspace_dir()
+    if workspace_dir.exists():
         # Warn user about data loss and ask for confirmation
         print("[jiuwenclaw-init] WARNING: This will delete all historical configuration and memory information.")
         print("[jiuwenclaw-init] This action cannot be undone.")
@@ -468,7 +501,7 @@ def init_user_workspace(overwrite: bool = True) -> Path | Literal["cancelled"]:
     print(f"[jiuwenclaw-init] 将使用语言 / Language: {lang}")
     prepare_workspace(overwrite, preferred_language=lang)
 
-    return USER_WORKSPACE_DIR
+    return workspace_dir
 
 
 def _resolve_paths() -> None:
@@ -478,12 +511,13 @@ def _resolve_paths() -> None:
     if _initialized:
         return
 
+    workspace_dir = get_user_workspace_dir()
     # 优先使用已初始化的用户工作区 (~/.jiuwenclaw)，
     # 保证源码运行与安装包运行后的读写路径完全一致。
-    user_config_dir = USER_WORKSPACE_DIR / "config"
-    user_workspace_dir = USER_WORKSPACE_DIR / "agent" / "workspace"
+    user_config_dir = workspace_dir / "config"
+    user_workspace_dir = workspace_dir / "agent" / "workspace"
     if user_config_dir.exists():
-        _root_dir = USER_WORKSPACE_DIR
+        _root_dir = workspace_dir
         _config_dir = user_config_dir
         _workspace_dir = user_workspace_dir
     else:
@@ -527,11 +561,11 @@ def get_root_dir() -> Path:
 
 def get_agent_workspace_dir() -> Path:
     """Get the agent workspace directory path."""
-    return USER_WORKSPACE_DIR / "agent" / "workspace"
+    return get_user_workspace_dir() / "agent" / "workspace"
 
 
 def get_agent_root_dir() -> Path:
-    return USER_WORKSPACE_DIR / "agent"
+    return get_user_workspace_dir() / "agent"
 
 
 def get_agent_home_dir() -> Path:
@@ -557,15 +591,16 @@ def get_agent_sessions_dir() -> Path:
 
 
 def get_checkpoint_dir() -> Path:
-    return USER_WORKSPACE_DIR / ".checkpoint"
+    return get_user_workspace_dir() / ".checkpoint"
 
 
 def get_logs_dir() -> Path:
-    return USER_WORKSPACE_DIR / ".logs"
+    return get_user_workspace_dir() / ".logs"
 
 
 def get_xy_tmp_dir() -> Path:
-    xy_tmp_dir = USER_WORKSPACE_DIR / "tmp" / "xiaoyi"
+    workspace_dir = get_user_workspace_dir()
+    xy_tmp_dir = workspace_dir / "tmp" / "xiaoyi"
     xy_tmp_dir.mkdir(parents=True, exist_ok=True)
     return xy_tmp_dir
 

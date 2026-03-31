@@ -88,7 +88,7 @@ from jiuwenclaw.agentserver.permissions import (
     get_permission_engine,
     PermissionLevel,
 )
-from jiuwenclaw.agentserver.skill_manager import SkillManager, _SKILLS_DIR
+from jiuwenclaw.agentserver.skill_manager import SkillManager, _get_skills_dir
 from jiuwenclaw.evolution.service import EvolutionService
 from jiuwenclaw.schema.agent import AgentRequest, AgentResponse, AgentResponseChunk
 from jiuwenclaw.agentserver.memory import get_memory_manager
@@ -302,7 +302,7 @@ class JiuWenClaw:
         # register installed skills (compatible with openjiuwen variants).
         if hasattr(self._instance, "_skill_util"):
             try:
-                await self._instance.register_skill(str(_SKILLS_DIR))
+                await self._instance.register_skill(str(_get_skills_dir()))
             except Exception as exc:
                 logger.warning("[JiuWenClaw] register_skill failed, continue without skills: %s", exc)
 
@@ -339,7 +339,7 @@ class JiuWenClaw:
                 evo_service = EvolutionService(
                     llm=self._instance._get_llm(),
                     model=agent_config.model_name,
-                    skills_base_dir=str(_SKILLS_DIR),
+                    skills_base_dir=str(_get_skills_dir()),
                     auto_scan=evolution_auto_scan,
                 )
                 self._instance.set_evolution_service(evo_service)

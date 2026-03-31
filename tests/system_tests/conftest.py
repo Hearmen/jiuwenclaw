@@ -36,7 +36,7 @@ def clean_environment(temp_home: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     1. Overrides HOME to use a temporary directory
     2. Clears any cached configuration
     3. Resets module-level caches in utils.py
-    4. Directly patches USER_WORKSPACE_DIR to point to temp home
+    4. Uses set_user_home to set custom home directory
 
     Use this fixture when testing initialization to ensure tests are isolated.
     """
@@ -48,11 +48,8 @@ def clean_environment(temp_home: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     # Clear any cached configuration
     monkeypatch.delenv("JIUWENCLAW_CONFIG_DIR", raising=False)
 
-    # Directly monkeypatch USER_HOME and USER_WORKSPACE_DIR
-    # These are computed at module import time, so we need to override them directly
-    temp_workspace = temp_home / ".jiuwenclaw"
-    monkeypatch.setattr(utils_module, "USER_HOME", temp_home)
-    monkeypatch.setattr(utils_module, "USER_WORKSPACE_DIR", temp_workspace)
+    # Use set_user_home to set custom home directory
+    utils_module.set_user_home(temp_home)
 
     # Reset cache variables
     monkeypatch.setattr(utils_module, "_initialized", False)

@@ -5,15 +5,36 @@ import os
 from datetime import datetime, timezone, timedelta
 from typing import Optional
 
-from jiuwenclaw.utils import USER_WORKSPACE_DIR
+from jiuwenclaw.utils import (
+    get_user_workspace_dir,
+    get_agent_home_dir,
+    get_agent_memory_dir,
+    get_agent_skills_dir,
+    get_agent_workspace_dir,
+)
 
 
 logger = logging.getLogger(__name__)
-CONFIG_DIR = USER_WORKSPACE_DIR / "config"
-HOME_DIR = USER_WORKSPACE_DIR / "agent" / "home"
-MEMORY_DIR = USER_WORKSPACE_DIR / "agent" / "memory"
-SKILL_DIR = USER_WORKSPACE_DIR / "agent" / "skills"
-WORKSPACE_DIR = USER_WORKSPACE_DIR / "agent" / "workspace"
+
+
+def _get_config_dir() -> "Path":
+    return get_user_workspace_dir() / "config"
+
+
+def _get_home_dir() -> "Path":
+    return get_agent_home_dir()
+
+
+def _get_memory_dir() -> "Path":
+    return get_agent_memory_dir()
+
+
+def _get_skill_dir() -> "Path":
+    return get_agent_skills_dir()
+
+
+def _get_workspace_dir() -> "Path":
+    return get_agent_workspace_dir()
 
 
 def _memory_prompt(language: str, is_cron: bool = False) -> str:
@@ -48,14 +69,14 @@ def _memory_prompt(language: str, is_cron: bool = False) -> str:
             sections.append(memory_prompt)
             sections.append("")
 
-            profile_content = _read_file(MEMORY_DIR / "USER.md")
+            profile_content = _read_file(_get_memory_dir() / "USER.md")
             if profile_content:
                 sections.append("## 当前身份与用户资料")
                 sections.append("这是你对自己和用户的了解：")
                 sections.append(profile_content)
                 sections.append("")
 
-            memory_content = _read_file(MEMORY_DIR / "MEMORY.md")
+            memory_content = _read_file(_get_memory_dir() / "MEMORY.md")
             if memory_content:
                 sections.append("## 长期记忆")
                 sections.append("之前会话的重要信息：")
@@ -64,7 +85,7 @@ def _memory_prompt(language: str, is_cron: bool = False) -> str:
 
             beijing_tz = timezone(timedelta(hours=8))
             today = datetime.now(tz=beijing_tz).strftime("%Y-%m-%d")
-            today_content = _read_file(MEMORY_DIR / f"{today}.md")
+            today_content = _read_file(_get_memory_dir() / f"{today}.md")
             if today_content:
                 sections.append("## 今日会话记录")
                 sections.append(today_content)
@@ -94,14 +115,14 @@ def _memory_prompt(language: str, is_cron: bool = False) -> str:
             sections.append(memory_prompt)
             sections.append("")
 
-            profile_content = _read_file(MEMORY_DIR / "USER.md")
+            profile_content = _read_file(_get_memory_dir() / "USER.md")
             if profile_content:
                 sections.append("## Current Identity and User Profile")
                 sections.append("What you know about yourself and the user:")
                 sections.append(profile_content)
                 sections.append("")
 
-            memory_content = _read_file(MEMORY_DIR / "MEMORY.md")
+            memory_content = _read_file(_get_memory_dir() / "MEMORY.md")
             if memory_content:
                 sections.append("## Long-term Memory")
                 sections.append("Important information from previous sessions:")
@@ -110,7 +131,7 @@ def _memory_prompt(language: str, is_cron: bool = False) -> str:
 
             beijing_tz = timezone(timedelta(hours=8))
             today = datetime.now(tz=beijing_tz).strftime("%Y-%m-%d")
-            today_content = _read_file(MEMORY_DIR / f"{today}.md")
+            today_content = _read_file(_get_memory_dir() / f"{today}.md")
             if today_content:
                 sections.append("## Today's Session Record")
                 sections.append(today_content)
@@ -187,14 +208,14 @@ def _memory_prompt(language: str, is_cron: bool = False) -> str:
         sections.append(memory_prompt)
         sections.append("")
 
-        profile_content = _read_file(MEMORY_DIR / "USER.md")
+        profile_content = _read_file(_get_memory_dir() / "USER.md")
         if profile_content:
             sections.append("## 当前身份与用户资料")
             sections.append("这是你对自己和用户的了解：")
             sections.append(profile_content)
             sections.append("")
 
-        memory_content = _read_file(MEMORY_DIR / "MEMORY.md")
+        memory_content = _read_file(_get_memory_dir() / "MEMORY.md")
         if memory_content:
             sections.append("## 长期记忆")
             sections.append("之前会话的重要信息：")
@@ -203,7 +224,7 @@ def _memory_prompt(language: str, is_cron: bool = False) -> str:
 
         beijing_tz = timezone(timedelta(hours=8))
         today = datetime.now(tz=beijing_tz).strftime("%Y-%m-%d")
-        today_content = _read_file(MEMORY_DIR / f"{today}.md")
+        today_content = _read_file(_get_memory_dir() / f"{today}.md")
         if today_content:
             sections.append("## 今日会话记录")
             sections.append(today_content)
@@ -287,14 +308,14 @@ Before outputting final response text, **you must call the following tools first
         sections.append(memory_prompt)
         sections.append("")
 
-        profile_content = _read_file(MEMORY_DIR / "USER.md")
+        profile_content = _read_file(_get_memory_dir() / "USER.md")
         if profile_content:
             sections.append("## Current Identity and User Profile")
             sections.append("What you know about yourself and the user:")
             sections.append(profile_content)
             sections.append("")
 
-        memory_content = _read_file(MEMORY_DIR / "MEMORY.md")
+        memory_content = _read_file(_get_memory_dir() / "MEMORY.md")
         if memory_content:
             sections.append("## Long-term Memory")
             sections.append("Important information from previous sessions:")
@@ -303,7 +324,7 @@ Before outputting final response text, **you must call the following tools first
 
         beijing_tz = timezone(timedelta(hours=8))
         today = datetime.now(tz=beijing_tz).strftime("%Y-%m-%d")
-        today_content = _read_file(MEMORY_DIR / f"{today}.md")
+        today_content = _read_file(_get_memory_dir() / f"{today}.md")
         if today_content:
             sections.append("## Today's Session Record")
             sections.append(today_content)
@@ -538,12 +559,12 @@ When the user requests code/scripts/config/tests that must be delivered **as fil
 
 
 def _skills_prompt(language: str) -> str:
-    skills = os.listdir(SKILL_DIR)
+    skills = os.listdir(_get_skill_dir())
     skills_str = "\n".join(skills)
     if language == "zh":
         return f"""## 技能
 
-技能存放在 `{SKILL_DIR}` 目录下。
+技能存放在 `{_get_skill_dir()}` 目录下。
 
 当前可用技能：
 {skills_str}
@@ -551,7 +572,7 @@ def _skills_prompt(language: str) -> str:
     else:
         return f"""## Skills
 
-Skills live under `{SKILL_DIR}`.
+Skills live under `{_get_skill_dir()}`.
 
 Available skills:
 {skills_str}
@@ -604,20 +625,20 @@ def _workspace_prompt(language: str) -> str:
     if language == "zh":
         return f"""## 工作区
 
-你当前的工作路径为：{WORKSPACE_DIR}.
+你当前的工作路径为：{_get_workspace_dir()}.
 你可以自由在这个路径里操作文件，他们都属于你。如果用户没有要求在其他路径操作，默认将文件保存在此目录下。
 """
     else:
         return f"""## Workspace
 
-You are working under the dir：{WORKSPACE_DIR}.
+You are working under the dir：{_get_workspace_dir()}.
 Write or save all files under this dir, unless user ask you to operate in other dirs.
 """
 
 
 def _principle_prompt(language: str) -> str:
     """优先从 ~/.jiuwenclaw/agent/home/PRINCIPLE.md 读取；缺失时回退内置文案。"""
-    file_content = _read_file(str(HOME_DIR / "PRINCIPLE.md"))
+    file_content = _read_file(str(_get_home_dir() / "PRINCIPLE.md"))
     if file_content:
         return file_content
     if language == "zh":
@@ -695,7 +716,7 @@ def _time_prompt(language: str) -> str:
 
 def _tone_prompt(language: str) -> str:
     """优先从 ~/.jiuwenclaw/agent/home/TONE.md 读取；缺失时回退内置文案。"""
-    file_content = _read_file(str(HOME_DIR / "TONE.md"))
+    file_content = _read_file(str(_get_home_dir() / "TONE.md"))
     if file_content:
         return file_content
     if language == "zh":
@@ -848,19 +869,19 @@ def _start_prompt(language: str) -> str:
 
 | 路径 | 用途 | 操作建议 |
 |------|------|----------|
-| `{CONFIG_DIR}` | 配置信息 | 不要轻易改动，错误配置可能导致异常 |
-| `{HOME_DIR}` | 身份与任务信息 | 可适当更新，以更好地服务用户 |
-| `{MEMORY_DIR}` | 持久化记忆 | 将其视为你记忆的一部分，随时查阅 |
-| `{SKILL_DIR}` | 技能库 | 可随时翻阅、调用，不可修改 |
-| `{WORKSPACE_DIR}` | 工作区 | 你的安全屋，可自由读写，注意不要影响系统其他部分 |
+| `{_get_config_dir()}` | 配置信息 | 不要轻易改动，错误配置可能导致异常 |
+| `{_get_home_dir()}` | 身份与任务信息 | 可适当更新，以更好地服务用户 |
+| `{_get_memory_dir()}` | 持久化记忆 | 将其视为你记忆的一部分，随时查阅 |
+| `{_get_skill_dir()}` | 技能库 | 可随时翻阅、调用，不可修改 |
+| `{_get_workspace_dir()}` | 工作区 | 你的安全屋，可自由读写，注意不要影响系统其他部分 |
 
 ## 配置信息
 
 谨慎对待你的配置信息，如果用户要求你修改，请在修改后重启自己的服务，以保证改动生效
 | 路径 | 用途 |
 |------|------|----------|
-| `{CONFIG_DIR}/config.yaml` | 配置信息 |
-| `{CONFIG_DIR}/.env` | 环境变量 |
+| `{_get_config_dir()}/config.yaml` | 配置信息 |
+| `{_get_config_dir()}/.env` | 环境变量 |
 """
     else:
         return f"""You are a personal assistant created and run by JiuwenClaw. 
@@ -874,19 +895,19 @@ Everything starts from the `.jiuwenclaw` directory.
 
 | Path | Purpose | Guidelines |
 |------|---------|------------|
-| `{CONFIG_DIR}` | Configuration | Do not modify lightly; bad config can cause failures |
-| `{HOME_DIR}` | Identity and task info | You may update this to better serve your user |
-| `{MEMORY_DIR}` | Persistent memory | Treat it as part of your memory; consult it anytime |
-| `{SKILL_DIR}` | Skill library | Read and invoke freely; do not modify |
-| `{WORKSPACE_DIR}` | Workspace | Your safe space; read and write freely, but avoid affecting other parts of the system |
+| `{_get_config_dir()}` | Configuration | Do not modify lightly; bad config can cause failures |
+| `{_get_home_dir()}` | Identity and task info | You may update this to better serve your user |
+| `{_get_memory_dir()}` | Persistent memory | Treat it as part of your memory; consult it anytime |
+| `{_get_skill_dir()}` | Skill library | Read and invoke freely; do not modify |
+| `{_get_workspace_dir()}` | Workspace | Your safe space; read and write freely, but avoid affecting other parts of the system |
 
 ## Configuration
 
 Be careful with your configuration, if changes are required, remember to restart your service to ensure the changes are configured.
 | Path | Purpose |
 |------|------|----------|
-| `{CONFIG_DIR}/config.yaml` | Config Infos |
-| `{CONFIG_DIR}/.env` | Environment Variables |
+| `{_get_config_dir()}/config.yaml` | Config Infos |
+| `{_get_config_dir()}/.env` | Environment Variables |
 """
 
 

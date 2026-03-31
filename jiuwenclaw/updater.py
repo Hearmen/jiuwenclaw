@@ -15,7 +15,7 @@ from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
 from jiuwenclaw.config import get_config_raw
-from jiuwenclaw.utils import USER_WORKSPACE_DIR
+from jiuwenclaw.utils import get_user_workspace_dir
 from jiuwenclaw.version import __version__
 
 
@@ -27,7 +27,7 @@ DOWNLOAD_CHUNK_SIZE = 1024 * 512
 
 
 def _updates_dir() -> Path:
-    path = USER_WORKSPACE_DIR / ".updates"
+    path = get_user_workspace_dir() / ".updates"
     path.mkdir(parents=True, exist_ok=True)
     return path
 

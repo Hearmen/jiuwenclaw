@@ -28,13 +28,24 @@ logger = logging.getLogger(__name__)
 _SKILLNET_DOWNLOAD_TIMEOUT: int = int(os.environ.get("SKILLNET_DOWNLOAD_TIMEOUT", "60"))
 _SKILLNET_MAX_RETRIES: int = int(os.environ.get("SKILLNET_MAX_RETRIES", "3"))
 
+
 # ---------------------------------------------------------------------------
 # 默认路径
 # ---------------------------------------------------------------------------
-_SKILLS_DIR = get_agent_skills_dir()
-_AGENT_ROOT = get_agent_root_dir()
-_MARKETPLACE_DIR = _SKILLS_DIR / "_marketplace"
-_STATE_FILE = _SKILLS_DIR / "skills_state.json"
+def _get_skills_dir() -> "Path":
+    return get_agent_skills_dir()
+
+
+def _get_agent_root_dir() -> "Path":
+    return get_agent_root_dir()
+
+
+def _get_marketplace_dir() -> "Path":
+    return _get_skills_dir() / "_marketplace"
+
+
+def _get_state_file() -> "Path":
+    return _get_skills_dir() / "skills_state.json"
 
 
 class SkillNetEmptyDownloadError(Exception):
@@ -128,14 +139,14 @@ class SkillManager:
     """Skill 管理器，对应 skills.* 请求方法."""
 
     def __init__(self) -> None:
-        _SKILLS_DIR.mkdir(parents=True, exist_ok=True)
+        _get_skills_dir().mkdir(parents=True, exist_ok=True)
         self._state: dict[str, Any] = self._load_state()
         # SkillNet 异步安装：install 立即返回 install_id，后台下载；完成后调用 hook 重载 Agent
         self._skillnet_install_jobs: dict[str, dict[str, Any]] = {}
         self._skillnet_install_complete_hook: Callable[[], Awaitable[None]] | None = None
 
     def set_skillnet_install_complete_hook(
-        self, hook: Callable[[], Awaitable[None]] | None
+            self, hook: Callable[[], Awaitable[None]] | None
     ) -> None:
         """安装成功落盘后回调（通常为重载 Agent 实例）."""
         self._skillnet_install_complete_hook = hook
@@ -201,7 +212,7 @@ class SkillManager:
             raise ValueError("缺少参数: name")
 
         # 先在本地 skills 目录中查找
-        for child in _SKILLS_DIR.iterdir():
+        for child in _get_skills_dir().iterdir():
             if child.name.startswith("_") or not child.is_dir():
                 continue
             md = self._try_find_skill_file(child)
@@ -217,8 +228,8 @@ class SkillManager:
                 return meta
 
         # 再在 marketplace 目录中查找
-        if _MARKETPLACE_DIR.exists():
-            for repo_dir in _MARKETPLACE_DIR.iterdir():
+        if _get_marketplace_dir().exists():
+            for repo_dir in _get_marketplace_dir().iterdir():
                 if not repo_dir.is_dir():
                     continue
                 for plugin_dir in repo_dir.iterdir():
@@ -290,7 +301,7 @@ class SkillManager:
             return {"success": False, "detail": f"marketplace {marketplace_name} 缺少 url"}
 
         # 确保 marketplace 仓库已 clone
-        repo_dir = _MARKETPLACE_DIR / marketplace_name
+        repo_dir = _get_marketplace_dir() / marketplace_name
         if repo_dir.exists():
             await self._git_pull(repo_dir)
         else:
@@ -300,7 +311,7 @@ class SkillManager:
 
         # 在仓库中查找 plugin 目录
         plugin_src = repo_dir / "skills" / plugin_name
-        
+
         # 兼容单skill模式
         if not plugin_src.exists() or not plugin_src.is_dir():
             plugin_src = repo_dir
@@ -312,7 +323,7 @@ class SkillManager:
             return {"success": False, "detail": f"plugin {plugin_name} 缺少 SKILL.md"}
 
         # 复制到本地 skills 目录
-        dest = _SKILLS_DIR / plugin_name
+        dest = _get_skills_dir() / plugin_name
         if dest.exists():
             if not force:
                 return {"success": False, "detail": f"skill {plugin_name} 已存在"}
@@ -631,7 +642,7 @@ class SkillManager:
         force = bool(params.get("force", False))
 
         # 检查 skill 是否已安装
-        dest = _SKILLS_DIR / slug
+        dest = _get_skills_dir() / slug
         if dest.exists() and not force:
             return {
                 "success": False,
@@ -754,11 +765,11 @@ class SkillManager:
             }
 
     async def _skillnet_install_background(
-        self,
-        install_id: str,
-        skill_url: str,
-        force: bool,
-        mirror_url: str | None = None,
+            self,
+            install_id: str,
+            skill_url: str,
+            force: bool,
+            mirror_url: str | None = None,
     ) -> None:
         try:
             result = await asyncio.to_thread(
@@ -839,7 +850,7 @@ class SkillManager:
         }
 
     def _skillnet_install_files_sync(
-        self, skill_url: str, force: bool, mirror_url: str | None = None
+            self, skill_url: str, force: bool, mirror_url: str | None = None
     ) -> dict[str, Any]:
         """在工作线程中下载并拷贝到 skills 目录；返回 ok / skill_name / meta / skill_url."""
         try:
@@ -875,7 +886,7 @@ class SkillManager:
                     }
 
                 skill_name = str(meta.get("name", skill_dir.name)).strip() or skill_dir.name
-                dest = _SKILLS_DIR / skill_name
+                dest = _get_skills_dir() / skill_name
                 if dest.exists():
                     if not force:
                         return {
@@ -934,7 +945,7 @@ class SkillManager:
         if self._is_builtin_skill(name, self._get_installed_plugins(), dest):
             return {"success": False, "detail": "内置技能不允许删除"}
 
-        dest = _SKILLS_DIR / name
+        dest = _get_skills_dir() / name
         if dest.exists() and dest.is_dir():
             _safe_rmtree(dest)
         for mirror_root in self._get_mirror_skills_dirs():
@@ -969,7 +980,7 @@ class SkillManager:
             if meta is None:
                 return {"success": False, "detail": "无法解析 skill 文件"}
             skill_name = meta.get("name", src.stem)
-            dest = _SKILLS_DIR / skill_name
+            dest = _get_skills_dir() / skill_name
             if dest.exists():
                 if not force:
                     return {"success": False, "detail": f"skill {skill_name} 已存在"}
@@ -982,7 +993,7 @@ class SkillManager:
                 return {"success": False, "detail": f"目录中未找到 SKILL.md: {raw_path}"}
             meta = self._parse_skill_md(md) or {}
             skill_name = meta.get("name", src.name)
-            dest = _SKILLS_DIR / skill_name
+            dest = _get_skills_dir() / skill_name
             if dest.exists():
                 if not force:
                     return {"success": False, "detail": f"skill {skill_name} 已存在"}
@@ -1034,7 +1045,7 @@ class SkillManager:
 
         cache_removed = False
         if bool(remove_cache):
-            repo_dir = _MARKETPLACE_DIR / name
+            repo_dir = _get_marketplace_dir() / name
             if repo_dir.exists() and repo_dir.is_dir():
                 try:
                     _safe_rmtree(repo_dir)
@@ -1070,7 +1081,7 @@ class SkillManager:
             return {"success": False, "detail": f"marketplace 不存在: {name}"}
 
         if enabled:
-            repo_dir = _MARKETPLACE_DIR / name
+            repo_dir = _get_marketplace_dir() / name
             url = marketplace.get("url", "")
             if not url:
                 return {"success": False, "detail": f"marketplace {name} 缺少 url"}
@@ -1092,7 +1103,7 @@ class SkillManager:
             return {"success": True, "name": name, "enabled": True, "detail": detail}
 
         # 禁用：删除本地缓存目录，不卸载已安装 skill。
-        repo_dir = _MARKETPLACE_DIR / name
+        repo_dir = _get_marketplace_dir() / name
         cache_removed = False
         if repo_dir.exists() and repo_dir.is_dir():
             cache_removed = _safe_rmtree(repo_dir)
@@ -1251,10 +1262,10 @@ class SkillManager:
     def _scan_local_skills(self) -> list[dict]:
         """扫描 agent/skills/ 下的本地 skill（跳过 _marketplace）."""
         results: list[dict] = []
-        if not _SKILLS_DIR.exists():
+        if not _get_skills_dir().exists():
             return results
 
-        for child in _SKILLS_DIR.iterdir():
+        for child in _get_skills_dir().iterdir():
             if not child.is_dir() or child.name.startswith("_"):
                 continue
             md = self._try_find_skill_file(child)
@@ -1321,7 +1332,7 @@ class SkillManager:
         扫描路径：_marketplace/{marketplace_name}/skills/{plugin_name}
         """
         results: list[dict] = []
-        if not _MARKETPLACE_DIR.exists():
+        if not _get_marketplace_dir().exists():
             return results
 
         installed_names = {p.get("name") for p in self._get_installed_plugins()}
@@ -1332,7 +1343,7 @@ class SkillManager:
             if bool(m.get("enabled", True)) and m.get("name")
         }
 
-        for repo_dir in _MARKETPLACE_DIR.iterdir():
+        for repo_dir in _get_marketplace_dir().iterdir():
             if not repo_dir.is_dir():
                 continue
             marketplace_name = repo_dir.name
@@ -1345,7 +1356,7 @@ class SkillManager:
             is_skills_dir = True
             if not skills_dir.exists() or not skills_dir.is_dir():
                 # 如果没有 skills 子目录，尝试直接扫描 repo_dir（兼容旧结构）
-                skills_dir = repo_dir / _MARKETPLACE_DIR
+                skills_dir = repo_dir / _get_marketplace_dir()
                 is_skills_dir = False
 
             for plugin_dir in skills_dir.iterdir():
@@ -1387,14 +1398,14 @@ class SkillManager:
         try:
             source_repo_root = Path(__file__).resolve().parents[2]
             source_resources_skills_dir = (
-                source_repo_root / "jiuwenclaw" / "resources" / "agent" / "skills"
+                    source_repo_root / "jiuwenclaw" / "resources" / "agent" / "skills"
             )
             # 开发模式下不将源码目录作为镜像目标
             # 这样用户下载的skill只保存在用户目录，不会污染源码目录
             if (
-                source_resources_skills_dir.exists()
-                and source_resources_skills_dir.resolve() != _SKILLS_DIR.resolve()
-                and source_resources_skills_dir.resolve() != get_builtin_skills_dir().resolve()
+                    source_resources_skills_dir.exists()
+                    and source_resources_skills_dir.resolve() != _get_skills_dir().resolve()
+                    and source_resources_skills_dir.resolve() != get_builtin_skills_dir().resolve()
             ):
                 mirrors.append(source_resources_skills_dir)
         except Exception:
@@ -1469,7 +1480,7 @@ class SkillManager:
 
     def _refresh_agent_data_indexes(self) -> None:
         """Refresh agent-data.json for runtime and mirror workspaces."""
-        workspace_roots: set[Path] = {_AGENT_ROOT.resolve()}
+        workspace_roots: set[Path] = {_get_agent_root_dir().resolve()}
         for mirror_root in self._get_mirror_skills_dirs():
             try:
                 # mirror_root = .../agent/skills → agent 根目录为其 parent
@@ -1630,7 +1641,7 @@ class SkillManager:
                     parts.append(f"HTTP {r.status_code}: {raw}")
 
             if r.status_code == 403 or any(
-                "rate limit" in p.lower() for p in parts
+                    "rate limit" in p.lower() for p in parts
             ):
                 try:
                     rl = dl.session.get("https://api.github.com/rate_limit", timeout=12)
@@ -1650,10 +1661,9 @@ class SkillManager:
 
         return " | ".join(parts) if parts else ""
 
-
     @staticmethod
     def _skillnet_download_sync(
-        skill_url: str, target_dir: str, mirror_url: str | None = None
+            skill_url: str, target_dir: str, mirror_url: str | None = None
     ) -> str:
         """同步调用 skillnet-ai download；失败时附带 GitHub API 返回说明（如前端的限流文案）。"""
         try:
@@ -1745,7 +1755,7 @@ class SkillManager:
         if not marketplaces:
             return
 
-        _MARKETPLACE_DIR.mkdir(parents=True, exist_ok=True)
+        _get_marketplace_dir().mkdir(parents=True, exist_ok=True)
 
         for marketplace in marketplaces:
             name = marketplace.get("name", "")
@@ -1753,7 +1763,7 @@ class SkillManager:
             if not name or not url:
                 continue
 
-            repo_dir = _MARKETPLACE_DIR / name
+            repo_dir = _get_marketplace_dir() / name
             try:
                 if repo_dir.exists():
                     await self._git_pull(repo_dir)
@@ -1774,8 +1784,8 @@ class SkillManager:
     def _load_state(self) -> dict[str, Any]:
         """加载 skills_state.json，失败时返回默认空状态."""
         try:
-            if _STATE_FILE.exists():
-                state = json.loads(_STATE_FILE.read_text(encoding="utf-8"))
+            if _get_state_file().exists():
+                state = json.loads(_get_state_file().read_text(encoding="utf-8"))
                 self._normalize_state(state)
                 return state
         except Exception:
@@ -1787,8 +1797,8 @@ class SkillManager:
     def _save_state(self) -> None:
         """持久化状态到 skills_state.json."""
         try:
-            _STATE_FILE.parent.mkdir(parents=True, exist_ok=True)
-            _STATE_FILE.write_text(
+            _get_state_file().parent.mkdir(parents=True, exist_ok=True)
+            _get_state_file().write_text(
                 json.dumps(self._state, ensure_ascii=False, indent=2),
                 encoding="utf-8",
             )

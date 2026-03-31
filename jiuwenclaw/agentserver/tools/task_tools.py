@@ -16,7 +16,7 @@ from jiuwenclaw.agentserver.tools import (
     tool,
 )
 
-from jiuwenclaw.utils import USER_WORKSPACE_DIR
+from jiuwenclaw.utils import get_user_workspace_dir
 
 logger = logging.getLogger(__name__)
 
@@ -34,7 +34,10 @@ class TaskAddParams:
 
 
 # Path for persisting task_add entries
-_TASK_DATA_PATH = str(USER_WORKSPACE_DIR / "agent" / "workspace" / "task-data.json")
+def _get_task_data_path() -> str:
+    return str(get_user_workspace_dir() / "agent" / "workspace" / "task-data.json")
+
+
 _connector = JSONFileConnector(indent=2)
 
 _service: Optional[Any] = None  # TaskMemoryService instance
@@ -215,8 +218,8 @@ async def experience_retrieve(
     persisted_memories: List[Dict[str, Any]] = []
     persisted_lines: List[str] = []
     try:
-        if _connector.exists(_TASK_DATA_PATH):
-            data = _connector.load_from_file(_TASK_DATA_PATH)
+        if _connector.exists(_get_task_data_path()):
+            data = _connector.load_from_file(_get_task_data_path())
             for entry in data.get("entries", []):
                 mem = {
                     "id": entry.get("memory_id", ""),
@@ -318,8 +321,8 @@ async def experience_learn(params: TaskAddParams, matts: str = "none") -> Dict[s
     # Step 2: persist new entry to task-data.json
     try:
         existing = (
-            _connector.load_from_file(_TASK_DATA_PATH)
-            if _connector.exists(_TASK_DATA_PATH)
+            _connector.load_from_file(_get_task_data_path())
+            if _connector.exists(_get_task_data_path())
             else {"entries": []}
         )
         entry: Dict[str, Any] = {
@@ -339,7 +342,7 @@ async def experience_learn(params: TaskAddParams, matts: str = "none") -> Dict[s
         if params.label is not None:
             entry["label"] = params.label
         existing.setdefault("entries", []).append(entry)
-        _connector.save_to_file(_TASK_DATA_PATH, existing)
+        _connector.save_to_file(_get_task_data_path(), existing)
     except Exception as persist_exc:
         logger.warning(
             "[Experience] experience_learn: failed to persist to task-data.json: %s", persist_exc,
@@ -352,8 +355,8 @@ async def experience_learn(params: TaskAddParams, matts: str = "none") -> Dict[s
     # Step 3: summarize all entries in task-data.json
     raw_entries: List[Dict[str, Any]] = []
     try:
-        if _connector.exists(_TASK_DATA_PATH):
-            data = _connector.load_from_file(_TASK_DATA_PATH)
+        if _connector.exists(_get_task_data_path()):
+            data = _connector.load_from_file(_get_task_data_path())
             raw_entries = data.get("entries", [])
     except Exception as load_exc:
         logger.warning("[Experience] experience_learn: failed to reload task-data.json: %s", load_exc)
@@ -394,8 +397,8 @@ async def experience_learn(params: TaskAddParams, matts: str = "none") -> Dict[s
                     for mem in memories
                 ]
                 existing = (
-                    _connector.load_from_file(_TASK_DATA_PATH)
-                    if _connector.exists(_TASK_DATA_PATH)
+                    _connector.load_from_file(_get_task_data_path())
+                    if _connector.exists(_get_task_data_path())
                     else {"entries": []}
                 )
                 existing_ids = {
@@ -407,7 +410,7 @@ async def experience_learn(params: TaskAddParams, matts: str = "none") -> Dict[s
                         existing.setdefault("entries", []).append(s_entry)
                         existing_ids.add(s_entry.get("memory_id"))
                         added += 1
-                _connector.save_to_file(_TASK_DATA_PATH, existing)
+                _connector.save_to_file(_get_task_data_path(), existing)
                 logger.info(
                     "[Experience] experience_learn: merged %d summarized entries (total=%d)",
                     added, len(existing.get("entries", [])),
@@ -444,7 +447,7 @@ async def experience_clear() -> Dict[str, Any]:
         Dictionary with status message.
     """
     try:
-        _connector.save_to_file(_TASK_DATA_PATH, {"entries": []})
+        _connector.save_to_file(_get_task_data_path(), {"entries": []})
         logger.info("[Experience] experience_clear: task-data.json wiped")
         return {"status": "success", "message": "task-data.json cleared"}
     except Exception as exc:

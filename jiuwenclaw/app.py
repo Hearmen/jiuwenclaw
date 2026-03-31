@@ -13,9 +13,10 @@ import time
 
 from dotenv import load_dotenv
 
-from jiuwenclaw.utils import USER_WORKSPACE_DIR, get_env_file, prepare_workspace
+from jiuwenclaw.utils import get_user_workspace_dir, get_env_file, prepare_workspace
 
-_config_file = USER_WORKSPACE_DIR / "config" / "config.yaml"
+
+_config_file = get_user_workspace_dir() / "config" / "config.yaml"
 if not _config_file.exists():
     prepare_workspace(overwrite=False)
 

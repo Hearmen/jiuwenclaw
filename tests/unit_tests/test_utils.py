@@ -103,12 +103,12 @@ class TestLoggerSetup:
 class TestUserWorkspace:
     """Test user workspace functions."""
 
-    @patch("jiuwenclaw.utils.USER_WORKSPACE_DIR")
+    @patch("jiuwenclaw.utils.get_user_workspace_dir")
     @patch("jiuwenclaw.utils._find_package_root")
     @patch("pathlib.Path.exists")
     @patch("builtins.input")
     def test_init_user_workspace_cancelled(
-        self, mock_input, mock_exists, mock_find_root, mock_workspace_dir, temp_workspace
+        self, mock_input, mock_exists, mock_find_root, mock_get_workspace_dir, temp_workspace
     ):
         """Test user workspace initialization when user cancels."""
         # This test requires more complex mocking due to file operations
@@ -120,14 +120,14 @@ class TestConstants:
     """Test module constants."""
 
     @staticmethod
-    def test_user_home_defined():
-        """Test USER_HOME is defined and is a Path."""
-        assert hasattr(utils, "USER_HOME")
-        assert isinstance(utils.USER_HOME, Path)
+    def test_get_user_home_defined():
+        """Test get_user_home is defined and returns a Path."""
+        assert hasattr(utils, "get_user_home")
+        assert isinstance(utils.get_user_home(), Path)
 
     @staticmethod
-    def test_user_workspace_dir_defined():
-        """Test USER_WORKSPACE_DIR is defined."""
-        assert hasattr(utils, "USER_WORKSPACE_DIR")
-        assert isinstance(utils.USER_WORKSPACE_DIR, Path)
-        assert ".jiuwenclaw" in str(utils.USER_WORKSPACE_DIR)
+    def test_get_user_workspace_dir_defined():
+        """Test get_user_workspace_dir is defined."""
+        assert hasattr(utils, "get_user_workspace_dir")
+        assert isinstance(utils.get_user_workspace_dir(), Path)
+        assert ".jiuwenclaw" in str(utils.get_user_workspace_dir())

@@ -15,7 +15,7 @@ from logging.handlers import RotatingFileHandler
 
 import webview
 
-from jiuwenclaw.utils import USER_WORKSPACE_DIR, get_logs_dir
+from jiuwenclaw.utils import get_user_workspace_dir, get_logs_dir
 
 
 BACKEND_HOST = "127.0.0.1"
@@ -543,7 +543,7 @@ class DesktopRuntime:
     def run(self, window_title: str, width: int, height: int, debug: bool) -> None:
         self.start_services()
 
-        storage_path = USER_WORKSPACE_DIR / "tmp" / "webview"
+        storage_path = get_user_workspace_dir() / "tmp" / "webview"
         storage_path.mkdir(parents=True, exist_ok=True)
 
         self.window = webview.create_window(
