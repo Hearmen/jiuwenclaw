@@ -52,11 +52,18 @@ def _browser_move_root() -> Path:
     return _repo_root() / "jiuwenclaw" / "agentserver" / "tools" / "browser-move"
 
 
+def _browser_runtime_state_root() -> Path:
+    configured = (os.getenv("BROWSER_RUNTIME_STATE_DIR") or "").strip()
+    if configured:
+        return Path(configured).expanduser()
+    return Path.home() / ".jiuwenclaw" / "browser-move"
+
+
 def _profile_store_path() -> Path:
     configured = (os.getenv("BROWSER_PROFILE_STORE_PATH") or "").strip()
     if configured:
         return Path(configured).expanduser()
-    return _browser_move_root() / ".browser" / "profiles.json"
+    return _browser_runtime_state_root() / ".browser" / "profiles.json"
 
 
 def _profile_name(profile_directory: str) -> str:

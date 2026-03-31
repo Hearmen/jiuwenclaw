@@ -161,11 +161,18 @@ class BrowserService:
                 pass
         return [part for part in shlex.split(raw) if part]
 
+    @staticmethod
+    def _runtime_state_root() -> Path:
+        configured = (os.getenv("BROWSER_RUNTIME_STATE_DIR") or "").strip()
+        if configured:
+            return Path(configured).expanduser()
+        return Path.home() / ".jiuwenclaw" / "browser-move"
+
     def _resolve_profile_store_path(self) -> Path:
         configured = (os.getenv("BROWSER_PROFILE_STORE_PATH") or "").strip()
         if configured:
             return Path(configured).expanduser()
-        return Path(REPO_ROOT).expanduser() / ".browser" / "profiles.json"
+        return self._runtime_state_root() / ".browser" / "profiles.json"
 
     def _resolve_driver_mode(self) -> str:
         explicit = (os.getenv("BROWSER_DRIVER") or "").strip().lower()
@@ -354,7 +361,7 @@ class BrowserService:
         elif kill_existing:
             user_data_dir = _default_chrome_user_data_dir()
         else:
-            user_data_dir = str(Path(REPO_ROOT).expanduser() / ".browser-profiles" / self._profile_name)
+            user_data_dir = str(self._runtime_state_root() / ".browser-profiles" / self._profile_name)
         browser_binary = (os.getenv("BROWSER_MANAGED_BINARY") or "").strip()
         extra_args = self._parse_env_args(os.getenv("BROWSER_MANAGED_ARGS") or "")
         cdp_url = f"http://{host}:{port}"
