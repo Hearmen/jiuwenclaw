@@ -507,7 +507,8 @@
       "uninstall": "卸载",
       "importLocal": "导入本地技能",
       "sourceManager": "源管理",
-      "backToList": "返回列表"
+      "backToList": "返回列表",
+      "viewEvolution": "查看技能经验"
     },
     "builtIn": "内置",
     "status": {
@@ -535,6 +536,34 @@
     "noMatches": "暂无匹配的技能",
     "detailLoading": "加载详情中...",
     "detailError": "加载详情失败",
+    "evolution": {
+      "closeAria": "关闭技能经验弹窗",
+      "title": "技能经验：{{name}}",
+      "subtitle": "可编辑经验内容（change.content），并支持删除条目后保存。",
+      "empty": "暂无经验条目",
+      "deleteConfirm": "确认删除该条经验吗？",
+      "actions": {
+        "delete": "删除"
+      },
+      "fields": {
+        "id": "ID",
+        "source": "来源",
+        "section": "Section",
+        "target": "Target",
+        "applied": "已应用",
+        "timestamp": "时间",
+        "context": "上下文",
+        "content": "经验内容"
+      },
+      "messages": {
+        "saved": "保存成功"
+      },
+      "errors": {
+        "loadFailed": "加载技能经验失败",
+        "saveFailed": "保存技能经验失败",
+        "invalidFile": "经验文件格式错误，请先修复 evolutions.json"
+      }
+    },
     "skillNet": {
       "title": "SkillNet 在线搜索",
       "titleRepoLinkText": "SkillNet 开源仓库",

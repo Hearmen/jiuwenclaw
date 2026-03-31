@@ -507,7 +507,8 @@
       "uninstall": "Uninstall",
       "importLocal": "Import Local Skill",
       "sourceManager": "Source Manager",
-      "backToList": "Back to List"
+      "backToList": "Back to List",
+      "viewEvolution": "View Skill Experience"
     },
     "builtIn": "Built-in",
     "status": {
@@ -535,6 +536,34 @@
     "noMatches": "No matching skills",
     "detailLoading": "Loading details...",
     "detailError": "Failed to load details",
+    "evolution": {
+      "closeAria": "Close skill experience dialog",
+      "title": "Skill Experience: {{name}}",
+      "subtitle": "You can edit experience content (change.content), delete entries, and save.",
+      "empty": "No experience entries",
+      "deleteConfirm": "Delete this experience entry?",
+      "actions": {
+        "delete": "Delete"
+      },
+      "fields": {
+        "id": "ID",
+        "source": "Source",
+        "section": "Section",
+        "target": "Target",
+        "applied": "Applied",
+        "timestamp": "Timestamp",
+        "context": "Context",
+        "content": "Experience Content"
+      },
+      "messages": {
+        "saved": "Saved successfully"
+      },
+      "errors": {
+        "loadFailed": "Failed to load skill experience",
+        "saveFailed": "Failed to save skill experience",
+        "invalidFile": "Invalid experience file format. Please fix evolutions.json first."
+      }
+    },
     "skillNet": {
       "title": "SkillNet Online Search",
       "titleRepoLinkText": "SkillNet on GitHub",

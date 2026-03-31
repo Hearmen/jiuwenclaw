@@ -22,6 +22,7 @@ from jiuwenclaw.utils import (
     get_agent_skills_dir,
     get_builtin_skills_dir,
 )
+from jiuwenclaw.evolution.schema import EvolutionEntry, EvolutionFile
 
 logger = logging.getLogger(__name__)
 
@@ -32,6 +33,9 @@ _SKILLNET_MAX_RETRIES: int = int(os.environ.get("SKILLNET_MAX_RETRIES", "3"))
 # ---------------------------------------------------------------------------
 # 默认路径
 # ---------------------------------------------------------------------------
+_EVOLUTION_FILENAME = "evolutions.json"
+
+
 def _get_skills_dir() -> "Path":
     return get_agent_skills_dir()
 
@@ -225,6 +229,7 @@ class SkillManager:
                 meta["file_path"] = meta.pop("path", "")
                 meta["source"] = self._resolve_skill_source(meta.get("name", ""))
                 meta["is_builtin"] = self._is_builtin_skill(meta.get("name", ""), self._get_installed_plugins(), child)
+                meta["has_evolutions"] = (child / _EVOLUTION_FILENAME).is_file()
                 return meta
 
         # 再在 marketplace 目录中查找
@@ -247,9 +252,114 @@ class SkillManager:
                         meta["source"] = marketplace_name
                         meta["marketplace"] = marketplace_name
                         meta["is_builtin"] = False
+                        meta["has_evolutions"] = False
                         return meta
 
         raise ValueError(f"未找到 skill: {name}")
+
+    async def handle_skills_evolution_status(self, params: dict) -> dict:
+        """检查某个 skill 是否存在 evolutions.json."""
+        name = str(params.get("name") or "").strip()
+        if not name:
+            raise ValueError("缺少参数: name")
+        evo_path = self._get_skill_evolution_path(name)
+        return {
+            "name": name,
+            "exists": bool(evo_path and evo_path.is_file()),
+        }
+
+    async def handle_skills_evolution_get(self, params: dict) -> dict:
+        """获取某个 skill 的 evolutions.json 内容（重点返回 entries）."""
+        name = str(params.get("name") or "").strip()
+        if not name:
+            raise ValueError("缺少参数: name")
+
+        evo_path = self._get_skill_evolution_path(name)
+        if evo_path is None or not evo_path.is_file():
+            return {
+                "name": name,
+                "exists": False,
+                "valid": True,
+                "skill_id": name,
+                "version": "1.0.0",
+                "updated_at": "",
+                "entries": [],
+            }
+
+        try:
+            raw = json.loads(evo_path.read_text(encoding="utf-8"))
+            evo_file = EvolutionFile.from_dict(raw)
+            return {
+                "name": name,
+                "exists": True,
+                "valid": True,
+                **evo_file.to_dict(),
+            }
+        except Exception as exc:
+            logger.warning("读取 evolutions.json 失败: skill=%s error=%s", name, exc)
+            return {
+                "name": name,
+                "exists": True,
+                "valid": False,
+                "detail": "evolutions.json 格式错误或读取失败",
+                "skill_id": name,
+                "version": "1.0.0",
+                "updated_at": "",
+                "entries": [],
+            }
+
+    async def handle_skills_evolution_save(self, params: dict) -> dict:
+        """保存某个 skill 的 evolutions.json 条目列表."""
+        name = str(params.get("name") or "").strip()
+        if not name:
+            raise ValueError("缺少参数: name")
+
+        if not self._resolve_local_skill_dir(name):
+            raise ValueError(f"未找到 skill: {name}")
+
+        entries = params.get("entries")
+        if not isinstance(entries, list):
+            raise ValueError("参数 entries 必须是数组")
+
+        normalized_entries: list[EvolutionEntry] = []
+        for idx, item in enumerate(entries):
+            if not isinstance(item, dict):
+                raise ValueError(f"entries[{idx}] 必须是对象")
+            entry_id = str(item.get("id") or "").strip()
+            content = item.get("change", {}).get("content") if isinstance(item.get("change"), dict) else None
+            if not entry_id:
+                raise ValueError(f"entries[{idx}].id 不能为空")
+            if not isinstance(content, str):
+                raise ValueError(f"entries[{idx}].change.content 必须是字符串")
+            normalized_entries.append(EvolutionEntry.from_dict(item))
+
+        evo_path = self._get_skill_evolution_path(name)
+        evo_file = EvolutionFile.empty(skill_id=name)
+        if evo_path and evo_path.is_file():
+            try:
+                current = json.loads(evo_path.read_text(encoding="utf-8"))
+                evo_file = EvolutionFile.from_dict(current)
+            except Exception as exc:
+                logger.warning("读取原 evolutions.json 失败，将以新内容覆盖: skill=%s error=%s", name, exc)
+
+        evo_file.entries = normalized_entries
+        evo_file.updated_at = datetime.now(timezone.utc).isoformat()
+        if not evo_file.skill_id:
+            evo_file.skill_id = name
+
+        if evo_path is None:
+            raise ValueError(f"未找到 skill: {name}")
+        evo_path.parent.mkdir(parents=True, exist_ok=True)
+        evo_path.write_text(
+            json.dumps(evo_file.to_dict(), ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+        return {
+            "success": True,
+            "name": name,
+            "entry_count": len(evo_file.entries),
+            "updated_at": evo_file.updated_at,
+        }
 
     async def handle_skills_marketplace_list(self, params: dict) -> dict:
         """列出已配置的 marketplace 源.
@@ -1297,6 +1407,7 @@ class SkillManager:
             meta["source"] = source
             # 判断是否为内置技能（传入 child 路径，通过实际路径判断）
             meta["is_builtin"] = self._is_builtin_skill(meta.get("name", ""), self._get_installed_plugins(), child)
+            meta["has_evolutions"] = (child / _EVOLUTION_FILENAME).is_file()
             # 不在列表中返回 body
             meta.pop("body", None)
             results.append(meta)
@@ -1325,6 +1436,32 @@ class SkillManager:
                 return "local"
 
         return "project"
+
+    def _resolve_local_skill_dir(self, skill_name: str) -> Path | None:
+        """根据 skill name 定位本地技能目录（仅 agent/skills 下）."""
+        direct = _get_skills_dir() / skill_name
+        if direct.is_dir():
+            return direct
+
+        if not _get_skills_dir().exists():
+            return None
+
+        for child in _get_skills_dir().iterdir():
+            if not child.is_dir() or child.name.startswith("_"):
+                continue
+            md = self._try_find_skill_file(child)
+            if md is None:
+                continue
+            meta = self._parse_skill_md(md)
+            if meta and meta.get("name") == skill_name:
+                return child
+        return None
+
+    def _get_skill_evolution_path(self, skill_name: str) -> Path | None:
+        skill_dir = self._resolve_local_skill_dir(skill_name)
+        if skill_dir is None:
+            return None
+        return skill_dir / _EVOLUTION_FILENAME
 
     def _scan_marketplace_skills(self) -> list[dict]:
         """扫描 _marketplace/ 下已 clone 的仓库中未安装的 skill.
@@ -1382,6 +1519,7 @@ class SkillManager:
                 meta["source"] = marketplace_name
                 meta["marketplace"] = marketplace_name
                 meta["is_builtin"] = False
+                meta["has_evolutions"] = False
                 meta.pop("body", None)
                 results.append(meta)
 

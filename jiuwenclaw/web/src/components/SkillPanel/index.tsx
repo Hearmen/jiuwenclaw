@@ -9,6 +9,7 @@ import { webRequest } from "../../services/webClient";
 import { SourceManagerModal } from "../../features/SourceManagerModal";
 import { SkillNetSearchModal } from "../../features/SkillNetSearchModal";
 import { ClawHubSearchModal } from "../../features/ClawHubSearchModal";
+import { SkillEvolutionModal } from "../../features/SkillEvolutionModal";
 import { normalizeSkillNetUrl } from "../../utils/skillNetUrl";
 
 /** 刷新会 git pull marketplace，略放宽；普通进页单次 RPC 一般很快。 */
@@ -28,6 +29,8 @@ type SkillItem = {
   origin?: string;
   /** 是否为内置技能（不允许删除） */
   is_builtin?: boolean;
+  /** 本地技能目录是否存在 evolutions.json */
+  has_evolutions?: boolean;
 };
 
 type InstalledPluginItem = {
@@ -104,6 +107,8 @@ export function SkillPanel({ sessionId, onNavigateToConfig }: SkillPanelProps) {
   const [sourceModalOpen, setSourceModalOpen] = useState(false);
   const [skillNetModalOpen, setSkillNetModalOpen] = useState(false);
   const [clawHubModalOpen, setClawHubModalOpen] = useState(false);
+  const [evolutionModalOpen, setEvolutionModalOpen] = useState(false);
+  const [evolutionSkillName, setEvolutionSkillName] = useState<string | null>(null);
   const withSession = useCallback(
     (params?: Record<string, unknown>) => ({
       ...(params || {}),
@@ -246,6 +251,16 @@ export function SkillPanel({ sessionId, onNavigateToConfig }: SkillPanelProps) {
   const handleBackToList = useCallback(() => {
     setSelectedSkill(null);
     setDetailState("idle");
+  }, []);
+
+  const handleOpenEvolution = useCallback((skillName: string) => {
+    setEvolutionSkillName(skillName);
+    setEvolutionModalOpen(true);
+  }, []);
+
+  const handleCloseEvolution = useCallback(() => {
+    setEvolutionModalOpen(false);
+    setEvolutionSkillName(null);
   }, []);
 
   const handleInstall = useCallback(
@@ -474,6 +489,27 @@ export function SkillPanel({ sessionId, onNavigateToConfig }: SkillPanelProps) {
     return t('skills.status.builtIn');
   };
 
+  const renderEvolutionButton = (skill: SkillItem) => {
+    const disabled = !skill.has_evolutions;
+    return (
+      <button
+        onClick={(event) => {
+          event.stopPropagation();
+          if (disabled) return;
+          handleOpenEvolution(skill.name);
+        }}
+        className={`px-3 py-1.5 rounded-md text-sm transition-colors whitespace-nowrap ${
+          disabled
+            ? "bg-secondary text-text-muted cursor-not-allowed"
+            : "bg-secondary text-text hover:bg-card border border-border"
+        }`}
+        disabled={disabled}
+      >
+        {t('skills.actions.viewEvolution')}
+      </button>
+    );
+  };
+
   return (
     <div className="flex-1 flex flex-col min-w-0 min-h-0">
       <div className="card flex-1 flex flex-col min-h-0 overflow-hidden">
@@ -570,6 +606,7 @@ export function SkillPanel({ sessionId, onNavigateToConfig }: SkillPanelProps) {
 
                 <div className="flex flex-col items-end gap-2">
                   {renderActionButton(selectedSkill)}
+                  {renderEvolutionButton(selectedSkill)}
                 </div>
               </div>
 
@@ -657,6 +694,7 @@ export function SkillPanel({ sessionId, onNavigateToConfig }: SkillPanelProps) {
                       </div>
                       <div className="flex flex-col items-end gap-2 flex-shrink-0">
                         {renderActionButton(skill)}
+                        {renderEvolutionButton(skill)}
                       </div>
                     </div>
                   </button>
@@ -694,6 +732,18 @@ export function SkillPanel({ sessionId, onNavigateToConfig }: SkillPanelProps) {
         onClose={() => setClawHubModalOpen(false)}
         onInstalled={async () => {
           await fetchSkills();
+        }}
+      />
+      <SkillEvolutionModal
+        open={evolutionModalOpen}
+        sessionId={sessionId}
+        skillName={evolutionSkillName}
+        onClose={handleCloseEvolution}
+        onSaved={async () => {
+          await fetchSkills();
+          if (selectedSkill) {
+            await fetchSkillDetail(selectedSkill.name);
+          }
         }}
       />
     </div>

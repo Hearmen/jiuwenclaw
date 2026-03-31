@@ -149,6 +149,9 @@ _SKILL_ROUTES: dict[ReqMethod, str] = {
     ReqMethod.SKILLS_CLAWHUB_SET_TOKEN: "handle_skills_clawhub_set_token",
     ReqMethod.SKILLS_CLAWHUB_SEARCH: "handle_skills_clawhub_search",
     ReqMethod.SKILLS_CLAWHUB_DOWNLOAD: "handle_skills_clawhub_download",
+    ReqMethod.SKILLS_EVOLUTION_STATUS: "handle_skills_evolution_status",
+    ReqMethod.SKILLS_EVOLUTION_GET: "handle_skills_evolution_get",
+    ReqMethod.SKILLS_EVOLUTION_SAVE: "handle_skills_evolution_save",
 }
 
 
