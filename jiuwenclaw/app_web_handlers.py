@@ -34,7 +34,7 @@ from jiuwenclaw.jiuwen_core_patch import apply_openai_model_client_patch
 from jiuwenclaw.security.base_crypto import get_crypto_provider
 from jiuwenclaw.updater import WindowsUpdaterService
 from jiuwenclaw.utils import (
-    USER_WORKSPACE_DIR,
+    get_user_workspace_dir,
     get_agent_sessions_dir,
     get_env_file,
     get_root_dir,
@@ -42,7 +42,7 @@ from jiuwenclaw.utils import (
 )
 from jiuwenclaw.version import __version__
 
-_config_file = USER_WORKSPACE_DIR / "config" / "config.yaml"
+_config_file = get_user_workspace_dir() / "config" / "config.yaml"
 if not _config_file.exists():
     prepare_workspace(overwrite=False)
 
@@ -444,7 +444,7 @@ def _register_web_handlers(bind: WebHandlersBindParams) -> None:
             try:
                 updates["timeout_seconds"] = max(5, int(params.get("timeout_seconds")))
             except (TypeError, ValueError):
-                await channel.send_response(ws, req_id, ok=False, 
+                await channel.send_response(ws, req_id, ok=False,
                                             error="timeout_seconds must be integer", code="BAD_REQUEST")
                 return
 
@@ -452,7 +452,7 @@ def _register_web_handlers(bind: WebHandlersBindParams) -> None:
             update_updater_in_config(updates)
         except Exception as exc:  # noqa: BLE001
             logger.warning("[updater.set_conf] 写回 config.yaml 失败: %s", exc)
-            await channel.send_response(ws, req_id, ok=False, 
+            await channel.send_response(ws, req_id, ok=False,
                                         error=str(exc), code="INTERNAL_ERROR")
             return
 
@@ -589,19 +589,17 @@ def _register_web_handlers(bind: WebHandlersBindParams) -> None:
     async def _memory_compute(ws, req_id, params, session_id):
 
         process = psutil.Process()
-        rss_bytes = process.memory_info().rss   # 物理内存
-        rss_mb = rss_bytes / (1024 * 1024)     
-        
+        rss_bytes = process.memory_info().rss  # 物理内存
+        rss_mb = rss_bytes / (1024 * 1024)
+
         mem = psutil.virtual_memory()
         total_mb = mem.total / (1024 * 1024)
         available_mb = mem.available / (1024 * 1024)
         used_percent = mem.percent
 
-        await channel.send_response(ws, req_id, ok=True, 
-        payload={"rss_mb": rss_mb, "total_mb": total_mb, 
-        "available_mb": available_mb})
-    
-    
+        await channel.send_response(ws, req_id, ok=True,
+                                    payload={"rss_mb": rss_mb, "total_mb": total_mb,
+                                             "available_mb": available_mb})
 
     async def _chat_send(ws, req_id, params, session_id):
         await channel.send_response(
@@ -1367,4 +1365,3 @@ def _register_web_handlers(bind: WebHandlersBindParams) -> None:
     channel.register_method("cron.job.toggle", _cron_job_toggle)
     channel.register_method("cron.job.preview", _cron_job_preview)
     channel.register_method("cron.job.run_now", _cron_job_run_now)
-
