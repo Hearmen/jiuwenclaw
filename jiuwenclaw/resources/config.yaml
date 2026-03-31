@@ -131,6 +131,11 @@ task_memory:
   retrieval_algo: ACE
   summary_algo: ACE
 
+gateway:
+  # SessionMap 仅用于企业claw场景，如 feishu_enterprise 等通道：将平台身份映射为 Agent 的 session_id。
+  # 取值：per_chat_bot（默认，同 chat+bot 共享会话）, per_chat_bot_user（按 user 分会话）
+  session_map_scope: per_chat_bot
+
 heartbeat:
   # 心跳间隔（秒），默认 60
   every: 3600

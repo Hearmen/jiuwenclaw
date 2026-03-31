@@ -83,7 +83,7 @@ class MessageHandler(ABC):
             ChannelType.WHATSAPP.value,
             ChannelType.WECOM.value,
         }
-        # 使用 SessionMap（identity 四元组）的 channel 族：channel_id 等于 base 或为 base:<suffix>
+        # 使用 SessionMap 的 channel 族（由 config 中 gateway.session_map_scope 决定是否在 key 中含 user）
         self._session_map_channel_types = frozenset({
             "feishu_enterprise",
         })
