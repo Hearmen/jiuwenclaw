@@ -31,7 +31,6 @@ from jiuwenclaw.config import (
     update_updater_in_config,
 )
 from jiuwenclaw.jiuwen_core_patch import apply_openai_model_client_patch
-from jiuwenclaw.security.base_crypto import get_crypto_provider
 from jiuwenclaw.updater import WindowsUpdaterService
 from jiuwenclaw.utils import (
     get_user_workspace_dir,
@@ -294,8 +293,10 @@ def _register_web_handlers(bind: WebHandlersBindParams) -> None:
         try:
             raw = get_config_raw()
             for key, val in payload.items():
-                if ("api_key" in key or "token" in key) and get_crypto_provider():
-                    payload[key] = get_crypto_provider().decrypt(val)
+                from jiuwenclaw.extensions import ExtensionRegistry
+                if (("api_key" in key.lower() or "token" in key.lower())
+                        and ExtensionRegistry.get_instance().get_crypto_provider()):
+                    payload[key] = ExtensionRegistry.get_instance().get_crypto_provider().decrypt(val)
             ctx_cfg = (raw.get("react") or {}).get("context_engine_config") or {}
             payload["context_engine_enabled"] = "true" if ctx_cfg.get("enabled", False) else "false"
             perm_cfg = raw.get("permissions") or {}
@@ -342,8 +343,10 @@ def _register_web_handlers(bind: WebHandlersBindParams) -> None:
             await channel.send_response(ws, req_id, ok=False, error="params must be object", code="BAD_REQUEST")
             return
         for key, val in params.items():
-            if ("api_key" in key or "token" in key) and get_crypto_provider():
-                params[key] = get_crypto_provider().encrypt(val)
+            from jiuwenclaw.extensions import ExtensionRegistry
+            if (("api_key" in key.lower() or "token" in key.lower())
+                    and ExtensionRegistry.get_instance().get_crypto_provider()):
+                params[key] = ExtensionRegistry.get_instance().get_crypto_provider().encrypt(val)
         env_updates: dict[str, str] = {}
         yaml_updated: list[str] = []
         available_model_providers = [provider.value for provider in ProviderType]
