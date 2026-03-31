@@ -116,7 +116,7 @@ class WebSocketAgentServerClient(AgentServerClient):
         config: dict[str, Any],
         env: dict[str, str] | None = None,
     ) -> None:
-        """默认 WebSocket client 不处理服务端配置缓存，留给扩展 client 自行实现."""s
+        """默认 WebSocket client 不处理服务端配置缓存，留给扩展 client 自行实现."""
         return None
 
     @property
