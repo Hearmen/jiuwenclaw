@@ -15,6 +15,7 @@ interface CronJob {
   id: string;
   name: string;
   enabled: boolean;
+  expired?: boolean;
   cron_expr: string;
   timezone: string;
   wake_offset_seconds: number;
@@ -733,8 +734,12 @@ export default function CronPanel({ sessionId }: CronPanelProps) {
                             {displayCron}
                           </td>
                           <td className="px-4 py-3">
-                            <span className={`inline-flex items-center px-2 py-1 rounded-full text-xs font-medium ${job.enabled ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-700'}`}>
-                              {job.enabled ? t('cron.status.enabled') : t('cron.status.disabled')}
+                            <span
+                              className={`inline-flex items-center px-2 py-1 rounded-full text-xs font-medium ${
+                                job.expired ? 'bg-amber-100 text-amber-700' : job.enabled ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-700'
+                              }`}
+                            >
+                              {job.expired ? t('cron.status.expired') : job.enabled ? t('cron.status.enabled') : t('cron.status.disabled')}
                             </span>
                           </td>
                           <td className="px-4 py-3 text-sm text-text-muted">

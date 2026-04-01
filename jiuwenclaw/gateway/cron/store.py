@@ -91,9 +91,16 @@ class CronJobStore:
         if "name" in patch:
             updated = replace(updated, name=str(patch.get("name") or "").strip())
         if "enabled" in patch:
-            updated = replace(updated, enabled=bool(patch.get("enabled")))
+            enabled_val = bool(patch.get("enabled"))
+            updated = replace(updated, enabled=enabled_val)
+            # Re-enabling a job implies it is no longer expired, unless caller explicitly sets expired.
+            if enabled_val and "expired" not in patch:
+                updated = replace(updated, expired=False)
         if "cron_expr" in patch:
             updated = replace(updated, cron_expr=str(patch.get("cron_expr") or "").strip())
+            # Editing schedule implies it is no longer expired, unless caller explicitly sets expired.
+            if "expired" not in patch:
+                updated = replace(updated, expired=False)
         if "timezone" in patch:
             updated = replace(updated, timezone=str(patch.get("timezone") or "").strip())
         if "wake_offset_seconds" in patch:
@@ -107,6 +114,8 @@ class CronJobStore:
             updated = replace(updated, description=str(patch.get("description") or ""))
         if "targets" in patch:
             updated = replace(updated, targets=str(patch.get("targets") or "").strip())
+        if "expired" in patch:
+            updated = replace(updated, expired=bool(patch.get("expired")))
 
         updated.updated_at = time.time()
         CronJob.from_dict(updated.to_dict())

@@ -137,7 +137,20 @@ class CronSchedulerService:
             try:
                 push_dt, wake_dt, run_id = self._compute_next_run(job, now_ts=now)
             except Exception as exc:  # noqa: BLE001
-                logger.warning("[Cron] compute next run failed job=%s: %s", job.id, exc)
+                if self._is_croniter_no_next_date(exc):
+                    # 已过期的 one-shot：标记 expired 并停用，避免 UI 仍显示 enabled。
+                    try:
+                        job.enabled = False
+                        job.expired = True
+                        await self._store.update_job(job.id, {"enabled": False, "expired": True})
+                    except Exception as update_exc:  # noqa: BLE001
+                        logger.warning(
+                            "[Cron] mark expired failed job=%s: %s",
+                            job.id,
+                            update_exc,
+                        )
+                else:
+                    logger.warning("[Cron] compute next run failed job=%s: %s", job.id, exc)
                 continue
             self._schedule_event(wake_dt, "wake", job.id, run_id)
             self._schedule_event(push_dt, "push", job.id, run_id)
@@ -174,6 +187,14 @@ class CronSchedulerService:
         wake_dt = push_dt - timedelta(seconds=max(0, int(job.wake_offset_seconds or 0)))
         run_id = f"{job.id}:{int(push_dt.timestamp())}"
         return push_dt, wake_dt, run_id
+
+    @staticmethod
+    def _is_croniter_no_next_date(exc: Exception) -> bool:
+        """croniter 找不到下一次日期（通常为单次 year 固定为过去）时视为过期。"""
+        return (
+            exc.__class__.__name__ == "CroniterBadDateError"
+            or "failed to find next date" in str(exc)
+        )
 
     async def _loop(self) -> None:
         while self._running:
@@ -221,7 +242,20 @@ class CronSchedulerService:
                 self._schedule_event(wake_dt, "wake", job.id, next_run_id)
                 self._schedule_event(push_dt, "push", job.id, next_run_id)
             except Exception as exc:  # noqa: BLE001
-                logger.warning("[Cron] compute next run failed after push job=%s: %s", job.id, exc)
+                if self._is_croniter_no_next_date(exc):
+                    # 执行后无下一次：将任务标记为过期并停用。
+                    try:
+                        job.enabled = False
+                        job.expired = True
+                        await self._store.update_job(job.id, {"enabled": False, "expired": True})
+                    except Exception as update_exc:  # noqa: BLE001
+                        logger.warning(
+                            "[Cron] mark expired after push failed job=%s: %s",
+                            job.id,
+                            update_exc,
+                        )
+                else:
+                    logger.warning("[Cron] compute next run failed after push job=%s: %s", job.id, exc)
         elif ev.kind == "push_update":
             await self._on_push_update(job, ev.run_id)
 

@@ -400,7 +400,8 @@
     "deleteConfirm": "确定要删除这个任务吗？",
     "status": {
       "enabled": "启用",
-      "disabled": "禁用"
+      "disabled": "禁用",
+      "expired": "过期"
     },
     "columns": {
       "name": "任务名称",

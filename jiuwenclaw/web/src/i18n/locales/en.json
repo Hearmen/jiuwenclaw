@@ -214,7 +214,8 @@
     },
     "status": {
       "enabled": "Enabled",
-      "disabled": "Disabled"
+      "disabled": "Disabled",
+      "expired": "Expired"
     },
     "actions": {
       "enable": "Enable",

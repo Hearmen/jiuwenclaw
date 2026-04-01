@@ -60,6 +60,8 @@ class CronJob:
     timezone: str
     wake_offset_seconds: int = 300
     description: str = ""
+    # For one-shot schedules where croniter has no "next" after the run.
+    expired: bool = False
     # Target channel ID to push results to (e.g. "web").
     # JSON 字段名仍然叫 targets，用字符串保存频道 ID，兼容旧数据。
     targets: str = ""
@@ -71,6 +73,7 @@ class CronJob:
             "id": self.id,
             "name": self.name,
             "enabled": bool(self.enabled),
+            "expired": bool(self.expired),
             "cron_expr": self.cron_expr,
             "timezone": self.timezone,
             "wake_offset_seconds": int(self.wake_offset_seconds),
@@ -87,6 +90,7 @@ class CronJob:
         cron_expr = str(data.get("cron_expr") or "").strip()
         timezone = str(data.get("timezone") or "").strip()
         enabled = bool(data.get("enabled", False))
+        expired = bool(data.get("expired", False))
 
         wake_offset_seconds_raw = data.get("wake_offset_seconds", 60)
         try:
@@ -134,6 +138,7 @@ class CronJob:
             id=job_id,
             name=name,
             enabled=enabled,
+            expired=expired,
             cron_expr=cron_expr,
             timezone=timezone,
             wake_offset_seconds=wake_offset_seconds,
