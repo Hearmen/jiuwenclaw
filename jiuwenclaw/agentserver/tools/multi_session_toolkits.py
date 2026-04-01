@@ -35,7 +35,6 @@ from pydantic import BaseModel
 
 from openjiuwen.core.foundation.tool import LocalFunction, Tool, ToolCard
 
-from jiuwenclaw.agentserver.agent_ws_server import AgentWebSocketServer
 from jiuwenclaw.agentserver.tools.mcp_toolkits import get_mcp_tools
 from jiuwenclaw.gateway.message_handler import MessageHandler
 from jiuwenclaw.schema import AgentResponseChunk
@@ -216,6 +215,7 @@ class MultiSessionToolkit:
             index + 1,
             total,
         )
+        from jiuwenclaw.agentserver.agent_ws_server import AgentWebSocketServer
         server = AgentWebSocketServer.get_instance()
         await server.send_push(msg)
 

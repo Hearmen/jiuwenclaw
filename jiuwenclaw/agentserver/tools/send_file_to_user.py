@@ -19,7 +19,6 @@ from typing import Any, List, Union
 
 from openjiuwen.core.foundation.tool import LocalFunction, Tool, ToolCard
 
-from jiuwenclaw.agentserver.agent_ws_server import AgentWebSocketServer
 
 logger = logging.getLogger(__name__)
 
@@ -105,6 +104,8 @@ class SendFileToolkit:
         )
 
         try:
+            from jiuwenclaw.agentserver.agent_ws_server import AgentWebSocketServer
+
             server = AgentWebSocketServer.get_instance()
             files_payload = [
                 {

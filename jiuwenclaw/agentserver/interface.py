@@ -24,7 +24,7 @@ from openjiuwen.core.session.checkpointer.checkpointer import CheckpointerConfig
 from openjiuwen.core.session.checkpointer.persistence import PersistenceCheckpointerProvider
 
 from jiuwenclaw.agentserver.tools.multi_session_toolkits import MultiSessionToolkit
-from jiuwenclaw.agentserver.tools import SendFileToolkit
+from jiuwenclaw.agentserver.tools.send_file_to_user import SendFileToolkit
 from jiuwenclaw.agentserver.prompt_builder import build_system_prompt, build_user_prompt
 from jiuwenclaw.gateway.cron import CronController, CronTargetChannel
 
