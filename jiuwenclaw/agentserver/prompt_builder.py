@@ -1,10 +1,15 @@
 # Copyright (c) Huawei Technologies Co., Ltd. 2025. All rights reserved.
+import asyncio
 import logging
 import json
 import os
 from datetime import datetime, timezone, timedelta
+from pathlib import Path
 from typing import Optional
 
+from jiuwenclaw.extensions import ExtensionRegistry
+from jiuwenclaw.schema import AgentServerHookEvents
+from jiuwenclaw.schema.hooks_context import SystemPromptHookContext
 from jiuwenclaw.utils import (
     get_user_workspace_dir,
     get_agent_home_dir,
@@ -561,13 +566,42 @@ When the user requests code/scripts/config/tests that must be delivered **as fil
 """
 
 
-def _skills_prompt(language: str) -> str:
-    skills = os.listdir(_get_skill_dir())
-    skills_str = "\n".join(skills)
+def _skills_prompt(language: str, extra_skill_dir: "Path | None" = None) -> str:
+    """Generate skills prompt, supporting multiple skill directories.
+
+    Args:
+        language: 语言
+        extra_skill_dir: 可选的扩展技能目录
+    """
+    skill_dirs = [_get_skill_dir()]
+    if extra_skill_dir:
+        skill_dirs.append(extra_skill_dir)
+
+    # Multiple skill directories
+    all_skills = []
+    dir_info = []
+
+    for dir_path in skill_dirs:
+        if dir_path.exists() and dir_path.is_dir():
+            try:
+                skills_in_dir = os.listdir(dir_path)
+                all_skills.extend(skills_in_dir)
+                dir_info.append(f"- `{dir_path}`: {len(skills_in_dir)} skills")
+            except OSError as e:
+                logger.warning(f"Failed to read skills from {dir_path}: {e}")
+                dir_info.append(f"- `{dir_path}`: (failed to read)")
+
+    # Deduplicate skills
+    unique_skills = sorted(set(all_skills))
+    skills_str = "\n".join(unique_skills)
+
+    dirs_str = "\n".join(dir_info)
+
     if language == "zh":
         return f"""## 技能
 
-技能存放在 `{_get_skill_dir()}` 目录下。
+技能存放在以下目录下：
+{dirs_str}
 
 当前可用技能：
 {skills_str}
@@ -575,7 +609,8 @@ def _skills_prompt(language: str) -> str:
     else:
         return f"""## Skills
 
-Skills live under `{_get_skill_dir()}`.
+Skills live under the following directories:
+{dirs_str}
 
 Available skills:
 {skills_str}
@@ -639,9 +674,15 @@ Write or save all files under this dir, unless user ask you to operate in other 
 """
 
 
-def _principle_prompt(language: str) -> str:
-    """优先从 ~/.jiuwenclaw/agent/home/PRINCIPLE.md 读取；缺失时回退内置文案。"""
-    file_content = _read_file(str(_get_home_dir() / "PRINCIPLE.md"))
+def _principle_prompt(language: str, home_dir: "Path | None" = None) -> str:
+    """优先从 ~/.jiuwenclaw/agent/home/PRINCIPLE.md 读取；缺失时回退内置文案。
+
+    Args:
+        language: 语言
+        home_dir: 可选的自定义 home 目录
+    """
+    dir_path = home_dir if home_dir else _get_home_dir()
+    file_content = _read_file(str(dir_path / "PRINCIPLE.md"))
     if file_content:
         return file_content
     if language == "zh":
@@ -717,9 +758,15 @@ def _time_prompt(language: str) -> str:
 """
 
 
-def _tone_prompt(language: str) -> str:
-    """优先从 ~/.jiuwenclaw/agent/home/TONE.md 读取；缺失时回退内置文案。"""
-    file_content = _read_file(str(_get_home_dir() / "TONE.md"))
+def _tone_prompt(language: str, home_dir: "Path | None" = None) -> str:
+    """优先从 ~/.jiuwenclaw/agent/home/TONE.md 读取；缺失时回退内置文案。
+
+    Args:
+        language: 语言
+        home_dir: 可选的自定义 home 目录
+    """
+    dir_path = home_dir if home_dir else _get_home_dir()
+    file_content = _read_file(str(dir_path / "TONE.md"))
     if file_content:
         return file_content
     if language == "zh":
@@ -914,7 +961,7 @@ Be careful with your configuration, if changes are required, remember to restart
 """
 
 
-def build_system_prompt(
+async def build_system_prompt(
     mode: str,
     language: str,
     channel: str,
@@ -934,11 +981,19 @@ def build_system_prompt(
         System prompt string
     """
 
+    # Create context for extension hooks
+    context = SystemPromptHookContext()
+    await ExtensionRegistry.get_instance().trigger(AgentServerHookEvents.BEFORE_SYSTEM_PROMPT_BUILD, context)
+
+    # Get custom directories from context
+    custom_home_dir = Path(context.home_dir) if context.home_dir else None
+    custom_skill_dir = Path(context.skill_dir) if context.skill_dir else None
+
     system_prompt = _start_prompt(language) + '\n'
     # Inject current time so the model can reason about "now"
     system_prompt += _time_prompt(language) + '\n'
     system_prompt += _context_prompt(language) + '\n'
-    system_prompt += _skills_prompt(language) + '\n'
+    system_prompt += _skills_prompt(language, extra_skill_dir=custom_skill_dir) + '\n'
     system_prompt += _tool_prompt(
         mode,
         language,
@@ -973,8 +1028,8 @@ Be a warm person, not a cold machine. Help your user unconditionally and meet th
 
 """
 
-    system_prompt += _principle_prompt(language) + '\n'
-    system_prompt += _tone_prompt(language) + '\n'
+    system_prompt += _principle_prompt(language, home_dir=custom_home_dir) + '\n'
+    system_prompt += _tone_prompt(language, home_dir=custom_home_dir) + '\n'
     system_prompt += "---\n\n"
     system_prompt += _safety_prompt(language) + '\n'
     system_prompt += "---\n\n"

@@ -213,7 +213,7 @@ class JiuWenClaw:
         except Exception as e:
             logger.error(("[JiuWenClaw] fail to setup checkpoint due to: %s", e))
 
-    def _load_react_config(self, config):
+    async def _load_react_config(self, config):
         # 提取 agent_name，如果不存在则使用默认值
         react_config = config.get("react", {}).copy()
         agent_name = react_config.pop("agent_name", "main_agent")
@@ -227,7 +227,7 @@ class JiuWenClaw:
             model_configs = model_configs.copy()
         memory_mode = get_memory_mode(config)
         react_config = {**react_config, **model_configs.get("default", {}).copy(), "prompt_template": [
-            {"role": "system", "content": build_system_prompt(
+            {"role": "system", "content": await build_system_prompt(
                 mode="plan",
                 language=config.get("preferred_language", "en"),
                 channel="web",
@@ -289,7 +289,7 @@ class JiuWenClaw:
         apply_video_model_config_from_yaml(config_base)
         apply_audio_model_config_from_yaml(config_base)
         apply_vision_model_config_from_yaml(config_base)
-        agent_config = self._load_react_config(config_base)
+        agent_config = await self._load_react_config(config_base)
 
         sysop_card_id: str | None = None
         try:
@@ -526,7 +526,7 @@ class JiuWenClaw:
         )
         logger.info("[JiuWenClaw] 初始化完成: agent_name=%s", self._agent_name)
 
-    def reload_agent_config(
+    async def reload_agent_config(
         self,
         config_base: dict[str, Any] | None = None,
         env_overrides: dict[str, Any] | None = None,
@@ -562,7 +562,7 @@ class JiuWenClaw:
         apply_video_model_config_from_yaml(config_base)
         apply_audio_model_config_from_yaml(config_base)
         apply_vision_model_config_from_yaml(config_base)
-        agent_config = self._load_react_config(config_base)
+        agent_config = await self._load_react_config(config_base)
 
         if self._sysop_card_id:
             agent_config.sys_operation_id = self._sysop_card_id
@@ -693,7 +693,7 @@ class JiuWenClaw:
                 session_id=effective_session_id,
                 channel_id=ctx.channel_id,
                 request_id=ctx.request_id,
-                sub_agent_config=self._load_react_config(config_base)
+                sub_agent_config=await self._load_react_config(config_base)
             )
             self._session_tool = session_toolkits
             for tool in session_toolkits.get_tools():
@@ -872,7 +872,7 @@ class JiuWenClaw:
             except Exception as exc:
                 logger.debug("[JiuWenClaw] unregister MCP tool %s failed (tool may not exist): %s", tool_name, exc)
 
-        system_prompt = build_system_prompt(
+        system_prompt = await build_system_prompt(
             mode=ctx.mode,
             language=config_base.get("preferred_language", "zh"),
             channel=channel,

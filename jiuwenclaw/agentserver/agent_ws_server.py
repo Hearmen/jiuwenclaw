@@ -311,18 +311,7 @@ class AgentWebSocketServer:
                 await ws.send(json.dumps(wire, ensure_ascii=False))
 
     @staticmethod
-    def _should_trigger_before_chat_request_hook(request: AgentRequest) -> bool:
-        from jiuwenclaw.schema.message import ReqMethod
-
-        return request.req_method in (
-            ReqMethod.CHAT_SEND,
-            ReqMethod.CHAT_RESUME,
-            ReqMethod.CHAT_ANSWER,
-        )
-
-    async def _trigger_before_chat_request_hook(self, request: AgentRequest) -> None:
-        if not self._should_trigger_before_chat_request_hook(request):
-            return
+    async def _trigger_before_chat_request_hook(request: AgentRequest) -> None:
         from jiuwenclaw.extensions.registry import ExtensionRegistry
 
         params = request.params if isinstance(request.params, dict) else {}
@@ -538,7 +527,7 @@ class AgentWebSocketServer:
             params = request.params or {}
             config_payload = params.get("config")
             env_overrides = params.get("env")
-            self._agent.reload_agent_config(
+            await self._agent.reload_agent_config(
                 config_base=config_payload,
                 env_overrides=env_overrides,
             )
