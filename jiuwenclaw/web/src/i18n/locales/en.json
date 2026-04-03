@@ -381,7 +381,8 @@
     },
     "errors": {
       "requiredModelFields": "These model fields are required: {{fields}}. Complete them before saving and restarting.",
-      "saveFailed": "Save failed, please try again later"
+      "saveFailed": "Save failed, please try again later",
+      "processingDisabled": "A task is running. Please wait for it to finish before saving config."
     }
   },
   "cron": {
@@ -696,7 +697,7 @@
     "markdownOnly": "Only Markdown/JSON (.md/.mdx/.json) preview is supported",
     "errors": {
       "refreshFailed": "Refresh failed: unable to rebuild the agent file index. Check the generator script logs.",
-      "loadFailed": "Unable to read the agent file list. Check whether agent/workspace/agent-data.json has been generated."
+      "loadFailed": "Unable to read the agent file list. Check whether agent/jiuwenclaw_workspace/agent-data.json has been generated."
     }
   },
   "fileViewer": {
