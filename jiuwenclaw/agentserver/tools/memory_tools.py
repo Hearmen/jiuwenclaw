@@ -29,8 +29,8 @@ def _validate_memory_path(path: str) -> tuple[bool, str]:
     
     Only allows:
     - memory/YYYY-MM-DD.md (date format files)
-    - USER.md
-    - MEMORY.md
+    - memory/USER.md
+    - memory/MEMORY.md
     
     Returns:
         (is_valid, resolved_path_or_error)
@@ -38,15 +38,15 @@ def _validate_memory_path(path: str) -> tuple[bool, str]:
     if ".." in path or path.startswith("/"):
         return (False, "Invalid path: directory traversal not allowed")
     
-    if path in ("USER.md", "MEMORY.md"):
-        return (True, f"memory/{path}")
+    if path in ("memory/USER.md", "memory/MEMORY.md"):
+        return (True, path)
     
     if path.startswith("memory/"):
         filename = path[7:]
         if re.match(r"^\d{4}-\d{2}-\d{2}\.md$", filename):
             return (True, path)
     
-    return (False, f"Path must be memory/YYYY-MM-DD.md, USER.md, or MEMORY.md. Got: {path}")
+    return (False, f"Path must be memory/YYYY-MM-DD.md, memory/USER.md, or memory/MEMORY.md. Got: {path}")
 
 
 def set_global_memory_manager(
@@ -257,11 +257,11 @@ async def write_memory(
     content: str,
     append: bool = False
 ) -> Dict[str, Any]:
-    """在 memory 目录下创建或更新记忆文件。仅用于写入记忆相关内容，如 USER.md、MEMORY.md 或 memory/*.md 文件。
+    """在 memory 目录下创建或更新记忆文件。仅用于写入记忆相关内容，如 memory/USER.md、memory/MEMORY.md 或 memory/*.md 文件。
     禁止用于创建代码文件、配置文件或其他非记忆类文件。
 
     Args:
-        path: 文件路径，仅允许 memory/ 目录下的文件（如 "memory/xxx.md" 或 "USER.md"）
+        path: 文件路径，仅允许 memory/ 目录下的文件（如 "memory/xxx.md" 或 "memory/USER.md"）
         content: 要写入的内容
         append: 是否追加模式 (默认覆盖)
 
@@ -316,7 +316,7 @@ async def edit_memory(
     oldText: str,
     newText: str
 ) -> Dict[str, Any]:
-    """精确编辑 memory 目录下的文件内容。仅用于更新记忆文件（如 USER.md、MEMORY.md）。
+    """精确编辑 memory 目录下的文件内容。仅用于更新记忆文件（如 memory/USER.md、memory/MEMORY.md）。
     oldText 必须完全匹配文件中的内容。如果 oldText 出现多次，需要更具体地指定。
 
     Args:
@@ -394,7 +394,7 @@ async def read_memory(
     offset: Optional[int] = None,
     limit: Optional[int] = None
 ) -> Dict[str, Any]:
-    """读取 memory 目录下的文件内容。仅用于读取记忆文件（如 USER.md、MEMORY.md 或 memory/*.md）。
+    """读取 memory 目录下的文件内容。仅用于读取记忆文件（如 memory/USER.md、memory/MEMORY.md 或 memory/*.md）。
 
     Args:
         path: 文件路径，仅允许 memory/ 目录下的文件
