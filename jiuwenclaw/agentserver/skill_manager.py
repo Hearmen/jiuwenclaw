@@ -16,7 +16,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Awaitable, Callable
 from urllib.parse import urlparse
-
+import yaml
 from jiuwenclaw.utils import (
     get_agent_root_dir,
     get_agent_skills_dir,
@@ -1289,23 +1289,31 @@ class SkillManager:
         if fm_match:
             fm_text = fm_match.group(1)
             body = fm_match.group(2).strip()
-            # 简单 YAML 解析（key: value 格式），避免引入额外依赖
-            for line in fm_text.splitlines():
-                line = line.strip()
-                if not line or line.startswith("#"):
-                    continue
-                m = re.match(r"^(\w[\w_-]*)\s*:\s*(.*)", line)
-                if m:
-                    key = m.group(1)
-                    val = m.group(2).strip()
-                    # 处理 YAML 列表 [a, b, c]
-                    if val.startswith("[") and val.endswith("]"):
-                        inner = val[1:-1]
-                        val = [v.strip().strip("'\"") for v in inner.split(",") if v.strip()]
-                    # 去掉引号
-                    elif val.startswith(("'", '"')) and val.endswith(("'", '"')):
-                        val = val[1:-1]
-                    meta[key] = val
+            # 优先完整 YAML（支持 description: >- 多行、嵌套等），与 openjiuwen register_skill 一致
+            try:
+                loaded = yaml.safe_load(fm_text)
+                if isinstance(loaded, dict):
+                    meta = {str(k): v for k, v in loaded.items()}
+                else:
+                    meta = {}
+            except Exception:
+                meta = {}
+            if not meta:
+                # 回退：逐行 key: value（旧逻辑，无 PyYAML 语义）
+                for line in fm_text.splitlines():
+                    line = line.strip()
+                    if not line or line.startswith("#"):
+                        continue
+                    m = re.match(r"^(\w[\w_-]*)\s*:\s*(.*)", line)
+                    if m:
+                        key = m.group(1)
+                        val = m.group(2).strip()
+                        if val.startswith("[") and val.endswith("]"):
+                            inner = val[1:-1]
+                            val = [v.strip().strip("'\"") for v in inner.split(",") if v.strip()]
+                        elif val.startswith(("'", '"')) and val.endswith(("'", '"')):
+                            val = val[1:-1]
+                        meta[key] = val
 
         # 如果没有 name，从文件名推断
         if "name" not in meta:

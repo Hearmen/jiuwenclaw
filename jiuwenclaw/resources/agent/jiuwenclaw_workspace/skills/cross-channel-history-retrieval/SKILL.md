@@ -1,7 +1,7 @@
 ---
 name: cross-channel-history-retrieval
-description: 跨会话检索聊天原文（记忆不足时再用）
-在回答任何关于历史事件、日期、人物、过去对话的问题时，如果记忆中没有相关信息或不足以回答，则需要使用跨会话检索聊天原文。用 mcp_exec_command 执行 scripts/search_history.py，读 ~/.jiuwenclaw/agent/sessions/*/history.json。支持 channel、session_id、关键词、时间窗。如果搜索结果不足，尝试用不同的关键词再次搜索。
+description: >-
+  跨会话检索聊天原文（记忆不足时再用）。在回答任何关于历史事件、日期、人物、过去对话的问题时，如果记忆中没有相关信息或不足以回答，则需要使用跨会话检索聊天原文。用 mcp_exec_command 执行 scripts/search_history.py，读 ~/.jiuwenclaw/agent/sessions/*/history.json。支持 channel、session_id、关键词、时间窗。如果搜索结果不足，尝试用不同的关键词再次搜索。
 allowed_tools: [mcp_exec_command]
 ---
 
