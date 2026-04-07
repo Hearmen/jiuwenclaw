@@ -502,12 +502,11 @@ export function useWebSocket(options: UseWebSocketOptions): UseWebSocketReturn {
           addMessage({
             id: assistantMsgId,
             role: 'assistant',
-            content,
+            content: '',
             timestamp: new Date().toISOString(),
             isStreaming: true,
           });
           startStreaming(assistantMsgId);
-          return;
         }
         appendStreamContent(content);
       }),
@@ -521,7 +520,7 @@ export function useWebSocket(options: UseWebSocketOptions): UseWebSocketReturn {
         // 定时任务等广播的 session_id 为空/null，若仍走 currentStreamId 会写到错误气泡甚至“无可见更新”。
         const streamId = currentStreamId;
         if (streamId && payloadSessionId) {
-          updateMessage(streamId, { content, isStreaming: false });
+          updateMessage(streamId, { ...(content ? { content } : {}), isStreaming: false });
           stopStreaming();
           if (content && !content.includes('MEDIA:')) {
             handleTtsPlayback(streamId, content);

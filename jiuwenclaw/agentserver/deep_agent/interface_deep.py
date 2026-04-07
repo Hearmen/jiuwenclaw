@@ -1855,7 +1855,7 @@ class JiuWenClawDeepAdapter:
                             yield AgentResponseChunk(
                                 request_id=rid,
                                 channel_id=cid,
-                                payload={"event_type": "chat.final", "content": accumulated_text},
+                                payload={"event_type": "chat.delta", "content": accumulated_text},
                                 is_complete=False,
                             )
                             accumulated_text = ""
@@ -1882,7 +1882,7 @@ class JiuWenClawDeepAdapter:
                         yield AgentResponseChunk(
                             request_id=rid,
                             channel_id=cid,
-                            payload={"event_type": "chat.final", "content": accumulated_text},
+                            payload={"event_type": "chat.delta", "content": accumulated_text},
                             is_complete=False,
                         )
                         accumulated_text = ""
@@ -1924,7 +1924,7 @@ class JiuWenClawDeepAdapter:
                             yield AgentResponseChunk(
                                 request_id=rid,
                                 channel_id=cid,
-                                payload={"event_type": "chat.final", "content": accumulated_text},
+                                payload={"event_type": "chat.delta", "content": accumulated_text},
                                 is_complete=False,
                             )
                             accumulated_text = ""
@@ -1948,7 +1948,7 @@ class JiuWenClawDeepAdapter:
                         yield AgentResponseChunk(
                             request_id=rid,
                             channel_id=cid,
-                            payload={"event_type": "chat.final", "content": accumulated_text},
+                            payload={"event_type": "chat.delta", "content": accumulated_text},
                             is_complete=False,
                         )
                         accumulated_text = ""
@@ -1976,7 +1976,7 @@ class JiuWenClawDeepAdapter:
                     yield AgentResponseChunk(
                         request_id=rid,
                         channel_id=cid,
-                        payload={"event_type": "chat.final", "content": accumulated_text},
+                        payload={"event_type": "chat.delta", "content": accumulated_text},
                         is_complete=False,
                     )
                     accumulated_text = ""
