@@ -500,7 +500,7 @@ class AgentWebSocketServer:
 
     async def _handle_browser_runtime_restart(self, ws: Any, request: AgentRequest, send_lock: asyncio.Lock) -> None:
         try:
-            from jiuwenclaw.agentserver.tools.browser_tools import restart_local_browser_runtime_server
+            from openjiuwen.harness.tools.browser_move import restart_local_browser_runtime_server
 
             result = restart_local_browser_runtime_server()
             resp = AgentResponse(

@@ -479,12 +479,11 @@ def _tool_prompt(mode, language: str, include_memory_tools: bool = True) -> str:
 
 | 工具名称 | 功能说明 |
 |---------|---------|
-| `browser_run_task` | 执行浏览器任务（Playwright） |
-| `browser_cancel_task` | 取消正在执行的浏览器任务 |
-| `browser_clear_cancel` | 清除取消标志 |
-| `browser_custom_action` | 执行自定义浏览器动作 |
-| `browser_list_custom_actions` | 列出可用的自定义动作 |
-| `browser_runtime_health` | 检查浏览器运行状态 |
+| `task_tool` | Delegate browser work to the `browser_agent` subagent / 委派浏览器任务给 `browser_agent` 子代理 |
+| `browser_clear_cancel` | Browser runtime helper: clear the cancel flag / 浏览器运行时辅助工具：清除取消标记 |
+| `browser_custom_action` | Browser runtime helper: run a deterministic custom browser action / 浏览器运行时辅助工具：执行确定性的自定义浏览器动作 |
+| `browser_list_custom_actions` | Browser runtime helper: list available custom actions / 浏览器运行时辅助工具：列出可用的自定义动作 |
+| `browser_runtime_health` | Browser runtime helper: inspect runtime readiness / 浏览器运行时辅助工具：检查运行时状态 |
 
 ### 上下文管理
 
@@ -591,12 +590,11 @@ When the user requests code/scripts/config/tests that must be delivered **as fil
 
 | Tool Name | Description |
 |-----------|-------------|
-| `browser_run_task` | Run browser tasks (Playwright) |
-| `browser_cancel_task` | Cancel a running browser task |
-| `browser_clear_cancel` | Clear the cancel flag |
-| `browser_custom_action` | Run a custom browser action |
-| `browser_list_custom_actions` | List available custom actions |
-| `browser_runtime_health` | Check browser runtime status |
+| `task_tool` | Delegate browser work to the `browser_agent` subagent / 委派浏览器任务给 `browser_agent` 子代理 |
+| `browser_clear_cancel` | Browser runtime helper: clear the cancel flag / 浏览器运行时辅助工具：清除取消标记 |
+| `browser_custom_action` | Browser runtime helper: run a deterministic custom browser action / 浏览器运行时辅助工具：执行确定性的自定义浏览器动作 |
+| `browser_list_custom_actions` | Browser runtime helper: list available custom actions / 浏览器运行时辅助工具：列出可用的自定义动作 |
+| `browser_runtime_health` | Browser runtime helper: inspect runtime readiness / 浏览器运行时辅助工具：检查运行时状态 |
 
 ### Context Management
 

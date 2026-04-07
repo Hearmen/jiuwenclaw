@@ -160,7 +160,7 @@ class RailManager:
             self._validate_rail_file(plugin_content, name)
         except Exception as e:
             logger.error("[RailManager] rail.py 验证失败: %s", e)
-            raise ValueError(f"rail.py 验证失败")
+            raise ValueError("rail.py 验证失败") from e
 
         # 复制整个文件夹到扩展目录
         dest_path = self._extensions_dir / name
@@ -215,7 +215,7 @@ class RailManager:
             compile(file_str, f"{name}.py", "exec")
         except SyntaxError as e:
             logger.error("[RailManager] rail.py 验证失败: %s", e)
-            raise ValueError(f"语法错误")
+            raise ValueError("语法错误") from e
 
     @staticmethod
     def _extract_class_name(file_str: str, default_name: str) -> str:
@@ -459,48 +459,47 @@ class RailManager:
             raise ValueError(f"扩展插件文件 '{name}/rail.py' 不存在")
 
         try:
-            # 将扩展目录添加到 sys.path 以支持相对导入
-            extensions_dir_str = str(self._extensions_dir)
-            path_inserted = False
-            if extensions_dir_str not in sys.path:
-                sys.path.insert(0, extensions_dir_str)
-                path_inserted = True
+            module: Any
+            if (folder_path / "__init__.py").exists():
+                package_name = f"jiuwenclaw_rail_extension_{name}"
+                package_spec = importlib.util.spec_from_file_location(
+                    package_name,
+                    folder_path / "__init__.py",
+                    submodule_search_locations=[str(folder_path)],
+                )
+                if package_spec is None or package_spec.loader is None:
+                    raise ValueError(f"无法加载包规范: {name}")
 
-            try:
-                # 先尝试直接导入 rail.py 文件（如果只有单个文件）
-                module_name = f"{name}.rail"
+                package_module = importlib.util.module_from_spec(package_spec)
+                sys.modules[package_name] = package_module
+                package_spec.loader.exec_module(package_module)
 
-                # 检查是否存在 __init__.py（说明是一个包）
-                if (folder_path / "__init__.py").exists():
-                    # 使用 import_module 加载包中的 rail 模块
-                    module = importlib.import_module(module_name)
-                else:
-                    # 如果没有 __init__.py，使用 spec_from_file_location 加载单个文件
-                    # 这种情况下相对导入会失败，需要明确告知用户
-                    spec = importlib.util.spec_from_file_location(
-                        f"rail_extension_{name}", plugin_file
-                    )
-                    if spec is None or spec.loader is None:
-                        raise ValueError(f"无法加载模块规范: {name}")
+                module_name = f"{package_name}.rail"
+                rail_spec = importlib.util.spec_from_file_location(module_name, plugin_file)
+                if rail_spec is None or rail_spec.loader is None:
+                    raise ValueError(f"无法加载 Rail 模块: {name}")
 
-                    module = importlib.util.module_from_spec(spec)
-                    spec.loader.exec_module(module)
+                module = importlib.util.module_from_spec(rail_spec)
+                sys.modules[module_name] = module
+                rail_spec.loader.exec_module(module)
+            else:
+                spec = importlib.util.spec_from_file_location(
+                    f"rail_extension_{name}", plugin_file
+                )
+                if spec is None or spec.loader is None:
+                    raise ValueError(f"无法加载模块规范: {name}")
 
-                # 获取 Rail 类
-                rail_class = getattr(module, extension.class_name, None)
-                if rail_class is None:
-                    raise ValueError(f"模块中未找到类: {extension.class_name}")
+                module = importlib.util.module_from_spec(spec)
+                spec.loader.exec_module(module)
 
-                # 实例化
-                rail_instance = rail_class()
-                # 缓存实例
-                self._rail_instances[name] = rail_instance
-                logger.info("[RailManager] 加载并缓存 Rail 实例成功: %s", name)
-                return rail_instance
-            finally:
-                # 清理 sys.path
-                if path_inserted:
-                    sys.path.remove(extensions_dir_str)
+            rail_class = getattr(module, extension.class_name, None)
+            if rail_class is None:
+                raise ValueError(f"模块中未找到类: {extension.class_name}")
+
+            rail_instance = rail_class()
+            self._rail_instances[name] = rail_instance
+            logger.info("[RailManager] 加载并缓存 Rail 实例成功: %s", name)
+            return rail_instance
         except ImportError as e:
             if "attempted relative import with no known parent package" in str(e):
                 raise ValueError(

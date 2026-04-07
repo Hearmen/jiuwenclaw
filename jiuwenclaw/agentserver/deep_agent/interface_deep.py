@@ -104,7 +104,13 @@ from jiuwenclaw.config import get_config, resolve_env_vars
 from jiuwenclaw.agentserver.extensions import get_rail_manager
 from jiuwenclaw.gateway.cron import CronController, CronTargetChannel
 from jiuwenclaw.schema.agent import AgentRequest, AgentResponse, AgentResponseChunk
-from jiuwenclaw.utils import get_env_file, get_agent_root_dir, get_agent_workspace_dir, get_checkpoint_dir, get_agent_skills_dir
+from jiuwenclaw.utils import (
+    get_agent_root_dir,
+    get_agent_skills_dir,
+    get_agent_workspace_dir,
+    get_checkpoint_dir,
+    get_env_file,
+)
 
 load_dotenv(dotenv_path=get_env_file())
 
@@ -258,6 +264,12 @@ class JiuWenClawDeepAdapter:
         """Build browser subagent config when browser runtime is enabled."""
         if not self._browser_runtime_enabled():
             return None
+        if not str(os.getenv("BROWSER_DRIVER") or "").strip():
+            os.environ["BROWSER_DRIVER"] = "managed"
+            logger.info(
+                "[JiuWenClawDeepAdapter] browser runtime enabled without BROWSER_DRIVER; defaulting to managed mode"
+            )
+
 
         return [
             build_browser_agent_config(
@@ -1006,6 +1018,10 @@ class JiuWenClawDeepAdapter:
     def _build_cron_tools(self) -> list[Any]:
         """Build cron tools from the shared runtime bridge."""
         return self._cron_runtime.build_tools(context=self._runtime_cron_tool_context)
+
+    async def _proc_context_compaction(self) -> None:
+        """Backward-compatible no-op hook retained for tests and old call sites."""
+        return None
 
     async def create_instance(self, config: dict[str, Any] | None = None) -> None:
         """初始化 DeepAgent 实例.

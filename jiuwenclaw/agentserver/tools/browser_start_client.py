@@ -28,11 +28,14 @@ import os
 import platform
 import shutil
 import subprocess
-import sys
 from pathlib import Path
 from typing import Any
 
 import yaml
+from openjiuwen.harness.tools.browser_move.playwright_runtime.profiles import (
+    BrowserProfile,
+    BrowserProfileStore,
+)
 
 
 logger = logging.getLogger(__name__)
@@ -48,15 +51,12 @@ def _config_path(custom_path: str = "") -> Path:
     return _repo_root() / "config" / "config.yaml"
 
 
-def _browser_move_root() -> Path:
-    return _repo_root() / "jiuwenclaw" / "agentserver" / "tools" / "browser-move"
-
 
 def _browser_runtime_state_root() -> Path:
     configured = (os.getenv("BROWSER_RUNTIME_STATE_DIR") or "").strip()
     if configured:
         return Path(configured).expanduser()
-    return Path.home() / ".jiuwenclaw" / "browser-move"
+    return Path.home() / ".jiuwenclaw"
 
 
 def _profile_store_path() -> Path:
@@ -74,11 +74,6 @@ def _profile_name(profile_directory: str) -> str:
     return fallback or "jiuwenclaw"
 
 
-def _load_profile_store_types() -> tuple[type[Any], type[Any]]:
-    from playwright_runtime.profiles import BrowserProfile, BrowserProfileStore
-
-    return BrowserProfile, BrowserProfileStore
-
 
 def _persist_browser_profile(
     *,
@@ -88,10 +83,9 @@ def _persist_browser_profile(
     user_data_dir: str,
     profile_directory: str,
 ) -> None:
-    browser_profile_cls, browser_profile_store_cls = _load_profile_store_types()
     store_path = _profile_store_path()
-    store = browser_profile_store_cls(store_path)
-    profile = browser_profile_cls(
+    store = BrowserProfileStore(store_path)
+    profile = BrowserProfile(
         name=_profile_name(profile_directory),
         driver_type="remote",
         cdp_url=f"http://{host}:{port}",

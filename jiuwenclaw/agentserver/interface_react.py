@@ -24,6 +24,7 @@ from openjiuwen.core.sys_operation import SysOperationCard, OperationMode, Local
 from openjiuwen.core.session.checkpointer import CheckpointerFactory
 from openjiuwen.core.session.checkpointer.checkpointer import CheckpointerConfig
 from openjiuwen.core.session.checkpointer.persistence import PersistenceCheckpointerProvider
+from openjiuwen.harness.tools.browser_move import register_browser_runtime_mcp_server
 
 from jiuwenclaw.agentserver.prompt_builder import build_system_prompt
 from jiuwenclaw.agentserver.tools.multi_session_toolkits import MultiSessionToolkit
@@ -39,7 +40,6 @@ from jiuwenclaw.utils import (
 from jiuwenclaw.config import get_config
 from jiuwenclaw.agentserver.react_agent import JiuClawReActAgent
 from jiuwenclaw.agentserver.permissions.checker import TOOL_PERMISSION_CHANNEL_ID
-from jiuwenclaw.agentserver.tools.browser_tools import register_browser_runtime_mcp_server
 from jiuwenclaw.agentserver.tools.audio_tools import (
     audio_question_answering,
     audio_metadata,

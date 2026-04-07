@@ -33,6 +33,7 @@ from jiuwenclaw.utils import get_agent_home_dir, get_agent_workspace_dir, get_en
 from jiuwenclaw.agentserver.memory.config import get_memory_mode
 from jiuwenclaw.schema.hook_event import AgentServerHookEvents
 from jiuwenclaw.extensions.registry import ExtensionRegistry
+from jiuwenclaw.agentserver.deep_agent.cron_runtime import CronRuntimeBridge
 from jiuwenclaw.schema.hooks_context import MemoryHookContext
 
 load_dotenv(dotenv_path=get_env_file())
@@ -64,6 +65,17 @@ _SKILL_ROUTES: dict[ReqMethod, str] = {
 }
 
 
+class _FacadeCronToolContext:
+    """Minimal cron tool context retained for facade compatibility."""
+
+    channel_id: str = "web"
+    session_id: str | None = None
+    metadata: dict[str, Any] | None = None
+    mode: str | None = None
+    tool_scope: str = "facade"
+
+
+
 class JiuWenClaw:
     """JiuWenClaw 统一门面.
 
@@ -78,6 +90,8 @@ class JiuWenClaw:
         self._sdk_name: str | None = None
         self._skill_manager = SkillManager(workspace_dir=str(get_agent_workspace_dir()))
         self._session_manager = SessionManager()
+        self._cron_runtime = CronRuntimeBridge()
+        self._runtime_cron_tool_context = _FacadeCronToolContext()
 
     def _ensure_adapter(self) -> AgentAdapter:
         """确保 adapter 已初始化，如果未初始化则根据环境变量创建."""
@@ -89,6 +103,10 @@ class JiuWenClaw:
             )
             logger.info("[JiuWenClaw] Initialized adapter: sdk=%s", self._sdk_name)
         return self._adapter
+
+    def _build_cron_tools(self) -> list[Any]:
+        """Build cron tools from the shared runtime bridge for compatibility tests."""
+        return self._cron_runtime.build_tools(context=self._runtime_cron_tool_context)
 
     async def create_instance(self, config: dict[str, Any] | None = None) -> None:
         """初始化 Agent 实例.
