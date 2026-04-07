@@ -79,12 +79,13 @@ function parseSessionDisplayLabel(sessionId: string, t: (key: string, options?: 
     return `${wechatLabel}-${shortenDiscordIDForLabel(idPart)}`;
   }
 
-  // 处理以 sess_、cron_、feishu_、xiaoyi_、dingtalk_ 开头的会话ID
-  const prefixes = ['sess_', 'cron_', 'feishu_', 'xiaoyi_', 'dingtalk_', 'wecom_'];
+  // 处理以 sess_、cron_、feishu_、wechat_、xiaoyi_、dingtalk_ 开头的会话ID
+  const prefixes = ['sess_', 'cron_', 'feishu_', 'wechat_', 'xiaoyi_', 'dingtalk_', 'wecom_'];
   const prefixMap: Record<string, string> = {
     'sess_': t('sessions.prefixes.session'),
     'cron_': t('sessions.prefixes.cron'),
     'feishu_': t('sessions.prefixes.feishu'),
+    'wechat_': t('sessions.prefixes.wechat'),
     'xiaoyi_': t('sessions.prefixes.xiaoyi'),
     'dingtalk_': t('sessions.prefixes.dingtalk'),
     'wecom_': t('sessions.prefixes.wecom')

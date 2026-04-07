@@ -84,6 +84,7 @@ class MessageHandler(ABC):
             ChannelType.DINGTALK.value,
             ChannelType.WHATSAPP.value,
             ChannelType.WECOM.value,
+            ChannelType.WECHAT.value,
         }
         # 使用 SessionMap 的 channel 族（由 config 中 gateway.session_map_scope 决定是否在 key 中含 user）
         self._session_map_channel_types = frozenset({
@@ -695,7 +696,7 @@ class MessageHandler(ABC):
                     continue
                 
          
-                # 先处理 Channel 控制指令（仅 feishu/xiaoyi/dingtalk/whatsapp）
+                # 先处理受控通道的 Channel 控制指令（如 /new_session、/mode）
                 if self._handle_channel_control(msg):
                     # 该消息仅用于修改 session/mode，已给 Channel 回复提示，不再转发给 Agent
                     continue
