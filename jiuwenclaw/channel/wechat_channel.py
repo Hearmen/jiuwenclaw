@@ -296,6 +296,26 @@ async def reset_wechat_login_ui_state() -> None:
         )
 
 
+def clear_wechat_bound_session(conf: dict[str, Any]) -> dict[str, Any]:
+    """删除 credential_file 指向的本地 JSON（若存在），并返回去掉 bot_token / ilink 绑定字段后的配置副本，用于写回 ChannelManager 与 config.yaml。"""
+    out = dict(conf)
+    cred_default = "~/.wx-ai-bridge/credentials.json"
+    cred_path = str(out.get("credential_file") or "").strip() or cred_default
+    path = Path(cred_path).expanduser()
+    if path.is_file():
+        try:
+            path.unlink()
+            logger.info("WechatChannel 已删除本地凭据文件: %s", path)
+            main_logger.info("WechatChannel 已删除本地凭据文件: %s", path)
+        except OSError as e:
+            logger.warning("WechatChannel 删除凭据文件失败: %s: %s", path, e)
+            main_logger.warning("WechatChannel 删除凭据文件失败: %s: %s", path, e)
+    out["bot_token"] = ""
+    out["ilink_bot_id"] = ""
+    out["ilink_user_id"] = ""
+    return out
+
+
 class WechatChannel(BaseChannel):
     """
     个人微信通道（基于 iLink Bot API）。

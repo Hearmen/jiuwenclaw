@@ -40,6 +40,19 @@ class ChannelManager(ABC):
         # 默认仅在网关侧使用；其他简单用法可以忽略该字段。
         self._config: dict[str, Any] = dict(config or {})
         self._on_config_updated = on_config_updated
+        # 下一次 on_config_updated 时强制重启的 channel_id（例如微信解绑：YAML 中 bot_token 本就为空时配置 dict 对比不会变，但内存里仍有旧凭据）
+        self._pending_channel_restart: set[str] = set()
+
+    def mark_channel_restart_pending(self, channel_id: str) -> None:
+        """请求在下次 set_conf / set_config 触发配置应用时，无论配置快照是否变化都重启该 channel。"""
+        if channel_id:
+            self._pending_channel_restart.add(channel_id)
+
+    def pop_channel_restart_pending(self) -> set[str]:
+        """取出并重置待强制重启集合（由网关 _apply_channel_config 调用）。"""
+        out = set(self._pending_channel_restart)
+        self._pending_channel_restart.clear()
+        return out
 
     def _on_channel_message(self, msg: "Message") -> None:
         """Channel 同步 on_message 回调：交给 MessageHandler 处理（入队并最终发往 AgentServer）."""

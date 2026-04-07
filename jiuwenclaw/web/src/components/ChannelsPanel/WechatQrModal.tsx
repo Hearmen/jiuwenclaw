@@ -47,6 +47,9 @@ export function WechatQrModal({ open, onClose, loginUi }: WechatQrModalProps) {
                   {loginUi.error}
                 </div>
               ) : null}
+              {loginUi.phase === 'fetching_qr' && !String(loginUi.message ?? '').trim() ? (
+                <p className="text-text-muted">{t('channels.wechatLogin.fetchingQrFallback')}</p>
+              ) : null}
               {loginUi.phase === 'idle' &&
               !loginUi.qr &&
               !loginUi.error &&

@@ -331,12 +331,21 @@
       "hintAfterSave": "配置已保存，通道正在启动。请稍候，下方将出现二维码；请使用微信扫码，并在手机上确认登录。",
       "close": "关闭",
       "waitBackend": "正在等待后端返回二维码… 若长时间无响应，请查看后端日志或稍后清空 bot_token 再保存一次。",
+      "fetchingQrFallback": "正在向后端请求二维码…",
       "qrTextHint": "接口未返回图片，仅提供二维码内容，请用手机微信按官方流程扫码（或查看后端日志）。",
       "qrHostedPageHint": "微信不允许在其它站点内嵌该页，故无法用 iframe 展示。请用微信扫描下方二维码，或点击链接在浏览器中打开（与官方扫码页一致）。",
       "openQrInNewTab": "在新窗口打开扫码页",
       "filledDraft": "登录信息已填回下方表单",
       "savePrompt": "登录成功。凭据已填入表单，请点击「保存」写入配置（与后端持久化一致）。",
       "savePromptFromFile": "已从本地凭据文件读取并填入表单（非扫码流程）。请点击「保存」将 token 写入配置；若需重新扫码，请先删除或清空凭据文件后再保存。"
+    },
+    "wechatUnbind": {
+      "button": "解绑微信账号",
+      "confirmTitle": "解绑微信账号",
+      "confirmAction": "确定解绑",
+      "confirm": "将删除本地凭据文件（credential_file），并清空配置中的 bot_token、ilink_bot_id、ilink_user_id。微信通道会按新配置重启；若通道仍启用且 bot_token 为空，可再次扫码登录其他账号。",
+      "unbinding": "解绑中…",
+      "success": "已解绑当前微信账号，凭据文件与配置中的 token 已清除"
     },
     "errors": {
       "loadChannels": "获取 channels 失败",
@@ -348,6 +357,7 @@
       "loadWhatsApp": "获取 WhatsApp 配置失败",
       "loadWecom": "获取企业微信配置失败",
       "loadWechat": "获取微信配置失败",
+      "unbindWechat": "微信解绑失败",
       "saveGeneric": "保存失败，请稍后重试"
     }
   },

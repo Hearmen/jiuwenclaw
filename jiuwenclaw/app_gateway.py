@@ -411,6 +411,7 @@ async def _run(agent_server_url: str, web_host: str, web_port: int, web_path: st
         nonlocal _last_channels_conf
         nonlocal feishu_enterprise_channels, feishu_enterprise_tasks
 
+        restart_pending = channel_manager.pop_channel_restart_pending()
         changed_channels: list[str] = []
         for channel_name in [
             "feishu",
@@ -423,7 +424,14 @@ async def _run(agent_server_url: str, web_host: str, web_port: int, web_path: st
             "wecom",
             "wechat",
         ]:
-            if _should_restart_channel(channel_name, _last_channels_conf, conf):
+            if _should_restart_channel(channel_name, _last_channels_conf, conf) or channel_name in restart_pending:
+                if channel_name in restart_pending and not _should_restart_channel(
+                    channel_name, _last_channels_conf, conf
+                ):
+                    logger.info(
+                        "[App] channels.%s 将强制重启（配置快照相对上次未变，例如解绑后需丢弃内存中的旧微信凭据）",
+                        channel_name,
+                    )
                 changed_channels.append(channel_name)
         _last_channels_conf = dict(conf or {})
 

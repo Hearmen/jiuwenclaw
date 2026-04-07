@@ -332,12 +332,21 @@
       "hintAfterSave": "Settings saved; the channel is starting. A QR code will appear below—scan with WeChat and confirm on your phone.",
       "close": "Close",
       "waitBackend": "Waiting for the QR code… If this takes too long, check server logs or clear bot_token and Save again.",
+      "fetchingQrFallback": "Requesting QR code from server…",
       "qrTextHint": "No image from API; only raw QR payload is available. Use WeChat to scan per vendor flow or check server logs.",
       "qrHostedPageHint": "WeChat blocks embedding this page in other sites (no iframe). Scan the QR below with WeChat, or open the link—same as the official flow.",
       "openQrInNewTab": "Open scan page in new tab",
       "filledDraft": "Credentials filled into the form below",
       "savePrompt": "Login succeeded. Fields are filled in—click Save to persist configuration.",
       "savePromptFromFile": "Credentials were loaded from the local file (not QR). Click Save to write them into config; to scan again, delete or clear the credential file first, then Save."
+    },
+    "wechatUnbind": {
+      "button": "Unlink WeChat account",
+      "confirmTitle": "Unlink WeChat account",
+      "confirmAction": "Unlink",
+      "confirm": "This deletes the local credential file (credential_file) and clears bot_token, ilink_bot_id, and ilink_user_id in config. The WeChat channel will restart. If it stays enabled with an empty bot_token, you can scan again to sign in with another account.",
+      "unbinding": "Unlinking…",
+      "success": "WeChat account unlinked; credential file and tokens cleared from config"
     },
     "errors": {
       "loadChannels": "Failed to load channels",
@@ -349,6 +358,7 @@
       "loadWhatsApp": "Failed to load WhatsApp settings",
       "loadWecom": "Failed to load WeCom settings",
       "loadWechat": "Failed to load WeChat settings",
+      "unbindWechat": "Failed to unlink WeChat",
       "saveGeneric": "Save failed, please try again later"
     }
   },

@@ -1192,6 +1192,37 @@ def _register_web_handlers(bind: WebHandlersBindParams) -> None:
             logger.exception("[channel.wechat.get_login_ui] %s", e)
             await channel.send_response(ws, req_id, ok=False, error=str(e), code="INTERNAL_ERROR")
 
+    async def _channel_wechat_unbind(ws, req_id, params, session_id):
+        cm = _resolve(channel_manager)
+        if cm is None:
+            await channel.send_response(
+                ws,
+                req_id,
+                ok=False,
+                error="channel manager not available",
+                code="SERVICE_UNAVAILABLE",
+            )
+            return
+        try:
+            from jiuwenclaw.channel.wechat_channel import clear_wechat_bound_session, reset_wechat_login_ui_state
+
+            conf = cm.get_conf("wechat")
+            new_conf = clear_wechat_bound_session(conf)
+            await reset_wechat_login_ui_state()
+            # 若 YAML 里 bot_token 本就为空，仅删凭据文件时 dict 与上次相同，_should_restart_channel 不会重启，扫码 UI 会一直停在 idle
+            cm.mark_channel_restart_pending("wechat")
+            await cm.set_conf("wechat", new_conf)
+            final = cm.get_conf("wechat")
+            try:
+                update_channel_in_config("wechat", final)
+                await _clear_agent_config_cache(_resolve(agent_client))
+            except Exception as e:  # noqa: BLE001
+                logger.warning("[channel.wechat.unbind] 写回 config.yaml 失败: %s", e)
+            await channel.send_response(ws, req_id, ok=True, payload={"config": final})
+        except Exception as e:  # noqa: BLE001
+            logger.exception("[channel.wechat.unbind] %s", e)
+            await channel.send_response(ws, req_id, ok=False, error=str(e), code="INTERNAL_ERROR")
+
     # ----- cron jobs -----
 
     def _get_cron():
@@ -1387,6 +1418,7 @@ def _register_web_handlers(bind: WebHandlersBindParams) -> None:
     channel.register_method("channel.wechat.get_conf", _channel_wechat_get_conf)
     channel.register_method("channel.wechat.set_conf", _channel_wechat_set_conf)
     channel.register_method("channel.wechat.get_login_ui", _channel_wechat_get_login_ui)
+    channel.register_method("channel.wechat.unbind", _channel_wechat_unbind)
     channel.register_method("cron.job.list", _cron_job_list)
     channel.register_method("cron.job.get", _cron_job_get)
     channel.register_method("cron.job.create", _cron_job_create)

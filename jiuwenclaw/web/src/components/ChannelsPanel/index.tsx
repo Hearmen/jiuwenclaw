@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { webRequest } from '../../services/webClient';
 import { WechatQrModal } from './WechatQrModal';
+import { WechatUnbindConfirmModal } from './WechatUnbindConfirmModal';
 import {
   DEFAULT_WECHAT_CONF,
   buildWechatPayload,
@@ -738,6 +739,8 @@ export function ChannelsPanel({ isConnected }: ChannelsPanelProps) {
   const [wechatVisibleFields, setWechatVisibleFields] = useState<Record<string, boolean>>({});
   const [wechatLoading, setWechatLoading] = useState(false);
   const [wechatSaving, setWechatSaving] = useState(false);
+  const [wechatUnbinding, setWechatUnbinding] = useState(false);
+  const [wechatUnbindConfirmOpen, setWechatUnbindConfirmOpen] = useState(false);
   const [wechatSaveError, setWechatSaveError] = useState<string | null>(null);
   const [wechatSuccess, setWechatSuccess] = useState<string | null>(null);
   const [wechatQrModalOpen, setWechatQrModalOpen] = useState(false);
@@ -1427,6 +1430,31 @@ export function ChannelsPanel({ isConnected }: ChannelsPanelProps) {
     }
   };
 
+  const runWechatUnbind = async () => {
+    if (!isConnected || wechatUnbinding) return;
+    setWechatUnbinding(true);
+    setWechatSaveError(null);
+    setWechatSuccess(null);
+    try {
+      const result = await webRequest<{ config?: unknown }>('channel.wechat.unbind', {});
+      const normalized = normalizeWechatConfig(result?.config);
+      setWechatConfig(normalized);
+      setWechatDraft(draftFromWechatConfig(normalized));
+      setWechatVisibleFields({});
+      setWechatSuccess(t('channels.wechatUnbind.success'));
+      wechatLoginPollAppliedAt.current = null;
+      setWechatUnbindConfirmOpen(false);
+      if (normalized.enabled && !normalized.bot_token.trim()) {
+        setWechatQrModalOpen(true);
+      }
+    } catch (err) {
+      setWechatSaveError(err instanceof Error ? err.message : t('channels.errors.unbindWechat'));
+      setWechatUnbindConfirmOpen(false);
+    } finally {
+      setWechatUnbinding(false);
+    }
+  };
+
   const isConfigRefreshing =
     feishuLoading ||
     xiaoyiLoading ||
@@ -1487,6 +1515,16 @@ export function ChannelsPanel({ isConnected }: ChannelsPanelProps) {
         open={wechatQrModalOpen}
         onClose={() => setWechatQrModalOpen(false)}
         loginUi={wechatLoginUi}
+      />
+      <WechatUnbindConfirmModal
+        open={wechatUnbindConfirmOpen}
+        onClose={() => {
+          if (!wechatUnbinding) {
+            setWechatUnbindConfirmOpen(false);
+          }
+        }}
+        onConfirm={() => void runWechatUnbind()}
+        confirming={wechatUnbinding}
       />
       <div className="card w-full h-full flex flex-col">
         {configErrorNotice ? (
@@ -2459,15 +2497,26 @@ export function ChannelsPanel({ isConnected }: ChannelsPanelProps) {
                           <button
                             type="button"
                             onClick={() => void fetchWechatConfig()}
-                            disabled={wechatSaving || isConfigRefreshing}
+                            disabled={wechatSaving || wechatUnbinding || isConfigRefreshing}
                             className="btn !px-3 !py-1.5 disabled:opacity-50 disabled:cursor-not-allowed"
                           >
                             {wechatLoading ? t('common.refreshing') : t('common.refresh')}
                           </button>
                           <button
                             type="button"
+                            onClick={() => {
+                              if (!isConnected || wechatSaving || wechatUnbinding || wechatLoading) return;
+                              setWechatUnbindConfirmOpen(true);
+                            }}
+                            disabled={!isConnected || wechatSaving || wechatUnbinding || wechatLoading}
+                            className="btn !px-3 !py-1.5 border border-[var(--destructive)] text-[var(--destructive)] hover:bg-[var(--destructive)]/10 disabled:opacity-50 disabled:cursor-not-allowed"
+                          >
+                            {wechatUnbinding ? t('channels.wechatUnbind.unbinding') : t('channels.wechatUnbind.button')}
+                          </button>
+                          <button
+                            type="button"
                             onClick={handleCancelWechatConfig}
-                            disabled={!hasWechatConfigChanges || wechatSaving}
+                            disabled={!hasWechatConfigChanges || wechatSaving || wechatUnbinding}
                             className="btn !px-3 !py-1.5 disabled:opacity-50 disabled:cursor-not-allowed"
                           >
                             {t('common.cancel')}
@@ -2475,7 +2524,7 @@ export function ChannelsPanel({ isConnected }: ChannelsPanelProps) {
                           <button
                             type="button"
                             onClick={() => void handleSaveWechatConfig()}
-                            disabled={!hasWechatConfigChanges || wechatSaving || !isConnected}
+                            disabled={!hasWechatConfigChanges || wechatSaving || wechatUnbinding || !isConnected}
                             className="btn primary !px-3 !py-1.5 disabled:opacity-50 disabled:cursor-not-allowed"
                           >
                             {wechatSaving ? t('common.saving') : t('common.save')}
