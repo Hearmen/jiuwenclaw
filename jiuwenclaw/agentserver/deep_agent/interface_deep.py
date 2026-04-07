@@ -629,13 +629,21 @@ class JiuWenClawDeepAdapter:
             user_processors: List[Tuple[str, dict]] = []
             context_engine_cfg = config.get("context_engine_config", {})
 
-            offloader_cfg = context_engine_cfg.get("message_offloader_config", {})
+            offloader_cfg = context_engine_cfg.get("message_summary_offloader_config", {})
             if isinstance(offloader_cfg, dict) and offloader_cfg:
-                user_processors.append(("MessageOffloader", offloader_cfg))
+                user_processors.append(("MessageSummaryOffloader", offloader_cfg))
 
             compressor_cfg = context_engine_cfg.get("dialogue_compressor_config", {})
             if isinstance(compressor_cfg, dict) and compressor_cfg:
                 user_processors.append(("DialogueCompressor", compressor_cfg))
+
+            current_round_cfg = context_engine_cfg.get("current_round_compressor_config", {})
+            if isinstance(current_round_cfg, dict) and current_round_cfg:
+                user_processors.append(("CurrentRoundCompressor", current_round_cfg))
+
+            round_level_cfg = context_engine_cfg.get("round_level_compressor_config", {})
+            if isinstance(round_level_cfg, dict) and round_level_cfg:
+                user_processors.append(("RoundLevelCompressor", round_level_cfg))
 
             # 构建 ContextEngineeringRail
             context_rail = ContextEngineeringRail(
