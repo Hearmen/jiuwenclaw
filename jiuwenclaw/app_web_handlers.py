@@ -37,13 +37,8 @@ from jiuwenclaw.utils import (
     get_agent_sessions_dir,
     get_env_file,
     get_root_dir,
-    prepare_workspace,
 )
 from jiuwenclaw.version import __version__
-
-_config_file = get_user_workspace_dir() / "config" / "config.yaml"
-if not _config_file.exists():
-    prepare_workspace(overwrite=False)
 
 apply_openai_model_client_patch()
 
@@ -99,6 +94,10 @@ _FORWARD_REQ_METHODS = frozenset({
     "skills.evolution.status",
     "skills.evolution.get",
     "skills.evolution.save",
+    "extensions.list",
+    "extensions.import",
+    "extensions.delete",
+    "extensions.toggle",
 })
 
 _FORWARD_NO_LOCAL_HANDLER_METHODS = frozenset({
@@ -124,6 +123,10 @@ _FORWARD_NO_LOCAL_HANDLER_METHODS = frozenset({
     "skills.evolution.status",
     "skills.evolution.get",
     "skills.evolution.save",
+    "extensions.list",
+    "extensions.import",
+    "extensions.delete",
+    "extensions.toggle",
 })
 
 # 配置信息：config.get 返回、config.set 可修改的键（前端 param 名 -> 环境变量名）
