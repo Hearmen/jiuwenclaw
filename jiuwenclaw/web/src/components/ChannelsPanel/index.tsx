@@ -1595,19 +1595,19 @@ export function ChannelsPanel({ isConnected }: ChannelsPanelProps) {
                                 : 'border-border bg-card text-text hover:bg-bg-hover'
                           }`}
                         >
-                          <div className="flex items-center justify-between gap-3">
-                            <div className="flex items-center gap-3 min-w-0">
-                              <span className="text-xs px-2.5 py-1 rounded-full border border-border bg-secondary text-text-muted font-medium">
+                          <div className="flex items-center justify-between gap-3 w-full">
+                            <div className="flex items-center gap-3 min-w-0 flex-1">
+                              <span className="text-xs px-2.5 py-1 rounded-full border border-border bg-secondary text-text-muted font-medium flex-shrink-0">
                                 #{index + 1}
                               </span>
                               <ChannelLogo channel={channel} label={label} />
-                              <span className="text-sm font-medium text-text">{label}</span>
-                              <span className="mono text-xs px-2.5 py-1 rounded-md border border-border bg-secondary text-text-muted">
+                              <span className="text-sm font-medium text-text flex-1 min-w-0 truncate">{label}</span>
+                              <span className="mono text-xs px-2.5 py-1 rounded-md border border-border bg-secondary text-text-muted flex-shrink-0">
                                 {channel.channel_id}
                               </span>
                             </div>
                             <span
-                              className={`text-xs px-2.5 py-1 rounded-full border font-medium ${
+                              className={`text-xs px-2.5 py-1 rounded-full border font-medium flex-shrink-0 ${
                                 isAdapting
                                   ? 'text-text-muted border-border bg-secondary'
                                   : channel.enabled

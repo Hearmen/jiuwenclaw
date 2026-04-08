@@ -63,7 +63,9 @@
       "loadedOfTotal": "历史已加载 {{loaded}} / {{total}} 页",
       "loadingMore": "加载中…",
       "allLoaded": "已显示全部历史",
-      "wheelToLoadMore": "向上滚动加载更多"
+      "wheelToLoadMore": "向上滚动加载更多",
+      "clickToLoadMore": "点击加载更多",
+      "clickOrScrollToLoadMore": "点击或向上滚动加载更多"
     }
   },
   "connection": {
@@ -388,6 +390,10 @@
       "permissions": { "label": "工具安全护栏", "hint": "控制工具调用时的权限检查" },
       "email": { "label": "邮箱配置", "hint": "邮件账号与令牌参数" },
       "other": { "label": "其他配置", "hint": "未归类的扩展参数" }
+    },
+    "booleanLabels": {
+      "evolutionAutoScan": "自动检测可演进信号",
+      "enabled": "启用"
     },
     "errors": {
       "requiredModelFields": "模型配置为必填：{{fields}}。请完整填写后再保存并重启。",

@@ -144,11 +144,14 @@ function parseBoolValue(value: string): boolean {
   return value.toLowerCase() === "true" || value === "1";
 }
 
-const BOOL_KEY_LABELS: Record<string, string> = {
-  evolution_auto_scan: "自动检测可演进信号",
-  context_engine_enabled: "启用",
-  permissions_enabled: "启用",
-};
+function getBooleanKeyLabel(key: string, t: (key: string) => string): string {
+  const labels: Record<string, string> = {
+    evolution_auto_scan: t('config.booleanLabels.evolutionAutoScan'),
+    context_engine_enabled: t('config.booleanLabels.enabled'),
+    permissions_enabled: t('config.booleanLabels.enabled'),
+  };
+  return labels[key] ?? key;
+}
 
 function isSensitiveKey(key: string): boolean {
   const lower = key.toLowerCase();
@@ -197,10 +200,10 @@ function isProviderKey(key: string): boolean {
 }
 
 /** 表格列显示用：video_api_base -> api_base，避免与分组标题重复 */
-function getKeyDisplayLabel(key: string): string {
+function getKeyDisplayLabel(key: string, t: (key: string) => string): string {
   const m = key.match(/^(video|audio|vision)_(.+)$/);
   if (m) return m[2];
-  return BOOL_KEY_LABELS[key] ?? key;
+  return getBooleanKeyLabel(key, t) ?? key;
 }
 
 function GroupSection({
@@ -270,7 +273,7 @@ function GroupSection({
           <tbody>
             {group.keys.map(([key, value]) => (
               <tr key={key} className="border-t border-border first:border-t-0 even:bg-secondary/10 hover:bg-secondary/25 transition-colors">
-                <td className="px-4 py-2.5 align-middle mono text-xs text-text-muted w-[32%]" title={key}>{getKeyDisplayLabel(key)}</td>
+                <td className="px-4 py-2.5 align-middle mono text-xs text-text-muted w-[32%]" title={key}>{getKeyDisplayLabel(key, t)}</td>
                 <td className="px-4 py-2.5 break-all text-[13px] align-middle">
                   {isBooleanKey(key) ? (
                     <div className="flex items-center gap-2">
@@ -288,7 +291,7 @@ function GroupSection({
                           role="switch"
                           aria-checked={parseBoolValue(draftValues[key] ?? value)}
                           onClick={() => onChange(key, parseBoolValue(draftValues[key] ?? value) ? "false" : "true")}
-                          title={BOOL_KEY_LABELS[key] ?? key}
+                          title={getBooleanKeyLabel(key, t) ?? key}
                           className={`relative inline-flex h-5 w-9 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 focus:outline-none ${
                             parseBoolValue(draftValues[key] ?? value) ? "bg-ok" : "bg-secondary"
                           }`}

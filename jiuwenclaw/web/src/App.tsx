@@ -608,6 +608,7 @@ function AppContent() {
         historyRestoreFromPanelHintRef.current = false;
         restoreHandle.dispose();
         historyRestoreHandleRef.current = null;
+        // 发生错误时，设置 historyPagerMeta 为 null，显示欢迎信息
         setHistoryPagerMeta(null);
         console.error('Failed to load history:', error);
         // 忽略 "invalid page_idx or session history not found" 错误，因为这是新会话的正常情况

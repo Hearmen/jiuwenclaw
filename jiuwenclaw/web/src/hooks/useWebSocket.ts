@@ -441,9 +441,10 @@ export function useWebSocket(options: UseWebSocketOptions): UseWebSocketReturn {
     activeSessionIdRef.current = activeSessionId;
   }, [activeSessionId]);
 
-  useEffect(() => {
-    setContextCompressionStats(null);
-  }, [activeSessionId, setContextCompressionStats]);
+  // 会话切换时不再重置上下文压缩信息，保持本地存储的状态
+  // useEffect(() => {
+  //   setContextCompressionStats(null);
+  // }, [activeSessionId, setContextCompressionStats]);
 
   useEffect(() => {
     onConnectRef.current = onConnect;
@@ -877,7 +878,8 @@ export function useWebSocket(options: UseWebSocketOptions): UseWebSocketReturn {
       clearTodos();
       clearSubtasks();
       setConnected(false);
-      setContextCompressionStats(null);
+      // 不再重置上下文压缩信息，保持本地存储的状态
+      // setContextCompressionStats(null);
       setHeartbeatStatus('unknown', null, null);
       setConnectionStats({ state: 'closed', inflight: 0 });
     };

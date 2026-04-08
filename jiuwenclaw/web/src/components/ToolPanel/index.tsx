@@ -95,9 +95,16 @@ export function ToolPanel() {
       : `${memoryUsage.rssMb.toFixed(1)} MB${memoryUsage.usedPercent == null ? '' : ` (${memoryUsage.usedPercent.toFixed(1)}%)`}`;
   const beforeK = ((contextCompressionBefore ?? 0) / 1000).toFixed(1);
   const afterK = ((contextCompressionAfter ?? 0) / 1000).toFixed(1);
-  const compressionRateDisplay = Number.isFinite(contextCompressionRate)
-    ? contextCompressionRate.toFixed(1)
-    : '0.0';
+  let compressionRateDisplay;
+  if (contextCompressionBefore === 0) {
+    compressionRateDisplay = '0.0';
+  } else if (contextCompressionAfter === contextCompressionBefore) {
+    compressionRateDisplay = '100.0';
+  } else {
+    compressionRateDisplay = Number.isFinite(contextCompressionRate)
+      ? contextCompressionRate.toFixed(1)
+      : '0.0';
+  }
   const compressionDisplay = `${afterK}K/${beforeK}K (${compressionRateDisplay}%)`;
 
   return (

@@ -4,7 +4,7 @@
  * 聊天面板，包含消息列表和输入区域
  */
 
-import { useRef, useEffect, useLayoutEffect, useCallback } from 'react';
+import React, { useRef, useEffect, useLayoutEffect, useCallback } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useChatStore } from '../../stores';
 import { AgentMode, UserAnswer } from '../../types';
@@ -95,7 +95,24 @@ export function ChatPanel({
     // 检查是否在底部（有 40px 的阈值）
     const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 40;
     userScrolledUpRef.current = !atBottom;
-  }, []);
+    
+    // 当滚动到顶部且有更多历史消息时，加载更多
+    if (el.scrollTop === 0 && historyPager && historyPager.loadedPages < historyPager.totalPages && !historyPager.loadingMore) {
+      void historyPager.onLoadMore();
+    }
+  }, [historyPager]);
+
+  // 检测鼠标滚轮事件，即使没有滚动条也能触发加载更多
+  const handleWheel = useCallback((e: React.WheelEvent<HTMLDivElement>) => {
+    // 只有向上滚动时才触发
+    if (e.deltaY < 0 && historyPager && historyPager.loadedPages < historyPager.totalPages && !historyPager.loadingMore) {
+      // 检查是否已经在顶部（没有滚动条时 scrollTop 始终为 0）
+      const el = scrollContainerRef.current;
+      if (el && el.scrollTop === 0) {
+        void historyPager.onLoadMore();
+      }
+    }
+  }, [historyPager]);
 
   useEffect(() => {
     if (suppressNextScrollToEndRef.current) {
@@ -145,16 +162,35 @@ export function ChatPanel({
 
   return (
     <div className="flex flex-col h-full" data-testid="chat-panel">
-      <div ref={scrollContainerRef} className="flex-1 overflow-y-auto px-3 py-4" onScroll={handleScroll}>
-        {historyPager && messages.length > 0 ? (
-          <HistoryPagerBar
-            loadedPages={historyPager.loadedPages}
-            totalPages={historyPager.totalPages}
-            loadingMore={historyPager.loadingMore}
-            onLoadMore={historyPager.onLoadMore}
-          />
-        ) : null}
-        {messages.length === 0 ? (
+      <div ref={scrollContainerRef} className="flex-1 overflow-y-auto px-3 py-4" onScroll={handleScroll} onWheel={handleWheel}>
+        {historyPager || messages.length > 0 ? (
+          <>
+            {historyPager && (
+              <HistoryPagerBar
+                loadedPages={historyPager.loadedPages}
+                totalPages={historyPager.totalPages}
+                loadingMore={historyPager.loadingMore}
+                onLoadMore={historyPager.onLoadMore}
+              />
+            )}
+            {messages.length > 0 ? (
+              <>
+                <MessageList messages={messages} />
+                <SubtaskProgress />
+                {/* 内联审批卡片（演进审批 & 权限审批共用） */}
+                <InlineQuestionCard onSubmit={onUserAnswer} />
+                {/* 思考中指示器 */}
+                {isThinking && <ThinkingIndicator />}
+              </>
+            ) : (
+              <div className="flex items-center justify-center h-32">
+                <div className="text-text-muted text-sm">
+                  {t('connection.loadingConfig')}
+                </div>
+              </div>
+            )}
+          </>
+        ) : (
           <div className="chat-welcome">
             <img src="/logo.png" alt={t('chat.welcomeLogoAlt')} className="chat-welcome__logo" />
             <h2 className="chat-welcome__heading">{t('chat.welcomeHeading')}</h2>
@@ -167,15 +203,6 @@ export function ChatPanel({
               ))}
             </div>
           </div>
-        ) : (
-          <>
-            <MessageList messages={messages} />
-            <SubtaskProgress />
-            {/* 内联审批卡片（演进审批 & 权限审批共用） */}
-            <InlineQuestionCard onSubmit={onUserAnswer} />
-            {/* 思考中指示器 */}
-            {isThinking && <ThinkingIndicator />}
-          </>
         )}
         <div ref={messagesEndRef} />
       </div>

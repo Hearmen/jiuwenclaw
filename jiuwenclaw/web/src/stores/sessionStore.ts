@@ -5,6 +5,28 @@
 import { create } from 'zustand';
 import { Session, AgentMode, WebConnectionState } from '../types';
 
+const STORAGE_KEY = 'jiuwenclaw_context_compression';
+
+function loadFromStorage() {
+  try {
+    const stored = localStorage.getItem(STORAGE_KEY);
+    if (stored) {
+      return JSON.parse(stored);
+    }
+  } catch (error) {
+    console.error('Error loading context compression from storage:', error);
+  }
+  return null;
+}
+
+function saveToStorage(data: any) {
+  try {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
+  } catch (error) {
+    console.error('Error saving context compression to storage:', error);
+  }
+}
+
 const DEFAULT_MODE: AgentMode = 'plan';
 
 function normalizeAgentMode(mode: unknown): AgentMode {
@@ -92,9 +114,9 @@ export const useSessionStore = create<SessionState>((set) => ({
     inflight: 0,
     lastError: null,
   },
-  contextCompressionRate: 0,
-  contextCompressionBefore: null,
-  contextCompressionAfter: null,
+  contextCompressionRate: loadFromStorage()?.rate || 0,
+  contextCompressionBefore: loadFromStorage()?.beforeCompressed || null,
+  contextCompressionAfter: loadFromStorage()?.afterCompressed || null,
   memoryUsage: {
     rssMb: null,
     usedPercent: null,
@@ -181,6 +203,7 @@ export const useSessionStore = create<SessionState>((set) => ({
         contextCompressionBefore: null,
         contextCompressionAfter: null,
       });
+      saveToStorage(null);
       return;
     }
 
@@ -197,11 +220,19 @@ export const useSessionStore = create<SessionState>((set) => ({
         ? Math.max(Math.round(stats.afterCompressed), 0)
         : null;
 
+    const contextCompressionData = {
+      rate: normalizedRate,
+      beforeCompressed: normalizedBefore,
+      afterCompressed: normalizedAfter
+    };
+
     set({
       contextCompressionRate: normalizedRate,
       contextCompressionBefore: normalizedBefore,
       contextCompressionAfter: normalizedAfter,
     });
+
+    saveToStorage(contextCompressionData);
   },
 
   setMemoryUsage: (memoryUsage) => {

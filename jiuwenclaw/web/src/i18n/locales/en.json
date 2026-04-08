@@ -60,10 +60,12 @@
     "send": "Send (Enter)",
     "newSessionDisabled": "Cannot create session while processing or recording",
     "historyPager": {
-      "loadedOfTotal": "History loaded {{loaded}} / {{total}} pages",
-      "loadingMore": "Loading…",
-      "allLoaded": "All history loaded",
-      "wheelToLoadMore": "Scroll up to load more"
+      "loadedOfTotal": "Loaded {{loaded}} / {{total}} pages",
+      "loadingMore": "Loading...",
+      "allLoaded": "All history shown",
+      "wheelToLoadMore": "Scroll up to load more",
+      "clickToLoadMore": "Click to load more",
+      "clickOrScrollToLoadMore": "Click or scroll up to load more"
     }
   },
   "connection": {
@@ -389,6 +391,10 @@
       "permissions": { "label": "Tool Safety Guardrail", "hint": "Enable or disable permission checks for tool calls" },
       "email": { "label": "Email Settings", "hint": "Email account and token settings" },
       "other": { "label": "Other Settings", "hint": "Unclassified extended parameters" }
+    },
+    "booleanLabels": {
+      "evolutionAutoScan": "Auto-detect evolution signals",
+      "enabled": "Enable"
     },
     "errors": {
       "requiredModelFields": "These model fields are required: {{fields}}. Complete them before saving and restarting.",
