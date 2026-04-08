@@ -1429,7 +1429,19 @@ class JiuWenClawDeepAdapter:
         )
 
     async def handle_heartbeat(self, request: AgentRequest) -> AgentResponse | None:
-        """处理 heartbeat 请求，返回 None 表示继续正常流程."""
+        """Handle heartbeat request. Returns None to continue normal flow.
+
+        Injects a heartbeat prompt into the query to ensure the LLM receives
+        a non-empty user message. Reading HEARTBEAT.md and injecting its content
+        into the system prompt is handled by HeartbeatRail in before_model_call.
+        """
+        request.params["query"] = "根据heartbeat section内容执行任务. 如果没有或内容为空, 仅回复HEARTBEAT_OK"
+        logger.info(
+            "[JiuWenClawDeepAdapter] heartbeat query injected:"
+            " request_id=%s session_id=%s",
+            request.request_id,
+            request.session_id,
+        )
         return None
 
     async def _handle_evolution_approval(self, request_id: str, answers: list) -> bool:
