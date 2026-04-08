@@ -430,7 +430,7 @@ class SkillManager:
         # 查找 marketplace 配置
         marketplace = None
         for m in self._get_marketplaces():
-            if m.get("name") == marketplace:
+            if m.get("name") == marketplace_name:
                 marketplace = m
                 break
         if marketplace is None:
