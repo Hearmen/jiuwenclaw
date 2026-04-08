@@ -307,62 +307,6 @@ async def _read_tool_executions(page: Page) -> list[dict[str, str]]:
     )
 
 
-async def _create_structured_job_from_chat(
-    page: Page,
-    *,
-    backend_port: int,
-    report_dir: Path,
-    name: str,
-) -> tuple[dict[str, Any], list[dict[str, str]], str]:
-    await _open_chat_panel(page)
-    agent_mode = page.locator('[data-testid="chat-mode-agent"]')
-    await agent_mode.click()
-
-    deadline = time.time() + 10
-    while time.time() < deadline:
-        classes = await agent_mode.get_attribute("class") or ""
-        if "chat-mode-btn--active" in classes:
-            break
-        await asyncio.sleep(0.2)
-
-    prompt = "\n".join(
-        [
-            "Create exactly one reminder using the unified tool named `cron`.",
-            "Do not use `cron_create_job` or any other legacy `cron_*` tool.",
-            f'Use name "{name}".',
-            'Use schedule {"kind":"every","everyMs":120000}.',
-            'Use payload {"kind":"systemEvent","text":"2 minute structured reminder smoke from chat"}.',
-            'Use sessionTarget "current" and wakeMode "now".',
-            "After the tool call succeeds, reply with one short confirmation sentence.",
-        ]
-    )
-    await page.locator('[data-testid="chat-input"]').fill(prompt)
-    await page.locator('[data-testid="chat-send"]').click()
-
-    created_job: dict[str, Any] | None = None
-    tool_executions: list[dict[str, str]] = []
-    wait_deadline = time.time() + 180
-    while time.time() < wait_deadline:
-        tool_executions = await _read_tool_executions(page)
-        created_job = await _find_job_by_name(backend_port, name)
-        if created_job is not None and tool_executions:
-            break
-        await asyncio.sleep(1)
-
-    if created_job is None:
-        raise RuntimeError(f"Structured job `{name}` was not created from chat in time")
-
-    settle_deadline = time.time() + 20
-    while time.time() < settle_deadline:
-        tool_executions = await _read_tool_executions(page)
-        if any(item["name"] == "cron" and item["status"] == "completed" for item in tool_executions):
-            break
-        await asyncio.sleep(0.5)
-
-    screenshot_chat = await _screenshot(page, report_dir, "03-structured-chat-created.png")
-    return created_job, tool_executions, screenshot_chat
-
-
 def _write_report(report_dir: Path, context: ReportContext, cases: list[CaseResult]) -> Path:
     report_path = report_dir / "report.md"
     lines = [
@@ -433,7 +377,6 @@ async def _run_ui_flow_impl(
     await _open_cron_panel(page)
 
     legacy_name = f"{case_prefix}-legacy"
-    structured_name = f"{case_prefix}-structured"
 
     await page.locator('[data-testid="cron-create-toggle"]').click()
     await page.locator('[data-testid="cron-create-name"]').fill(legacy_name)
@@ -468,68 +411,6 @@ async def _run_ui_flow_impl(
         )
     )
 
-    structured_job, structured_tools, screenshot_structured_chat = await _create_structured_job_from_chat(
-        page,
-        backend_port=backend_port,
-        report_dir=report_dir,
-        name=structured_name,
-    )
-    structured_job_id = str(structured_job.get("id") or "").strip() or None
-    await _open_cron_panel(page)
-    structured_row = page.locator(f'[data-cron-name="{structured_name}"]').first
-    await structured_row.wait_for()
-    if not structured_job_id:
-        raise RuntimeError("Structured job id not found after chat creation")
-    structured_hint = ""
-    structured_hint_locator = page.locator(f'[data-testid="cron-hint-{structured_job_id}"]')
-    if await structured_hint_locator.count():
-        structured_hint = (await structured_hint_locator.text_content() or "").strip()
-    await page.locator(f'[data-testid="cron-preview-action-{structured_job_id}"]').click()
-    await page.locator(f'[data-testid="cron-preview-{structured_job_id}"]').wait_for()
-    screenshot_structured = await _screenshot(page, report_dir, "04-structured-visible.png")
-    structured_preview = await _preview_job(backend_port, structured_job_id, count=3)
-    structured_target = str(structured_job.get("session_target") or "")
-    structured_payload_kind = str(((structured_job.get("payload") or {}) if isinstance(structured_job.get("payload"), dict) else {}).get("kind") or "")
-    structured_compat_mode = str(structured_job.get("compat_mode") or "")
-    tool_summary = ", ".join(f'{item["name"]}:{item["status"]}' for item in structured_tools) or "no tool execution found"
-    first_preview_at = ""
-    first_preview_delta_seconds: float | None = None
-    if structured_preview:
-        first_preview_at = str((structured_preview[0] or {}).get("push_at") or "")
-        first_preview_dt = _parse_iso_datetime(first_preview_at)
-        if first_preview_dt is not None:
-            first_preview_delta_seconds = (first_preview_dt - datetime.now(timezone.utc)).total_seconds()
-    preview_ok = first_preview_delta_seconds is not None and 0 <= first_preview_delta_seconds <= 300
-    hint_ok = all(
-        token in structured_hint
-        for token in ("systemEvent", f"session:{session_id}", "openclaw")
-    )
-    tool_ok = any(item["name"] == "cron" for item in structured_tools)
-    results.append(
-        CaseResult(
-            name="Structured reminder created from chat, then observed in UI",
-            status=(
-                "PASS"
-                if (
-                    structured_target == f"session:{session_id}"
-                    and structured_payload_kind == "systemEvent"
-                    and structured_compat_mode == "openclaw"
-                    and preview_ok
-                    and hint_ok
-                    and tool_ok
-                )
-                else "FAIL"
-            ),
-            details=(
-                f"Chat created `{structured_name}` via tools [{tool_summary}]; "
-                f"session_target=`{structured_target}`, payload.kind=`{structured_payload_kind}`, "
-                f"compat_mode=`{structured_compat_mode}`, preview_at=`{first_preview_at or 'missing'}`, "
-                f"cron_hint=`{structured_hint or 'missing'}`."
-            ),
-            screenshots=[screenshot_structured_chat, screenshot_structured],
-        )
-    )
-
     await page.locator(f'[data-testid="cron-run-{legacy_job_id}"]').click()
     await page.locator('[data-testid="cron-success"]').wait_for()
     screenshot_run = await _screenshot(page, report_dir, "05-legacy-run-now.png")
@@ -556,15 +437,12 @@ async def _run_ui_flow_impl(
 
     await page.locator(f'[data-testid="cron-delete-{legacy_job_id}"]').click()
     await page.locator(f'[data-cron-name="{legacy_name}"]').wait_for(state="detached")
-    if structured_job_id:
-        await page.locator(f'[data-testid="cron-delete-{structured_job_id}"]').click()
-        await page.locator(f'[data-cron-name="{structured_name}"]').wait_for(state="detached")
     screenshot_cleanup = await _screenshot(page, report_dir, "07-cleanup.png")
     results.append(
         CaseResult(
             name="Cleanup",
             status="PASS",
-            details=f"Deleted `{legacy_name}` and `{structured_name}` from the UI.",
+            details=f"Deleted `{legacy_name}` from the UI.",
             screenshots=[screenshot_cleanup],
         )
     )

@@ -63,7 +63,9 @@ from jiuwenclaw.agentserver.deep_agent.interrupt.interrupt_helpers import (
 )
 from jiuwenclaw.agentserver.deep_agent.prompt_builder import build_identity_prompt
 from jiuwenclaw.agentserver.deep_agent.rails import (
-    JiuClawStreamEventRail
+    JiuClawContextEngineeringRail,
+    JiuClawStreamEventRail,
+    RuntimePromptRail,
 )
 from jiuwenclaw.agentserver.memory import clear_memory_manager_cache
 from jiuwenclaw.agentserver.memory.config import clear_config_cache, get_memory_mode
@@ -201,6 +203,7 @@ class JiuWenClawDeepAdapter:
         self._stream_event_rail: JiuClawStreamEventRail | None = None
         self._task_planning_rail: TaskPlanningRail | None = None
         self._context_engineering_rail: ContextEngineeringRail | None = None
+        self._runtime_prompt_rail: RuntimePromptRail | None = None
         self._security_rail: SecurityRail | None = None
         self._memory_rail: MemoryRail | None = None
         self._heartbeat_rail: HeartbeatRail | None = None
@@ -657,13 +660,13 @@ class JiuWenClawDeepAdapter:
             if isinstance(round_level_cfg, dict) and round_level_cfg:
                 user_processors.append(("RoundLevelCompressor", round_level_cfg))
 
-            # 构建 ContextEngineeringRail
-            context_rail = ContextEngineeringRail(
+            # 构建 JiuClawContextEngineeringRail（含 offload 说明）
+            context_rail = JiuClawContextEngineeringRail(
                 processors=user_processors if user_processors else None,
                 preset=True,
             )
             logger.info(
-                "[JiuWenClawDeepAdapter] ContextEngineeringRail create success, "
+                "[JiuWenClawDeepAdapter] JiuClawContextEngineeringRail create success, "
                 "user_processors=%s",
                 [p[0] for p in user_processors] if user_processors else "none"
             )
@@ -755,6 +758,19 @@ class JiuWenClawDeepAdapter:
             heartbeat_rail = None
         return heartbeat_rail
 
+    def _build_runtime_prompt_rail(self) -> RuntimePromptRail | None:
+        """Build RuntimePromptRail for per-model-call time/channel injection."""
+        try:
+            rail = RuntimePromptRail(
+                language=self._resolve_runtime_language(),
+                channel=self._resolve_prompt_channel(),
+            )
+            logger.info("[JiuWenClawDeepAdapter] RuntimePromptRail create success")
+        except Exception as exc:
+            logger.warning("[JiuWenClawDeepAdapter] RuntimePromptRail create failed: %s", exc)
+            rail = None
+        return rail
+
     def _build_agent_rails(self, config: dict[str, Any], config_base: dict[str, Any]) -> list[Any]:
         """Build DeepAgent rails consistently for cold start and hot reload."""
 
@@ -768,6 +784,7 @@ class JiuWenClawDeepAdapter:
                 self.params = self.params or {}
 
         rail_infos = [
+            _RailBuildInfo("_runtime_prompt_rail", self._build_runtime_prompt_rail),
             _RailBuildInfo("_filesystem_rail", self._build_filesystem_rail),
             _RailBuildInfo("_skill_rail", self._build_skill_rail,
                            {"config": config, "include_tools": self._filesystem_rail is None}),
@@ -856,6 +873,7 @@ class JiuWenClawDeepAdapter:
             rails=rails,
             vision_model_config=self._vision_model_config,
             audio_model_config=self._audio_model_config,
+            completion_timeout=config.get("completion_timeout", 3600.0),
         )
 
     def _get_current_agent_rails(self, config: dict[str, Any], config_base: dict[str, Any] | None = None) -> list[Any]:
@@ -1071,8 +1089,10 @@ class JiuWenClawDeepAdapter:
                 language=self._resolve_runtime_language(),
             ),
             sys_operation=sys_operation,
+            language=self._resolve_runtime_language(),
             vision_model_config=self._vision_model_config,
             audio_model_config=self._audio_model_config,
+            completion_timeout=config.get("completion_timeout", 3600.0),
         )
         logger.info("[JiuWenClawDeepAdapter] 初始化完成: agent_name=%s", self._agent_name)
 
@@ -1208,6 +1228,9 @@ class JiuWenClawDeepAdapter:
             raise RuntimeError("JiuWenClawDeepAdapter 未初始化，请先调用 create_instance()")
 
         resolved_language = self._resolve_runtime_language()
+        if self._runtime_prompt_rail:
+            self._runtime_prompt_rail.set_language(resolved_language)
+            self._runtime_prompt_rail.set_channel(self._resolve_prompt_channel(session_id))
         if mode == "plan":
             if self._task_planning_rail is None:
                 self._task_planning_rail = self._build_task_planning_rail()
