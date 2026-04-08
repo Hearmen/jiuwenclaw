@@ -11,6 +11,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import time
 from typing import Any, AsyncIterator, Tuple
@@ -22,10 +23,8 @@ from jiuwenclaw.agentserver.agent_adapters import (
     create_adapter,
     resolve_sdk_choice,
 )
-from jiuwenclaw.agentserver.prompt_builder import build_user_prompt
 from jiuwenclaw.agentserver.session_manager import SessionManager
 from jiuwenclaw.agentserver.skill_manager import SkillManager
-from jiuwenclaw.agentserver.deep_agent.cron_runtime import CronRuntimeBridge
 from jiuwenclaw.config import get_config
 from jiuwenclaw.schema.agent import AgentRequest, AgentResponse, AgentResponseChunk
 from jiuwenclaw.agentserver.session_history import append_history_record
@@ -34,7 +33,6 @@ from jiuwenclaw.utils import get_agent_home_dir, get_agent_workspace_dir, get_en
 from jiuwenclaw.agentserver.memory.config import get_memory_mode
 from jiuwenclaw.schema.hook_event import AgentServerHookEvents
 from jiuwenclaw.extensions.registry import ExtensionRegistry
-from jiuwenclaw.agentserver.deep_agent.cron_runtime import CronRuntimeBridge
 from jiuwenclaw.schema.hooks_context import MemoryHookContext
 
 load_dotenv(dotenv_path=get_env_file())
@@ -71,15 +69,32 @@ _SKILL_ROUTES: dict[ReqMethod, str] = {
 }
 
 
-class _FacadeCronToolContext:
-    """Minimal cron tool context retained for facade compatibility."""
-
-    channel_id: str = "web"
-    session_id: str | None = None
-    metadata: dict[str, Any] | None = None
-    mode: str | None = None
-    tool_scope: str = "facade"
-
+def build_user_prompt(content: str, files: dict, channel: str, language: str) -> str:
+    """Build user prompt for the agent."""
+    if language == "zh":
+        prompt = "你收到一条消息：\n"
+    else:
+        prompt = "You receive a new message:\n"
+    if channel in ["cron", "heartbeat"]:
+        return prompt + json.dumps(
+            {
+                "source": "system",
+                "preferred_response_language": language,
+                "content": content,
+                "type": channel,
+            },
+            ensure_ascii=False,
+        )
+    return prompt + json.dumps(
+        {
+            "source": channel,
+            "preferred_response_language": language,
+            "content": content,
+            "files_updated_by_user": json.dumps(files, ensure_ascii=False),
+            "type": "user input",
+        },
+        ensure_ascii=False,
+    )
 
 
 class JiuWenClaw:
@@ -96,10 +111,6 @@ class JiuWenClaw:
         self._sdk_name: str | None = None
         self._skill_manager = SkillManager(workspace_dir=str(get_agent_workspace_dir()))
         self._session_manager = SessionManager()
-        # Backward compatibility: cron tools on the facade use CronRuntimeBridge + facade context.
-        self._cron_runtime = CronRuntimeBridge()
-        self._runtime_cron_tool_context = _FacadeCronToolContext()
-        
         # SkillDev 模式：懒初始化，首次 skilldev.* 请求时构造
         self._skilldev_service = None
 
@@ -127,7 +138,7 @@ class JiuWenClaw:
         deps = SkillDevDeps(
             model_name=default_model.get("model_name", ""),
             model_client_config=default_model.get("model_client_config", {}),
-            mcp_tools_factory=get_mcp_tools,   # 直接复用已加载的 MCP 工具工厂
+            mcp_tools_factory=get_mcp_tools,  # 直接复用已加载的 MCP 工具工厂
             sysop_config=None,
             state_store=state_store,
             workspace_provider=workspace_provider,
@@ -147,10 +158,6 @@ class JiuWenClaw:
             logger.info("[JiuWenClaw] Initialized adapter: sdk=%s", self._sdk_name)
         return self._adapter
 
-    def _build_cron_tools(self) -> list[Any]:
-        """Build cron tools from the shared runtime bridge for compatibility tests."""
-        return self._cron_runtime.build_tools(context=self._runtime_cron_tool_context)
-
     async def create_instance(self, config: dict[str, Any] | None = None) -> None:
         """初始化 Agent 实例.
 
@@ -162,9 +169,9 @@ class JiuWenClaw:
         logger.info("[JiuWenClaw] Agent instance created: sdk=%s", self._sdk_name)
 
     async def reload_agent_config(
-        self,
-        config_base: dict[str, Any] | None = None,
-        env_overrides: dict[str, Any] | None = None,
+            self,
+            config_base: dict[str, Any] | None = None,
+            env_overrides: dict[str, Any] | None = None,
     ) -> None:
         """从配置重新加载.
 
@@ -221,7 +228,7 @@ class JiuWenClaw:
         return inputs, memory_mode
 
     def _build_interactive_input_from_answers(
-        self, request_id: str, answers: list[dict]
+            self, request_id: str, answers: list[dict]
     ) -> Any:
         """从用户答案构建 InteractiveInput.
 
@@ -378,7 +385,7 @@ class JiuWenClaw:
         heartbeat_response = await adapter.handle_heartbeat(request)
         if heartbeat_response is not None:
             return heartbeat_response
-        
+
         skilldev_response = await self._handle_skilldev_request(request)
         if skilldev_response is not None:
             return skilldev_response

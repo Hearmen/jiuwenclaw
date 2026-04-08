@@ -1,14 +1,12 @@
 # Copyright (c) Huawei Technologies Co., Ltd. 2025. All rights reserved.
-import os
 from enum import IntEnum
 from typing import Optional
 
 from openjiuwen.harness.prompts import SystemPromptBuilder, PromptSection, resolve_language
-from jiuwenclaw.utils import get_user_workspace_dir, logger
+from jiuwenclaw.utils import logger
 
 from jiuwenclaw.utils import (
     get_user_workspace_dir,
-    get_agent_root_dir,
     get_agent_memory_dir,
     get_agent_skills_dir,
     get_agent_workspace_dir,
@@ -18,18 +16,6 @@ from jiuwenclaw.utils import (
 
 def _get_config_dir() -> "Path":
     return get_user_workspace_dir() / "config"
-
-
-def _get_memory_dir() -> "Path":
-    return get_agent_memory_dir()
-
-
-def _get_skill_dir() -> "Path":
-    return get_agent_skills_dir()
-
-
-def _get_workspace_dir() -> "Path":
-    return get_agent_workspace_dir()
 
 
 class PromptPriority(IntEnum):
@@ -43,7 +29,6 @@ class PromptPriority(IntEnum):
     TODO = 95
     SAFETY = 120
     RESPONSE = 130
-
 
 
 def _response_prompt(language: str) -> PromptSection:

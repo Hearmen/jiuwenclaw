@@ -27,7 +27,7 @@ from openjiuwen.core.runner import Runner
 from openjiuwen.core.runner.callback.events import LLMCallEvents
 
 from jiuwenclaw.agentserver.deep_agent.interface_deep import JiuWenClawDeepAdapter
-from jiuwenclaw.agentserver.prompt_builder import build_user_prompt
+from jiuwenclaw.agentserver.interface import build_user_prompt
 from jiuwenclaw.config import get_config
 from jiuwenclaw.schema.agent import AgentRequest
 from jiuwenclaw.schema.message import ReqMethod

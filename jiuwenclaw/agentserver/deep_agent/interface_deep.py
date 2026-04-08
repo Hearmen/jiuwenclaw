@@ -69,7 +69,7 @@ from jiuwenclaw.agentserver.deep_agent.rails import (
 )
 from jiuwenclaw.agentserver.memory import clear_memory_manager_cache
 from jiuwenclaw.agentserver.memory.config import clear_config_cache, get_memory_mode
-from jiuwenclaw.agentserver.deep_agent.permissions.checker import TOOL_PERMISSION_CHANNEL_ID
+from jiuwenclaw.agentserver.permissions.checker import TOOL_PERMISSION_CHANNEL_ID
 from jiuwenclaw.agentserver.tools.multimodal_config import (
     apply_audio_model_config_from_yaml,
     apply_video_model_config_from_yaml,
@@ -107,7 +107,6 @@ from jiuwenclaw.agentserver.extensions import get_rail_manager
 from jiuwenclaw.gateway.cron import CronTargetChannel
 from jiuwenclaw.schema.agent import AgentRequest, AgentResponse, AgentResponseChunk
 from jiuwenclaw.utils import (
-    get_agent_root_dir,
     get_agent_skills_dir,
     get_agent_workspace_dir,
     get_checkpoint_dir,

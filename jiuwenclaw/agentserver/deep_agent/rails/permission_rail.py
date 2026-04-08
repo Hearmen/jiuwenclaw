@@ -18,11 +18,10 @@ from openjiuwen.harness.rails.interrupt.confirm_rail import (
     ConfirmInterruptRail,
     ConfirmPayload,
 )
-from openjiuwen.harness.rails.interrupt.interrupt_base import InterruptDecision
 
-from jiuwenclaw.agentserver.deep_agent.permissions.core import PermissionEngine
-from jiuwenclaw.agentserver.deep_agent.permissions.checker import TOOL_PERMISSION_CHANNEL_ID
-from jiuwenclaw.agentserver.deep_agent.permissions.models import PermissionLevel, PermissionResult
+from jiuwenclaw.agentserver.permissions.core import PermissionEngine
+from jiuwenclaw.agentserver.permissions.checker import TOOL_PERMISSION_CHANNEL_ID
+from jiuwenclaw.agentserver.permissions import PermissionLevel, PermissionResult
 from jiuwenclaw.utils import logger
 
 

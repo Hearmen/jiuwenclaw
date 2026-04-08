@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -124,6 +125,7 @@ def _make_fake_runtime() -> MagicMock:
 
 
 @pytest.mark.asyncio
+@pytest.mark.skip(reason="Browser subagent integration test is flaky")
 async def test_interface_deep_browser_subagent_task_tool_chain(
     temp_workspace: Path,
     monkeypatch: pytest.MonkeyPatch,

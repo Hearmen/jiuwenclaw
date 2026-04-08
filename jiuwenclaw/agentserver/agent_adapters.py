@@ -87,11 +87,10 @@ def resolve_sdk_choice() -> str:
     """Resolve SDK choice from environment variable.
 
     Returns:
-        SDK name: 'harness', 'react', or 'pi' (reserved).
+        SDK name: 'harness', or 'pi' (reserved).
 
     Behavior:
         - If env var is unset or empty: return 'harness' (default).
-        - If env var is 'harness' or 'react': return as-is.
         - If env var is 'pi': return 'pi' (not yet implemented).
         - If env var is unknown: log warning and fallback to 'harness'.
     """
@@ -100,7 +99,7 @@ def resolve_sdk_choice() -> str:
         logger.debug("[SDK] %s not set, using default: %s", _SDK_ENV_VAR, _DEFAULT_SDK)
         return _DEFAULT_SDK
 
-    valid_sdks = {"harness", "react", "pi"}
+    valid_sdks = {"harness", "pi"}
     if raw in valid_sdks:
         logger.info("[SDK] Resolved SDK: %s", raw)
         return raw
@@ -132,16 +131,12 @@ def create_adapter(sdk: str | None = None) -> AgentAdapter:
         from jiuwenclaw.agentserver.deep_agent.interface_deep import JiuWenClawDeepAdapter
         return JiuWenClawDeepAdapter()
 
-    if sdk_name == "react":
-        from jiuwenclaw.agentserver.interface_react import JiuWenClawReactAdapter
-        return JiuWenClawReactAdapter()
-
     if sdk_name == "pi":
         raise NotImplementedError(
             f"SDK '{sdk_name}' is not yet implemented. "
-            f"Currently supported: harness, react"
+            f"Currently supported: harness"
         )
 
     raise RuntimeError(
-        f"Unknown SDK '{sdk_name}'. Supported: harness, react, pi (reserved)"
+        f"Unknown SDK '{sdk_name}'. Supported: harness, pi (reserved)"
     )

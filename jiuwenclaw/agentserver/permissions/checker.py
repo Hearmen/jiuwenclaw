@@ -20,6 +20,7 @@ import contextvars
 import json
 import logging
 import re
+import shlex
 from pathlib import Path
 from typing import Any, Awaitable, Callable, List
 
@@ -53,11 +54,11 @@ WEB_TOOL_PERMISSIONS_CHANNEL_ID = "web"
 
 
 async def check_tool_permissions(
-    tool_calls: List[Any],
-    channel_id: str = "",
-    session_id: str | None = None,
-    session: Any = None,
-    request_approval_callback: Callable[[Any, Any, Any], Awaitable[str]] | None = None,
+        tool_calls: List[Any],
+        channel_id: str = "",
+        session_id: str | None = None,
+        session: Any = None,
+        request_approval_callback: Callable[[Any, Any, Any], Awaitable[str]] | None = None,
 ) -> tuple[List[Any], List[tuple[Any, str]]]:
     """检查每个工具调用的权限，执行前过滤。
 
@@ -183,13 +184,13 @@ def assess_command_risk_static(tool_name: str, tool_args: dict | str) -> dict:
 
     cmd = str(tool_args.get("command", tool_args.get("cmd", "")))
     if re.search(
-        r"\b(rm\s+-rf|del\s+/[fsq]|format|shutdown|reboot|mkfs|dd\s+if=|>\s*/dev/)",
-        cmd, re.IGNORECASE,
+            r"\b(rm\s+-rf|del\s+/[fsq]|format|shutdown|reboot|mkfs|dd\s+if=|>\s*/dev/)",
+            cmd, re.IGNORECASE,
     ):
         return {"level": "高", "explanation": "该命令可能造成不可逆的数据丢失或系统损坏", "icon": "\U0001f534"}
     if re.search(
-        r"\b(sudo|pip\s+install|npm\s+install|curl.*\|\s*sh|wget.*\|\s*sh|chmod|chown)",
-        cmd, re.IGNORECASE,
+            r"\b(sudo|pip\s+install|npm\s+install|curl.*\|\s*sh|wget.*\|\s*sh|chmod|chown)",
+            cmd, re.IGNORECASE,
     ):
         return {"level": "中", "explanation": "该命令涉及权限变更或软件安装", "icon": "\U0001f7e1"}
     if tool_name == "mcp_exec_command":
@@ -198,10 +199,10 @@ def assess_command_risk_static(tool_name: str, tool_args: dict | str) -> dict:
 
 
 async def assess_command_risk_with_llm(
-    llm: Any,
-    model_name: str,
-    tool_name: str,
-    tool_args: dict | str,
+        llm: Any,
+        model_name: str,
+        tool_name: str,
+        tool_args: dict | str,
 ) -> dict:
     """使用 LLM 评估工具调用的安全风险.
 
@@ -260,9 +261,9 @@ async def assess_command_risk_with_llm(
 # If a command matches an allow pattern but also contains these operators,
 # the permission is escalated from ALLOW → ASK as a safety net.
 _SHELL_OPERATORS_RE = re.compile(
-    r'[;&|`<>]'    # ; & | ` < > (covers &&, ||, pipes, redirects, backticks)
-    r'|\$[({]'     # $( or ${ — command / variable substitution
-    r'|\r?\n'      # newline injection
+    r'[;&|`<>]'  # ; & | ` < > (covers &&, ||, pipes, redirects, backticks)
+    r'|\$[({]'  # $( or ${ — command / variable substitution
+    r'|\r?\n'  # newline injection
 )
 _COMMAND_EXEC_TOOLS = frozenset({"mcp_exec_command"})
 
@@ -270,6 +271,7 @@ _COMMAND_EXEC_TOOLS = frozenset({"mcp_exec_command"})
 _PATH_AWARE_COMMANDS = frozenset({
     "cd", "rm", "cp", "mv", "mkdir", "touch", "chmod", "chown", "cat",
     "ls", "dir", "type", "del", "rd", "copy", "move", "md", "rd",
+    "head", "tail", "more", "less", "vim", "nano", "gedit", "notepad",
 })
 
 
@@ -277,24 +279,40 @@ def _extract_paths_from_command(command: str, workdir: str | Path) -> list[Path]
     """从命令字符串中提取可能为路径的参数，并解析为绝对路径."""
     if not command or not isinstance(command, str):
         return []
-    tokens = command.strip().split()
+    try:
+        tokens = shlex.split(command.strip(), posix=False)
+    except ValueError:
+        tokens = command.strip().split()
     if not tokens:
         return []
     cmd = tokens[0].lower()
+    logger.info("[_extract_paths_from_command] command=%s cmd=%s _PATH_AWARE_COMMANDS=%s", command, cmd,
+                cmd in _PATH_AWARE_COMMANDS)
     if cmd not in _PATH_AWARE_COMMANDS:
         return []
     base = Path(workdir).resolve()
+    logger.info("[_extract_paths_from_command] base=%s", base)
     paths: list[Path] = []
     for tok in tokens[1:]:
-        if tok.startswith("-") or tok.startswith("/"):
+        tok = tok.strip().strip('"').strip("'")
+        if not tok or tok.startswith("-"):
             continue
-        try:
-            p = (base / tok).resolve()
-            if p.exists():
-                paths.append(p)
-        except (OSError, RuntimeError):
-            pass
+        if not _looks_like_path(tok):
+            continue
+        p = Path(tok)
+        if not p.is_absolute():
+            p = base / tok
+        paths.append(p.resolve())
+    logger.info("[_extract_paths_from_command] extracted paths=%s", paths)
     return paths
+
+
+def _looks_like_path(token: str) -> bool:
+    if token.startswith(("\\\\", "./", "../")):
+        return True
+    if re.match(r"^[A-Za-z]:[\\/]", token):
+        return True
+    return "\\" in token or "/" in token
 
 
 # ---------- 外部目录检查器 ----------
@@ -308,28 +326,35 @@ class ExternalDirectoryChecker:
         self._workspace_root = workspace_root
 
     def check_external_paths(
-        self,
-        tool_name: str,
-        tool_args: dict[str, Any],
+            self,
+            tool_name: str,
+            tool_args: dict[str, Any],
     ) -> PermissionResult | None:
         """若访问了 workspace 外路径，根据 external_directory 配置返回 DENY/ASK；否则返回 None."""
-        if tool_name != "mcp_exec_command":
+        if tool_name not in ("mcp_exec_command", "bash"):
             return None
         workspace = self._workspace_root
         if workspace is None:
             try:
                 from jiuwenclaw.utils import get_agent_workspace_dir
                 workspace = get_agent_workspace_dir()
+                logger.info("[ExternalDirectoryChecker] workspace from get_agent_workspace_dir: %s", workspace)
             except ImportError:
+                logger.error("[ExternalDirectoryChecker] Failed to import get_agent_workspace_dir")
                 return None
-        workdir = tool_args.get("workdir", ".")
+        else:
+            logger.info("[ExternalDirectoryChecker] workspace from _workspace_root: %s", workspace)
+        workdir = tool_args.get("workdir", "")
         try:
             workdir_resolved = (workspace / workdir).resolve()
         except (OSError, RuntimeError):
             workdir_resolved = workspace
         cmd = str(tool_args.get("command", "") or tool_args.get("cmd", ""))
+        logger.info("[ExternalDirectoryChecker] tool_name=%s cmd=%s workdir=%s", tool_name, cmd, workdir_resolved)
         paths = _extract_paths_from_command(cmd, workdir_resolved)
+        logger.info("[ExternalDirectoryChecker] extracted paths: %s", paths)
         external = [p for p in paths if not contains_path(workspace, p)]
+        logger.info("[ExternalDirectoryChecker] external paths: %s", external)
         if not external:
             return None
         ext_paths_str = [str(p).replace("\\", "/") for p in external]
@@ -390,10 +415,10 @@ class ToolPermissionChecker:
         self.config = config
 
     def check_tool(
-        self,
-        tool_name: str,
-        tool_args: dict[str, Any],
-        channel_id: str = "web",
+            self,
+            tool_name: str,
+            tool_args: dict[str, Any],
+            channel_id: str = "web",
     ) -> tuple[PermissionLevel | None, str | None]:
         """按来源优先级匹配，deny 拥有绝对否决权.
 
@@ -425,7 +450,7 @@ class ToolPermissionChecker:
 
     # -- 工具级模式规则 --
     def _check_tool_pattern_rules(
-        self, tool_name: str, tool_args: dict[str, Any]
+            self, tool_name: str, tool_args: dict[str, Any]
     ) -> tuple[PermissionLevel | None, str | None]:
         tools_cfg = self.config.get("tools", {})
         if tool_name not in tools_cfg:
@@ -448,7 +473,7 @@ class ToolPermissionChecker:
 
     # -- 辅助方法 --
     def _check_tool_config(
-        self, tool_config: Any, tool_args: dict[str, Any], rule_prefix: str
+            self, tool_config: Any, tool_args: dict[str, Any], rule_prefix: str
     ) -> tuple[PermissionLevel | None, str | None]:
         """解析工具配置 (字符串或字典)."""
         if isinstance(tool_config, str):
@@ -477,7 +502,7 @@ class ToolPermissionChecker:
         return None, None
 
     def _match_pattern_config(
-        self, pattern_config: dict, tool_args: dict[str, Any]
+            self, pattern_config: dict, tool_args: dict[str, Any]
     ) -> PermissionLevel | None:
         pattern = pattern_config.get("pattern", "")
         permission = pattern_config.get("permission")

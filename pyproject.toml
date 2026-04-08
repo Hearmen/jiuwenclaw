@@ -75,3 +75,14 @@ jiuwenclaw = [
 
 [tool.setuptools.exclude-package-data]
 jiuwenclaw = ["web/node_modules/**", "web/node_modules/*"]
+
+[dependency-groups]
+# Testing
+test = [
+    "pytest>=8.3.5",
+    "pytest-asyncio>=1.0.0",
+    "pytest-html>=4.1.1",
+    "pytest-mock>=3.14.0",
+    "pytest-cov>=7.0.0",
+    "coverage>=7.7.1",
+]
