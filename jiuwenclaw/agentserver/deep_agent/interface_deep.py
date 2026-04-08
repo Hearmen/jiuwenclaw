@@ -102,7 +102,7 @@ from jiuwenclaw.agentserver.tools.xiaoyi_phone_tools import (
 )
 from jiuwenclaw.config import get_config, resolve_env_vars
 from jiuwenclaw.agentserver.extensions import get_rail_manager
-from jiuwenclaw.gateway.cron import CronController, CronTargetChannel
+from jiuwenclaw.gateway.cron import CronTargetChannel
 from jiuwenclaw.schema.agent import AgentRequest, AgentResponse, AgentResponseChunk
 from jiuwenclaw.utils import (
     get_agent_root_dir,
@@ -1020,7 +1020,7 @@ class JiuWenClawDeepAdapter:
         return self._cron_runtime.build_tools(context=self._runtime_cron_tool_context)
 
     async def _proc_context_compaction(self) -> None:
-        """Backward-compatible no-op hook retained for tests and old call sites."""
+        """Backward-compatible no-op hook for tests and legacy call sites."""
         return None
 
     async def create_instance(self, config: dict[str, Any] | None = None) -> None:
@@ -1170,11 +1170,16 @@ class JiuWenClawDeepAdapter:
             channel_id: str | None,
             session_id: str | None,
             metadata: dict[str, Any] | None,
+            request_id: str | None,
             mode: str | None,
     ) -> tuple[Token[str], Token[str | None], Token[dict[str, Any] | None], Token[str | None]]:
         normalized_channel = str(channel_id or "").strip() or CronTargetChannel.WEB.value
         normalized_mode = str(mode).strip() if isinstance(mode, str) and mode.strip() else None
         normalized_metadata = dict(metadata) if isinstance(metadata, dict) else None
+        if normalized_metadata is None:
+            normalized_metadata = {}
+        if isinstance(request_id, str) and request_id.strip():
+            normalized_metadata["request_id"] = request_id.strip()
         return (
             _CRON_TOOL_CHANNEL_ID.set(normalized_channel),
             _CRON_TOOL_SESSION_ID.set(session_id),
@@ -1244,16 +1249,6 @@ class JiuWenClawDeepAdapter:
         # 定时工具：按当前 session 的 channel 注册（contextvar 已由 _bind_runtime_cron_context 设置）
         if session_id not in ("heartbeat", "cron"):
             try:
-                channel = self._resolve_prompt_channel(session_id)
-                _CHANNEL_TO_CRON_TARGET = {
-                    "feishu": CronTargetChannel.FEISHU,
-                    "wecom": CronTargetChannel.WECOM,
-                    "xiaoyi": CronTargetChannel.XIAOYI,
-                    "web": CronTargetChannel.WEB,
-                    "sess": CronTargetChannel.WEB,
-                }
-                cron_target = _CHANNEL_TO_CRON_TARGET.get(channel, CronTargetChannel.WEB)
-                CronController.get_instance().set_target_channel(cron_target)
                 for cron_tool in self._build_cron_tools():
                     if not Runner.resource_mgr.get_tool(cron_tool.card.id):
                         Runner.resource_mgr.add_tool(cron_tool)
@@ -1782,6 +1777,7 @@ class JiuWenClawDeepAdapter:
             channel_id=request.channel_id,
             session_id=request.session_id,
             metadata=request.metadata,
+            request_id=request.request_id,
             mode=request.params.get("mode", "plan"),
         )
         token_cid = TOOL_PERMISSION_CHANNEL_ID.set((request.channel_id or "").strip())
@@ -1876,6 +1872,7 @@ class JiuWenClawDeepAdapter:
             channel_id=request.channel_id,
             session_id=request.session_id,
             metadata=request.metadata,
+            request_id=request.request_id,
             mode=request.params.get("mode", "plan"),
         )
         token_cid = TOOL_PERMISSION_CHANNEL_ID.set((request.channel_id or "").strip())

@@ -25,6 +25,7 @@ from jiuwenclaw.agentserver.agent_adapters import (
 from jiuwenclaw.agentserver.prompt_builder import build_user_prompt
 from jiuwenclaw.agentserver.session_manager import SessionManager
 from jiuwenclaw.agentserver.skill_manager import SkillManager
+from jiuwenclaw.agentserver.deep_agent.cron_runtime import CronRuntimeBridge
 from jiuwenclaw.config import get_config
 from jiuwenclaw.schema.agent import AgentRequest, AgentResponse, AgentResponseChunk
 from jiuwenclaw.agentserver.session_history import append_history_record
@@ -95,6 +96,7 @@ class JiuWenClaw:
         self._sdk_name: str | None = None
         self._skill_manager = SkillManager(workspace_dir=str(get_agent_workspace_dir()))
         self._session_manager = SessionManager()
+        # Backward compatibility: cron tools on the facade use CronRuntimeBridge + facade context.
         self._cron_runtime = CronRuntimeBridge()
         self._runtime_cron_tool_context = _FacadeCronToolContext()
         

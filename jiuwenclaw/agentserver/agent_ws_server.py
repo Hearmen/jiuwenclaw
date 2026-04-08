@@ -11,6 +11,7 @@ import math
 from pathlib import Path
 from typing import Any, ClassVar
 
+from jiuwenclaw.agentserver.gateway_push.wire import build_server_push_wire
 from jiuwenclaw.utils import get_agent_sessions_dir, get_config_file
 from jiuwenclaw.e2a.agent_compat import e2a_to_agent_request
 from jiuwenclaw.e2a.gateway_normalize import (
@@ -19,10 +20,6 @@ from jiuwenclaw.e2a.gateway_normalize import (
     E2A_LEGACY_AGENT_REQUEST_KEY,
 )
 from jiuwenclaw.e2a.models import E2AEnvelope
-from jiuwenclaw.e2a.constants import (
-    E2A_WIRE_INTERNAL_METADATA_KEYS,
-    E2A_WIRE_SERVER_PUSH_KEY,
-)
 from jiuwenclaw.e2a.wire_codec import (
     encode_agent_chunk_for_wire,
     encode_agent_response_for_wire,
@@ -739,36 +736,21 @@ class AgentWebSocketServer:
             return
 
         try:
-            chunk = AgentResponseChunk(
-                request_id=str(msg.get("request_id", "")),
-                channel_id=str(msg.get("channel_id", "")),
-                payload=msg.get("payload"),
-                is_complete=bool(msg.get("is_complete", False)),
-            )
-            wire = encode_agent_chunk_for_wire(
-                chunk,
-                response_id=str(msg.get("request_id", "")),
-                sequence=0,
-            )
-            # 与同一 request_id 上的 unary/stream RPC 响应区分，避免 Gateway 将推送当作 RPC 首包解析
-            md = dict(wire.get("metadata") or {})
-            um = msg.get("metadata")
-            if isinstance(um, dict):
-                for k, v in um.items():
-                    if k in E2A_WIRE_INTERNAL_METADATA_KEYS:
-                        continue
-                    md[k] = v
-            md[E2A_WIRE_SERVER_PUSH_KEY] = True
-            wire["metadata"] = md
-            sid = msg.get("session_id")
-            if sid is not None and str(sid).strip():
-                wire["session_id"] = str(sid)
+            wire = build_server_push_wire(msg)
             async with self._current_send_lock:
                 await self._current_ws.send(json.dumps(wire, ensure_ascii=False))
-            logger.info(
-                "[AgentWebSocketServer] send_push 已发送(E2A wire): channel_id=%s",
-                msg["channel_id"],
-            )
+            response_kind = str(msg.get("response_kind") or "").strip()
+            if response_kind:
+                logger.info(
+                    "[AgentWebSocketServer] send_push response_kind wire sent: channel_id=%s kind=%s",
+                    msg.get("channel_id", ""),
+                    response_kind,
+                )
+            else:
+                logger.info(
+                    "[AgentWebSocketServer] send_push 已发送(E2A wire): channel_id=%s",
+                    msg.get("channel_id", ""),
+                )
         except Exception as e:
             logger.warning("[AgentWebSocketServer] send_push 失败: %s", e)
 

@@ -6,28 +6,48 @@ from typing import Any
 
 from openjiuwen.harness.tools.cron import CronToolBackend, CronToolContext, create_cron_tools
 
-from jiuwenclaw.gateway.cron import CronController, CronJobStore, CronSchedulerService, CronTargetChannel
+from jiuwenclaw.gateway.cron import CronTargetChannel
+from jiuwenclaw.gateway.cron.models import is_valid_target_channel_id, normalize_target_channel_id
+from jiuwenclaw.agentserver.tools.cron_tools import CronToolRoute, CronTools
 from jiuwenclaw.gateway.message_handler import MessageHandler
 from jiuwenclaw.schema.message import Message, ReqMethod
 from jiuwenclaw.utils import logger
 
 
-class _ControllerCronBackend(CronToolBackend):
-    """Adapt the legacy gateway CronController to the DeepAgents cron backend interface."""
+class _CronToolsCronBackend(CronToolBackend):
+    """Adapt AgentServer CronTools to the DeepAgents CronToolBackend interface."""
 
-    def __init__(self, controller: CronController, message_handler: MessageHandler | None = None) -> None:
-        self._controller = controller
+    def __init__(self, cron_tools: CronTools, message_handler: MessageHandler | None = None) -> None:
+        self._cron_tools = cron_tools
         self._message_handler = message_handler
 
+    @staticmethod
+    def _route_from_context(context: CronToolContext | None) -> CronToolRoute:
+        if context is None:
+            return CronToolRoute()
+        metadata = context.metadata if isinstance(context.metadata, dict) else {}
+        request_id = str(metadata.get("request_id") or "").strip()
+        channel_id = str(context.channel_id or "").strip() or CronTargetChannel.WEB.value
+        session_id = (
+            str(context.session_id).strip()
+            if isinstance(context.session_id, str) and context.session_id.strip()
+            else None
+        )
+        return CronToolRoute(
+            request_id=request_id,
+            channel_id=channel_id,
+            session_id=session_id,
+        )
+
     async def list_jobs(self, *, include_disabled: bool = True) -> list[dict[str, Any]]:
-        jobs = await self._controller.list_jobs()
+        jobs = await self._cron_tools.list_jobs()
         rows = [self._to_backend_job(job) for job in jobs]
         if include_disabled:
             return rows
         return [job for job in rows if job.get("enabled", True)]
 
     async def get_job(self, job_id: str) -> dict[str, Any] | None:
-        job = await self._controller.get_job(job_id)
+        job = await self._cron_tools.get_job(job_id)
         if job is None:
             return None
         return self._to_backend_job(job)
@@ -38,8 +58,31 @@ class _ControllerCronBackend(CronToolBackend):
         *,
         context: CronToolContext | None = None,
     ) -> dict[str, Any]:
-        payload = self._to_legacy_create_params(params, context=context)
-        job = await self._controller.create_job(payload)
+        request_id = None
+        if context and isinstance(context.metadata, dict):
+            request_id = context.metadata.get("request_id")
+        logger.info(
+            (
+                "[CronRuntimeBridge] create_job in: context.channel_id=%s "
+                "context.session_id=%s metadata.request_id=%s raw_keys=%s"
+            ),
+            getattr(context, "channel_id", None),
+            getattr(context, "session_id", None),
+            request_id,
+            sorted(list((params or {}).keys())),
+        )
+        payload = _extract_legacy_params(dict(params or {}), context=context, require_schedule=True)
+        logger.info(
+            "[CronRuntimeBridge] create_job mapped payload.targets=%s payload.id=%s payload.name=%s",
+            payload.get("targets"),
+            payload.get("id"),
+            payload.get("name"),
+        )
+        token = self._cron_tools.push_cron_route(self._route_from_context(context))
+        try:
+            job = await self._cron_tools.create_job(payload)
+        finally:
+            self._cron_tools.reset_cron_route(token)
         return self._to_backend_job(job)
 
     async def update_job(
@@ -49,36 +92,46 @@ class _ControllerCronBackend(CronToolBackend):
         *,
         context: CronToolContext | None = None,
     ) -> dict[str, Any]:
-        payload = self._to_legacy_patch(patch, context=context)
-        job = await self._controller.update_job(job_id, payload)
+        payload = _extract_legacy_params(dict(patch or {}), context=context, require_schedule=False)
+        token = self._cron_tools.push_cron_route(self._route_from_context(context))
+        try:
+            job = await self._cron_tools.update_job(job_id, payload)
+        finally:
+            self._cron_tools.reset_cron_route(token)
         return self._to_backend_job(job)
 
     async def delete_job(self, job_id: str) -> bool:
-        return await self._controller.delete_job(job_id)
+        return bool(await self._cron_tools.delete_job(job_id))
 
     async def toggle_job(self, job_id: str, enabled: bool) -> dict[str, Any]:
-        job = await self._controller.toggle_job(job_id, enabled)
+        job = await self._cron_tools.toggle_job(job_id, enabled)
         return self._to_backend_job(job)
 
     async def preview_job(self, job_id: str, count: int = 5) -> list[dict[str, Any]]:
-        return await self._controller.preview_job(job_id, count)
+        rows = await self._cron_tools.preview_job(job_id, count)
+        return list(rows or [])
 
     async def run_now(self, job_id: str) -> str:
-        return await self._controller.run_now(job_id)
+        token = self._cron_tools.push_cron_route(CronToolRoute())
+        try:
+            run_result = await self._cron_tools.run_now(job_id)
+        finally:
+            self._cron_tools.reset_cron_route(token)
+        if isinstance(run_result, dict):
+            return str(run_result.get("run_id") or "")
+        return str(run_result or "")
 
     async def status(self) -> dict[str, Any]:
-        scheduler = getattr(self._controller, "_scheduler", None)
-        jobs = await self._controller.list_jobs()
-        runs = self._serialize_runs()
+        jobs = await self._cron_tools.list_jobs()
         return {
-            "running": bool(scheduler and getattr(scheduler, "is_running", lambda: False)()),
+            "running": False,
             "job_count": len(jobs),
-            "run_count": len(runs),
+            "run_count": 0,
         }
 
     async def get_runs(self, job_id: str, limit: int = 20) -> list[dict[str, Any]]:
-        rows = [row for row in self._serialize_runs() if not job_id or row.get("job_id") == job_id]
-        return rows[: max(1, min(int(limit), 100))]
+        _ = (job_id, limit)
+        return []
 
     async def wake(
         self,
@@ -112,27 +165,6 @@ class _ControllerCronBackend(CronToolBackend):
         await self._message_handler.publish_user_messages(msg)
         return {"queued": True}
 
-    def _serialize_runs(self) -> list[dict[str, Any]]:
-        scheduler = getattr(self._controller, "_scheduler", None)
-        run_map = getattr(scheduler, "_runs", {}) if scheduler is not None else {}
-        if not isinstance(run_map, dict):
-            return []
-        rows: list[dict[str, Any]] = []
-        for state in run_map.values():
-            if hasattr(state, "to_dict"):
-                try:
-                    rows.append(state.to_dict())
-                    continue
-                except Exception:
-                    pass
-            if hasattr(state, "__dict__"):
-                rows.append({k: v for k, v in vars(state).items() if not k.startswith("_")})
-        rows.sort(
-            key=lambda item: item.get("started_at") or item.get("finished_at") or 0.0,
-            reverse=True,
-        )
-        return rows
-
     @staticmethod
     def _to_backend_job(job: dict[str, Any]) -> dict[str, Any]:
         row = dict(job)
@@ -162,25 +194,6 @@ class _ControllerCronBackend(CronToolBackend):
         row.setdefault("compat_mode", "legacy")
         return row
 
-    @staticmethod
-    def _to_legacy_create_params(
-        params: dict[str, Any],
-        *,
-        context: CronToolContext | None,
-    ) -> dict[str, Any]:
-        payload = dict(params or {})
-        out = _extract_legacy_params(payload, context=context, require_schedule=True)
-        return out
-
-    @staticmethod
-    def _to_legacy_patch(
-        patch: dict[str, Any],
-        *,
-        context: CronToolContext | None,
-    ) -> dict[str, Any]:
-        payload = dict(patch or {})
-        return _extract_legacy_params(payload, context=context, require_schedule=False)
-
 
 def _extract_legacy_params(
     payload: dict[str, Any],
@@ -189,6 +202,16 @@ def _extract_legacy_params(
     require_schedule: bool,
 ) -> dict[str, Any]:
     data = dict(payload or {})
+    context_channel = str((context.channel_id if context else "") or "").strip()
+    context_target = ""
+    if context_channel:
+        if context_channel.startswith("feishu_enterprise:"):
+            context_target = normalize_target_channel_id(
+                context_channel,
+                default=CronTargetChannel.WEB.value,
+            )
+        elif is_valid_target_channel_id(context_channel):
+            context_target = context_channel
     if "schedule" in data or "payload" in data or "delivery" in data:
         schedule = data.get("schedule") if isinstance(data.get("schedule"), dict) else {}
         kind = str(schedule.get("kind") or "cron").strip().lower()
@@ -219,12 +242,41 @@ def _extract_legacy_params(
         )
 
         delivery = data.get("delivery") if isinstance(data.get("delivery"), dict) else {}
+        logger.info(
+            "[CronRuntimeBridge] _extract_legacy_params: delivery.channel=%s data.targets=%s context.channel_id=%s",
+            delivery.get("channel"),
+            data.get("targets"),
+            (context.channel_id if context else None),
+        )
         targets = str(
             delivery.get("channel")
             or data.get("targets")
             or (context.channel_id if context else "")
             or CronTargetChannel.WEB.value
         ).strip() or CronTargetChannel.WEB.value
+        # Per-request routing: when DeepAgent tool injects implicit delivery.channel=web,
+        # use current request context channel instead of sticky tool-level default.
+        has_context_target = bool(context_target)
+        is_web_target = targets == CronTargetChannel.WEB.value
+        has_explicit_targets = "targets" in data
+        has_delivery_channel = "channel" in delivery
+        should_use_context_target = (
+            has_context_target
+            and is_web_target
+            and not has_explicit_targets
+            and has_delivery_channel
+        )
+        if should_use_context_target:
+            logger.info(
+                "[CronRuntimeBridge] map implicit web target to request context: %s -> %s",
+                targets,
+                context_target,
+            )
+            targets = context_target
+        logger.info(
+            "[CronRuntimeBridge] _extract_legacy_params: resolved targets=%s",
+            targets,
+        )
 
         out: dict[str, Any] = {}
         if cron_expr or require_schedule:
@@ -237,6 +289,8 @@ def _extract_legacy_params(
             out["targets"] = targets
         if "name" in data:
             out["name"] = str(data.get("name") or "").strip()
+        if "id" in data:
+            out["id"] = str(data.get("id") or "").strip()
         if "enabled" in data:
             out["enabled"] = bool(data.get("enabled"))
         if "wake_offset_seconds" in data:
@@ -263,17 +317,13 @@ class CronRuntimeBridge:
         if self._resolved_backend is not None:
             return self._resolved_backend
 
-        controller = self._resolve_controller()
-        if controller is None:
-            return None
-
         message_handler = None
         try:
             message_handler = MessageHandler.get_instance()
         except RuntimeError:
             message_handler = None
 
-        backend = _ControllerCronBackend(controller, message_handler=message_handler)
+        backend: CronToolBackend = _CronToolsCronBackend(CronTools(), message_handler=message_handler)
         self._resolved_backend = backend
         return backend
 
@@ -286,30 +336,5 @@ class CronRuntimeBridge:
             backend,
             context=context,
             target_channels=[channel.value for channel in CronTargetChannel],
-            default_target_channel=CronTargetChannel.WEB.value,
+            default_target_channel=None,
         )
-
-    @staticmethod
-    def _resolve_controller() -> CronController | None:
-        try:
-            return CronController.get_instance()
-        except RuntimeError:
-            pass
-
-        try:
-            message_handler = MessageHandler.get_instance()
-        except RuntimeError:
-            return None
-
-        agent_client = getattr(message_handler, "_agent_client", None)
-        if agent_client is None:
-            logger.warning("[CronRuntimeBridge] message handler is missing agent client")
-            return None
-
-        store = CronJobStore()
-        scheduler = CronSchedulerService(
-            store=store,
-            agent_client=agent_client,
-            message_handler=message_handler,
-        )
-        return CronController.get_instance(store=store, scheduler=scheduler)
