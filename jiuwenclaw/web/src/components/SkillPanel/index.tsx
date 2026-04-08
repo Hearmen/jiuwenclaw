@@ -29,6 +29,8 @@ type SkillItem = {
   origin?: string;
   /** 是否为内置技能（不允许删除） */
   is_builtin?: boolean;
+  /** 是否为内置技能的来源（源码中存在内置版本） */
+  is_builtin_source?: boolean;
   /** 本地技能目录是否存在 evolutions.json */
   has_evolutions?: boolean;
 };
@@ -62,9 +64,11 @@ interface SkillPanelProps {
   onNavigateToConfig?: () => void;
 }
 
-function getSourceLabel(source: string, t: (key: string) => string): string {
+function getSourceLabel(source: string, t: (key: string) => string, isBuiltinSource?: boolean): string {
+  if (isBuiltinSource) return t('skills.source.builtin');
   if (source === "local") return t('skills.source.local');
   if (source === "project") return t('skills.source.project');
+  if (source === "builtin") return t('skills.source.builtin');
   return source || t('skills.source.unknown');
 }
 
@@ -265,10 +269,43 @@ export function SkillPanel({ sessionId, onNavigateToConfig }: SkillPanelProps) {
 
   const handleInstall = useCallback(
     async (skillName?: string) => {
-      const marketplaceNames = marketplaces.map((m) => m.name).join(", ");
       const targetSkill = skillName
         ? skills.find((skill) => skill.name === skillName)
         : undefined;
+
+      // 内置技能的安装：自动使用 builtin marketplace，不需要用户输入
+      if (targetSkill?.is_builtin && targetSkill?.is_builtin_source) {
+        const spec = `${skillName}@builtin`;
+        setActionTarget(spec);
+        setMessage(null);
+        setMessageType(null);
+        try {
+          const data = await webRequest<{
+            success: boolean;
+            detail?: string;
+            message?: string;
+          }>("skills.install", withSession({ spec, force: false }));
+          if (!data.success) {
+            throw new Error(data.detail || data.message || t('skills.errors.installFailed'));
+          }
+          setMessage(t('skills.messages.installed', { spec }));
+          setMessageType("success");
+          await fetchSkills();
+          if (selectedSkill) {
+            await fetchSkillDetail(selectedSkill.name);
+          }
+        } catch (error) {
+          console.error(error);
+          setMessage(t('skills.errors.installFailedHint'));
+          setMessageType("error");
+        } finally {
+          setActionTarget(null);
+        }
+        return;
+      }
+
+      // 其他技能的安装：提示用户输入 spec
+      const marketplaceNames = marketplaces.map((m) => m.name).join(", ");
       const preferredMarketplace =
         targetSkill?.marketplace ||
         (targetSkill &&
@@ -316,7 +353,7 @@ export function SkillPanel({ sessionId, onNavigateToConfig }: SkillPanelProps) {
         setActionTarget(null);
       }
     },
-    [fetchSkills, fetchSkillDetail, selectedSkill, marketplaces, skills, withSession]
+    [fetchSkills, fetchSkillDetail, selectedSkill, marketplaces, skills, withSession, t]
   );
 
   const handleImportLocal = useCallback(async () => {
@@ -394,14 +431,19 @@ export function SkillPanel({ sessionId, onNavigateToConfig }: SkillPanelProps) {
   const renderActionButton = (skill: SkillItem) => {
     const plugin = installedSkillMap.get(skill.name);
 
-    // 内置技能不允许卸载
-    if (skill.is_builtin) {
+    // 未安装到用户目录的内置技能（来自内置目录，需要安装）
+    // 判断条件：is_builtin_source 为 true 且不在已安装列表中
+    const isInstalled = installedSkillMap.has(skill.name) || skill.source === "local";
+    if (skill.is_builtin_source && !isInstalled) {
       return (
         <button
-          className="px-3 py-1.5 rounded-md text-sm bg-secondary text-text-muted cursor-not-allowed whitespace-nowrap"
-          disabled
+          onClick={(event) => {
+            event.stopPropagation();
+            handleInstall(skill.name);
+          }}
+          className={`px-3 py-1.5 rounded-md text-sm transition-colors whitespace-nowrap bg-accent text-white hover:bg-accent-hover`}
         >
-          {t('skills.builtIn')}
+          {t('skills.actions.install')}
         </button>
       );
     }
@@ -470,6 +512,29 @@ export function SkillPanel({ sessionId, onNavigateToConfig }: SkillPanelProps) {
       );
     }
 
+    // 已安装到用户目录的内置技能（从内置目录复制过来的）
+    // 这种情况下 source 可能是 "project"，但 is_builtin_source 为 true
+    // 只对已安装的内置技能显示卸载按钮
+    if (skill.is_builtin_source && isInstalled) {
+      const isLoading = actionTarget === skill.name;
+      return (
+        <button
+          onClick={(event) => {
+            event.stopPropagation();
+            handleUninstall(skill.name);
+          }}
+          className={`px-3 py-1.5 rounded-md text-sm transition-colors whitespace-nowrap ${
+            isLoading
+              ? "bg-secondary text-text-muted cursor-not-allowed"
+              : "bg-danger text-white hover:bg-danger/90"
+          }`}
+          disabled={isLoading}
+        >
+          {t('skills.actions.uninstall')}
+        </button>
+      );
+    }
+
     // 默认显示内置（兜底）
     return (
       <button
@@ -482,9 +547,12 @@ export function SkillPanel({ sessionId, onNavigateToConfig }: SkillPanelProps) {
   };
 
   const renderStatus = (skill: SkillItem) => {
-    if (skill.is_builtin) return t('skills.status.installed');
     if (installedSkillMap.has(skill.name)) return t('skills.status.installed');
     if (skill.source === "local") return t('skills.status.installed');
+    if (skill.is_builtin) {
+      // 未安装的内置技能
+      return t('skills.status.notInstalled');
+    }
     if (skill.source !== "project") return t('skills.status.notInstalled');
     return t('skills.status.builtIn');
   };
@@ -593,7 +661,7 @@ export function SkillPanel({ sessionId, onNavigateToConfig }: SkillPanelProps) {
                   </div>
                   <div className="flex flex-wrap gap-2 mt-3 text-xs text-text-muted">
                     <span className="px-2 py-1 rounded-full bg-secondary border border-border">
-                      {t('skills.sourceLabel')}: {getSourceLabel(selectedSkill.source, t)}
+                      {t('skills.sourceLabel')}: {getSourceLabel(selectedSkill.source, t, selectedSkill.is_builtin_source)}
                     </span>
                     <span className="px-2 py-1 rounded-full bg-secondary border border-border">
                       {t('skills.versionLabel')}: {selectedSkill.version || 'unknown'}
@@ -685,7 +753,7 @@ export function SkillPanel({ sessionId, onNavigateToConfig }: SkillPanelProps) {
                         </div>
                         <div className="flex flex-wrap gap-2 mt-3 text-xs text-text-muted">
                           <span className="px-2 py-1 rounded-full bg-secondary border border-border">
-                            {t('skills.sourceLabel')}: {getSourceLabel(skill.source, t)}
+                            {t('skills.sourceLabel')}: {getSourceLabel(skill.source, t, skill.is_builtin_source)}
                           </span>
                           <span className="px-2 py-1 rounded-full bg-secondary border border-border">
                             {t('skills.statusLabel')}: {renderStatus(skill)}

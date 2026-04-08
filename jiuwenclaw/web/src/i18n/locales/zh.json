@@ -532,6 +532,7 @@
     "source": {
       "local": "本地",
       "project": "项目",
+      "builtin": "内置",
       "unknown": "未知"
     },
     "sourceLabel": "来源",

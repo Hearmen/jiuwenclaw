@@ -532,6 +532,7 @@
     "source": {
       "local": "Local",
       "project": "Project",
+      "builtin": "Built-in",
       "unknown": "Unknown"
     },
     "sourceLabel": "Source",

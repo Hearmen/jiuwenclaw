@@ -456,7 +456,6 @@ def prepare_workspace(overwrite: bool = True, preferred_language: Optional[str] 
     else:
         deepagent_workspace.mkdir(parents=True, exist_ok=True)
     _copy_dir(template_agent_memory, agent_memory, ignore_patterns=("*_ZH.md", "*_EN.md"))
-    _copy_dir(template_agent_skills, agent_skills)
 
     # Copy multi-language files based on resolved language
     # Files with _ZH/_EN suffix are copied to the workspace without suffix
@@ -699,7 +698,13 @@ def get_deepagent_user_md_path() -> Path:
 def get_builtin_skills_dir() -> Path:
     """Get the built-in skills directory from package resources."""
     package_root = _find_package_root()
-    return package_root / "resources" / "agent" / "skills"
+    # 优先检查 jiuwenclaw_workspace/skills 目录（标准布局）
+    primary_path = package_root / "resources" / "agent" / "jiuwenclaw_workspace" / "skills"
+    if primary_path.exists() and primary_path.is_dir():
+        return primary_path
+    # 回退到 skills 目录
+    fallback_path = package_root / "resources" / "agent" / "skills"
+    return fallback_path
 
 
 def get_agent_sessions_dir() -> Path:

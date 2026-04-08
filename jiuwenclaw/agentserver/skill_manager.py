@@ -192,8 +192,9 @@ class SkillManager:
         if refresh_marketplaces:
             await self._sync_marketplace_repos()
         local = self._scan_local_skills()
+        builtin = self._scan_builtin_skills()
         marketplace = self._scan_marketplace_skills()
-        out: dict[str, Any] = {"skills": local + marketplace}
+        out: dict[str, Any] = {"skills": local + builtin + marketplace}
         if bool(params.get("with_installed", False)):
             installed = await self.handle_skills_installed(params)
             out["plugins"] = installed.get("plugins") or []
@@ -248,6 +249,12 @@ class SkillManager:
                 meta["file_path"] = meta.pop("path", "")
                 meta["source"] = self._resolve_skill_source(meta.get("name", ""))
                 meta["is_builtin"] = self._is_builtin_skill(meta.get("name", ""), self._get_installed_plugins(), child)
+                builtin_dir = get_builtin_skills_dir()
+                if builtin_dir.exists():
+                    builtin_skill_path = builtin_dir / child.name
+                    meta["is_builtin_source"] = builtin_skill_path.exists() and builtin_skill_path.is_dir()
+                else:
+                    meta["is_builtin_source"] = False
                 meta["has_evolutions"] = (child / _EVOLUTION_FILENAME).is_file()
                 return meta
 
@@ -271,6 +278,7 @@ class SkillManager:
                         meta["source"] = marketplace_name
                         meta["marketplace"] = marketplace_name
                         meta["is_builtin"] = False
+                        meta["is_builtin_source"] = False
                         meta["has_evolutions"] = False
                         return meta
 
@@ -416,10 +424,13 @@ class SkillManager:
         if not plugin_name or not marketplace_name:
             return {"success": False, "detail": "plugin 或 marketplace 名称为空"}
 
+        if marketplace_name == "builtin":
+            return await self.handle_skills_install_builtin({"name": plugin_name})
+
         # 查找 marketplace 配置
         marketplace = None
         for m in self._get_marketplaces():
-            if m.get("name") == marketplace_name:
+            if m.get("name") == marketplace:
                 marketplace = m
                 break
         if marketplace is None:
@@ -471,6 +482,52 @@ class SkillManager:
             "source": marketplace_name,
             "installed_at": datetime.now(timezone.utc).isoformat(),
         })
+        self._refresh_agent_data_indexes()
+
+        return {"success": True}
+
+    async def handle_skills_install_builtin(self, params: dict) -> dict:
+        """安装内置技能.
+
+        params:
+            name: skill 名称
+        """
+        name = params.get("name", "")
+        if not name:
+            return {"success": False, "detail": "缺少参数: name"}
+
+        builtin_dir = get_builtin_skills_dir()
+        if not builtin_dir.exists():
+            return {"success": False, "detail": "内置技能目录不存在"}
+
+        src = builtin_dir / name
+        if not src.exists() or not src.is_dir():
+            return {"success": False, "detail": f"未找到内置技能: {name}"}
+
+        # 检查是否已经安装
+        dest = get_agent_skills_dir() / name
+        if dest.exists() and dest.is_dir():
+            return {"success": False, "detail": f"技能 {name} 已经安装"}
+
+        # 复制技能到用户目录
+        try:
+            shutil.copytree(src, dest)
+        except Exception as exc:
+            logger.error("安装内置技能失败: %s", exc)
+            return {"success": False, "detail": f"安装失败: {exc}"}
+
+        # 记录安装信息到状态文件
+        meta = self._parse_skill_md(self._try_find_skill_file(dest)) or {}
+        self._add_installed_plugin({
+            "name": name,
+            "marketplace": "builtin",
+            "version": meta.get("version", ""),
+            "commit": "",
+            "source": "builtin",
+            "installed_at": datetime.now(timezone.utc).isoformat(),
+        })
+
+        # 刷新索引
         self._refresh_agent_data_indexes()
 
         return {"success": True}
@@ -871,7 +928,7 @@ class SkillManager:
                         "installed_at": datetime.now(timezone.utc).isoformat(),
                     })
                     self._refresh_agent_data_indexes()
-
+                    _safe_rmtree(skill_dir)
                     return {
                         "success": True,
                         "skill": {"name": skill_name, "source": "clawhub"},
@@ -1034,7 +1091,7 @@ class SkillManager:
                         _safe_rmtree(mirror_dest)
                     mirror_root.mkdir(parents=True, exist_ok=True)
                     shutil.copytree(skill_dir, mirror_dest)
-
+                _safe_rmtree(skill_dir)
                 return {
                     "ok": True,
                     "skill_name": skill_name,
@@ -1069,10 +1126,15 @@ class SkillManager:
         if not name:
             return {"success": False, "detail": "缺少参数: name"}
 
-        # 内置技能不允许删除（传入实际路径判断）
+        # 检查是否为真正的内置技能（源码目录中的，不允许删除）
+        # 只有当当前运行的技能目录就是内置目录时，才不允许删除
         dest = self._skills_dir / name
-        if self._is_builtin_skill(name, self._get_installed_plugins(), dest):
-            return {"success": False, "detail": "内置技能不允许删除"}
+        builtin_dir = get_builtin_skills_dir()
+        if builtin_dir.exists():
+            builtin_skill_path = builtin_dir / name
+            if builtin_skill_path.exists() and builtin_skill_path.is_dir():
+                if dest.resolve() == builtin_skill_path.resolve():
+                    return {"success": False, "detail": "内置技能不允许删除"}
 
         if dest.exists() and dest.is_dir():
             _safe_rmtree(dest)
@@ -1433,7 +1495,52 @@ class SkillManager:
             meta["source"] = source
             # 判断是否为内置技能（传入 child 路径，通过实际路径判断）
             meta["is_builtin"] = self._is_builtin_skill(meta.get("name", ""), self._get_installed_plugins(), child)
+            builtin_dir = get_builtin_skills_dir()
+            if builtin_dir.exists():
+                builtin_skill_path = builtin_dir / child.name
+                meta["is_builtin_source"] = builtin_skill_path.exists() and builtin_skill_path.is_dir()
+            else:
+                meta["is_builtin_source"] = False
             meta["has_evolutions"] = (child / _EVOLUTION_FILENAME).is_file()
+            # 不在列表中返回 body
+            meta.pop("body", None)
+            results.append(meta)
+
+        return results
+
+    def _scan_builtin_skills(self) -> list[dict]:
+        """扫描内置技能目录中尚未安装到用户目录的技能.
+
+        返回的技能列表仅包含那些存在于内置目录但尚未在用户目录中的技能。
+        """
+        results: list[dict] = []
+        builtin_dir = get_builtin_skills_dir()
+        user_skills_dir = get_agent_skills_dir()
+
+        if not builtin_dir.exists() or not builtin_dir.is_dir():
+            return results
+
+        for child in builtin_dir.iterdir():
+            if not child.is_dir() or child.name.startswith("_"):
+                continue
+
+            # 检查该技能是否已经在用户目录中安装
+            user_skill_path = user_skills_dir / child.name
+            if user_skill_path.exists() and user_skill_path.is_dir():
+                continue  # 已安装，跳过
+
+            md = self._try_find_skill_file(child)
+            if md is None:
+                continue
+            meta = self._parse_skill_md(md)
+            if meta is None:
+                continue
+
+            # 设置内置技能的标记
+            meta["source"] = "builtin"
+            meta["is_builtin"] = True
+            meta["is_builtin_source"] = True  # 这是内置技能来源
+            meta["has_evolutions"] = False
             # 不在列表中返回 body
             meta.pop("body", None)
             results.append(meta)
