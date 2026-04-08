@@ -532,3 +532,23 @@ class JiuWenClaw:
             payload={"is_complete": True},
             is_complete=True,
         )
+
+    # ---------- 资源清理 ----------
+
+    async def cleanup(self) -> None:
+        """清理资源，准备销毁实例.
+
+        每次 initialize 重建 agent 时调用。
+        不清理记忆数据（记忆数据保留在文件系统中）。
+        """
+        logger.info("[JiuWenClaw] cleanup: 清理资源")
+
+        if self._adapter is not None:
+            try:
+                if hasattr(self._adapter, "cleanup"):
+                    await self._adapter.cleanup()
+            except Exception as e:
+                logger.warning("[JiuWenClaw] Adapter cleanup failed: %s", e)
+            self._adapter = None
+
+        logger.info("[JiuWenClaw] cleanup: 完成")

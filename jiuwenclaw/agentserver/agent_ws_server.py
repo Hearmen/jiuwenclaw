@@ -32,6 +32,7 @@ from jiuwenclaw.schema.agent import AgentRequest, AgentResponse, AgentResponseCh
 from jiuwenclaw.schema.hook_event import AgentServerHookEvents
 from jiuwenclaw.agentserver.extensions import get_rail_manager
 from jiuwenclaw.schema.hooks_context import AgentServerChatHookContext
+from jiuwenclaw.agentserver.agent_manager import AgentManager, ACP_DEFAULT_CAPABILITIES
 
 
 logger = logging.getLogger(__name__)
@@ -73,14 +74,12 @@ class AgentWebSocketServer:
 
     def __init__(
         self,
-        agent=None,
         host: str = "127.0.0.1",
         port: int = 18000,
         *,
         ping_interval: float | None = 30.0,
         ping_timeout: float | None = 300.0,
     ) -> None:
-        self._agent = agent
         self._host = host
         self._port = port
         self._ping_interval = ping_interval
@@ -89,12 +88,13 @@ class AgentWebSocketServer:
         # 当前 Gateway 连接，用于 send_push 主动推送
         self._current_ws: Any = None
         self._current_send_lock: asyncio.Lock | None = None
+        # AgentManager 实例
+        self._agent_manager = AgentManager()
 
     @classmethod
     def get_instance(
         cls,
         *,
-        agent: Any = None,
         host: str = "127.0.0.1",
         port: int = 18000,
         ping_interval: float | None = 30.0,
@@ -102,13 +102,11 @@ class AgentWebSocketServer:
     ) -> "AgentWebSocketServer":
         """返回单例实例。
 
-        首次调用时 agent 可选（若未提供则在 start() 时自动创建 JiuWenClaw 实例）。
-        后续调用可省略所有参数，返回已存在的实例。
+        首次调用时创建实例，后续调用返回已存在的实例。
         """
         if cls._instance is not None:
             return cls._instance
         cls._instance = cls(
-            agent=agent,
             host=host,
             port=port,
             ping_interval=ping_interval,
@@ -133,12 +131,6 @@ class AgentWebSocketServer:
 
     async def start(self) -> None:
         """启动 WebSocket 服务端，开始监听连接。优先使用 legacy.server.serve 以与 Gateway 的 legacy client 握手兼容."""
-        if self._agent is None:
-            from jiuwenclaw.agentserver.interface import JiuWenClaw
-            self._agent = JiuWenClaw()
-            await self._agent.create_instance()
-            logger.info("[AgentWebSocketServer] 已自动创建 JiuWenClaw 实例")
-
         if self._server is not None:
             logger.warning("[AgentWebSocketServer] 服务端已在运行")
             return
@@ -354,7 +346,24 @@ class AgentWebSocketServer:
 
     async def _handle_unary(self, ws: Any, request: AgentRequest, send_lock: asyncio.Lock) -> None:
         """非流式处理：调用 process_message，返回一条 E2AResponse 线 JSON。"""
-        resp = await self._agent.process_message(request)
+        from jiuwenclaw.schema.message import ReqMethod
+
+        channel_id = request.channel_id or "default"
+
+        if request.req_method == ReqMethod.INITIALIZE:
+            await self._handle_initialize(ws, request, send_lock)
+            return
+
+        if request.req_method == ReqMethod.SESSION_CREATE:
+            await self._handle_session_create(ws, request, send_lock)
+            return
+
+        agent = await self._agent_manager.get_agent(channel_id=channel_id)
+        if agent is None:
+            raise ValueError("Failed to get agent")
+
+        resp = await agent.process_message(request)
+
         wire = encode_agent_response_for_wire(resp, response_id=request.request_id)
         async with send_lock:
             await ws.send(json.dumps(wire, ensure_ascii=False))
@@ -365,8 +374,16 @@ class AgentWebSocketServer:
 
     async def _handle_stream(self, ws: Any, request: AgentRequest, send_lock: asyncio.Lock) -> None:
         """流式处理：调用 process_message_stream，逐条发送 E2AResponse 线 JSON。"""
+        from jiuwenclaw.schema.message import ReqMethod
+
+        channel_id = request.channel_id or "default"
+
+        agent = await self._agent_manager.get_agent(channel_id=channel_id)
+        if agent is None:
+            raise ValueError("Failed to get agent")
+
         chunk_count = 0
-        async for chunk in self._agent.process_message_stream(request):
+        async for chunk in agent.process_message_stream(request):
             chunk_count += 1
             wire = encode_agent_chunk_for_wire(
                 chunk,
@@ -551,7 +568,12 @@ class AgentWebSocketServer:
             params = request.params or {}
             config_payload = params.get("config")
             env_overrides = params.get("env")
-            await self._agent.reload_agent_config(
+
+            agent = await self._agent_manager.get_agent(channel_id="default")
+            if agent is None:
+                raise ValueError("Failed to get default agent")
+
+            await agent.reload_agent_config(
                 config_base=config_payload,
                 env_overrides=env_overrides,
             )
@@ -751,7 +773,12 @@ class AgentWebSocketServer:
             logger.warning("[AgentWebSocketServer] send_push 失败: %s", e)
 
     def get_agent(self):
-        return getattr(self._agent, "_instance", None)
+        """获取 default agent 实例（向后兼容）."""
+        return self._agent_manager.get_agent_nowait()
+
+    def get_agent_manager(self) -> AgentManager:
+        """获取 AgentManager 实例."""
+        return self._agent_manager
     
     @staticmethod
     def get_conversation_history(session_id: str, page_idx: int) -> dict[str, Any] | None:
@@ -785,3 +812,100 @@ class AgentWebSocketServer:
             "total_pages": total_pages,
             "page_idx": page_idx,
         }
+
+    async def _handle_initialize(
+        self, ws: Any, request: AgentRequest, send_lock: asyncio.Lock
+    ) -> None:
+        """处理 initialize 方法（非流式）.
+
+        调用 AgentManager.initialize 完成初始化，返回 capabilities。
+
+        Args:
+            ws: WebSocket 连接
+            request: AgentRequest
+            send_lock: 发送锁
+        """
+        logger.info("[AgentServer] initialize: request_id=%s", request.request_id)
+
+        try:
+            params = request.params if isinstance(request.params, dict) else {}
+            client_capabilities = params.get("clientCapabilities", {})
+
+            extra_config = {
+                "protocol_version": params.get("protocolVersion", "0.1.0"),
+                "client_capabilities": client_capabilities,
+            }
+
+            channel_id = request.channel_id or "default"
+            capabilities = await self._agent_manager.initialize(
+                channel_id=channel_id,
+                extra_config=extra_config,
+            )
+            if capabilities is None:
+                capabilities = ACP_DEFAULT_CAPABILITIES.copy()
+
+            resp = AgentResponse(
+                request_id=request.request_id,
+                channel_id=request.channel_id,
+                ok=True,
+                payload=capabilities,
+            )
+            wire = encode_agent_response_for_wire(resp, response_id=request.request_id)
+            async with send_lock:
+                await ws.send(json.dumps(wire, ensure_ascii=False))
+
+            logger.info("[AgentServer] initialize completed: capabilities=%s", capabilities)
+
+        except Exception as e:
+            logger.exception("[AgentServer] initialize failed: %s", e)
+            resp = AgentResponse(
+                request_id=request.request_id,
+                channel_id=request.channel_id,
+                ok=False,
+                payload={"error": str(e)},
+            )
+            wire = encode_agent_response_for_wire(resp, response_id=request.request_id)
+            async with send_lock:
+                await ws.send(json.dumps(wire, ensure_ascii=False))
+
+    async def _handle_session_create(
+        self, ws: Any, request: AgentRequest, send_lock: asyncio.Lock
+    ) -> None:
+        """处理 session.create 方法.
+
+        调用 AgentManager.create_session 创建会话，返回 session_id。
+
+        Args:
+            ws: WebSocket 连接
+            request: AgentRequest
+            send_lock: 发送锁
+        """
+        logger.info("[AgentServer] session.create: request_id=%s", request.request_id)
+
+        try:
+            channel_id = request.channel_id or "default"
+            session_id = await self._agent_manager.create_session(channel_id=channel_id)
+
+            resp = AgentResponse(
+                request_id=request.request_id,
+                channel_id=request.channel_id,
+                ok=True,
+                payload={"sessionId": session_id},
+            )
+            wire = encode_agent_response_for_wire(resp, response_id=request.request_id)
+            async with send_lock:
+                await ws.send(json.dumps(wire, ensure_ascii=False))
+
+            logger.info("[AgentServer] session.create completed: session_id=%s", session_id)
+
+        except Exception as e:
+            logger.exception("[AgentServer] session.create failed: %s", e)
+            resp = AgentResponse(
+                request_id=request.request_id,
+                channel_id=request.channel_id,
+                ok=False,
+                payload={"error": str(e)},
+            )
+            wire = encode_agent_response_for_wire(resp, response_id=request.request_id)
+            async with send_lock:
+                await ws.send(json.dumps(wire, ensure_ascii=False))

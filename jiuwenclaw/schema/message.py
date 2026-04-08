@@ -8,6 +8,8 @@ from typing import Any, Literal
 
 
 class ReqMethod(Enum):
+    INITIALIZE = "initialize"
+
     CHAT_SEND = "chat.send"
     CHAT_RESUME = "chat.resume"
     CHAT_CANCEL = "chat.interrupt"
