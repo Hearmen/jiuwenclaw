@@ -40,6 +40,11 @@ load_dotenv(dotenv_path=get_env_file())
 
 logger = logging.getLogger(__name__)
 
+# SkillDev 请求方法集合（统一委托给 SkillDevService）
+_SKILLDEV_METHODS: frozenset[ReqMethod] = frozenset(
+    m for m in ReqMethod if m.value.startswith("skilldev.")
+)
+
 _SKILL_ROUTES: dict[ReqMethod, str] = {
     ReqMethod.SKILLS_LIST: "handle_skills_list",
     ReqMethod.SKILLS_INSTALLED: "handle_skills_installed",
@@ -92,6 +97,42 @@ class JiuWenClaw:
         self._session_manager = SessionManager()
         self._cron_runtime = CronRuntimeBridge()
         self._runtime_cron_tool_context = _FacadeCronToolContext()
+        
+        # SkillDev 模式：懒初始化，首次 skilldev.* 请求时构造
+        self._skilldev_service = None
+
+    def _get_skilldev_service(self):
+        """懒初始化并返回 SkillDevService 实例.
+
+        SkillDevService 是无状态的，单实例即可服务所有请求。
+        首次调用时从当前 JiuWenClaw 配置中提取最小依赖并构造。
+        """
+        if self._skilldev_service is not None:
+            return self._skilldev_service
+
+        from jiuwenclaw.agentserver.skilldev import SkillDevDeps, SkillDevService, StateStore, WorkspaceProvider
+        from jiuwenclaw.utils import get_workspace_dir
+        from jiuwenclaw.agentserver.tools.mcp_toolkits import get_mcp_tools
+
+        skilldev_base = get_workspace_dir() / "skilldev"
+        state_store = StateStore(skilldev_base)
+        workspace_provider = WorkspaceProvider(skilldev_base)
+
+        config = get_config()
+        model_configs = config.get("models", {})
+        default_model = model_configs.get("default", {})
+
+        deps = SkillDevDeps(
+            model_name=default_model.get("model_name", ""),
+            model_client_config=default_model.get("model_client_config", {}),
+            mcp_tools_factory=get_mcp_tools,   # 直接复用已加载的 MCP 工具工厂
+            sysop_config=None,
+            state_store=state_store,
+            workspace_provider=workspace_provider,
+        )
+        self._skilldev_service = SkillDevService(deps)
+        logger.info("[JiuWenClaw] SkillDevService 初始化完成")
+        return self._skilldev_service
 
     def _ensure_adapter(self) -> AgentAdapter:
         """确保 adapter 已初始化，如果未初始化则根据环境变量创建."""
@@ -214,6 +255,35 @@ class JiuWenClaw:
 
         return interactive_input
 
+    async def _handle_skilldev_request(self, request: AgentRequest) -> AgentResponse | None:
+        """处理 SkillDev 相关请求，返回 None 表示不是 SkillDev 请求."""
+        if request.req_method not in _SKILLDEV_METHODS:
+            return None
+
+        service = self._get_skilldev_service()
+        try:
+            chunks = []
+            async for chunk in service.handle(request):
+                chunks.append(chunk)
+            final = chunks[-1] if chunks else None
+            payload = final.payload if final else {}
+        except Exception as exc:
+            logger.error("[JiuWenClaw] skilldev 请求处理失败: %s", exc)
+            return AgentResponse(
+                request_id=request.request_id,
+                channel_id=request.channel_id,
+                ok=False,
+                payload={"error": str(exc)},
+                metadata=request.metadata,
+            )
+        return AgentResponse(
+            request_id=request.request_id,
+            channel_id=request.channel_id,
+            ok=True,
+            payload=payload,
+            metadata=request.metadata,
+        )
+
     async def _handle_skills_request(self, request: AgentRequest) -> AgentResponse | None:
         """处理 Skills 相关请求，返回 None 表示不是 Skills 请求."""
         if request.req_method not in _SKILL_ROUTES:
@@ -306,6 +376,10 @@ class JiuWenClaw:
         heartbeat_response = await adapter.handle_heartbeat(request)
         if heartbeat_response is not None:
             return heartbeat_response
+        
+        skilldev_response = await self._handle_skilldev_request(request)
+        if skilldev_response is not None:
+            return skilldev_response
 
         skills_response = await self._handle_skills_request(request)
         if skills_response is not None:
@@ -383,6 +457,22 @@ class JiuWenClaw:
 
         支持多 session 并发执行，同 session 内任务按先进后出顺序执行.
         """
+        # SkillDev 流式请求：直接委托给 SkillDevService，绕过 ReActAgent
+        if request.req_method in _SKILLDEV_METHODS:
+            service = self._get_skilldev_service()
+            try:
+                async for chunk in service.handle(request):
+                    yield chunk
+            except Exception as exc:
+                logger.error("[JiuWenClaw] skilldev 流式请求处理失败: %s", exc)
+                yield AgentResponseChunk(
+                    request_id=request.request_id,
+                    channel_id=request.channel_id,
+                    payload={"event_type": "skilldev.error", "error": str(exc)},
+                    is_complete=True,
+                )
+            return
+
         adapter = self._ensure_adapter()
 
         session_id = self._session_manager.get_session_id(request.session_id)
