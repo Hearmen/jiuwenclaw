@@ -1430,6 +1430,10 @@ class JiuWenClawDeepAdapter:
         a non-empty user message. Reading HEARTBEAT.md and injecting its content
         into the system prompt is handled by HeartbeatRail in before_model_call.
         """
+        sid = str(request.session_id or "")
+        if not sid.startswith("heartbeat"):
+            return None
+
         request.params["query"] = "根据heartbeat section内容执行任务. 如果没有或内容为空, 仅回复HEARTBEAT_OK"
         logger.info(
             "[JiuWenClawDeepAdapter] heartbeat query injected:"
