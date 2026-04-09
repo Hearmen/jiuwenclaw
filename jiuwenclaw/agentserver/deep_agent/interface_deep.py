@@ -2063,6 +2063,14 @@ class JiuWenClawDeepAdapter:
                         )
                         accumulated_reasoning = ""
                     if has_streamed_content:
+                        parsed = self._parse_stream_chunk(chunk, _has_streamed_content=True)
+                        if parsed is not None:
+                            yield AgentResponseChunk(
+                                request_id=rid,
+                                channel_id=cid,
+                                payload=parsed,
+                                is_complete=False,
+                            )
                         continue
                     parsed = self._parse_stream_chunk(chunk)
                     if parsed is not None:
@@ -2259,7 +2267,7 @@ class JiuWenClawDeepAdapter:
                         is_chunked = False
 
                     if _has_streamed_content and not is_chunked:
-                        return {"event_type": "chat.final", "content": ""}
+                        return {"event_type": "chat.final", "content": content}
 
                     if not content:
                         return None
