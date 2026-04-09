@@ -731,7 +731,9 @@ class MessageHandler(ABC):
         try:
             resp = await self._agent_client.send_request(env)
             out = self._response_to_message(
-                resp, session_id=msg.session_id, request_metadata=msg.metadata
+                resp,
+                session_id=msg.session_id,
+                request_metadata=msg.metadata,
             )
             await self.publish_robot_messages(out)
             logger.info(
@@ -1034,7 +1036,9 @@ class MessageHandler(ABC):
                             has_processing_status_false = True
 
                 out = self._chunk_to_message(
-                    chunk, session_id=session_id, metadata=request_metadata
+                    chunk,
+                    session_id=session_id,
+                    metadata=request_metadata,
                 )
                 await self.publish_robot_messages(out)
                 logger.debug(

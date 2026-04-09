@@ -14,11 +14,14 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import json
 import logging
 import os
 import sys
 import time
+from dataclasses import dataclass
 from typing import Any
+from urllib.parse import urlparse
 
 from dotenv import load_dotenv
 from openjiuwen.core.common.logging import LogManager
@@ -40,6 +43,91 @@ for _lg in LogManager.get_all_loggers().values():
 load_dotenv(dotenv_path=get_env_file())
 
 logger = logging.getLogger(__name__)
+
+
+def _normalize_and_forward_message(msg, channel_manager) -> bool:
+    from jiuwenclaw.app_web_handlers import (
+        _FORWARD_NO_LOCAL_HANDLER_METHODS,
+        _FORWARD_REQ_METHODS,
+    )
+    from jiuwenclaw.schema.message import Message, ReqMethod
+
+    method_val = getattr(getattr(msg, "req_method", None), "value", None) or ""
+    if method_val not in _FORWARD_REQ_METHODS:
+        return False
+
+    is_stream = bool(
+        msg.is_stream
+        or method_val in (ReqMethod.CHAT_SEND.value, ReqMethod.HISTORY_GET.value)
+    )
+    params = dict(msg.params or {})
+    if "query" not in params and "content" in params:
+        params["query"] = params["content"]
+
+    normalized = Message(
+        id=msg.id,
+        type=msg.type,
+        channel_id=msg.channel_id,
+        session_id=msg.session_id,
+        params=params,
+        timestamp=msg.timestamp,
+        ok=msg.ok,
+        req_method=getattr(msg, "req_method", None) or ReqMethod.CHAT_SEND,
+        mode=msg.mode,
+        is_stream=is_stream,
+        stream_seq=msg.stream_seq,
+        stream_id=msg.stream_id,
+        metadata=msg.metadata,
+    )
+    channel_manager.deliver_to_message_handler(normalized)
+    logger.info("[App] ACP/Web inbound -> MessageHandler: id=%s channel_id=%s", msg.id, msg.channel_id)
+    return method_val in _FORWARD_NO_LOCAL_HANDLER_METHODS
+
+
+class _InboundGatewayServer:
+    """Gateway internal inbound service for forwarding channel messages to MessageHandler."""
+
+    def __init__(self, inbound_handler):
+        self._inbound_handler = inbound_handler
+        self._queue: asyncio.Queue = asyncio.Queue()
+        self._task: asyncio.Task | None = None
+        self._running = False
+
+    async def start(self) -> None:
+        if self._task is not None:
+            return
+        self._running = True
+        self._task = asyncio.create_task(self._serve_loop(), name="gateway-inbound-server")
+
+    async def stop(self) -> None:
+        self._running = False
+        task = self._task
+        self._task = None
+        if task is not None:
+            task.cancel()
+            try:
+                await task
+            except asyncio.CancelledError:
+                pass
+
+    async def handle_message(self, msg) -> bool:
+        await self._queue.put(msg)
+        return True
+
+    async def _serve_loop(self) -> None:
+        while self._running:
+            try:
+                msg = await self._queue.get()
+            except asyncio.CancelledError:
+                break
+            try:
+                handled = self._inbound_handler(msg)
+                if asyncio.iscoroutine(handled):
+                    await handled
+            except Exception:  # noqa: BLE001
+                logger.exception("[App] Gateway inbound handling failed: id=%s", getattr(msg, "id", None))
+
+
 
 
 async def _connect_with_retry(
@@ -64,7 +152,7 @@ async def _connect_with_retry(
                 )
                 raise
             logger.warning(
-                "[App] connect AgentServer failed (%d/%d): %s  retry in %s s…",
+                "[App] connect AgentServer failed (%d/%d): %s  retry in %s s...",
                 attempt,
                 max_retries,
                 exc,
@@ -73,29 +161,227 @@ async def _connect_with_retry(
             await asyncio.sleep(interval)
 
 
-async def _run(agent_server_url: str, web_host: str, web_port: int, web_path: str) -> None:
-    from jiuwenclaw.channel import (
-        DingTalkChannel,
-        DingTalkConfig,
-        WhatsAppChannel,
-        WhatsAppChannelConfig,
-        WechatChannel,
-        WechatConfig,
-    )
+@dataclass
+class GatewayServerConfig:
+    enabled: bool = True
+    host: str = "127.0.0.1"
+    port: int = 19001
+    path: str = "/acp"
+    channel_id: str = "acp"
+
+
+class GatewayServer:
+    """ACP 专用的 GatewayServer。"""
+
+    def __init__(self, config: GatewayServerConfig, router) -> None:
+        self.config = config
+        self.bus = router
+        self._server = None
+        self._running = False
+        self._on_message_cb = None
+        self._clients: set[Any] = set()
+        self._request_to_client: dict[str, Any] = {}
+        self._session_to_client: dict[str, Any] = {}
+
+    @property
+    def channel_id(self) -> str:
+        return self.config.channel_id
+
+    def on_message(self, callback) -> None:
+        self._on_message_cb = callback
+
+    async def start(self) -> None:
+        if self._running or not self.config.enabled:
+            return
+        try:
+            from websockets.legacy.server import serve as ws_serve
+        except Exception:  # pragma: no cover
+            from websockets import serve as ws_serve
+
+        self._server = await ws_serve(
+            self._connection_handler,
+            self.config.host,
+            self.config.port,
+            ping_interval=20,
+            ping_timeout=20,
+        )
+        self._running = True
+        logger.info(
+            "[App] ACP Gateway server started: ws://%s:%s%s",
+            self.config.host,
+            self.config.port,
+            self.config.path,
+        )
+
+    async def stop(self) -> None:
+        self._running = False
+        close_tasks = [client.close(code=1001, reason="server shutdown") for client in list(self._clients)]
+        if close_tasks:
+            await asyncio.gather(*close_tasks, return_exceptions=True)
+        self._clients.clear()
+        self._request_to_client.clear()
+        self._session_to_client.clear()
+        if self._server is not None:
+            self._server.close()
+            await self._server.wait_closed()
+            self._server = None
+        logger.info("[App] ACP Gateway server stopped")
+
+    async def send(self, msg) -> None:
+        ws = self._request_to_client.get(str(msg.id))
+        if ws is None and msg.session_id:
+            ws = self._session_to_client.get(str(msg.session_id))
+        if ws is None or bool(getattr(ws, "closed", False)):
+            return
+
+        if msg.type == "res":
+            payload = dict(msg.payload or {}) if isinstance(msg.payload, dict) else {}
+            frame: dict[str, Any] = {
+                "type": "res",
+                "id": msg.id,
+                "ok": bool(msg.ok),
+                "payload": payload,
+            }
+            if not msg.ok:
+                frame["error"] = str(payload.get("error") or "request failed")
+            await ws.send(json.dumps(frame, ensure_ascii=False))
+            return
+
+        event_name = "chat.final"
+        if msg.event_type is not None:
+            event_name = msg.event_type.value
+
+        if isinstance(msg.payload, dict):
+            payload = {**msg.payload}
+            payload.setdefault("session_id", msg.session_id)
+        else:
+            payload = {"session_id": msg.session_id, "content": str(msg.payload or "")}
+
+        frame = {"type": "event", "event": event_name, "payload": payload}
+        await ws.send(json.dumps(frame, ensure_ascii=False))
+
+    async def _connection_handler(self, ws: Any, path: str | None = None) -> None:
+        raw_path = path if path is not None else getattr(ws, "path", "")
+        parsed = urlparse(raw_path)
+        request_path = parsed.path or raw_path
+        if request_path != self.config.path:
+            await ws.close(code=1008, reason=f"unsupported path: {request_path}")
+            return
+
+        self._clients.add(ws)
+        try:
+            async for raw in ws:
+                await self._handle_raw_message(ws, raw)
+        finally:
+            self._clients.discard(ws)
+            stale_request_ids = [request_id for request_id, client in self._request_to_client.items() if client is ws]
+            for request_id in stale_request_ids:
+                self._request_to_client.pop(request_id, None)
+            stale_session_ids = [session_id for session_id, client in self._session_to_client.items() if client is ws]
+            for session_id in stale_session_ids:
+                self._session_to_client.pop(session_id, None)
+
+    async def _handle_raw_message(self, ws: Any, raw: str) -> None:
+        from jiuwenclaw.schema.message import Message, Mode, ReqMethod
+
+        try:
+            data = json.loads(raw)
+        except json.JSONDecodeError:
+            await ws.send(
+                json.dumps(
+                    {"type": "res", "id": "", "ok": False, "error": "invalid json"},
+                    ensure_ascii=False,
+                )
+            )
+            return
+
+        if not isinstance(data, dict) or data.get("type") != "req":
+            await ws.send(
+                json.dumps(
+                    {"type": "res", "id": "", "ok": False, "error": "invalid request"},
+                    ensure_ascii=False,
+                )
+            )
+            return
+
+        req_id = str(data.get("id") or "").strip()
+        method = str(data.get("method") or "").strip()
+        params = data.get("params") if isinstance(data.get("params"), dict) else {}
+        if not req_id or not method:
+            await ws.send(
+                json.dumps(
+                    {"type": "res", "id": req_id, "ok": False, "error": "invalid request"},
+                    ensure_ascii=False,
+                )
+            )
+            return
+
+        session_id = str(params.get("session_id") or "").strip() or req_id
+        req_method = None
+        for item in ReqMethod:
+            if item.value == method:
+                req_method = item
+                break
+        if req_method is None:
+            await ws.send(
+                json.dumps(
+                    {"type": "res", "id": req_id, "ok": False, "error": f"unknown method: {method}"},
+                    ensure_ascii=False,
+                )
+            )
+            return
+
+        self._request_to_client[req_id] = ws
+        self._session_to_client[session_id] = ws
+
+        mode = Mode.PLAN
+        raw_mode = params.get("mode")
+        if isinstance(raw_mode, str):
+            try:
+                mode = Mode(raw_mode.strip().lower())
+            except ValueError:
+                mode = Mode.PLAN
+
+        msg = Message(
+            id=req_id,
+            type="req",
+            channel_id=self.channel_id,
+            session_id=session_id,
+            params=params,
+            timestamp=time.time(),
+            ok=True,
+            req_method=req_method,
+            mode=mode,
+            metadata={"method": method},
+        )
+
+        if self._on_message_cb is None:
+            return
+        result = self._on_message_cb(msg)
+        if asyncio.iscoroutine(result):
+            await result
+
+
+async def _run(
+    agent_server_url: str,
+    web_host: str,
+    web_port: int,
+    web_path: str,
+) -> None:
+    from jiuwenclaw.channel.dingding import DingTalkChannel, DingTalkConfig
     from jiuwenclaw.channel.feishu import FeishuChannel, FeishuConfig
+    from jiuwenclaw.channel.whatsapp_channel import WhatsAppChannel, WhatsAppChannelConfig
+    from jiuwenclaw.channel.wechat_channel import WechatChannel, WechatConfig
     from jiuwenclaw.channel.web_channel import WebChannel, WebChannelConfig
     from jiuwenclaw.channel.xiaoyi_channel import XiaoyiChannel, XiaoyiChannelConfig
     from jiuwenclaw.channel.telegram_channel import TelegramChannel, TelegramChannelConfig
     from jiuwenclaw.channel.discord_channel import DiscordChannel, DiscordChannelConfig
     from jiuwenclaw.channel.wecom_channel import WecomChannel, WecomConfig
     from jiuwenclaw.config import get_config
-    from jiuwenclaw.gateway import (
-        GatewayHeartbeatService,
-        HeartbeatConfig,
-        WebSocketAgentServerClient,
-    )
+    from jiuwenclaw.gateway.agent_client import WebSocketAgentServerClient
     from jiuwenclaw.gateway.channel_manager import ChannelManager
     from jiuwenclaw.gateway.cron import CronController, CronJobStore, CronSchedulerService
+    from jiuwenclaw.gateway.heartbeat import GatewayHeartbeatService, HeartbeatConfig
     from jiuwenclaw.gateway.message_handler import MessageHandler
     from jiuwenclaw.app_web_handlers import (
         WebHandlersBindParams,
@@ -105,13 +391,14 @@ async def _run(agent_server_url: str, web_host: str, web_port: int, web_path: st
         _FORWARD_REQ_METHODS,
         _register_web_handlers,
     )
-    from jiuwenclaw.extensions import ExtensionManager, ExtensionRegistry
+    from jiuwenclaw.extensions.manager import ExtensionManager
+    from jiuwenclaw.extensions.registry import ExtensionRegistry
     from jiuwenclaw.schema.message import Message, ReqMethod
     from jiuwenclaw.updater import WindowsUpdaterService
     from openjiuwen.core.runner import Runner
 
     def _do_restart() -> None:
-        logger.info("[App] 配置已写回 .env，正在重启 Gateway 服务…")
+        logger.info("[App] .env updated, restarting Gateway...")
         os.execv(sys.executable, [sys.executable, *sys.argv])
 
     def _schedule_restart() -> None:
@@ -131,14 +418,14 @@ async def _run(agent_server_url: str, web_host: str, web_port: int, web_path: st
     )
     extension_manager = ExtensionManager(registry=extension_registry)
     await extension_manager.load_all_extensions()
-    logger.info("[App] 扩展加载完成，共 %d 个", len(extension_manager.list_extensions()))
+    logger.info("[App] extensions loaded: %d", len(extension_manager.list_extensions()))
 
     max_retries = int(os.getenv("AGENT_CONNECT_RETRY", "20"))
     retry_interval = float(os.getenv("AGENT_CONNECT_RETRY_INTERVAL", "3"))
 
     agent_server_ext = extension_registry.get_agent_server_client_extension()
     if agent_server_ext is not None:
-        logger.info("[App] 使用扩展提供的 AgentServerClient: %s", agent_server_ext.metadata.name)
+        logger.info("[App] using extension AgentServerClient: %s", agent_server_ext.metadata.name)
         client = agent_server_ext.get_client()
     else:
         client = WebSocketAgentServerClient(ping_interval=20.0, ping_timeout=20.0)
@@ -169,7 +456,7 @@ async def _run(agent_server_url: str, web_host: str, web_port: int, web_path: st
         heartbeat_cfg = full_cfg.get("heartbeat") if isinstance(full_cfg, dict) else None
         channels_cfg = full_cfg.get("channels") if isinstance(full_cfg, dict) else None
     except Exception as e:  # noqa: BLE001
-        logger.warning("[App] 读取 config.yaml heartbeat 配置失败，将使用默认值: %s", e)
+        logger.warning("[App] failed to read heartbeat config from config.yaml, using defaults: %s", e)
         heartbeat_cfg = None
         channels_cfg = None
 
@@ -252,9 +539,9 @@ async def _run(agent_server_url: str, web_host: str, web_port: int, web_path: st
                 channel_id="",
                 req_method=ReqMethod.AGENT_RELOAD_CONFIG,
                 params={
-                    # config: 本次保存后的完整配置快照，Agent 优先使用它而不是本地 yaml。
+                    # config: full config snapshot after save; Agent should prefer this over local yaml.
                     "config": dict(config_payload or {}),
-                    # env: 本次更新的环境变量增量；未出现的 key 表示不变。
+                    # env: incremental environment updates; missing keys mean unchanged.
                     "env": dict(env_updates or {}),
                 },
             )
@@ -269,10 +556,11 @@ async def _run(agent_server_url: str, web_host: str, web_port: int, web_path: st
                 await client.send_request(restart_env)
             return True
         except Exception as e:  # noqa: BLE001
-            logger.warning("[App] 配置热更新失败，将延迟重启: %s", e)
+            logger.warning("[App] hot config reload failed, scheduling restart: %s", e)
             _schedule_restart()
             return False
 
+    web_channel = None
     web_config = WebChannelConfig(enabled=True, host=web_host, port=web_port, path=web_path)
     web_channel = WebChannel(web_config, _DummyBus())
     _register_web_handlers(
@@ -315,12 +603,27 @@ async def _run(agent_server_url: str, web_host: str, web_port: int, web_path: st
             metadata=msg.metadata,
         )
         channel_manager.deliver_to_message_handler(normalized)
-        logger.info("[App] Web 入站 -> MessageHandler: id=%s channel_id=%s", msg.id, msg.channel_id)
+        logger.info("[App] Web inbound -> MessageHandler: id=%s channel_id=%s", msg.id, msg.channel_id)
         if method_val in _FORWARD_NO_LOCAL_HANDLER_METHODS:
             return True
         return False
 
-    channel_manager.register_channel_with_inbound(web_channel, _norm_and_forward)
+    if web_channel is not None:
+        channel_manager.register_channel_with_inbound(web_channel, _norm_and_forward)
+
+    gateway_server_config = GatewayServerConfig(
+        enabled=True,
+        host=os.getenv("ACP_GATEWAY_HOST", "127.0.0.1"),
+        port=int(os.getenv("ACP_GATEWAY_PORT", "19001")),
+        path=os.getenv("ACP_GATEWAY_PATH", "/acp"),
+        channel_id=str(os.getenv("ACP_GATEWAY_CHANNEL_ID", "acp")).strip() or "acp",
+    )
+    acp_inbound_server = _InboundGatewayServer(
+        lambda msg: _normalize_and_forward_message(msg, channel_manager)
+    )
+    await acp_inbound_server.start()
+    gateway_server = GatewayServer(gateway_server_config, _DummyBus())
+    channel_manager.register_channel_with_inbound(gateway_server, acp_inbound_server.handle_message)
 
     feishu_channel = None
     feishu_task = None
@@ -361,10 +664,10 @@ async def _run(agent_server_url: str, web_host: str, web_port: int, web_path: st
                     try:
                         await task
                     except (TypeError, asyncio.CancelledError):
-                        logger.info("[App] 取消旧 %sChannel 任务成功", channel_name.capitalize())
+                        logger.info("[App] cancelled previous %sChannel task", channel_name.capitalize())
                     except Exception as e:  # noqa: BLE001
                         logger.warning(
-                            "[App] 等待旧 %sChannel 任务结束时忽略异常: %s",
+                            "[App] ignored exception while waiting for previous %sChannel task: %s",
                             channel_name.capitalize(),
                             e,
                         )
@@ -374,12 +677,15 @@ async def _run(agent_server_url: str, web_host: str, web_port: int, web_path: st
                 try:
                     await asyncio.wait_for(task, timeout=5.0)
                 except asyncio.TimeoutError:
-                    logger.warning("[App] 等待 %sChannel 任务取消超时", channel_name.capitalize())
+                    logger.warning(
+                        "[App] timeout while waiting for %sChannel task cancellation",
+                        channel_name.capitalize(),
+                    )
                 except asyncio.CancelledError:
                     pass
                 except Exception as e:  # noqa: BLE001
                     logger.warning(
-                        "[App] 等待旧 %sChannel 任务结束时忽略异常: %s",
+                        "[App] ignored exception while waiting for previous %sChannel task: %s",
                         channel_name.capitalize(),
                         e,
                     )
@@ -388,18 +694,18 @@ async def _run(agent_server_url: str, web_host: str, web_port: int, web_path: st
             try:
                 await asyncio.wait_for(channel.stop(), timeout=10.0)
             except asyncio.TimeoutError:
-                logger.warning("[App] 停止 %sChannel 超时", channel_name.capitalize())
+                logger.warning("[App] timeout while stopping %sChannel", channel_name.capitalize())
             except Exception as e:  # noqa: BLE001
-                logger.warning("[App] 停止旧 %sChannel 失败: %s", channel_name.capitalize(), e)
+                logger.warning("[App] failed to stop previous %sChannel: %s", channel_name.capitalize(), e)
             channel_manager.unregister_channel(channel.channel_id)
 
     def _is_channel_enabled(conf: dict | None, required_fields: list[str]) -> tuple[bool, str]:
         if conf is None:
-            return False, "未配置或格式错误"
+            return False, "missing or invalid config"
         enabled_raw = conf.get("enabled", None)
         if enabled_raw is None:
             all_fields_present = all(conf.get(f) for f in required_fields)
-            return all_fields_present, f"缺少 {','.join(required_fields)}" if not all_fields_present else ""
+            return all_fields_present, f"missing {','.join(required_fields)}" if not all_fields_present else ""
         return bool(enabled_raw), "enabled = false" if not enabled_raw else ""
 
     async def _apply_channel_config(conf: dict) -> None:
@@ -430,7 +736,7 @@ async def _run(agent_server_url: str, web_host: str, web_port: int, web_path: st
                     channel_name, _last_channels_conf, conf
                 ):
                     logger.info(
-                        "[App] channels.%s 将强制重启（配置快照相对上次未变，例如解绑后需丢弃内存中的旧微信凭据）",
+                        "[App] channels.%s force restart requested; cached runtime state must be dropped",
                         channel_name,
                     )
                 changed_channels.append(channel_name)
@@ -444,7 +750,7 @@ async def _run(agent_server_url: str, web_host: str, web_port: int, web_path: st
             if isinstance(feishu_conf, dict):
                 enabled, reason = _is_channel_enabled(feishu_conf, ["app_id", "app_secret"])
                 if not enabled:
-                    logger.info("[App] channels.feishu.%s，FeishuChannel 未启用", reason)
+                    logger.info("[App] channels.feishu.%s, FeishuChannel disabled", reason)
                 else:
                     feishu_config = FeishuConfig(
                         enabled=True,
@@ -461,9 +767,9 @@ async def _run(agent_server_url: str, web_host: str, web_port: int, web_path: st
                     feishu_channel = FeishuChannel(feishu_config, _DummyBus())
                     channel_manager.register_channel(feishu_channel)
                     feishu_task = asyncio.create_task(feishu_channel.start(), name="feishu")
-                    logger.info("[App] 已按 config.yaml.channels.feishu 注册 FeishuChannel")
+                    logger.info("[App] FeishuChannel registered from config.yaml.channels.feishu")
             else:
-                logger.info("[App] channels.feishu 未配置或格式错误，FeishuChannel 不启用")
+                logger.info("[App] channels.feishu missing or invalid, FeishuChannel disabled")
 
         if "feishu_enterprise" in changed_channels:
             for bot_key, task in list(feishu_enterprise_tasks.items()):
@@ -477,19 +783,22 @@ async def _run(agent_server_url: str, web_host: str, web_port: int, web_path: st
 
             enterprise_conf = conf.get("feishu_enterprise") if isinstance(conf, dict) else None
             if not isinstance(enterprise_conf, dict):
-                logger.info("[App] channels.feishu_enterprise 未配置或格式错误，FeishuEnterpriseChannel 不启用")
+                logger.info(
+                    "[App] channels.feishu_enterprise missing or invalid; "
+                    "FeishuEnterpriseChannel disabled"
+                )
             else:
                 for bot_key, bot_conf_raw in enterprise_conf.items():
                     if not isinstance(bot_key, str) or not bot_key.strip():
                         continue
                     bot_conf = bot_conf_raw if isinstance(bot_conf_raw, dict) else None
                     if bot_conf is None:
-                        logger.info("[App] channels.feishu_enterprise.%s 配置格式错误，跳过", bot_key)
+                        logger.info("[App] channels.feishu_enterprise.%s invalid config, skipping", bot_key)
                         continue
                     enabled, reason = _is_channel_enabled(bot_conf, ["app_id", "app_secret"])
                     if not enabled:
                         logger.info(
-                            "[App] channels.feishu_enterprise.%s.%s，FeishuEnterpriseChannel 未启用",
+                            "[App] channels.feishu_enterprise.%s.%s, FeishuEnterpriseChannel disabled",
                             bot_key,
                             reason,
                         )
@@ -518,7 +827,7 @@ async def _run(agent_server_url: str, web_host: str, web_port: int, web_path: st
                     feishu_enterprise_channels[bot_key] = channel
                     feishu_enterprise_tasks[bot_key] = task
                     logger.info(
-                        "[App] 已按 config.yaml.channels.feishu_enterprise.%s 注册 FeishuChannel(%s)",
+                        "[App] registered FeishuChannel(%s) from config.yaml.channels.feishu_enterprise.%s",
                         bot_key,
                         channel_id,
                     )
@@ -531,7 +840,7 @@ async def _run(agent_server_url: str, web_host: str, web_port: int, web_path: st
             if isinstance(xiaoyi_conf, dict):
                 enabled, reason = _is_channel_enabled(xiaoyi_conf, ["ak", "sk", "agent_id"])
                 if not enabled:
-                    logger.info("[App] channels.xiaoyi.%s，XiaoyiChannel 未启用", reason)
+                    logger.info("[App] channels.xiaoyi.%s, XiaoyiChannel disabled", reason)
                 else:
                     if xiaoyi_conf.get("mode") == "xiaoyi_claw":
                         xiaoyi_config = XiaoyiChannelConfig(
@@ -567,9 +876,9 @@ async def _run(agent_server_url: str, web_host: str, web_port: int, web_path: st
                     xiaoyi_channel = XiaoyiChannel(xiaoyi_config, _DummyBus())
                     channel_manager.register_channel(xiaoyi_channel)
                     xiaoyi_task = asyncio.create_task(xiaoyi_channel.start(), name="xiaoyi")
-                    logger.info("[App] 已按 config.yaml.channels.xiaoyi 注册 XiaoyiChannel")
+                    logger.info("[App] XiaoyiChannel registered from config.yaml.channels.xiaoyi")
             else:
-                logger.info("[App] channels.xiaoyi 未配置或格式错误，XiaoyiChannel 不启用")
+                logger.info("[App] channels.xiaoyi missing or invalid, XiaoyiChannel disabled")
 
         if "dingtalk" in changed_channels:
             dingtalk_conf = conf.get("dingtalk") if isinstance(conf, dict) else None
@@ -579,7 +888,7 @@ async def _run(agent_server_url: str, web_host: str, web_port: int, web_path: st
             if isinstance(dingtalk_conf, dict):
                 enabled, reason = _is_channel_enabled(dingtalk_conf, ["client_id", "client_secret"])
                 if not enabled:
-                    logger.info("[App] channels.dingtalk.%s，DingtalkChannel 未启用", reason)
+                    logger.info("[App] channels.dingtalk.%s, DingTalkChannel disabled", reason)
                 else:
                     dingtalk_config = DingTalkConfig(
                         enabled=True,
@@ -590,9 +899,9 @@ async def _run(agent_server_url: str, web_host: str, web_port: int, web_path: st
                     dingtalk_channel = DingTalkChannel(dingtalk_config, _DummyBus())
                     channel_manager.register_channel(dingtalk_channel)
                     dingtalk_task = asyncio.create_task(dingtalk_channel.start(), name="dingtalk")
-                    logger.info("[App] 已按 config.yaml.channels.dingtalk 注册 DingtalkChannel")
+                    logger.info("[App] DingTalkChannel registered from config.yaml.channels.dingtalk")
             else:
-                logger.info("[App] channels.dingtalk 未配置或格式错误，DingtalkChannel 不启用")
+                logger.info("[App] channels.dingtalk missing or invalid, DingTalkChannel disabled")
 
         if "telegram" in changed_channels:
             telegram_conf = conf.get("telegram") if isinstance(conf, dict) else None
@@ -602,7 +911,7 @@ async def _run(agent_server_url: str, web_host: str, web_port: int, web_path: st
             if isinstance(telegram_conf, dict):
                 enabled, reason = _is_channel_enabled(telegram_conf, ["bot_token"])
                 if not enabled:
-                    logger.info("[App] channels.telegram.%s，TelegramChannel 未启用", reason)
+                    logger.info("[App] channels.telegram.%s, TelegramChannel disabled", reason)
                 else:
                     telegram_config = TelegramChannelConfig(
                         enabled=True,
@@ -614,9 +923,9 @@ async def _run(agent_server_url: str, web_host: str, web_port: int, web_path: st
                     telegram_channel = TelegramChannel(telegram_config, _DummyBus())
                     channel_manager.register_channel(telegram_channel)
                     telegram_task = asyncio.create_task(telegram_channel.start(), name="telegram")
-                    logger.info("[App] 已按 config.yaml.channels.telegram 注册 TelegramChannel")
+                    logger.info("[App] TelegramChannel registered from config.yaml.channels.telegram")
             else:
-                logger.info("[App] channels.telegram 未配置或格式错误，TelegramChannel 不启用")
+                logger.info("[App] channels.telegram missing or invalid, TelegramChannel disabled")
 
         if "discord" in changed_channels:
             discord_conf = conf.get("discord") if isinstance(conf, dict) else None
@@ -626,7 +935,7 @@ async def _run(agent_server_url: str, web_host: str, web_port: int, web_path: st
             if isinstance(discord_conf, dict):
                 enabled, reason = _is_channel_enabled(discord_conf, ["bot_token"])
                 if not enabled:
-                    logger.info("[App] channels.discord.%s，DiscordChannel 未启用", reason)
+                    logger.info("[App] channels.discord.%s, DiscordChannel disabled", reason)
                 else:
                     discord_config = DiscordChannelConfig(
                         enabled=True,
@@ -640,9 +949,9 @@ async def _run(agent_server_url: str, web_host: str, web_port: int, web_path: st
                     discord_channel = DiscordChannel(discord_config, _DummyBus())
                     channel_manager.register_channel(discord_channel)
                     discord_task = asyncio.create_task(discord_channel.start(), name="discord")
-                    logger.info("[App] 已按 config.yaml.channels.discord 注册 DiscordChannel")
+                    logger.info("[App] DiscordChannel registered from config.yaml.channels.discord")
             else:
-                logger.info("[App] channels.discord 未配置或格式错误，DiscordChannel 不启用")
+                logger.info("[App] channels.discord missing or invalid, DiscordChannel disabled")
 
         if "whatsapp" in changed_channels:
             whatsapp_conf = conf.get("whatsapp") if isinstance(conf, dict) else None
@@ -669,9 +978,9 @@ async def _run(agent_server_url: str, web_host: str, web_port: int, web_path: st
                     enabled = bool(enabled_raw)
 
                 if not enabled:
-                    logger.info("[App] channels.whatsapp.enabled = false，WhatsAppChannel 未启用")
+                    logger.info("[App] channels.whatsapp.enabled = false, WhatsAppChannel disabled")
                 elif not bridge_ws_url:
-                    logger.info("[App] channels.whatsapp 缺少 bridge_ws_url，WhatsAppChannel 未启用")
+                    logger.info("[App] channels.whatsapp missing bridge_ws_url, WhatsAppChannel disabled")
                 else:
                     whatsapp_config = WhatsAppChannelConfig(
                         enabled=True,
@@ -687,9 +996,9 @@ async def _run(agent_server_url: str, web_host: str, web_port: int, web_path: st
                     whatsapp_channel = WhatsAppChannel(whatsapp_config, _DummyBus())
                     channel_manager.register_channel(whatsapp_channel)
                     whatsapp_task = asyncio.create_task(whatsapp_channel.start(), name="whatsapp")
-                    logger.info("[App] 已按 config.yaml.channels.whatsapp 注册 WhatsAppChannel")
+                    logger.info("[App] WhatsAppChannel registered from config.yaml.channels.whatsapp")
             else:
-                logger.info("[App] channels.whatsapp 未配置或格式错误，WhatsAppChannel 不启用")
+                logger.info("[App] channels.whatsapp missing or invalid, WhatsAppChannel disabled")
 
         if "wecom" in changed_channels:
             wecom_conf = conf.get("wecom") if isinstance(conf, dict) else None
@@ -699,7 +1008,7 @@ async def _run(agent_server_url: str, web_host: str, web_port: int, web_path: st
             if isinstance(wecom_conf, dict):
                 enabled, reason = _is_channel_enabled(wecom_conf, ["bot_id", "secret"])
                 if not enabled:
-                    logger.info("[App] channels.wecom.%s，WecomChannel 未启用", reason)
+                    logger.info("[App] channels.wecom.%s, WecomChannel disabled", reason)
                 else:
                     wecom_config = WecomConfig(
                         enabled=True,
@@ -713,9 +1022,9 @@ async def _run(agent_server_url: str, web_host: str, web_port: int, web_path: st
                     wecom_channel = WecomChannel(wecom_config, _DummyBus())
                     channel_manager.register_channel(wecom_channel)
                     wecom_task = asyncio.create_task(wecom_channel.start(), name="wecom")
-                    logger.info("[App] 已按 config.yaml.channels.wecom 注册 WecomChannel")
+                    logger.info("[App] WecomChannel registered from config.yaml.channels.wecom")
             else:
-                logger.info("[App] channels.wecom 未配置或格式错误，WecomChannel 不启用")
+                logger.info("[App] channels.wecom missing or invalid, WecomChannel disabled")
 
         if "wechat" in changed_channels:
             wechat_conf = conf.get("wechat") if isinstance(conf, dict) else None
@@ -725,7 +1034,7 @@ async def _run(agent_server_url: str, web_host: str, web_port: int, web_path: st
             if isinstance(wechat_conf, dict):
                 enabled, reason = _is_channel_enabled(wechat_conf, [])
                 if not enabled:
-                    logger.info("[App] channels.wechat.%s，WechatChannel 未启用", reason)
+                    logger.info("[App] channels.wechat.%s, WechatChannel disabled", reason)
                 else:
                     wechat_config = WechatConfig(
                         enabled=True,
@@ -747,37 +1056,55 @@ async def _run(agent_server_url: str, web_host: str, web_port: int, web_path: st
                     wechat_channel = WechatChannel(wechat_config, _DummyBus())
                     channel_manager.register_channel(wechat_channel)
                     wechat_task = asyncio.create_task(wechat_channel.start(), name="wechat")
-                    logger.info("[App] 已按 config.yaml.channels.wechat 注册 WechatChannel")
+                    logger.info("[App] WechatChannel registered from config.yaml.channels.wechat")
             else:
-                logger.info("[App] channels.wechat 未配置或格式错误，WechatChannel 不启用")
+                logger.info("[App] channels.wechat missing or invalid, WechatChannel disabled")
 
     channel_manager.set_config_callback(_apply_channel_config)
     await channel_manager.set_config(initial_channels_conf)
 
     await channel_manager.start_dispatch()
     await cron_scheduler.start()
-    web_task = asyncio.create_task(web_channel.start(), name="web-channel")
-    logger.info(
-        "[App] 已启动: Web ws://%s:%s%s  AgentServer: %s  Ctrl+C 退出。",
-        web_host,
-        web_port,
-        web_path,
-        agent_server_url,
+    gateway_server_task = asyncio.create_task(gateway_server.start(), name="acp-gateway-server")
+    web_task = (
+        asyncio.create_task(web_channel.start(), name="web-channel")
+        if web_channel is not None
+        else None
     )
+    if web_channel is not None:
+        logger.info(
+            "[App] started: Web ws://%s:%s%s  AgentServer: %s  Press Ctrl+C to exit.",
+            web_host,
+            web_port,
+            web_path,
+            agent_server_url,
+        )
 
     try:
-        await web_task
+        tasks_to_wait = [task for task in (gateway_server_task, web_task) if task is not None]
+        if tasks_to_wait:
+            await asyncio.gather(*tasks_to_wait)
     except KeyboardInterrupt:
-        logger.info("收到 Ctrl+C，正在退出…")
+        logger.info("received Ctrl+C, shutting down...")
     except asyncio.CancelledError:
         pass
     finally:
-        web_task.cancel()
-        try:
-            await web_task
-        except asyncio.CancelledError:
-            pass
-        await web_channel.stop()
+        if gateway_server_task is not None:
+            gateway_server_task.cancel()
+            try:
+                await gateway_server_task
+            except asyncio.CancelledError:
+                pass
+        await gateway_server.stop()
+        await acp_inbound_server.stop()
+        if web_task is not None:
+            web_task.cancel()
+            try:
+                await web_task
+            except asyncio.CancelledError:
+                pass
+        if web_channel is not None:
+            await web_channel.stop()
 
         if feishu_channel is not None and feishu_task is not None:
             feishu_task.cancel()
@@ -850,7 +1177,7 @@ async def _run(agent_server_url: str, web_host: str, web_port: int, web_path: st
         await heartbeat_service.stop()
         await message_handler.stop_forwarding()
         await client.disconnect()
-        logger.info("[App] Gateway 已停止")
+        logger.info("[App] Gateway stopped")
 
 
 def main() -> None:
@@ -911,3 +1238,4 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+

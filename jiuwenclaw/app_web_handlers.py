@@ -296,7 +296,7 @@ def _register_web_handlers(bind: WebHandlersBindParams) -> None:
         try:
             raw = get_config_raw()
             for key, val in payload.items():
-                from jiuwenclaw.extensions import ExtensionRegistry
+                from jiuwenclaw.extensions.registry import ExtensionRegistry
                 if (("api_key" in key.lower() or "token" in key.lower())
                         and ExtensionRegistry.get_instance().get_crypto_provider()):
                     payload[key] = ExtensionRegistry.get_instance().get_crypto_provider().decrypt(val)
@@ -346,7 +346,7 @@ def _register_web_handlers(bind: WebHandlersBindParams) -> None:
             await channel.send_response(ws, req_id, ok=False, error="params must be object", code="BAD_REQUEST")
             return
         for key, val in params.items():
-            from jiuwenclaw.extensions import ExtensionRegistry
+            from jiuwenclaw.extensions.registry import ExtensionRegistry
             if (("api_key" in key.lower() or "token" in key.lower())
                     and ExtensionRegistry.get_instance().get_crypto_provider()):
                 params[key] = ExtensionRegistry.get_instance().get_crypto_provider().encrypt(val)

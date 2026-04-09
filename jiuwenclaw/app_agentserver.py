@@ -38,8 +38,9 @@ load_dotenv(dotenv_path=get_env_file())
 
 async def _run(host: str, port: int) -> None:
     from openjiuwen.core.runner import Runner
-    from jiuwenclaw.gateway import AgentWebSocketServer
-    from jiuwenclaw.extensions import ExtensionManager, ExtensionRegistry
+    from jiuwenclaw.agentserver.agent_ws_server import AgentWebSocketServer
+    from jiuwenclaw.extensions.manager import ExtensionManager
+    from jiuwenclaw.extensions.registry import ExtensionRegistry
 
     logger.info("[AgentServer] starting: ws://%s:%s", host, port)
 
