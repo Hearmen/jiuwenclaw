@@ -307,6 +307,7 @@ class JiuWenClaw:
                 "handle_skills_uninstall",
                 "handle_skills_import_local",
                 "handle_skills_skillnet_install",
+                "handle_skills_clawhub_download",
             ]
             if handler_name == "handle_skills_skillnet_install" and payload.get("pending"):
                 _reload_after_skills = False
