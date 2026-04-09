@@ -22,7 +22,7 @@ export interface Session {
   tools?: string[];
 }
 
-export type AgentMode = 'agent' | 'plan';
+export type AgentMode = 'agent' | 'plan' | 'agentteam';
 export type SessionStatus = 'active' | 'paused' | 'completed' | 'interrupted';
 
 export interface OffloadFileListResponse {

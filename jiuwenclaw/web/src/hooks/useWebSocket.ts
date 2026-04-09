@@ -83,7 +83,7 @@ interface UseWebSocketReturn {
 function normalizeAgentMode(rawMode: unknown): AgentMode {
   if (typeof rawMode !== 'string') return 'plan';
   const normalized = rawMode.trim().toLowerCase();
-  return normalized === 'agent' ? 'agent' : 'plan';
+  return normalized === 'agent' ? 'agent' : normalized === 'agentteam' ? 'agentteam' : 'plan';
 }
 
 const EVENT_DEDUP_WINDOW_MS = 1500;
@@ -277,10 +277,11 @@ export function useWebSocket(options: UseWebSocketOptions): UseWebSocketReturn {
       setThinking(true);
       try {
         const currentMode = useSessionStore.getState().mode;
+        const sendMode = currentMode === 'agentteam' ? 'team' : currentMode;
         await request('chat.send', {
           session_id: sessionId,
           content,
-          mode: currentMode,
+          mode: sendMode,
         });
       } catch (error) {
         const webError = error as WebError;

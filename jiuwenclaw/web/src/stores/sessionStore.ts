@@ -32,7 +32,7 @@ const DEFAULT_MODE: AgentMode = 'plan';
 function normalizeAgentMode(mode: unknown): AgentMode {
   if (typeof mode !== 'string') return DEFAULT_MODE;
   const normalized = mode.trim().toLowerCase();
-  return normalized === 'agent' ? 'agent' : 'plan';
+  return normalized === 'agent' ? 'agent' : normalized === 'agentteam' ? 'agentteam' : 'plan';
 }
 
 function normalizeSession(session: Session): Session {

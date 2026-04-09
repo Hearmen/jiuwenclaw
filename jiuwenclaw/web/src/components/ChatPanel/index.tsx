@@ -27,7 +27,7 @@ interface ChatPanelProps {
   onInterrupt: (newInput?: string) => void;
   onSwitchMode: (mode: AgentMode) => void;
   isProcessing: boolean;
-  onNewSession: () => void;
+  onNewSession: () => Promise<void>;
   onUserAnswer: (requestId: string, answers: UserAnswer[]) => void;
   /** 自会话管理恢复历史后出现；支持分页加载更早消息 */
   historyPager?: ChatHistoryPagerProps | null;
@@ -79,6 +79,7 @@ export function ChatPanel({
   const prependScrollSnapRef = useRef<{ sh: number; st: number } | null>(null);
   const wasHistoryLoadingRef = useRef(false);
   const suppressNextScrollToEndRef = useRef(false);
+  const [isSending, setIsSending] = React.useState(false);
   const suggestions = [
     t('chat.welcomeSuggestions.journey'),
     t('chat.welcomeSuggestions.skills'),
@@ -155,9 +156,24 @@ export function ChatPanel({
     wasHistoryLoadingRef.current = false;
   }, [historyPager, messages.length]);
 
+  // 包装发送消息函数，添加滚动逻辑
+  const handleSendMessage = useCallback((content: string) => {
+    setIsSending(true);
+    onSendMessage(content);
+  }, [onSendMessage]);
+
+  // 当发送消息时强制滚动到底部
+  useEffect(() => {
+    if (isSending) {
+      messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+      userScrolledUpRef.current = false;
+      setIsSending(false);
+    }
+  }, [isSending]);
+
   const handleSuggestion = useCallback(
-    (text: string) => onSendMessage(text),
-    [onSendMessage],
+    (text: string) => handleSendMessage(text),
+    [handleSendMessage],
   );
 
   return (
@@ -209,7 +225,7 @@ export function ChatPanel({
 
       <div className="chat-compose px-3 pb-4">
         <InputArea
-          onSubmit={onSendMessage}
+          onSubmit={handleSendMessage}
           onInterrupt={onInterrupt}
           onSwitchMode={onSwitchMode}
           isProcessing={isProcessing}
