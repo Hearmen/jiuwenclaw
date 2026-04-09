@@ -575,7 +575,7 @@ class JiuWenClawDeepAdapter:
     @staticmethod
     def _resolve_skill_mode(config: dict[str, Any]) -> str:
         """Validate configured skill mode and fallback safely on invalid values."""
-        raw_skill_mode = config.get("skill_mode", SkillUseRail.SKILL_MODE_AUTO_LIST)
+        raw_skill_mode = config.get("skill_mode", SkillUseRail.SKILL_MODE_ALL)
         valid_modes = {
             SkillUseRail.SKILL_MODE_AUTO_LIST,
             SkillUseRail.SKILL_MODE_ALL,
@@ -586,9 +586,9 @@ class JiuWenClawDeepAdapter:
         logger.warning(
             "[JiuWenClawDeepAdapter] invalid skill_mode=%r, fallback to %s",
             raw_skill_mode,
-            SkillUseRail.SKILL_MODE_AUTO_LIST,
+            SkillUseRail.SKILL_MODE_ALL,
         )
-        return SkillUseRail.SKILL_MODE_AUTO_LIST
+        return SkillUseRail.SKILL_MODE_ALL
 
     @staticmethod
     def _create_sys_operation() -> SysOperation | None:
