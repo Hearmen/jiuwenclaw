@@ -797,25 +797,12 @@ class JiuWenClawDeepAdapter:
                                                                                               {}).get("model_name",
                                                                                                       "gpt-4")}),
         ]
-        if config.get("context_engine_config", {}).get("enabled", False):
-            rail_infos.append(
-                _RailBuildInfo(
-                    "_context_engineering_rail",
-                    self._build_context_engineering_rail,
-                    {"config": config},
-                )
-            )
-        if config.get("evolution", {}).get("enabled", False):
-            rail_infos.append(
-                _RailBuildInfo(
-                    "_skill_evolution_rail",
-                    self._build_skill_evolution_rail,
-                    {"config": config},
-                )
-            )
+        # ContextEngineeringRail 不在冷启动时挂载，由 _update_rails_for_mode 按 mode 按需注册/注销
 
-        if get_memory_mode(config_base) == "local":
-            rail_infos.append(_RailBuildInfo("_memory_rail", self._build_memory_rail))
+        # SkillEvolutionRail 不在冷启动时挂载，由 _update_rails_for_mode 按 mode 按需注册/注销
+        # 智能模式下关闭自演进，plan 模式下按配置启用
+
+        # MemoryRail 不在冷启动时挂载，由 _update_rails_for_mode 按 mode 按需注册/注销
 
         rails_list = []
         for info in rail_infos:
@@ -875,6 +862,21 @@ class JiuWenClawDeepAdapter:
             completion_timeout=config.get("completion_timeout", 3600.0),
         )
 
+    def _update_permission_rail(self, config_base: dict[str, Any] | None) -> None:
+        """原地更新已有 PermissionRail 配置，或在首次启用时新建。"""
+        permission_config = config_base.get("permissions", {}) if config_base else {}
+        if self._permission_rail is not None:
+            self._permission_rail.update_config(permission_config)
+            logger.info("[JiuWenClawDeepAdapter] _permission_rail config hot-updated")
+        elif permission_config.get("enabled", False):
+            self._permission_rail = build_permission_rail(
+                config=config_base, llm=self._model,
+                model_name=config_base.get("models", {}).get(
+                    "default", {}).get("model_client_config", {}).get("model_name", "gpt-4"),
+            )
+            if self._permission_rail is not None:
+                logger.info("[JiuWenClawDeepAdapter] _permission_rail newly created on hot-reload")
+
     def _get_current_agent_rails(self, config: dict[str, Any], config_base: dict[str, Any] | None = None) -> list[Any]:
         """Return rail instances that need to be re-initialized on hot reload.
 
@@ -892,38 +894,11 @@ class JiuWenClawDeepAdapter:
 
         self._skill_rail = self._build_skill_rail(config, include_tools=self._filesystem_rail is None)
 
-        if config.get("context_engine_config", {}).get("enabled", False):
-            self._context_engineering_rail = self._build_context_engineering_rail(config)
-        else:
-            self._context_engineering_rail = None
-
-        # MemoryRail 持有 EmbeddingConfig，embed 配置变更时需要整体重建。
-        if config_base is not None and get_memory_mode(config_base) == "local":
-            self._memory_rail = self._build_memory_rail()
-        else:
-            self._memory_rail = None
-
-        # PermissionRail: in-place 更新已有 rail，或首次启用时新建。
-        permission_config = config_base.get("permissions", {}) if config_base else {}
-        if self._permission_rail is not None:
-            self._permission_rail.update_config(permission_config)
-            logger.info("[JiuWenClawDeepAdapter] _permission_rail config hot-updated")
-        elif permission_config.get("enabled", False):
-            self._permission_rail = build_permission_rail(
-                config=config_base, llm=self._model,
-                model_name=config_base.get("models", {}).get(
-                    "default", {}).get("model_client_config", {}).get("model_name", "gpt-4"),
-            )
-            if self._permission_rail is not None:
-                logger.info("[JiuWenClawDeepAdapter] _permission_rail newly created on hot-reload")
+        self._update_permission_rail(config_base)
 
         rails_list = []
         if self._skill_rail is not None:
             rails_list.append(self._skill_rail)
-        if self._context_engineering_rail is not None:
-            rails_list.append(self._context_engineering_rail)
-        if self._memory_rail is not None:
-            rails_list.append(self._memory_rail)
         if self._permission_rail is not None:
             rails_list.append(self._permission_rail)
         return rails_list
@@ -1216,20 +1191,8 @@ class JiuWenClawDeepAdapter:
         _CRON_TOOL_SESSION_ID.reset(session_token)
         _CRON_TOOL_CHANNEL_ID.reset(channel_token)
 
-    async def _register_runtime_tools(
-            self,
-            session_id: str | None,
-            mode: str = "plan",
-            request_id: str | None = None,
-    ) -> None:
-        """Register per-request tools for current agent execution."""
-        if self._instance is None:
-            raise RuntimeError("JiuWenClawDeepAdapter 未初始化，请先调用 create_instance()")
-
-        resolved_language = self._resolve_runtime_language()
-        if self._runtime_prompt_rail:
-            self._runtime_prompt_rail.set_language(resolved_language)
-            self._runtime_prompt_rail.set_channel(self._resolve_prompt_channel(session_id))
+    async def _update_rails_for_mode(self, mode: str) -> None:
+        """按 mode 注册或卸载 rails。"""
         if mode == "plan":
             if self._task_planning_rail is None:
                 self._task_planning_rail = self._build_task_planning_rail()
@@ -1240,34 +1203,75 @@ class JiuWenClawDeepAdapter:
             for existing in list(self._instance.ability_manager.list() or []):
                 if getattr(existing, "name", "").startswith(("session_new", "session_cancel", "session_list")):
                     self._instance.ability_manager.remove(existing.name)
+            # plan 模式：恢复记忆 rail（仅 local memory 模式下）
+            if self._memory_rail is None and get_memory_mode(get_config()) == "local":
+                self._memory_rail = self._build_memory_rail()
+                if self._memory_rail is not None:
+                    await self._instance.register_rail(self._memory_rail)
+                    logger.info("[JiuWenClawDeepAdapter] MemoryRail registered for plan mode")
+            # plan 模式：恢复上下文 rail（仅配置启用时）
+            if (self._context_engineering_rail is None and
+                    self._config_cache.get("context_engine_config", {}).get("enabled", False)):
+                self._context_engineering_rail = self._build_context_engineering_rail(self._config_cache)
+                if self._context_engineering_rail is not None:
+                    await self._instance.register_rail(self._context_engineering_rail)
+                    logger.info("[JiuWenClawDeepAdapter] ContextEngineeringRail registered for plan mode")
+            # plan 模式：恢复自演进 rail（仅配置启用时）
+            if self._skill_evolution_rail is None and self._config_cache.get("evolution", {}).get("enabled", False):
+                self._skill_evolution_rail = self._build_skill_evolution_rail(self._config_cache)
+                if self._skill_evolution_rail is not None:
+                    await self._instance.register_rail(self._skill_evolution_rail)
+                    logger.info("[JiuWenClawDeepAdapter] SkillEvolutionRail registered for plan mode")
         else:
             if self._task_planning_rail is not None:
                 await self._instance.unregister_rail(self._task_planning_rail)
                 self._task_planning_rail = None
                 logger.info("[JiuWenClawDeepAdapter] TaskPlanningRail unregistered for agent mode")
-            # agent 模式：注册 multi-session 工具（每次请求用新的 request_id 重建）
-            if request_id and session_id and self._model_client_config is not None:
-                try:
-                    for existing in list(self._instance.ability_manager.list() or []):
-                        if getattr(existing, "name", "").startswith(("session_new", "session_cancel", "session_list")):
-                            self._instance.ability_manager.remove(existing.name)
-                    sub_agent_config = ReActAgentConfig(
-                        model_client_config=self._model_client_config,
-                        model_config_obj=self._model_request_config,
-                    )
-                    multi_session_toolkit = MultiSessionToolkit(
-                        session_id=session_id,
-                        channel_id=_CRON_TOOL_CHANNEL_ID.get(),
-                        request_id=request_id,
-                        sub_agent_config=sub_agent_config,
-                    )
-                    for ms_tool in multi_session_toolkit.get_tools():
-                        Runner.resource_mgr.add_tool(ms_tool)
-                        self._instance.ability_manager.add(ms_tool.card)
-                    logger.info("[JiuWenClawDeepAdapter] MultiSessionToolkit registered for agent mode")
-                except Exception as exc:
-                    logger.error("[JiuWenClawDeepAdapter] MultiSessionToolkit 注册失败: %s", exc)
+            # 智能模式：关闭记忆 rail
+            if self._memory_rail is not None:
+                await self._instance.unregister_rail(self._memory_rail)
+                self._memory_rail = None
+                logger.info("[JiuWenClawDeepAdapter] MemoryRail unregistered for agent mode")
+            # 智能模式：关闭上下文 rail
+            if self._context_engineering_rail is not None:
+                await self._instance.unregister_rail(self._context_engineering_rail)
+                self._context_engineering_rail = None
+                logger.info("[JiuWenClawDeepAdapter] ContextEngineeringRail unregistered for agent mode")
+            # 智能模式：关闭自演进 rail
+            if self._skill_evolution_rail is not None:
+                await self._instance.unregister_rail(self._skill_evolution_rail)
+                self._skill_evolution_rail = None
+                logger.info("[JiuWenClawDeepAdapter] SkillEvolutionRail unregistered for agent mode")
 
+    async def _update_tools_for_mode(self, mode: str, session_id: str | None, request_id: str | None) -> None:
+        """按 mode 注册或卸载 multi-session 工具。"""
+        if mode != "agent":
+            return
+        if not (request_id and session_id and self._model_client_config is not None):
+            return
+        try:
+            for existing in list(self._instance.ability_manager.list() or []):
+                if getattr(existing, "name", "").startswith(("session_new", "session_cancel", "session_list")):
+                    self._instance.ability_manager.remove(existing.name)
+            sub_agent_config = ReActAgentConfig(
+                model_client_config=self._model_client_config,
+                model_config_obj=self._model_request_config,
+            )
+            multi_session_toolkit = MultiSessionToolkit(
+                session_id=session_id,
+                channel_id=_CRON_TOOL_CHANNEL_ID.get(),
+                request_id=request_id,
+                sub_agent_config=sub_agent_config,
+            )
+            for ms_tool in multi_session_toolkit.get_tools():
+                Runner.resource_mgr.add_tool(ms_tool)
+                self._instance.ability_manager.add(ms_tool.card)
+            logger.info("[JiuWenClawDeepAdapter] MultiSessionToolkit registered for agent mode")
+        except Exception as exc:
+            logger.error("[JiuWenClawDeepAdapter] MultiSessionToolkit 注册失败: %s", exc)
+
+    async def _update_session_tools(self, session_id: str | None, request_id: str | None) -> None:
+        """注册 cron 和 send_file 工具（与 mode 无关，每次请求刷新）。"""
         # 定时工具：按当前 session 的 channel 注册（contextvar 已由 _bind_runtime_cron_context 设置）
         if session_id not in ("heartbeat", "cron"):
             try:
@@ -1298,12 +1302,32 @@ class JiuWenClawDeepAdapter:
                 Runner.resource_mgr.add_tool(sf_tool)
                 self._instance.ability_manager.add(sf_tool.card)
 
-        # Sync language onto shared builder and deep config so rails
-        # (SecurityRail, MemoryRail, etc.) see the updated language in before_model_call.
+    def _update_prompt_for_mode(self, mode: str, resolved_language: str) -> None:
+        """同步 system_prompt_builder 的语言。"""
         if self._instance.system_prompt_builder is not None:
             self._instance.system_prompt_builder.language = resolved_language
-        if self._instance._deep_config is not None:
-            self._instance._deep_config.language = resolved_language
+        if self._instance.deep_config is not None:
+            self._instance.deep_config.language = resolved_language
+
+    async def _update_runtime_config(
+            self,
+            session_id: str | None,
+            mode: str = "plan",
+            request_id: str | None = None,
+    ) -> None:
+        """Register per-request tools for current agent execution."""
+        if self._instance is None:
+            raise RuntimeError("JiuWenClawDeepAdapter 未初始化，请先调用 create_instance()")
+
+        resolved_language = self._resolve_runtime_language()
+        if self._runtime_prompt_rail:
+            self._runtime_prompt_rail.set_language(resolved_language)
+            self._runtime_prompt_rail.set_channel(self._resolve_prompt_channel(session_id))
+
+        await self._update_rails_for_mode(mode)
+        await self._update_tools_for_mode(mode, session_id, request_id)
+        await self._update_session_tools(session_id, request_id)
+        self._update_prompt_for_mode(mode, resolved_language)
 
     async def process_interrupt(self, request: AgentRequest) -> AgentResponse:
         """处理 interrupt 请求.
@@ -1673,8 +1697,23 @@ class JiuWenClawDeepAdapter:
             msg = f"已将 {count} 条演进经验固化到 Skill '{skill_name}' 的 SKILL.md。"
         return {"output": msg, "result_type": "answer"}
 
+    def _ensure_evolution_rail_for_slash(self, mode: str) -> str | None:
+        """Check evolution availability for slash commands; lazily init rail if needed.
+
+        Returns None when the rail is (or becomes) available, or an error message string.
+        """
+        if mode != "plan":
+            return "agent 模式下演进功能不可用。"
+        if not self._config_cache.get("evolution", {}).get("enabled", False):
+            return "演进功能未启用。"
+        if self._skill_evolution_rail is None:
+            self._skill_evolution_rail = self._build_skill_evolution_rail(self._config_cache)
+        if self._skill_evolution_rail is None:
+            return "演进功能初始化失败。"
+        return None
+
     async def _handle_slash_command(
-            self, query: str, session_id: str = "default",
+            self, query: str, session_id: str = "default", mode: str = "plan",
     ) -> dict[str, Any] | None:
         """Intercept /evolve and /solidify before agent invocation.
 
@@ -1685,13 +1724,15 @@ class JiuWenClawDeepAdapter:
         stripped = query.strip()
 
         if stripped.startswith("/solidify"):
-            if self._skill_evolution_rail is None:
-                return {"output": "演进功能未启用。", "result_type": "error"}
+            err = self._ensure_evolution_rail_for_slash(mode)
+            if err:
+                return {"output": err, "result_type": "error"}
             return await self._handle_solidify_command(stripped)
 
         if stripped.startswith("/evolve"):
-            if self._skill_evolution_rail is None:
-                return {"output": "演进功能未启用。", "result_type": "error"}
+            err = self._ensure_evolution_rail_for_slash(mode)
+            if err:
+                return {"output": err, "result_type": "error"}
             return await self._handle_evolve_command(stripped, session_id)
 
         return None
@@ -1716,7 +1757,7 @@ class JiuWenClawDeepAdapter:
             pass
 
         if modify_tool is None:
-            deep_config = self._instance._deep_config
+            deep_config = self._instance.deep_config
             modify_tool = TodoModifyTool(
                 operation=deep_config.sys_operation,
                 workspace=str(deep_config.workspace.get_node_path(WorkspaceNode.TODO)),
@@ -1782,8 +1823,9 @@ class JiuWenClawDeepAdapter:
 
         session_id = request.session_id or "default"
         query = request.params.get("query", "")
+        mode = request.params.get("mode", "plan")
 
-        slash_result = await self._handle_slash_command(query, session_id)
+        slash_result = await self._handle_slash_command(query, session_id, mode)
         if slash_result is not None:
             approval_chunks = slash_result.get("approval_chunks")
             if approval_chunks:
@@ -1804,11 +1846,11 @@ class JiuWenClawDeepAdapter:
             session_id=request.session_id,
             metadata=request.metadata,
             request_id=request.request_id,
-            mode=request.params.get("mode", "plan"),
+            mode=mode
         )
         token_cid = TOOL_PERMISSION_CHANNEL_ID.set((request.channel_id or "").strip())
         try:
-            await self._register_runtime_tools(request.session_id, request.params.get("mode", "plan"), request_id=request.request_id)
+            await self._update_runtime_config(request.session_id, mode, request_id=request.request_id)
             result = await Runner.run_agent(agent=self._instance, inputs=inputs)
         except asyncio.CancelledError:
             logger.info("[JiuWenClawDeepAdapter] Agent 任务被取消: request_id=%s session_id=%s", request.request_id,
@@ -1859,9 +1901,10 @@ class JiuWenClawDeepAdapter:
         rid = request.request_id
         cid = request.channel_id
         query = request.params.get("query", "")
+        mode = request.params.get("mode", "plan")
 
         # 拦截斜杠命令
-        slash_result = await self._handle_slash_command(query, session_id)
+        slash_result = await self._handle_slash_command(query, session_id, mode)
         if slash_result is not None:
             approval_chunks = slash_result.get("approval_chunks", [])
             if approval_chunks:
@@ -1899,11 +1942,11 @@ class JiuWenClawDeepAdapter:
             session_id=request.session_id,
             metadata=request.metadata,
             request_id=request.request_id,
-            mode=request.params.get("mode", "plan"),
+            mode=mode,
         )
         token_cid = TOOL_PERMISSION_CHANNEL_ID.set((request.channel_id or "").strip())
         try:
-            await self._register_runtime_tools(request.session_id, request.params.get("mode", "plan"), request_id=request.request_id)
+            await self._update_runtime_config(request.session_id, mode, request_id=request.request_id)
             if self._stream_event_rail is not None:
                 self._stream_event_rail.reset_abort()
             async for chunk in Runner.run_agent_streaming(self._instance, inputs):
