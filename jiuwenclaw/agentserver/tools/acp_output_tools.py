@@ -27,7 +27,7 @@ from jiuwenclaw.e2a.models import (
 )
 
 if TYPE_CHECKING:
-    from openjiuwen.core.foundation.tool import Tool
+    from openjiuwen.core.foundation.tool import Tool, ToolCard, LocalFunction
 
 logger = logging.getLogger(__name__)
 
@@ -46,20 +46,19 @@ class AcpOutputRequest:
 class AcpOutputManager:
     _instance: AcpOutputManager | None = None
     _pending: dict[str, AcpOutputRequest]
+    _jsonrpc_counter: int
     _send_push_callback: Any
-    _initialized: bool
 
     def __new__(cls) -> AcpOutputManager:
         if cls._instance is None:
             cls._instance = super().__new__(cls)
-            cls._instance._initialized = False
+            cls._instance._pending = {}
+            cls._instance._jsonrpc_counter = 0
+            cls._instance._send_push_callback = None
         return cls._instance
 
     def __init__(self) -> None:
-        if not self._initialized:
-            self._pending: dict[str, AcpOutputRequest] = {}
-            self._send_push_callback = None
-            self._initialized = True
+        pass
 
     def set_send_push_callback(self, callback: Any) -> None:
         self._send_push_callback = callback
@@ -73,10 +72,17 @@ class AcpOutputManager:
         session_id: str | None = None,
         timeout: float = _ACP_REQUEST_TIMEOUT_SECONDS,
     ) -> dict[str, Any]:
+        logger.info(
+            "[AcpOutput] send_jsonrpc_request called: method=%s params=%s",
+            method,
+            params,
+        )
         if self._send_push_callback is None:
+            logger.error("[AcpOutput] send_push callback is None!")
             raise RuntimeError("ACP output send_push callback not set")
 
-        jsonrpc_id = uuid.uuid4().hex[:8]
+        self._jsonrpc_counter += 1
+        jsonrpc_id = str(self._jsonrpc_counter)
         request_id = f"acp_out_{uuid.uuid4().hex[:12]}"
 
         future: asyncio.Future[dict[str, Any]] = (
@@ -90,11 +96,16 @@ class AcpOutputManager:
             request_id=request_id,
         )
         self._pending[jsonrpc_id] = acp_req
+        logger.info(
+            "[AcpOutput] added to pending: jsonrpc_id=%s pending_keys=%s",
+            jsonrpc_id,
+            list(self._pending.keys()),
+        )
 
         ts = utc_now_iso()
         prov = E2AProvenance(
             source_protocol=E2A_SOURCE_PROTOCOL_E2A,
-            converter="jiuwenclaw.agentserver.tools.acp_output:send_jsonrpc_request",
+            converter="jiuwenclaw.agentserver.tools.acp_output_tools:send_jsonrpc_request",
             converted_at=ts,
             details={"kind": "acp_output_request", "acp_method": method},
         )
@@ -113,7 +124,7 @@ class AcpOutputManager:
                 "jsonrpc": "2.0",
                 "id": jsonrpc_id,
                 "method": method,
-                "params": params,
+                "params": {**params, "sessionId": session_id} if session_id else params,
             },
             jsonrpc_id=jsonrpc_id,
             session_id=session_id,
@@ -123,6 +134,10 @@ class AcpOutputManager:
         )
 
         push_msg = e2a_response.to_dict()
+        if "channel_id" not in push_msg and "channel" in push_msg:
+            push_msg["channel_id"] = push_msg["channel"]
+        if "payload" not in push_msg and "body" in push_msg:
+            push_msg["payload"] = push_msg["body"]
 
         try:
             self._send_push_callback(push_msg)
@@ -149,31 +164,6 @@ class AcpOutputManager:
             )
             raise
 
-    def handle_response(self, jsonrpc_id: str, response: dict[str, Any]) -> None:
-        req = self._pending.pop(jsonrpc_id, None)
-        if req is None:
-            logger.warning(
-                "[AcpOutput] no pending request for jsonrpc_id=%s", jsonrpc_id
-            )
-            return
-
-        req.future.set_result(response)
-        logger.info(
-            "[AcpOutput] response received: jsonrpc_id=%s method=%s",
-            jsonrpc_id,
-            req.method,
-        )
-
-    def cancel_all(self) -> None:
-        for jsonrpc_id, req in list(self._pending.items()):
-            req.future.cancel()
-            self._pending.pop(jsonrpc_id, None)
-            logger.info(
-                "[AcpOutput] cancelled pending request: jsonrpc_id=%s method=%s",
-                jsonrpc_id,
-                req.method,
-            )
-
 
 def get_acp_output_manager() -> AcpOutputManager:
     return AcpOutputManager()
@@ -188,95 +178,186 @@ class AcpOutputError(Exception):
         super().__init__(f"[{method}] error {code}: {message}")
 
 
-async def _acp_request(
-    method: str,
-    params: dict[str, Any],
-    *,
-    channel_id: str = "acp",
-    session_id: str | None = None,
-    timeout: float = _ACP_REQUEST_TIMEOUT_SECONDS,
-) -> dict[str, Any]:
-    mgr = get_acp_output_manager()
-    response = await mgr.send_jsonrpc_request(
-        method, params, channel_id=channel_id, session_id=session_id, timeout=timeout
-    )
-    if "error" in response:
-        err = response["error"]
-        raise AcpOutputError(
-            method=method,
-            code=err.get("code", -32000),
-            message=err.get("message", "Unknown error"),
-            data=err.get("data"),
-        )
-    return response.get("result", {})
+# ============================================================================
+# ACP 工具函数
+# ============================================================================
 
 
-async def acp_read_text_file(
+async def read_text_file(
     path: str,
     *,
     offset: int | None = None,
     limit: int | None = None,
-    **kwargs,
+    session_id: str | None = None,
 ) -> dict[str, Any]:
+    """读取文件内容。"""
+    mgr = get_acp_output_manager()
     params: dict[str, Any] = {"path": path}
     if offset is not None:
         params["offset"] = offset
     if limit is not None:
         params["limit"] = limit
-    return await _acp_request("fs/read_text_file", params, **kwargs)
 
-
-async def acp_write_text_file(path: str, content: str, **kwargs) -> dict[str, Any]:
-    return await _acp_request(
-        "fs/write_text_file", {"path": path, "content": content}, **kwargs
+    response = await mgr.send_jsonrpc_request(
+        "fs/read_text_file", params, session_id=session_id
     )
 
+    if "error" in response:
+        err = response["error"]
+        raise AcpOutputError(
+            method="fs/read_text_file",
+            code=err.get("code", -32000),
+            message=err.get("message", "Unknown error"),
+            data=err.get("data"),
+        )
 
-async def acp_terminal_create(
+    return response.get("result", {})
+
+
+async def write_text_file(
+    path: str,
+    content: str,
+    *,
+    session_id: str | None = None,
+) -> dict[str, Any]:
+    """写入文件。"""
+    mgr = get_acp_output_manager()
+    params = {"path": path, "content": content}
+
+    response = await mgr.send_jsonrpc_request(
+        "fs/write_text_file", params, session_id=session_id
+    )
+
+    if "error" in response:
+        err = response["error"]
+        raise AcpOutputError(
+            method="fs/write_text_file",
+            code=err.get("code", -32000),
+            message=err.get("message", "Unknown error"),
+            data=err.get("data"),
+        )
+
+    return response.get("result", {})
+
+
+async def create_terminal(
     cmd: str,
     *,
     cwd: str | None = None,
-    env: dict[str, str] | None = None,
-    **kwargs,
+    session_id: str | None = None,
 ) -> dict[str, Any]:
-    params: dict[str, Any] = {"cmd": cmd}
+    """创建终端并执行命令。"""
+    mgr = get_acp_output_manager()
+    params: dict[str, Any] = {"command": cmd}
     if cwd is not None:
         params["cwd"] = cwd
-    if env is not None:
-        params["env"] = env
-    return await _acp_request("terminal/create", params, **kwargs)
+
+    response = await mgr.send_jsonrpc_request(
+        "terminal/create", params, session_id=session_id
+    )
+
+    if "error" in response:
+        err = response["error"]
+        raise AcpOutputError(
+            method="terminal/create",
+            code=err.get("code", -32000),
+            message=err.get("message", "Unknown error"),
+            data=err.get("data"),
+        )
+
+    return response.get("result", {})
 
 
-async def acp_terminal_send_text(
-    terminal_id: str, text: str, **kwargs
+async def read_terminal_output(
+    terminal_id: str,
+    *,
+    session_id: str | None = None,
 ) -> dict[str, Any]:
-    return await _acp_request(
-        "terminal/send_text", {"terminalId": terminal_id, "text": text}, **kwargs
+    """读取终端输出。"""
+    mgr = get_acp_output_manager()
+    params = {"terminalId": terminal_id}
+
+    response = await mgr.send_jsonrpc_request(
+        "terminal/output", params, session_id=session_id
     )
 
+    if "error" in response:
+        err = response["error"]
+        raise AcpOutputError(
+            method="terminal/output",
+            code=err.get("code", -32000),
+            message=err.get("message", "Unknown error"),
+            data=err.get("data"),
+        )
 
-async def acp_terminal_read_output(terminal_id: str, **kwargs) -> dict[str, Any]:
-    return await _acp_request("terminal/output", {"terminalId": terminal_id}, **kwargs)
+    return response.get("result", {})
 
 
-async def acp_terminal_release(terminal_id: str, **kwargs) -> dict[str, Any]:
-    return await _acp_request("terminal/release", {"terminalId": terminal_id}, **kwargs)
+async def wait_for_terminal_exit(
+    terminal_id: str,
+    *,
+    session_id: str | None = None,
+) -> dict[str, Any]:
+    """等待终端退出。"""
+    mgr = get_acp_output_manager()
+    params = {"terminalId": terminal_id}
 
-
-async def acp_terminal_wait_for_exit(terminal_id: str, **kwargs) -> dict[str, Any]:
-    return await _acp_request(
-        "terminal/wait_for_exit", {"terminalId": terminal_id}, **kwargs
+    response = await mgr.send_jsonrpc_request(
+        "terminal/wait_for_exit", params, session_id=session_id
     )
 
+    if "error" in response:
+        err = response["error"]
+        raise AcpOutputError(
+            method="terminal/wait_for_exit",
+            code=err.get("code", -32000),
+            message=err.get("message", "Unknown error"),
+            data=err.get("data"),
+        )
 
-async def acp_terminal_kill(terminal_id: str, **kwargs) -> dict[str, Any]:
-    return await _acp_request("terminal/kill", {"terminalId": terminal_id}, **kwargs)
+    return response.get("result", {})
+
+
+async def release_terminal(
+    terminal_id: str,
+    *,
+    session_id: str | None = None,
+) -> dict[str, Any]:
+    """释放终端资源。"""
+    mgr = get_acp_output_manager()
+    params = {"terminalId": terminal_id}
+
+    response = await mgr.send_jsonrpc_request(
+        "terminal/release", params, session_id=session_id
+    )
+
+    if "error" in response:
+        err = response["error"]
+        raise AcpOutputError(
+            method="terminal/release",
+            code=err.get("code", -32000),
+            message=err.get("message", "Unknown error"),
+            data=err.get("data"),
+        )
+
+    return response.get("result", {})
+
+
+# ============================================================================
+# 工具注册
+# ============================================================================
 
 
 def get_tools(session_id: str = "", request_id: str = "") -> List["Tool"]:
+    """返回 ACP 输出工具列表，用于注册到 Agent。"""
     from openjiuwen.core.foundation.tool import Tool, ToolCard, LocalFunction
 
-    def make_tool(name: str, description: str, input_params: dict, func) -> Tool:
+    def make_tool(
+        name: str,
+        description: str,
+        input_params: dict,
+        func,
+    ) -> Tool:
         card = ToolCard(
             id=f"{name}_{session_id}_{request_id}",
             name=name,
@@ -285,10 +366,37 @@ def get_tools(session_id: str = "", request_id: str = "") -> List["Tool"]:
         )
         return LocalFunction(card=card, func=func)
 
+    # 创建绑定了 session_id 的函数
+    async def read_text_file_bound(
+        path: str, offset: int | None = None, limit: int | None = None
+    ) -> dict:
+        return await read_text_file(
+            path, offset=offset, limit=limit, session_id=session_id
+        )
+
+    async def write_text_file_bound(path: str, content: str) -> dict:
+        return await write_text_file(path, content, session_id=session_id)
+
+    async def create_terminal_bound(cmd: str, cwd: str | None = None) -> dict:
+        return await create_terminal(cmd, cwd=cwd, session_id=session_id)
+
+    async def read_terminal_output_bound(terminal_id: str) -> dict:
+        return await read_terminal_output(terminal_id, session_id=session_id)
+
+    async def wait_for_terminal_exit_bound(terminal_id: str) -> dict:
+        return await wait_for_terminal_exit(terminal_id, session_id=session_id)
+
+    async def release_terminal_bound(terminal_id: str) -> dict:
+        return await release_terminal(terminal_id, session_id=session_id)
+
     return [
         make_tool(
             name="read_text_file",
-            description="请求 IDE 读取文件内容。当需要读取用户本地文件时使用此工具。",
+            description=(
+                "[ACP] 通过 IDE 读取用户本地文件内容。"
+                "这是唯一可用的文件读取工具。"
+                "必须调用此工具才能读取文件。"
+            ),
             input_params={
                 "type": "object",
                 "properties": {
@@ -301,11 +409,15 @@ def get_tools(session_id: str = "", request_id: str = "") -> List["Tool"]:
                 },
                 "required": ["path"],
             },
-            func=acp_read_text_file,
+            func=read_text_file_bound,
         ),
         make_tool(
             name="write_text_file",
-            description="请求 IDE 写入文件。当需要写入文件到用户本地时使用此工具。",
+            description=(
+                "[ACP] 通过 IDE 写入文件到用户本地。"
+                "这是唯一可用的文件写入工具。"
+                "必须调用此工具才能写入文件。"
+            ),
             input_params={
                 "type": "object",
                 "properties": {
@@ -314,11 +426,15 @@ def get_tools(session_id: str = "", request_id: str = "") -> List["Tool"]:
                 },
                 "required": ["path", "content"],
             },
-            func=acp_write_text_file,
+            func=write_text_file_bound,
         ),
         make_tool(
             name="create_terminal",
-            description="请求 IDE 创建终端并执行命令。当需要在用户本地执行命令时使用此工具。",
+            description=(
+                "[ACP] 通过 IDE 创建终端并执行命令。"
+                "这是唯一可用的命令执行工具。"
+                "必须调用此工具才能执行命令。"
+            ),
             input_params={
                 "type": "object",
                 "properties": {
@@ -327,20 +443,7 @@ def get_tools(session_id: str = "", request_id: str = "") -> List["Tool"]:
                 },
                 "required": ["cmd"],
             },
-            func=acp_terminal_create,
-        ),
-        make_tool(
-            name="send_text_to_terminal",
-            description="向终端发送文本输入（如回答 yes/no 确认）。",
-            input_params={
-                "type": "object",
-                "properties": {
-                    "terminal_id": {"type": "string", "description": "终端 ID"},
-                    "text": {"type": "string", "description": "要发送的文本"},
-                },
-                "required": ["terminal_id", "text"],
-            },
-            func=acp_terminal_send_text,
+            func=create_terminal_bound,
         ),
         make_tool(
             name="read_terminal_output",
@@ -352,6 +455,30 @@ def get_tools(session_id: str = "", request_id: str = "") -> List["Tool"]:
                 },
                 "required": ["terminal_id"],
             },
-            func=acp_terminal_read_output,
+            func=read_terminal_output_bound,
+        ),
+        make_tool(
+            name="wait_for_terminal_exit",
+            description="等待终端命令执行完成。",
+            input_params={
+                "type": "object",
+                "properties": {
+                    "terminal_id": {"type": "string", "description": "终端 ID"},
+                },
+                "required": ["terminal_id"],
+            },
+            func=wait_for_terminal_exit_bound,
+        ),
+        make_tool(
+            name="release_terminal",
+            description="释放终端资源（命令完成后必须调用）。",
+            input_params={
+                "type": "object",
+                "properties": {
+                    "terminal_id": {"type": "string", "description": "终端 ID"},
+                },
+                "required": ["terminal_id"],
+            },
+            func=release_terminal_bound,
         ),
     ]
