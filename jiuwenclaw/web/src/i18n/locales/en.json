@@ -162,6 +162,7 @@
     "channels": {
       "web": "Web (web)",
       "feishu": "Lark (feishu)",
+      "wechat": "WeChat (wechat)",
       "wecom": "WeCom (wecom)",
       "xiaoyi": "Xiaoyi (xiaoyi)",
       "dingtalk": "DingTalk (dingtalk)"
@@ -441,6 +442,7 @@
     "targets": {
       "web": "Web (web)",
       "feishu": "Lark (feishu)",
+      "wechat": "WeChat (wechat)",
       "wecom": "WeCom (wecom)",
       "xiaoyi": "Xiaoyi (xiaoyi)",
       "dingtalk": "DingTalk (dingtalk)"

@@ -499,6 +499,17 @@ class CronSchedulerService:
                         metadata = {
                             "wecom_chat_id": last_chat_id,
                         }
+                elif channel_id == "wechat":
+                    last_user_id = str(ch_cfg.get("last_user_id") or "").strip()
+                    last_context_token = str(ch_cfg.get("last_context_token") or "").strip()
+                    if last_user_id:
+                        metadata = {
+                            "wechat_user_id": last_user_id,
+                            "reply_to_user_id": last_user_id,
+                        }
+                        if last_context_token:
+                            metadata["wechat_context_token"] = last_context_token
+                            metadata["context_token"] = last_context_token
             except Exception:
                 metadata = None
 

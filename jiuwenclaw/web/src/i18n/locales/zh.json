@@ -162,6 +162,7 @@
     "channels": {
       "web": "网页 (web)",
       "feishu": "飞书 (feishu)",
+      "wechat": "微信 (wechat)",
       "wecom": "企业微信 (wecom)",
       "xiaoyi": "小艺 (xiaoyi)",
       "dingtalk": "钉钉 (dingtalk)"
@@ -441,6 +442,7 @@
     "targets": {
       "web": "网页 (web)",
       "feishu": "飞书 (feishu)",
+      "wechat": "微信 (wechat)",
       "wecom": "企业微信 (wecom)",
       "xiaoyi": "小艺 (xiaoyi)",
       "dingtalk": "钉钉 (dingtalk)"

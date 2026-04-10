@@ -894,6 +894,16 @@ class WechatChannel(BaseChannel):
         if context_token:
             self._context_tokens[user_id] = context_token
 
+        # 持久化 last_user_id 和 context_token 供 cron/心跳推送使用
+        try:
+            from jiuwenclaw.config import update_channel_in_config
+            updates: dict[str, str] = {"last_user_id": user_id}
+            if context_token:
+                updates["last_context_token"] = context_token
+            update_channel_in_config("wechat", updates)
+        except Exception as exc:
+            logger.warning("persist channel config failed: %s", exc)
+
         text, ref_text = self._parse_item_list(wx_msg.get("item_list") or [])
         if not text and not ref_text:
             return
