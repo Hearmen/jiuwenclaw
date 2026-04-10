@@ -53,6 +53,10 @@ class FakeStdout:
         self.buffer = FakeStdoutBuffer()
 
 
+class AcpChannelHarness(AcpChannel):
+    pass
+
+
 def json_line(payload):
     return json.dumps(payload, ensure_ascii=False)
 
@@ -152,7 +156,7 @@ async def test_jsonrpc_initialize_and_session_new(monkeypatch):
         ]
     )
     fake_stdout = FakeStdout()
-    channel = AcpChannel(AcpChannelConfig(enabled=True), DummyBus())
+    channel = AcpChannelHarness(AcpChannelConfig(enabled=True), DummyBus())
 
     monkeypatch.setattr("sys.stdin", fake_stdin)
     monkeypatch.setattr("sys.stdout", fake_stdout)
@@ -440,3 +444,69 @@ async def test_jsonrpc_session_cancel_finalizes_active_prompt(monkeypatch):
     assert isinstance(prompt_result.get("result"), dict)
     assert prompt_result["result"].get("stopReason") == "cancelled"
     assert cancel_result == {"jsonrpc": "2.0", "id": 21, "result": None}
+
+
+@pytest.mark.asyncio
+async def test_jsonrpc_response_is_forwarded_as_acp_tool_response(monkeypatch):
+    fake_stdin = FakeStdin(
+        [
+            json_line(
+                {
+                    "jsonrpc": "2.0",
+                    "id": "tool-1",
+                    "result": {"content": "from client"},
+                }
+            )
+        ]
+    )
+    fake_stdout = FakeStdout()
+    channel = AcpChannelHarness(AcpChannelConfig(enabled=True), DummyBus())
+    seen = []
+
+    channel.set_pending_client_rpc_session_for_test("tool-1", "sess-tool")
+
+    monkeypatch.setattr("sys.stdin", fake_stdin)
+    monkeypatch.setattr("sys.stdout", fake_stdout)
+    monkeypatch.setattr("jiuwenclaw.channel.acp_channel._ACP_STDOUT", fake_stdout)
+
+    async def _on_message(msg):
+        seen.append(msg)
+
+    channel.on_message(_on_message)
+    await channel.start()
+
+    assert len(seen) == 1
+    msg = seen[0]
+    assert msg.req_method == ReqMethod.ACP_TOOL_RESPONSE
+    assert msg.session_id == "sess-tool"
+    assert msg.params["jsonrpc_id"] == "tool-1"
+    assert msg.params["response"]["result"] == {"content": "from client"}
+
+
+@pytest.mark.asyncio
+async def test_gateway_jsonrpc_request_is_written_to_stdout(monkeypatch):
+    fake_stdout = FakeStdout()
+    channel = AcpChannelHarness(AcpChannelConfig(enabled=True), DummyBus())
+
+    monkeypatch.setattr("sys.stdout", fake_stdout)
+    monkeypatch.setattr("jiuwenclaw.channel.acp_channel._ACP_STDOUT", fake_stdout)
+
+    await channel.handle_gateway_frame_for_test(
+        {
+            "jsonrpc": "2.0",
+            "id": "tool-2",
+            "method": "fs/read_text_file",
+            "params": {"path": "workspace/demo.txt", "sessionId": "sess-tool"},
+        }
+    )
+
+    responses = fake_stdout.buffer.json_lines()
+    assert responses == [
+        {
+            "jsonrpc": "2.0",
+            "id": "tool-2",
+            "method": "fs/read_text_file",
+            "params": {"path": "workspace/demo.txt", "sessionId": "sess-tool"},
+        }
+    ]
+    assert channel.get_pending_client_rpc_session_for_test("tool-2") == "sess-tool"

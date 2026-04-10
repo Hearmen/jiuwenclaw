@@ -5,7 +5,9 @@ import pytest
 
 from jiuwenclaw.agentserver import agent_ws_server as agent_ws_server_module
 from jiuwenclaw.agentserver.agent_manager import ACP_DEFAULT_CAPABILITIES
+from jiuwenclaw.agentserver.tools.acp_output_tools import AcpOutputRequest, get_acp_output_manager
 from jiuwenclaw.agentserver.deep_agent import interface_deep as interface_deep_module
+from jiuwenclaw.e2a.gateway_normalize import e2a_from_agent_fields
 from jiuwenclaw.schema.agent import AgentRequest
 from jiuwenclaw.schema.message import ReqMethod
 
@@ -19,9 +21,10 @@ class FakeWebSocket:
 
 
 class FakeAgentManager:
-    def __init__(self, *, capabilities=None, session_id="sess-created"):
+    def __init__(self, *, capabilities=None, session_id="sess-created", client_capabilities=None):
         self.capabilities = capabilities
         self.session_id = session_id
+        self.client_capabilities = client_capabilities or {}
         self.initialize_calls = []
         self.create_session_calls = []
 
@@ -31,9 +34,12 @@ class FakeAgentManager:
         )
         return self.capabilities
 
-    async def create_session(self, channel_id=""):
-        self.create_session_calls.append(channel_id)
-        return self.session_id
+    async def create_session(self, channel_id="", session_id=None):
+        self.create_session_calls.append({"channel_id": channel_id, "session_id": session_id})
+        return session_id or self.session_id
+
+    def get_client_capabilities(self, channel_id=""):
+        return dict(self.client_capabilities)
 
 
 class FakeJiuClawContextEngineeringRail:
@@ -52,6 +58,9 @@ class AgentWebSocketServerHarness(agent_ws_server_module.AgentWebSocketServer):
     async def handle_session_create_for_test(self, ws, request, send_lock):
         await self._handle_session_create(ws, request, send_lock)
 
+    async def handle_message_for_test(self, ws, raw, send_lock):
+        await self._handle_message(ws, raw, send_lock)
+
 
 class DeepAdapterHarness(interface_deep_module.JiuWenClawDeepAdapter):
     def build_context_engineering_rail_for_test(self, config):
@@ -64,6 +73,16 @@ def fake_encode_agent_response_for_wire(resp, response_id):
         "payload": resp.payload,
         "ok": resp.ok,
     }
+
+
+@pytest.fixture(autouse=True)
+def _reset_acp_output_manager():
+    mgr = get_acp_output_manager()
+    mgr.reset_state()
+    mgr.set_send_push_callback(None)
+    yield
+    mgr.reset_state()
+    mgr.set_send_push_callback(None)
 
 
 @pytest.mark.asyncio
@@ -162,7 +181,7 @@ async def test_handle_session_create_returns_session_id(monkeypatch):
 
     await server.handle_session_create_for_test(fake_ws, request, asyncio.Lock())
 
-    assert fake_manager.create_session_calls == ["acp"]
+    assert fake_manager.create_session_calls == [{"channel_id": "acp", "session_id": None}]
     assert fake_ws.sent == [
         {
             "response_id": "req-session-create",
@@ -170,6 +189,144 @@ async def test_handle_session_create_returns_session_id(monkeypatch):
             "ok": True,
         }
     ]
+
+
+@pytest.mark.asyncio
+async def test_handle_session_create_returns_explicit_session_id(monkeypatch):
+    server = AgentWebSocketServerHarness()
+    fake_manager = FakeAgentManager(session_id="unused-default")
+    server.set_agent_manager_for_test(fake_manager)
+    fake_ws = FakeWebSocket()
+
+    monkeypatch.setattr(
+        agent_ws_server_module,
+        "encode_agent_response_for_wire",
+        fake_encode_agent_response_for_wire,
+    )
+
+    request = AgentRequest(
+        request_id="req-session-create-explicit",
+        channel_id="acp",
+        req_method=ReqMethod.SESSION_CREATE,
+        params={"session_id": "sess_explicit_001"},
+    )
+
+    await server.handle_session_create_for_test(fake_ws, request, asyncio.Lock())
+
+    assert fake_manager.create_session_calls == [
+        {"channel_id": "acp", "session_id": "sess_explicit_001"}
+    ]
+    assert fake_ws.sent == [
+        {
+            "response_id": "req-session-create-explicit",
+            "payload": {"sessionId": "sess_explicit_001"},
+            "ok": True,
+        }
+    ]
+
+
+@pytest.mark.asyncio
+async def test_handle_acp_tool_response_completes_pending_future(monkeypatch):
+    server = AgentWebSocketServerHarness()
+    fake_ws = FakeWebSocket()
+    mgr = get_acp_output_manager()
+    future: asyncio.Future[dict] = asyncio.get_running_loop().create_future()
+    mgr.add_pending_request(AcpOutputRequest(
+        jsonrpc_id="42",
+        method="fs/read_text_file",
+        params={"path": "workspace/demo.txt"},
+        future=future,
+        request_id="req-pending",
+    ))
+
+    monkeypatch.setattr(
+        agent_ws_server_module,
+        "encode_agent_response_for_wire",
+        fake_encode_agent_response_for_wire,
+    )
+
+    request = AgentRequest(
+        request_id="req-acp-tool-response",
+        channel_id="acp",
+        req_method=ReqMethod.ACP_TOOL_RESPONSE,
+        params={
+            "jsonrpc_id": "42",
+            "response": {
+                "jsonrpc": "2.0",
+                "id": "42",
+                "result": {"content": "hello"},
+            },
+        },
+    )
+
+    await server.handle_acp_tool_response_for_test(fake_ws, request, asyncio.Lock())
+
+    assert future.done() is True
+    assert future.result() == {
+        "jsonrpc": "2.0",
+        "id": "42",
+        "result": {"content": "hello"},
+    }
+    assert fake_ws.sent == [
+        {
+            "response_id": "req-acp-tool-response",
+            "payload": {"accepted": True},
+            "ok": True,
+        }
+    ]
+
+
+@pytest.mark.asyncio
+async def test_handle_message_uses_ws_scoped_acp_client_capabilities(monkeypatch):
+    ws_a = FakeWebSocket()
+    ws_b = FakeWebSocket()
+    server = AgentWebSocketServerHarness()
+    fake_manager = FakeAgentManager(
+        capabilities=ACP_DEFAULT_CAPABILITIES,
+        client_capabilities={"fs": {"readTextFile": True}},
+    )
+    server.set_agent_manager_for_test(fake_manager)
+
+    monkeypatch.setattr(
+        agent_ws_server_module,
+        "encode_agent_response_for_wire",
+        fake_encode_agent_response_for_wire,
+    )
+
+    init_request_a = AgentRequest(
+        request_id="req-init-a",
+        channel_id="acp",
+        req_method=ReqMethod.INITIALIZE,
+        params={"clientCapabilities": {"fs": {"readTextFile": True}}},
+    )
+    init_request_b = AgentRequest(
+        request_id="req-init-b",
+        channel_id="acp",
+        req_method=ReqMethod.INITIALIZE,
+        params={"clientCapabilities": {"terminal": {"create": True}}},
+    )
+    await server.handle_initialize_for_test(ws_a, init_request_a, asyncio.Lock())
+    await server.handle_initialize_for_test(ws_b, init_request_b, asyncio.Lock())
+
+    captured = {}
+
+    async def fake_handle_session_create(ws, request, send_lock):
+        captured[id(ws)] = dict(request.metadata or {})
+
+    monkeypatch.setattr(server, "_handle_session_create", fake_handle_session_create)
+
+    env = e2a_from_agent_fields(
+        request_id="req-session-create",
+        channel_id="acp",
+        session_id="sess-b",
+        req_method=ReqMethod.SESSION_CREATE,
+        params={"session_id": "sess-b"},
+        is_stream=False,
+        timestamp=0.0,
+    )
+    await server.handle_message_for_test(ws_b, json.dumps(env.to_dict(), ensure_ascii=False), asyncio.Lock())
+
+    assert captured[id(ws_b)]["acp_client_capabilities"] == {"terminal": {"create": True}}
 
 
 def test_build_context_engineering_rail_uses_summary_offloader_config(monkeypatch):

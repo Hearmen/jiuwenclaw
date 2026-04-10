@@ -9,7 +9,7 @@ import asyncio
 import secrets
 import time
 from abc import ABC, abstractmethod
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from enum import Enum
 from typing import TYPE_CHECKING, Any, Dict
 from jiuwenclaw.channel.base import ChannelType
@@ -19,6 +19,22 @@ from jiuwenclaw.schema.hook_event import GatewayHookEvents
 from jiuwenclaw.schema.hooks_context import GatewayChatHookContext
 
 logger = logging.getLogger(__name__)
+
+_ACP_CHANNEL_ID = "acp"
+_ACP_ORIGINAL_SESSION_ID_KEY = "acp_original_session_id"
+_KNOWN_JIUWENCLAW_SESSION_PREFIXES = (
+    "sess_",
+    "acp_",
+    "cron_",
+    "feishu_",
+    "wechat_",
+    "xiaoyi_",
+    "dingtalk_",
+    "wecom_",
+    "telegram_",
+    "discord_",
+    "whatsapp_",
+)
 
 
 
@@ -75,6 +91,8 @@ class MessageHandler(ABC):
         self._pending_evolution_approval: dict[str, str] = {}  # session_id -> approval_request_id
         self._queued_supplement_input: dict[str, str] = {}  # session_id -> queued_new_input
         self._session_evolution_in_progress: set[str] = set()
+        self._acp_session_aliases: dict[str, str] = {}  # external_session_id -> internal_session_id
+        self._acp_session_alias_lock = asyncio.Lock()
 
         # per-channel 控制状态：支持 \new_session / \mode 指令。
         # 使用 ChannelType 的 value 作为标准键，避免散落的硬编码字符串。
@@ -404,6 +422,118 @@ class MessageHandler(ABC):
             return None
 
     @staticmethod
+    def _is_session_map_style_session_id(session_id: str) -> bool:
+        parts = [part.strip() for part in str(session_id or "").split("::")]
+        if len(parts) not in (5, 6):
+            return False
+        return all(parts)
+
+    @classmethod
+    def _is_known_jiuwenclaw_session_id(cls, session_id: str | None) -> bool:
+        sid = str(session_id or "").strip()
+        if not sid:
+            return False
+        if sid.startswith(_KNOWN_JIUWENCLAW_SESSION_PREFIXES):
+            return True
+        return cls._is_session_map_style_session_id(sid)
+
+    async def _ensure_acp_agent_session(self, session_id: str) -> str:
+        from jiuwenclaw.e2a.gateway_normalize import e2a_from_agent_fields
+        from jiuwenclaw.schema.message import ReqMethod
+
+        env = e2a_from_agent_fields(
+            request_id=f"acp-session-create-{int(time.time() * 1000):x}-{secrets.token_hex(3)}",
+            channel_id=_ACP_CHANNEL_ID,
+            session_id=session_id,
+            req_method=ReqMethod.SESSION_CREATE,
+            params={"session_id": session_id},
+            is_stream=False,
+            timestamp=time.time(),
+        )
+        resp = await self._agent_client.send_request(env)
+        if not resp.ok:
+            payload = dict(resp.payload or {}) if isinstance(resp.payload, dict) else {}
+            raise RuntimeError(str(payload.get("error") or "acp session.create failed"))
+        payload = dict(resp.payload or {}) if isinstance(resp.payload, dict) else {}
+        resolved = payload.get("sessionId") or payload.get("session_id") or session_id
+        resolved_str = str(resolved or "").strip()
+        if not resolved_str:
+            raise RuntimeError("acp session.create returned empty session_id")
+        return resolved_str
+
+    async def _resolve_acp_internal_session_id(
+        self,
+        external_session_id: str | None,
+    ) -> tuple[str | None, bool]:
+        external = str(external_session_id or "").strip()
+        if not external:
+            return None, False
+
+        cached = self._acp_session_aliases.get(external)
+        if cached:
+            return cached, cached != external
+
+        async with self._acp_session_alias_lock:
+            cached = self._acp_session_aliases.get(external)
+            if cached:
+                return cached, cached != external
+
+            desired = (
+                external
+                if self._is_known_jiuwenclaw_session_id(external)
+                else self._generate_channel_session_id(_ACP_CHANNEL_ID)
+            )
+            ensured = await self._ensure_acp_agent_session(desired)
+            self._acp_session_aliases[external] = ensured
+            return ensured, ensured != external
+
+    async def _prepare_agent_dispatch_message(self, msg: "Message") -> "Message":
+        from jiuwenclaw.schema.message import ReqMethod
+
+        if msg.channel_id != _ACP_CHANNEL_ID:
+            return msg
+        if msg.req_method in (ReqMethod.INITIALIZE, ReqMethod.SESSION_CREATE):
+            return msg
+
+        internal_session_id, aliased = await self._resolve_acp_internal_session_id(msg.session_id)
+        if not internal_session_id:
+            return msg
+
+        params = dict(msg.params or {})
+        params["session_id"] = internal_session_id
+
+        metadata = dict(msg.metadata or {})
+        if aliased:
+            metadata.setdefault(_ACP_ORIGINAL_SESSION_ID_KEY, str(msg.session_id or ""))
+
+        return replace(
+            msg,
+            session_id=internal_session_id,
+            params=params,
+            metadata=metadata or None,
+        )
+
+    def _resolve_acp_external_session_id(
+        self,
+        session_id: str | None,
+        metadata: dict[str, Any] | None = None,
+    ) -> str | None:
+        sid = str(session_id or "").strip()
+        if not sid:
+            return None
+
+        original = ""
+        if isinstance(metadata, dict):
+            original = str(metadata.get(_ACP_ORIGINAL_SESSION_ID_KEY) or "").strip()
+        if original:
+            return original
+
+        for external, internal in self._acp_session_aliases.items():
+            if internal == sid:
+                return external
+        return sid
+
+    @staticmethod
     def message_to_e2a(msg: "Message") -> "E2AEnvelope":
         from jiuwenclaw.e2a.gateway_normalize import message_to_e2a_or_fallback
 
@@ -500,6 +630,8 @@ class MessageHandler(ABC):
             bus_metadata: dict[str, Any] | None = bus_md if bus_md else None
         else:
             bus_metadata = None
+        if chunk.channel_id == _ACP_CHANNEL_ID:
+            session_id = self._resolve_acp_external_session_id(session_id, bus_metadata)
         if isinstance(chunk.payload, dict) and chunk.payload.get("event_type") == "cron.response":
             await self._handle_cron_push_payload(
                 payload=dict(chunk.payload),
@@ -507,6 +639,12 @@ class MessageHandler(ABC):
                 channel_id=chunk.channel_id,
                 session_id=session_id,
                 metadata=bus_metadata,
+            )
+            return
+        if self._is_terminal_stream_chunk(chunk):
+            logger.debug(
+                "[MessageHandler] 忽略 server_push 终止 chunk: request_id=%s",
+                chunk.request_id,
             )
             return
 
@@ -613,6 +751,24 @@ class MessageHandler(ABC):
             event_type=event_type,
             metadata=metadata,
         )
+
+    @staticmethod
+    def _is_terminal_stream_chunk(chunk: AgentResponseChunk) -> bool:
+        """识别仅用于结束流的哨兵 chunk，避免被当作业务事件继续下发。"""
+        if not bool(getattr(chunk, "is_complete", False)):
+            return False
+        payload = getattr(chunk, "payload", None)
+        if not payload:
+            return True
+        if not isinstance(payload, dict):
+            return False
+        if payload.get("event_type"):
+            return False
+        if payload.get("content") not in (None, ""):
+            return False
+        if payload.get("error") not in (None, ""):
+            return False
+        return payload.get("is_complete") is True and set(payload.keys()) <= {"is_complete"}
 
     @staticmethod
     def _non_stream_rpc_may_run_parallel(env: "E2AEnvelope") -> bool:
@@ -780,7 +936,8 @@ class MessageHandler(ABC):
                 # 检查是否是中断请求
                 if msg.req_method == ReqMethod.CHAT_ANSWER:
                     # 先正常转发用户审批答案，再按会话自动派发排队的新输入
-                    env = self.message_to_e2a(msg)
+                    agent_msg = await self._prepare_agent_dispatch_message(msg)
+                    env = self.message_to_e2a(agent_msg)
                     await self._process_non_stream_request(msg, env)
                     answer_request_id = (msg.params or {}).get("request_id")
                     if self._is_evolution_approval_request_id(answer_request_id):
@@ -852,12 +1009,13 @@ class MessageHandler(ABC):
                         #    用 await 确保 agent 侧先完成取消再启动新任务
                         from jiuwenclaw.e2a.gateway_normalize import e2a_from_agent_fields
 
+                        agent_msg = await self._prepare_agent_dispatch_message(msg)
                         supplement_env = e2a_from_agent_fields(
                             request_id=f"supplement_{int(time.time() * 1000):x}",
                             channel_id=msg.channel_id,
-                            session_id=msg.session_id,
+                            session_id=agent_msg.session_id,
                             req_method=ReqMethod.CHAT_CANCEL,
-                            params={"intent": "supplement"},
+                            params={"intent": "supplement", "session_id": agent_msg.session_id},
                             is_stream=False,
                             timestamp=time.time(),
                         )
@@ -911,12 +1069,14 @@ class MessageHandler(ABC):
                                     rid, msg.channel_id, sid, "cancel",
                                 )
                         # Fire-and-forget: 发送取消请求到 AgentServer
-                        env_interrupt = self.message_to_e2a(msg)
+                        agent_msg = await self._prepare_agent_dispatch_message(msg)
+                        env_interrupt = self.message_to_e2a(agent_msg)
                         asyncio.create_task(self._send_interrupt_to_agent(env_interrupt))
 
                     elif intent in ("pause", "resume"):
                         # 暂停/恢复：不取消流式任务，转发给 AgentServer 处理 ReAct 循环
-                        env_interrupt = self.message_to_e2a(msg)
+                        agent_msg = await self._prepare_agent_dispatch_message(msg)
+                        env_interrupt = self.message_to_e2a(agent_msg)
                         asyncio.create_task(self._send_interrupt_to_agent(env_interrupt))
                         # 通知前端状态变更
                         await self._send_interrupt_result_notification(
@@ -929,8 +1089,9 @@ class MessageHandler(ABC):
                     "[MessageHandler] 从 user_messages 取出，发往 AgentServer: id=%s channel_id=%s is_stream=%s",
                     msg.id, msg.channel_id, msg.is_stream,
                 )
-                await self._trigger_before_chat_request_hook(msg)
-                env = self.message_to_e2a(msg)
+                agent_msg = await self._prepare_agent_dispatch_message(msg)
+                await self._trigger_before_chat_request_hook(agent_msg)
+                env = self.message_to_e2a(agent_msg)
                 stream_rid = env.request_id or msg.id
                 try:
                     if env.is_stream:
@@ -992,7 +1153,7 @@ class MessageHandler(ABC):
         try:
             async for chunk in self._agent_client.send_request_stream(env):
                 # 跳过终止 chunk（仅作为流结束信号，不含实际数据）
-                if chunk.is_complete and not chunk.payload:
+                if self._is_terminal_stream_chunk(chunk):
                     logger.debug(
                         "[MessageHandler] 跳过终止 chunk: request_id=%s",
                         chunk.request_id,

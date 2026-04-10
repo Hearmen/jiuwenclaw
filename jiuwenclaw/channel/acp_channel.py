@@ -80,6 +80,7 @@ class AcpChannel(BaseChannel):
         self._request_ctx: dict[str, _AcpRequestContext] = {}
         self._session_ctx: dict[str, dict[str, Any]] = {}
         self._active_prompt_request_by_session: dict[str, str] = {}
+        self._pending_client_rpc_session_by_id: dict[str, str] = {}
 
     @property
     def channel_id(self) -> str:
@@ -98,7 +99,7 @@ class AcpChannel(BaseChannel):
         stdin_eof_since: float | None = None
         while self._running:
             if stdin_eof:
-                if not self._request_ctx and stdin_eof_since is not None:
+                if not self._request_ctx and not self._pending_client_rpc_session_by_id and stdin_eof_since is not None:
                     if (time.time() - stdin_eof_since) >= _STDIN_EOF_GRACE_SECONDS:
                         break
                 await asyncio.sleep(0.05)
@@ -136,6 +137,7 @@ class AcpChannel(BaseChannel):
         self._running = False
         for request_id in list(self._request_ctx.keys()):
             await self._clear_request_context(request_id)
+        self._pending_client_rpc_session_by_id.clear()
         await self._close_gateway_connection()
 
     async def send(self, msg: Message) -> None:
@@ -162,6 +164,9 @@ class AcpChannel(BaseChannel):
         if self._is_jsonrpc_request(data):
             await self._handle_jsonrpc_request(data)
             return
+        if self._is_jsonrpc_response(data):
+            await self._handle_jsonrpc_response(data)
+            return
 
         env = self._parse_envelope(data)
         msg = self._envelope_to_message(env)
@@ -172,6 +177,30 @@ class AcpChannel(BaseChannel):
             session_id=msg.session_id,
         )
 
+        await self._dispatch_message(msg)
+
+    async def _handle_jsonrpc_response(self, data: dict[str, Any]) -> None:
+        jsonrpc_id = str(data.get("id") or "").strip()
+        if not jsonrpc_id:
+            return
+
+        session_id = self._pending_client_rpc_session_by_id.pop(jsonrpc_id, None)
+        msg = Message(
+            id=f"acp_tool_resp_{uuid.uuid4().hex[:12]}",
+            type="req",
+            channel_id=self.channel_id,
+            session_id=session_id,
+            params={
+                "jsonrpc_id": jsonrpc_id,
+                "response": dict(data),
+                "session_id": session_id,
+            },
+            timestamp=time.time(),
+            ok=True,
+            req_method=ReqMethod.ACP_TOOL_RESPONSE,
+            is_stream=False,
+            metadata={"acp": {"jsonrpc_id": jsonrpc_id, "kind": "tool_response"}},
+        )
         await self._dispatch_message(msg)
 
     def _parse_envelope(self, data: dict[str, Any]) -> E2AEnvelope:
@@ -376,6 +405,7 @@ class AcpChannel(BaseChannel):
         try:
             if method == "initialize":
                 await self._write_jsonrpc_result(rpc_id, self._initialize_result())
+                await self._notify_agent_initialize(params)
                 return
             if method == "session/new":
                 await self._handle_jsonrpc_session_new(rpc_id, params)
@@ -399,6 +429,24 @@ class AcpChannel(BaseChannel):
             logger.exception("[ACP] jsonrpc request failed: %s", exc)
             await self._write_jsonrpc_error(rpc_id, -32603, str(exc))
 
+    async def _notify_agent_initialize(self, params: dict[str, Any]) -> None:
+        msg = Message(
+            id=f"acp_init_{uuid.uuid4().hex[:12]}",
+            type="req",
+            channel_id=self.channel_id,
+            session_id=self.config.default_session_id,
+            params=dict(params),
+            timestamp=time.time(),
+            ok=True,
+            req_method=ReqMethod.INITIALIZE,
+            is_stream=False,
+            metadata={"acp": {"method": "initialize"}},
+        )
+        try:
+            await self._dispatch_message(msg)
+        except Exception:
+            logger.debug("[ACP] failed to forward initialize to gateway", exc_info=True)
+
     def _initialize_result(self) -> dict[str, Any]:
         return {
             "protocolVersion": _ACP_PROTOCOL_VERSION,
@@ -416,6 +464,16 @@ class AcpChannel(BaseChannel):
                 },
                 "sessionCapabilities": {
                     "list": {},
+                },
+                "fs": {
+                    "readTextFile": True,
+                    "writeTextFile": True,
+                },
+                "terminal": {
+                    "create": True,
+                    "output": True,
+                    "waitForExit": True,
+                    "release": True,
                 },
             },
             "authMethods": [],
@@ -716,6 +774,16 @@ class AcpChannel(BaseChannel):
         )
 
     @staticmethod
+    def _is_jsonrpc_response(data: Any) -> bool:
+        return (
+            isinstance(data, dict)
+            and data.get("jsonrpc") == "2.0"
+            and "id" in data
+            and not isinstance(data.get("method"), str)
+            and ("result" in data or "error" in data)
+        )
+
+    @staticmethod
     def _extract_prompt_text(params: dict[str, Any]) -> str:
         prompt = params.get("prompt")
         if isinstance(prompt, list):
@@ -827,6 +895,10 @@ class AcpChannel(BaseChannel):
         if not isinstance(data, dict):
             return
 
+        if self._is_jsonrpc_request(data):
+            await self._handle_gateway_jsonrpc_request(data)
+            return
+
         frame_type = str(data.get("type") or "").strip()
         if frame_type == "res":
             msg = self._message_from_gateway_response(data)
@@ -837,6 +909,27 @@ class AcpChannel(BaseChannel):
 
         if msg is not None:
             await self.send(msg)
+
+    def set_pending_client_rpc_session_for_test(self, jsonrpc_id: str, session_id: str) -> None:
+        """Public test helper to seed ACP client RPC session mappings."""
+        self._pending_client_rpc_session_by_id[jsonrpc_id] = session_id
+
+    def get_pending_client_rpc_session_for_test(self, jsonrpc_id: str) -> str | None:
+        """Public test helper to inspect ACP client RPC session mappings."""
+        return self._pending_client_rpc_session_by_id.get(jsonrpc_id)
+
+    async def handle_gateway_frame_for_test(self, data: dict[str, Any]) -> None:
+        """Public test helper that delegates to gateway frame handling."""
+        await self._handle_gateway_frame(data)
+
+    async def _handle_gateway_jsonrpc_request(self, data: dict[str, Any]) -> None:
+        jsonrpc_id = str(data.get("id") or "").strip()
+        params = data.get("params") if isinstance(data.get("params"), dict) else {}
+        session_id = str(params.get("sessionId") or params.get("session_id") or "").strip()
+        if jsonrpc_id and session_id:
+            self._pending_client_rpc_session_by_id[jsonrpc_id] = session_id
+        _ACP_STDOUT.buffer.write((json.dumps(data, ensure_ascii=False) + "\n").encode("utf-8"))
+        _ACP_STDOUT.buffer.flush()
 
     def _message_from_gateway_response(self, data: dict[str, Any]) -> Message | None:
         request_id = str(data.get("id") or "").strip()

@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import Any, ClassVar
 
 from jiuwenclaw.agentserver.gateway_push.wire import build_server_push_wire
+from jiuwenclaw.agentserver.tools.acp_output_tools import get_acp_output_manager
 from jiuwenclaw.utils import get_agent_sessions_dir, get_config_file
 from jiuwenclaw.e2a.agent_compat import e2a_to_agent_request
 from jiuwenclaw.e2a.gateway_normalize import (
@@ -85,8 +86,31 @@ class AgentWebSocketServer:
         # 当前 Gateway 连接，用于 send_push 主动推送
         self._current_ws: Any = None
         self._current_send_lock: asyncio.Lock | None = None
+        self._acp_client_capabilities_by_ws: dict[int, dict[str, Any]] = {}
         # AgentManager 实例
         self._agent_manager = AgentManager()
+        get_acp_output_manager().set_send_push_callback(
+            lambda msg: asyncio.create_task(self.send_push(msg))
+        )
+
+    @staticmethod
+    def _ws_capabilities_key(ws: Any) -> int:
+        return id(ws)
+
+    def _set_ws_acp_client_capabilities(self, ws: Any, capabilities: dict[str, Any] | None) -> None:
+        key = self._ws_capabilities_key(ws)
+        if isinstance(capabilities, dict):
+            self._acp_client_capabilities_by_ws[key] = dict(capabilities)
+        else:
+            self._acp_client_capabilities_by_ws.pop(key, None)
+
+    def _get_ws_acp_client_capabilities(self, ws: Any) -> dict[str, Any]:
+        key = self._ws_capabilities_key(ws)
+        caps = self._acp_client_capabilities_by_ws.get(key)
+        return dict(caps) if isinstance(caps, dict) else {}
+
+    def _clear_ws_acp_client_capabilities(self, ws: Any) -> None:
+        self._acp_client_capabilities_by_ws.pop(self._ws_capabilities_key(ws), None)
 
     @classmethod
     def get_instance(
@@ -202,6 +226,7 @@ class AgentWebSocketServer:
         finally:
             self._current_ws = None
             self._current_send_lock = None
+            self._clear_ws_acp_client_capabilities(ws)
             if tasks:
                 await asyncio.gather(*tasks, return_exceptions=True)
 
@@ -257,6 +282,15 @@ class AgentWebSocketServer:
 
         try:
             from jiuwenclaw.schema.message import ReqMethod
+
+            if request.channel_id == "acp" and request.req_method != ReqMethod.INITIALIZE:
+                metadata = dict(request.metadata or {})
+                ws_caps = self._get_ws_acp_client_capabilities(ws)
+                metadata.setdefault(
+                    "acp_client_capabilities",
+                    ws_caps or self._agent_manager.get_client_capabilities("acp"),
+                )
+                request.metadata = metadata
 
             await self._trigger_before_chat_request_hook(request)
 
@@ -353,6 +387,10 @@ class AgentWebSocketServer:
 
         if request.req_method == ReqMethod.SESSION_CREATE:
             await self._handle_session_create(ws, request, send_lock)
+            return
+
+        if request.req_method == ReqMethod.ACP_TOOL_RESPONSE:
+            await self._handle_acp_tool_response(ws, request, send_lock)
             return
 
         agent = await self._agent_manager.get_agent(channel_id=channel_id)
@@ -807,16 +845,22 @@ class AgentWebSocketServer:
             request: AgentRequest
             send_lock: 发送锁
         """
-        logger.info("[AgentServer] initialize: request_id=%s", request.request_id)
+        logger.info("[AgentServer] initialize: request_id=%s channel_id=%s", request.request_id, request.channel_id)
 
         try:
             params = request.params if isinstance(request.params, dict) else {}
             client_capabilities = params.get("clientCapabilities", {})
+            logger.info(
+                "[AgentServer] initialize clientCapabilities: %s",
+                client_capabilities,
+            )
 
             extra_config = {
                 "protocol_version": params.get("protocolVersion", "0.1.0"),
                 "client_capabilities": client_capabilities,
             }
+            if request.channel_id == "acp":
+                self._set_ws_acp_client_capabilities(ws, client_capabilities)
 
             channel_id = request.channel_id or "default"
             capabilities = await self._agent_manager.initialize(
@@ -866,7 +910,12 @@ class AgentWebSocketServer:
 
         try:
             channel_id = request.channel_id or "default"
-            session_id = await self._agent_manager.create_session(channel_id=channel_id)
+            params = request.params if isinstance(request.params, dict) else {}
+            explicit_session_id = params.get("session_id")
+            session_id = await self._agent_manager.create_session(
+                channel_id=channel_id,
+                session_id=str(explicit_session_id).strip() if isinstance(explicit_session_id, str) else None,
+            )
 
             resp = AgentResponse(
                 request_id=request.request_id,
@@ -891,3 +940,43 @@ class AgentWebSocketServer:
             wire = encode_agent_response_for_wire(resp, response_id=request.request_id)
             async with send_lock:
                 await ws.send(json.dumps(wire, ensure_ascii=False))
+
+    async def _handle_acp_tool_response(
+        self,
+        ws: Any,
+        request: AgentRequest,
+        send_lock: asyncio.Lock,
+    ) -> None:
+        params = request.params if isinstance(request.params, dict) else {}
+        jsonrpc_id = params.get("jsonrpc_id")
+        response_payload = params.get("response")
+        if not isinstance(response_payload, dict):
+            response_payload = {}
+
+        if get_acp_output_manager().complete_jsonrpc_response(jsonrpc_id, response_payload):
+            resp = AgentResponse(
+                request_id=request.request_id,
+                channel_id=request.channel_id,
+                ok=True,
+                payload={"accepted": True},
+            )
+        else:
+            resp = AgentResponse(
+                request_id=request.request_id,
+                channel_id=request.channel_id,
+                ok=False,
+                payload={"error": f"unknown acp tool response id: {jsonrpc_id}"},
+            )
+
+        wire = encode_agent_response_for_wire(resp, response_id=request.request_id)
+        async with send_lock:
+            await ws.send(json.dumps(wire, ensure_ascii=False))
+
+    async def handle_acp_tool_response_for_test(
+        self,
+        ws: Any,
+        request: AgentRequest,
+        send_lock: asyncio.Lock,
+    ) -> None:
+        """Public test helper that delegates to ACP tool-response handling."""
+        await self._handle_acp_tool_response(ws, request, send_lock)

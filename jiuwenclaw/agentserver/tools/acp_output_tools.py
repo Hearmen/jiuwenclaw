@@ -7,6 +7,7 @@ ACP 输出工具：AgentServer 向 IDE 发送请求。
 from __future__ import annotations
 
 import asyncio
+import inspect
 import logging
 import uuid
 from dataclasses import dataclass
@@ -62,6 +63,68 @@ class AcpOutputManager:
 
     def set_send_push_callback(self, callback: Any) -> None:
         self._send_push_callback = callback
+
+    def reset_state(self) -> None:
+        """Reset runtime state.
+
+        Intended for unit tests and controlled lifecycle cleanup.
+        """
+        self._pending.clear()
+        self._jsonrpc_counter = 0
+
+    def add_pending_request(self, request: AcpOutputRequest) -> None:
+        """Register a pending request explicitly.
+
+        Used by tests to seed pending state without touching protected members.
+        """
+        self._pending[str(request.jsonrpc_id)] = request
+
+    def complete_jsonrpc_response(
+        self,
+        jsonrpc_id: str | int | None,
+        response: dict[str, Any],
+    ) -> bool:
+        """Complete a pending ACP JSON-RPC request."""
+        jsonrpc_key = str(jsonrpc_id or "").strip()
+        if not jsonrpc_key:
+            return False
+
+        pending = self._pending.pop(jsonrpc_key, None)
+        if pending is None:
+            logger.warning(
+                "[AcpOutput] completion dropped: jsonrpc_id=%s pending_keys=%s",
+                jsonrpc_key,
+                list(self._pending.keys()),
+            )
+            return False
+
+        if pending.future.done():
+            return False
+
+        pending.future.set_result(dict(response or {}))
+        logger.info(
+            "[AcpOutput] request completed: jsonrpc_id=%s method=%s",
+            jsonrpc_key,
+            pending.method,
+        )
+        return True
+
+    def fail_jsonrpc_response(
+        self,
+        jsonrpc_id: str | int | None,
+        exc: BaseException,
+    ) -> bool:
+        jsonrpc_key = str(jsonrpc_id or "").strip()
+        if not jsonrpc_key:
+            return False
+
+        pending = self._pending.pop(jsonrpc_key, None)
+        if pending is None:
+            return False
+        if pending.future.done():
+            return False
+        pending.future.set_exception(exc)
+        return True
 
     async def send_jsonrpc_request(
         self,
@@ -140,7 +203,9 @@ class AcpOutputManager:
             push_msg["payload"] = push_msg["body"]
 
         try:
-            self._send_push_callback(push_msg)
+            callback_result = self._send_push_callback(push_msg)
+            if inspect.isawaitable(callback_result):
+                await callback_result
         except Exception as exc:
             self._pending.pop(jsonrpc_id, None)
             raise RuntimeError(f"Failed to send ACP output request: {exc}") from exc
@@ -482,3 +547,4 @@ def get_tools(session_id: str = "", request_id: str = "") -> List["Tool"]:
             func=release_terminal_bound,
         ),
     ]
+

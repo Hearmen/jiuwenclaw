@@ -110,6 +110,104 @@ async def test_gateway_server_send_event_targets_session_client():
 
 
 @pytest.mark.asyncio
+async def test_gateway_server_passthroughs_acp_output_request_as_raw_jsonrpc():
+    server = build_server()
+    ws = FakeWebSocket()
+    server.bind_session_client("sess-tool", ws)
+
+    await server.send(
+        Message(
+            id="req-tool",
+            type="event",
+            channel_id="acp",
+            session_id="sess-tool",
+            params={},
+            timestamp=time.time(),
+            ok=True,
+            payload={
+                "event_type": "acp.output_request",
+                "jsonrpc": {
+                    "jsonrpc": "2.0",
+                    "id": "tool-1",
+                    "method": "fs/read_text_file",
+                    "params": {"path": "workspace/demo.txt", "sessionId": "sess-tool"},
+                },
+            },
+        )
+    )
+
+    assert ws.sent_frames == [
+        {
+            "jsonrpc": "2.0",
+            "id": "tool-1",
+            "method": "fs/read_text_file",
+            "params": {"path": "workspace/demo.txt", "sessionId": "sess-tool"},
+        }
+    ]
+
+
+@pytest.mark.asyncio
+async def test_gateway_server_handle_raw_jsonrpc_response_forwards_acp_tool_response():
+    server = build_server()
+    ws = FakeWebSocket()
+    server.bind_session_client("sess-tool", ws)
+    seen = []
+
+    async def on_message(msg):
+        seen.append(msg)
+
+    server.on_message(on_message)
+
+    await server.send(
+        Message(
+            id="req-tool",
+            type="event",
+            channel_id="acp",
+            session_id="sess-tool",
+            params={},
+            timestamp=time.time(),
+            ok=True,
+            payload={
+                "event_type": "acp.output_request",
+                "jsonrpc": {
+                    "jsonrpc": "2.0",
+                    "id": "tool-1",
+                    "method": "fs/read_text_file",
+                    "params": {"path": "workspace/demo.txt", "sessionId": "sess-tool"},
+                },
+            },
+        )
+    )
+
+    await server.handle_raw_message_public(
+        ws,
+        json.dumps(
+            {
+                "jsonrpc": "2.0",
+                "id": "tool-1",
+                "result": {"content": "hello"},
+            },
+            ensure_ascii=False,
+        ),
+    )
+
+    assert len(seen) == 1
+    msg = seen[0]
+    assert msg.channel_id == "acp"
+    assert msg.session_id == "sess-tool"
+    assert msg.req_method == ReqMethod.ACP_TOOL_RESPONSE
+    assert msg.params == {
+        "jsonrpc_id": "tool-1",
+        "response": {
+            "jsonrpc": "2.0",
+            "id": "tool-1",
+            "result": {"content": "hello"},
+        },
+        "session_id": "sess-tool",
+    }
+
+
+@pytest.mark.asyncio
 async def test_gateway_server_handle_raw_message_forwards_request():
     server = build_server()
     ws = FakeWebSocket()

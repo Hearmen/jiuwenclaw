@@ -78,6 +78,7 @@ from jiuwenclaw.agentserver.tools.multimodal_config import (
 from jiuwenclaw.agentserver.tools.video_tools import video_understanding
 
 from jiuwenclaw.agentserver.tools import SendFileToolkit
+from jiuwenclaw.agentserver.tools.acp_output_tools import get_tools as get_acp_output_tools
 from jiuwenclaw.agentserver.tools.multi_session_toolkits import MultiSessionToolkit
 from jiuwenclaw.agentserver.tools.xiaoyi_phone_tools import (
     get_user_location,
@@ -136,6 +137,16 @@ _CRON_TOOL_MODE: ContextVar[str | None] = ContextVar(
 )
 
 logger = logging.getLogger(__name__)
+
+_ACP_BLOCKED_DEFAULT_TOOL_NAMES = frozenset(
+    {
+        "read_file",
+        "write_file",
+        "edit_file",
+        "bash",
+        "code",
+    }
+)
 
 
 def _parse_int(value: Any, default: int) -> int:
@@ -216,6 +227,7 @@ class JiuWenClawDeepAdapter:
         self._video_model_config: bool = False
         self._vision_tools: list[Any] = []
         self._audio_tools: list[Any] = []
+        self._instance_overrides: dict[str, Any] = {}
         self._xiaoyi_phone_tools_registered: bool = False
         self._paid_search_registered: bool = False
         self._paid_search_tool: WebPaidSearchTool | None = None
@@ -223,6 +235,25 @@ class JiuWenClawDeepAdapter:
         self._runtime_cron_tool_context = _RuntimeCronToolContext(
             tool_scope=f"runtime_{id(self):x}",
         )
+
+    @staticmethod
+    def _is_acp_tool_profile(config: dict[str, Any] | None = None) -> bool:
+        if not isinstance(config, dict):
+            return False
+        tool_profile = str(config.get("tool_profile") or "").strip().lower()
+        if tool_profile:
+            return tool_profile == "acp"
+        channel_id = str(config.get("channel_id") or "").strip().lower()
+        return channel_id == "acp"
+
+    def _filesystem_rail_enabled_for_profile(self) -> bool:
+        raw = self._instance_overrides.get("enable_filesystem_rail", True)
+        return bool(raw)
+
+    def _skill_include_tools_for_profile(self) -> bool:
+        if self._is_acp_tool_profile(self._instance_overrides):
+            return False
+        return self._filesystem_rail is None
 
     @staticmethod
     def _resolve_prompt_channel(session_id: str | None = None) -> str:
@@ -233,7 +264,7 @@ class JiuWenClawDeepAdapter:
         channel = session_id.split("_", 1)[0]
         if channel == "sess":
             return "web"
-        if channel in {"cron", "heartbeat", "feishu", "web"}:
+        if channel in {"acp", "cron", "heartbeat", "feishu", "web"}:
             return channel
         return "web"
 
@@ -760,9 +791,13 @@ class JiuWenClawDeepAdapter:
     def _build_runtime_prompt_rail(self) -> RuntimePromptRail | None:
         """Build RuntimePromptRail for per-model-call time/channel injection."""
         try:
+            default_channel = (
+                "acp" if self._is_acp_tool_profile(self._instance_overrides)
+                else self._resolve_prompt_channel()
+            )
             rail = RuntimePromptRail(
                 language=self._resolve_runtime_language(),
-                channel=self._resolve_prompt_channel(),
+                channel=default_channel,
             )
             logger.info("[JiuWenClawDeepAdapter] RuntimePromptRail create success")
         except Exception as exc:
@@ -784,9 +819,6 @@ class JiuWenClawDeepAdapter:
 
         rail_infos = [
             _RailBuildInfo("_runtime_prompt_rail", self._build_runtime_prompt_rail),
-            _RailBuildInfo("_filesystem_rail", self._build_filesystem_rail),
-            _RailBuildInfo("_skill_rail", self._build_skill_rail,
-                           {"config": config, "include_tools": self._filesystem_rail is None}),
             _RailBuildInfo("_stream_event_rail", self._build_stream_event_rail),
             _RailBuildInfo("_task_planning_rail", self._build_task_planning_rail),
             _RailBuildInfo("_security_rail", self._build_security_rail),
@@ -803,6 +835,19 @@ class JiuWenClawDeepAdapter:
         # 智能模式下关闭自演进，plan 模式下按配置启用
 
         # MemoryRail 不在冷启动时挂载，由 _update_rails_for_mode 按 mode 按需注册/注销
+
+        if self._filesystem_rail_enabled_for_profile():
+            rail_infos.insert(1, _RailBuildInfo("_filesystem_rail", self._build_filesystem_rail))
+        else:
+            self._filesystem_rail = None
+        rail_infos.insert(
+            2 if self._filesystem_rail_enabled_for_profile() else 1,
+            _RailBuildInfo(
+                "_skill_rail",
+                self._build_skill_rail,
+                {"config": config, "include_tools": self._skill_include_tools_for_profile()},
+            ),
+        )
 
         rails_list = []
         for info in rail_infos:
@@ -844,7 +889,10 @@ class JiuWenClawDeepAdapter:
             system_prompt=build_identity_prompt(
                 mode="agent",
                 language=self._resolve_prompt_language(),
-                channel=self._resolve_prompt_channel(),
+                channel=(
+                    "acp" if self._is_acp_tool_profile(self._instance_overrides)
+                    else self._resolve_prompt_channel()
+                ),
             ),
             enable_task_loop=config.get("enable_task_loop", True),
             max_iterations=config.get("max_iterations", 15),
@@ -892,7 +940,13 @@ class JiuWenClawDeepAdapter:
             if _env_auto_scan is not None:
                 self._skill_evolution_rail.auto_scan = _env_auto_scan.lower() in ("true", "1", "yes")
 
-        self._skill_rail = self._build_skill_rail(config, include_tools=self._filesystem_rail is None)
+        self._skill_rail = self._build_skill_rail(
+            config,
+            include_tools=self._skill_include_tools_for_profile(),
+        )
+
+        if not self._filesystem_rail_enabled_for_profile():
+            self._filesystem_rail = None
 
         self._update_permission_rail(config_base)
 
@@ -1026,11 +1080,12 @@ class JiuWenClawDeepAdapter:
         """
         await self.set_checkpoint()
 
+        self._instance_overrides = dict(config or {}) if isinstance(config, dict) else {}
         config_base = get_config()
         self._refresh_multimodal_configs(config_base)
         config = config_base.get('react', {}).copy()
         self._config_cache = config.copy()
-        self._agent_name = config.get("agent_name", "main_agent")
+        self._agent_name = self._instance_overrides.get("agent_name", config.get("agent_name", "main_agent"))
 
         model = self._create_model(config_base)
         agent_card = AgentCard(name=self._agent_name, id='jiuwenclaw')
@@ -1051,7 +1106,10 @@ class JiuWenClawDeepAdapter:
             system_prompt=build_identity_prompt(
                 mode="agent",
                 language=self._resolve_prompt_language(),
-                channel=self._resolve_prompt_channel(),
+                channel=(
+                    "acp" if self._is_acp_tool_profile(self._instance_overrides)
+                    else self._resolve_prompt_channel()
+                ),
             ),
             tools=tool_cards if tool_cards else [],
             subagents=browser_subagents,
@@ -1137,10 +1195,17 @@ class JiuWenClawDeepAdapter:
         self._config_cache = config.copy()
 
         model = self._create_model(config_base)
-        self._agent_name = config.get("agent_name", "main_agent")
+        self._agent_name = self._instance_overrides.get("agent_name", config.get("agent_name", "main_agent"))
         agent_card = AgentCard(name=self._agent_name, id='jiuwenclaw')
         self._sync_multimodal_tools_for_runtime()
         self._sync_paid_search_tool_for_runtime()
+
+        if not self._filesystem_rail_enabled_for_profile() and self._filesystem_rail is not None:
+            try:
+                await self._instance.unregister_rail(self._filesystem_rail)
+            except Exception as exc:
+                logger.warning("[JiuWenClawDeepAdapter] ACP filesystem rail unregister failed: %s", exc)
+            self._filesystem_rail = None
 
         rails_list = self._get_current_agent_rails(config, config_base)
 
@@ -1243,6 +1308,44 @@ class JiuWenClawDeepAdapter:
                 self._skill_evolution_rail = None
                 logger.info("[JiuWenClawDeepAdapter] SkillEvolutionRail unregistered for agent mode")
 
+    @staticmethod
+    def _acp_runtime_tools_enabled(
+            request_metadata: dict[str, Any] | None,
+    ) -> tuple[bool, bool]:
+        caps = (
+            dict(request_metadata.get("acp_client_capabilities") or {})
+            if isinstance(request_metadata, dict)
+            else {}
+        )
+        logger.info(
+            "[ACP] _acp_runtime_tools_enabled: metadata_keys=%s caps=%s",
+            list((request_metadata or {}).keys()),
+            caps,
+        )
+
+        fs_raw = caps.get("fs")
+        if fs_raw is True:
+            fs_enabled = True
+        elif isinstance(fs_raw, dict):
+            fs_enabled = bool(fs_raw.get("readTextFile") or fs_raw.get("writeTextFile"))
+        else:
+            fs_enabled = False
+
+        terminal_raw = caps.get("terminal")
+        if terminal_raw is True:
+            terminal_enabled = True
+        elif isinstance(terminal_raw, dict):
+            terminal_enabled = bool(
+                terminal_raw.get("create")
+                or terminal_raw.get("output")
+                or terminal_raw.get("waitForExit")
+                or terminal_raw.get("release")
+            )
+        else:
+            terminal_enabled = False
+
+        return fs_enabled, terminal_enabled
+
     async def _update_tools_for_mode(self, mode: str, session_id: str | None, request_id: str | None) -> None:
         """按 mode 注册或卸载 multi-session 工具。"""
         if mode != "agent":
@@ -1270,7 +1373,12 @@ class JiuWenClawDeepAdapter:
         except Exception as exc:
             logger.error("[JiuWenClawDeepAdapter] MultiSessionToolkit 注册失败: %s", exc)
 
-    async def _update_session_tools(self, session_id: str | None, request_id: str | None) -> None:
+    async def _update_session_tools(
+            self,
+            session_id: str | None,
+            request_id: str | None,
+            channel_id: str | None = None,
+    ) -> None:
         """注册 cron 和 send_file 工具（与 mode 无关，每次请求刷新）。"""
         # 定时工具：按当前 session 的 channel 注册（contextvar 已由 _bind_runtime_cron_context 设置）
         if session_id not in ("heartbeat", "cron"):
@@ -1285,7 +1393,7 @@ class JiuWenClawDeepAdapter:
         # send_file 工具：由 channels.<channel>.send_file_allowed 控制，每次请求重新注册
         # channel_id/metadata 由调用前的 _bind_runtime_cron_context 已写入 contextvar
         config_base = get_config()
-        channel = self._resolve_prompt_channel(session_id)
+        channel = str(channel_id or self._resolve_prompt_channel(session_id) or "web").strip() or "web"
         send_file_enabled = config_base.get("channels", {}).get(channel, {}).get("send_file_allowed", False)
         if send_file_enabled and request_id and session_id:
             # 先卸载上一次请求遗留的 send_file 工具
@@ -1302,6 +1410,76 @@ class JiuWenClawDeepAdapter:
                 Runner.resource_mgr.add_tool(sf_tool)
                 self._instance.ability_manager.add(sf_tool.card)
 
+    def _refresh_acp_runtime_tools(
+            self,
+            session_id: str | None,
+            request_id: str | None,
+            channel_id: str | None,
+            request_metadata: dict[str, Any] | None,
+    ) -> None:
+        """Refresh ACP tools for the current request based on client capabilities."""
+        acp_tool_names = (
+            "read_text_file",
+            "write_text_file",
+            "create_terminal",
+            "read_terminal_output",
+            "wait_for_terminal_exit",
+            "release_terminal",
+        )
+        if channel_id == "acp":
+            for existing in list(self._instance.ability_manager.list() or []):
+                if getattr(existing, "name", "") in _ACP_BLOCKED_DEFAULT_TOOL_NAMES:
+                    self._instance.ability_manager.remove(existing.name)
+        for existing in list(self._instance.ability_manager.list() or []):
+            if getattr(existing, "name", "") in acp_tool_names:
+                self._instance.ability_manager.remove(existing.name)
+
+        fs_enabled, terminal_enabled = self._acp_runtime_tools_enabled(request_metadata)
+        has_runtime_capability = fs_enabled or terminal_enabled
+        can_register_acp_runtime_tools = self._should_register_acp_runtime_tools(
+            channel_id=channel_id,
+            request_id=request_id,
+            session_id=session_id,
+            has_runtime_capability=has_runtime_capability,
+        )
+        if can_register_acp_runtime_tools:
+            for tool in get_acp_output_tools(session_id=session_id, request_id=request_id):
+                if tool.card.name in {"read_text_file", "write_text_file"}:
+                    if not fs_enabled:
+                        continue
+                elif not terminal_enabled:
+                    continue
+                Runner.resource_mgr.add_tool(tool)
+                self._instance.ability_manager.add(tool.card)
+
+        if channel_id == "acp":
+            ability_names = sorted(
+                self._collect_registered_ability_names()
+            )
+            runtime_tool_candidates = (
+                "read_text_file",
+                "write_text_file",
+                "create_terminal",
+                "read_terminal_output",
+                "wait_for_terminal_exit",
+                "release_terminal",
+            )
+            acp_runtime_names = self._select_registered_runtime_tool_names(
+                runtime_tool_candidates,
+                ability_names,
+            )
+            logger.info(
+                "[ACP] runtime tool snapshot: session_id=%s request_id=%s fs_enabled=%s terminal_enabled=%s "
+                "acp_runtime_tools=%s ability_count=%d abilities=%s",
+                session_id,
+                request_id,
+                fs_enabled,
+                terminal_enabled,
+                acp_runtime_names,
+                len(ability_names),
+                ability_names,
+            )
+
     def _update_prompt_for_mode(self, mode: str, resolved_language: str) -> None:
         """同步 system_prompt_builder 的语言。"""
         if self._instance.system_prompt_builder is not None:
@@ -1314,6 +1492,8 @@ class JiuWenClawDeepAdapter:
             session_id: str | None,
             mode: str = "plan",
             request_id: str | None = None,
+            channel_id: str | None = None,
+            request_metadata: dict[str, Any] | None = None,
     ) -> None:
         """Register per-request tools for current agent execution."""
         if self._instance is None:
@@ -1322,12 +1502,46 @@ class JiuWenClawDeepAdapter:
         resolved_language = self._resolve_runtime_language()
         if self._runtime_prompt_rail:
             self._runtime_prompt_rail.set_language(resolved_language)
-            self._runtime_prompt_rail.set_channel(self._resolve_prompt_channel(session_id))
+            resolved_channel = str(channel_id or self._resolve_prompt_channel(session_id) or "web").strip() or "web"
+            self._runtime_prompt_rail.set_channel(resolved_channel)
 
         await self._update_rails_for_mode(mode)
         await self._update_tools_for_mode(mode, session_id, request_id)
-        await self._update_session_tools(session_id, request_id)
+        await self._update_session_tools(session_id, request_id, channel_id=channel_id)
+        self._refresh_acp_runtime_tools(session_id, request_id, channel_id, request_metadata)
         self._update_prompt_for_mode(mode, resolved_language)
+
+    @staticmethod
+    def _should_register_acp_runtime_tools(
+            channel_id: str | None,
+            request_id: str | None,
+            session_id: str | None,
+            has_runtime_capability: bool,
+    ) -> bool:
+        if channel_id != "acp":
+            return False
+        if not request_id or not session_id:
+            return False
+        return has_runtime_capability
+
+    def _collect_registered_ability_names(self) -> set[str]:
+        ability_names: set[str] = set()
+        for card in self._instance.ability_manager.list() or []:
+            ability_name = str(getattr(card, "name", "") or "").strip()
+            if ability_name:
+                ability_names.add(ability_name)
+        return ability_names
+
+    @staticmethod
+    def _select_registered_runtime_tool_names(
+            runtime_tool_candidates: tuple[str, ...],
+            ability_names: set[str],
+    ) -> list[str]:
+        selected_names: list[str] = []
+        for name in runtime_tool_candidates:
+            if name in ability_names:
+                selected_names.append(name)
+        return selected_names
 
     async def process_interrupt(self, request: AgentRequest) -> AgentResponse:
         """处理 interrupt 请求.
@@ -1850,7 +2064,13 @@ class JiuWenClawDeepAdapter:
         )
         token_cid = TOOL_PERMISSION_CHANNEL_ID.set((request.channel_id or "").strip())
         try:
-            await self._update_runtime_config(request.session_id, mode, request_id=request.request_id)
+            await self._update_runtime_config(
+                request.session_id,
+                mode,
+                request_id=request.request_id,
+                channel_id=request.channel_id,
+                request_metadata=request.metadata,
+            )
             result = await Runner.run_agent(agent=self._instance, inputs=inputs)
         except asyncio.CancelledError:
             logger.info("[JiuWenClawDeepAdapter] Agent 任务被取消: request_id=%s session_id=%s", request.request_id,
@@ -1946,7 +2166,13 @@ class JiuWenClawDeepAdapter:
         )
         token_cid = TOOL_PERMISSION_CHANNEL_ID.set((request.channel_id or "").strip())
         try:
-            await self._update_runtime_config(request.session_id, mode, request_id=request.request_id)
+            await self._update_runtime_config(
+                request.session_id,
+                mode,
+                request_id=request.request_id,
+                channel_id=request.channel_id,
+                request_metadata=request.metadata,
+            )
             if self._stream_event_rail is not None:
                 self._stream_event_rail.reset_abort()
             async for chunk in Runner.run_agent_streaming(self._instance, inputs):

@@ -29,6 +29,25 @@ ACP_DEFAULT_CAPABILITIES: dict[str, Any] = {
 }
 
 
+def _build_acp_agent_config(extra_config: dict[str, Any] | None = None) -> dict[str, Any]:
+    """Return the dedicated ACP agent profile config.
+
+    ACP sessions should use ACP-native filesystem/terminal tools instead of the
+    default openjiuwen filesystem/bash toolchain.
+    """
+    config: dict[str, Any] = {
+        "agent_name": "acp_agent",
+        "channel_id": "acp",
+        "tool_profile": "acp",
+        "enable_filesystem_rail": True,
+    }
+    if isinstance(extra_config, dict):
+        config.update(extra_config)
+    config["channel_id"] = "acp"
+    config["tool_profile"] = "acp"
+    return config
+
+
 class AgentManager:
     """管理多个 Agent 实例.
 
@@ -39,6 +58,7 @@ class AgentManager:
 
     def __init__(self) -> None:
         self.agents: dict[str, "JiuWenClaw"] = {}
+        self._client_capabilities_by_channel: dict[str, dict[str, Any]] = {}
 
     async def _create_agent(
         self, agent_key: str, config: dict[str, Any] | None = None
@@ -77,6 +97,10 @@ class AgentManager:
         """
         if channel_id == "acp":
             logger.info("[AgentManager] ACP initialize")
+            if extra_config:
+                client_capabilities = extra_config.get("client_capabilities")
+                if isinstance(client_capabilities, dict):
+                    self._client_capabilities_by_channel["acp"] = dict(client_capabilities)
 
             if "acp" in self.agents:
                 logger.info("[AgentManager] Resetting ACP agent")
@@ -86,15 +110,18 @@ class AgentManager:
                     logger.warning("[AgentManager] ACP agent cleanup failed: %s", e)
                 del self.agents["acp"]
 
-            config: dict[str, Any] = {"agent_name": "acp_agent"}
-            if extra_config:
-                config.update(extra_config)
+            config = _build_acp_agent_config(extra_config)
             await self._create_agent("acp", config)
 
             return ACP_DEFAULT_CAPABILITIES.copy()
         return None
 
-    async def create_session(self, channel_id: str = "") -> str:
+    def get_client_capabilities(self, channel_id: str = "") -> dict[str, Any]:
+        channel_key = str(channel_id or "").strip()
+        caps = self._client_capabilities_by_channel.get(channel_key)
+        return dict(caps) if isinstance(caps, dict) else {}
+
+    async def create_session(self, channel_id: str = "", session_id: str | None = None) -> str:
         """创建会话.
 
         Args:
@@ -103,6 +130,10 @@ class AgentManager:
         Returns:
             会话 ID
         """
+        explicit_session_id = str(session_id or "").strip()
+        if explicit_session_id:
+            logger.info("[AgentManager] session ensured: channel_id=%s session_id=%s", channel_id, explicit_session_id)
+            return explicit_session_id
         if channel_id == "acp":
             session_id = f"acp_{uuid.uuid4().hex[:8]}"
             logger.info("[AgentManager] ACP session created: session_id=%s", session_id)
@@ -124,7 +155,7 @@ class AgentManager:
         if agent_key not in self.agents:
             config: dict[str, Any] | None = None
             if channel_id == "acp":
-                config = {"agent_name": "acp_agent"}
+                config = _build_acp_agent_config()
             await self._create_agent(agent_key, config)
         return self.agents.get(agent_key)
 
@@ -149,4 +180,5 @@ class AgentManager:
                 except Exception as e:
                     logger.warning("[AgentManager] Agent cleanup failed: %s", e)
             del self.agents[key]
+        self._client_capabilities_by_channel.clear()
         logger.info("[AgentManager] All agents cleaned up")

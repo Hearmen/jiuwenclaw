@@ -19,6 +19,7 @@ import logging
 import os
 import sys
 import time
+import uuid as uuid_module
 from dataclasses import dataclass
 from typing import Any
 from urllib.parse import urlparse
@@ -182,6 +183,7 @@ class GatewayServer:
         self._clients: set[Any] = set()
         self._request_to_client: dict[str, Any] = {}
         self._session_to_client: dict[str, Any] = {}
+        self._pending_client_rpc_session_by_id: dict[str, tuple[str, Any]] = {}
 
     @property
     def channel_id(self) -> str:
@@ -221,6 +223,7 @@ class GatewayServer:
         self._clients.clear()
         self._request_to_client.clear()
         self._session_to_client.clear()
+        self._pending_client_rpc_session_by_id.clear()
         if self._server is not None:
             self._server.close()
             await self._server.wait_closed()
@@ -232,6 +235,20 @@ class GatewayServer:
         if ws is None and msg.session_id:
             ws = self._session_to_client.get(str(msg.session_id))
         if ws is None or bool(getattr(ws, "closed", False)):
+            return
+
+        if (
+            msg.type == "event"
+            and isinstance(msg.payload, dict)
+            and str(msg.payload.get("event_type") or "").strip() == "acp.output_request"
+        ):
+            raw_jsonrpc = msg.payload.get("jsonrpc")
+            if isinstance(raw_jsonrpc, dict):
+                jsonrpc_id = str(raw_jsonrpc.get("id") or "").strip()
+                session_id = str(msg.session_id or "").strip()
+                if jsonrpc_id and session_id:
+                    self._pending_client_rpc_session_by_id[jsonrpc_id] = (session_id, ws)
+                await ws.send(json.dumps(raw_jsonrpc, ensure_ascii=False))
             return
 
         if msg.type == "res":
@@ -280,6 +297,67 @@ class GatewayServer:
             stale_session_ids = [session_id for session_id, client in self._session_to_client.items() if client is ws]
             for session_id in stale_session_ids:
                 self._session_to_client.pop(session_id, None)
+            stale_jsonrpc_ids = [
+                jsonrpc_id
+                for jsonrpc_id, (_, client) in self._pending_client_rpc_session_by_id.items()
+                if client is ws
+            ]
+            for jsonrpc_id in stale_jsonrpc_ids:
+                self._pending_client_rpc_session_by_id.pop(jsonrpc_id, None)
+
+    @staticmethod
+    def _is_jsonrpc_response(data: dict[str, Any]) -> bool:
+        return (
+            isinstance(data, dict)
+            and str(data.get("jsonrpc") or "").strip() == "2.0"
+            and str(data.get("id") or "").strip() != ""
+            and ("result" in data or "error" in data)
+        )
+
+    async def _handle_jsonrpc_response(self, ws: Any, data: dict[str, Any]) -> None:
+        from jiuwenclaw.schema.message import Message, ReqMethod
+
+        jsonrpc_id = str(data.get("id") or "").strip()
+        pending = self._pending_client_rpc_session_by_id.pop(jsonrpc_id, None)
+        session_id = ""
+        if isinstance(pending, tuple) and len(pending) == 2:
+            session_id = str(pending[0] or "").strip()
+
+        if not jsonrpc_id or not session_id:
+            await ws.send(
+                json.dumps(
+                    {
+                        "type": "res",
+                        "id": jsonrpc_id,
+                        "ok": False,
+                        "error": f"unknown acp tool response id: {jsonrpc_id}",
+                    },
+                    ensure_ascii=False,
+                )
+            )
+            return
+
+        msg = Message(
+            id=f"acp_tool_resp_{uuid_module.uuid4().hex[:12]}",
+            type="req",
+            channel_id=self.channel_id,
+            session_id=session_id,
+            params={
+                "jsonrpc_id": jsonrpc_id,
+                "response": dict(data),
+                "session_id": session_id,
+            },
+            timestamp=time.time(),
+            ok=True,
+            req_method=ReqMethod.ACP_TOOL_RESPONSE,
+            is_stream=False,
+            metadata={"acp": {"jsonrpc_id": jsonrpc_id, "kind": "tool_response"}},
+        )
+        if self._on_message_cb is None:
+            return
+        result = self._on_message_cb(msg)
+        if asyncio.iscoroutine(result):
+            await result
 
     async def _handle_raw_message(self, ws: Any, raw: str) -> None:
         from jiuwenclaw.schema.message import Message, Mode, ReqMethod
@@ -293,6 +371,10 @@ class GatewayServer:
                     ensure_ascii=False,
                 )
             )
+            return
+
+        if self._is_jsonrpc_response(data):
+            await self._handle_jsonrpc_response(ws, data)
             return
 
         if not isinstance(data, dict) or data.get("type") != "req":
@@ -532,10 +614,9 @@ async def _run(
 
             from jiuwenclaw.e2a.gateway_normalize import e2a_from_agent_fields
             from jiuwenclaw.schema.message import ReqMethod
-            import uuid
 
             reload_env = e2a_from_agent_fields(
-                request_id=f"agent-reload-{uuid.uuid4().hex[:8]}",
+                request_id=f"agent-reload-{uuid_module.uuid4().hex[:8]}",
                 channel_id="",
                 req_method=ReqMethod.AGENT_RELOAD_CONFIG,
                 params={
@@ -549,7 +630,7 @@ async def _run(
 
             if updated_env_keys and (browser_runtime_keys & set(updated_env_keys)):
                 restart_env = e2a_from_agent_fields(
-                    request_id=f"browser-restart-{uuid.uuid4().hex[:8]}",
+                    request_id=f"browser-restart-{uuid_module.uuid4().hex[:8]}",
                     channel_id="",
                     req_method=ReqMethod.BROWSER_RUNTIME_RESTART,
                 )

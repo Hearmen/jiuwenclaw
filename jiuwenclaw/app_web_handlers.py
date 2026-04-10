@@ -66,6 +66,9 @@ class _DummyBus:
 
 # 仅转发到 Agent 的 Web method
 _FORWARD_REQ_METHODS = frozenset({
+    "initialize",
+    "session.create",
+    "acp.tool_response",
     "chat.send",
     "chat.interrupt",
     "chat.resume",
@@ -101,6 +104,9 @@ _FORWARD_REQ_METHODS = frozenset({
 })
 
 _FORWARD_NO_LOCAL_HANDLER_METHODS = frozenset({
+    "initialize",
+    "session.create",
+    "acp.tool_response",
     "browser.start",
     "skills.marketplace.list",
     "skills.list",

@@ -9,6 +9,7 @@ import logging
 from typing import TYPE_CHECKING, Any
 
 from jiuwenclaw.e2a.constants import (
+    E2A_RESPONSE_KIND_ACP_OUTPUT_REQUEST,
     E2A_RESPONSE_KIND_CRON,
     E2A_RESPONSE_KIND_E2A_CHUNK,
     E2A_RESPONSE_KIND_E2A_COMPLETE,
@@ -513,6 +514,17 @@ def e2a_response_to_agent_chunk(e2a: E2AResponse) -> "AgentResponseChunk":
             request_id=rid,
             channel_id=ch,
             payload=body_payload,
+            is_complete=True,
+        )
+
+    if kind == E2A_RESPONSE_KIND_ACP_OUTPUT_REQUEST:
+        return AgentResponseChunk(
+            request_id=rid,
+            channel_id=ch,
+            payload={
+                "event_type": "acp.output_request",
+                "jsonrpc": dict(body),
+            },
             is_complete=True,
         )
 
