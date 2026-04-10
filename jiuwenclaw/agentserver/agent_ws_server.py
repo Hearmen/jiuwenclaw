@@ -294,6 +294,9 @@ class AgentWebSocketServer:
 
             await self._trigger_before_chat_request_hook(request)
 
+            if request.req_method == ReqMethod.SESSION_LIST:
+                await self._handle_session_list(ws, request, send_lock)
+                return
             if request.req_method == ReqMethod.HISTORY_GET:
                 if request.is_stream:
                     await self._handle_history_get_stream(ws, request, send_lock)
@@ -432,6 +435,37 @@ class AgentWebSocketServer:
             request.request_id,
             chunk_count,
         )
+
+    async def _handle_session_list(self, ws: Any, request: AgentRequest, send_lock: asyncio.Lock) -> None:
+        """处理 session.list 请求：扫描 sessions 目录，返回历史会话基础信息列表."""
+        sessions_dir = get_agent_sessions_dir()
+        sessions = []
+
+        try:
+            if sessions_dir.exists():
+                for entry in sorted(sessions_dir.iterdir(), key=lambda e: e.stat().st_mtime, reverse=True):
+                    if not entry.is_dir():
+                        continue
+                    history_path = entry / "history.json"
+                    if not history_path.exists():
+                        continue
+                    sessions.append({
+                        "session_id": entry.name,
+                        "last_modified": history_path.stat().st_mtime,
+                    })
+        except Exception as exc:
+            logger.warning("[AgentWebSocketServer] 扫描 sessions 目录失败: %s", exc)
+
+        resp = AgentResponse(
+            request_id=request.request_id,
+            channel_id=request.channel_id,
+            ok=True,
+            payload={"sessions": sessions},
+            metadata=request.metadata,
+        )
+        wire = encode_agent_response_for_wire(resp, response_id=request.request_id)
+        async with send_lock:
+            await ws.send(json.dumps(wire, ensure_ascii=False))
 
     async def _handle_history_get(self, ws: Any, request: AgentRequest, send_lock: asyncio.Lock) -> None:
         params = request.params if isinstance(request.params, dict) else {}
