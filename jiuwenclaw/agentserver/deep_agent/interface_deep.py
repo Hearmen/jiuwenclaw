@@ -306,50 +306,81 @@ class JiuWenClawDeepAdapter:
         ).strip().lower()
         return value in {"1", "true", "yes", "on"}
 
-    def _build_preset_subagents(
+    @staticmethod
+    def _is_subagent_enabled(subagent_cfg: Any) -> bool:
+        """Treat only explicit `enabled: true` as enabled."""
+        return isinstance(subagent_cfg, dict) and bool(subagent_cfg.get("enabled", False))
+
+    def _build_configured_subagents(
             self,
             model: Model,
             config: dict[str, Any],
-    ) -> list[Any]:
-        """Build built-in subagent presets exposed through task_tool."""
+            config_base: dict[str, Any] | None = None,
+    ) -> list[Any] | None:
+        """Build configured code/research subagents plus default browser subagent."""
+        react_cfg = config if isinstance(config, dict) else {}
+        subagents_cfg = react_cfg.get("subagents")
+
+        resolved_language = self._resolve_runtime_language()
         workspace = self._workspace_dir or "./"
-        language = self._resolve_runtime_language()
-        max_iterations = config.get("max_iterations", 15)
-        subagents: list[Any] = [
-            build_code_agent_config(
-                model,
-                workspace=workspace,
-                language=language,
-                max_iterations=max_iterations,
-            ),
-            build_research_agent_config(
-                model,
-                workspace=workspace,
-                language=language,
-                max_iterations=max_iterations,
-            ),
-        ]
+        subagents: list[Any] = []
 
-        if not self._browser_runtime_enabled():
-            return subagents
-        if not str(os.getenv("BROWSER_DRIVER") or "").strip():
-            os.environ["BROWSER_DRIVER"] = "managed"
+        if isinstance(subagents_cfg, dict):
+            code_agent_cfg = subagents_cfg.get("code_agent")
+            if self._is_subagent_enabled(code_agent_cfg):
+                subagents.append(
+                    build_code_agent_config(
+                        model,
+                        workspace=workspace,
+                        language=resolved_language,
+                        max_iterations=_parse_int(
+                            code_agent_cfg.get("max_iterations"),
+                            react_cfg.get("max_iterations", 15),
+                        ),
+                    )
+                )
+
+            research_agent_cfg = subagents_cfg.get("research_agent")
+            if self._is_subagent_enabled(research_agent_cfg):
+                subagents.append(
+                    build_research_agent_config(
+                        model,
+                        workspace=workspace,
+                        language=resolved_language,
+                        max_iterations=_parse_int(
+                            research_agent_cfg.get("max_iterations"),
+                            react_cfg.get("max_iterations", 15),
+                        ),
+                    )
+                )
+
+        browser_agent_cfg = subagents_cfg.get("browser_agent") if isinstance(subagents_cfg, dict) else {}
+        browser_enabled = self._browser_runtime_enabled()
+        if browser_enabled:
+            if not str(os.getenv("BROWSER_DRIVER") or "").strip():
+                os.environ["BROWSER_DRIVER"] = "managed"
+                logger.info(
+                    "[JiuWenClawDeepAdapter] browser subagent enabled without BROWSER_DRIVER; "
+                    "defaulting to managed mode"
+                )
+            subagents.append(
+                build_browser_agent_config(
+                    model,
+                    workspace=workspace,
+                    language=resolved_language,
+                    max_iterations=_parse_int(
+                        browser_agent_cfg.get("max_iterations") if isinstance(browser_agent_cfg, dict) else None,
+                        react_cfg.get("max_iterations", 15),
+                    )
+                )
+            )
+        elif isinstance(subagents_cfg, dict) and isinstance(browser_agent_cfg, dict) and browser_agent_cfg:
             logger.info(
-                "[JiuWenClawDeepAdapter] browser runtime enabled without BROWSER_DRIVER; defaulting to managed mode"
+                "[JiuWenClawDeepAdapter] browser_agent config detected but browser runtime is not enabled; "
+                "skipping browser subagent registration"
             )
 
-        subagents.append(
-            build_browser_agent_config(
-                model,
-                workspace=workspace,
-                language=language,
-                max_iterations=_parse_int(
-                    os.getenv("BROWSER_AGENT_MAX_ITERATIONS"),
-                    max_iterations,
-                ),
-            )
-        )
-        return subagents
+        return subagents or None
 
     def _build_vision_model_config(
             self,
@@ -937,6 +968,7 @@ class JiuWenClawDeepAdapter:
     ) -> DeepAgentConfig:
         """与 create_deep_agent() 中 DeepAgentConfig 构造保持一致."""
         resolved_language = self._resolve_runtime_language()
+        config_base = get_config()
         workspace_obj = Workspace(
             root_path=self._workspace_dir or "./",
             language=resolved_language
@@ -958,7 +990,7 @@ class JiuWenClawDeepAdapter:
             ),
             enable_task_loop=config.get("enable_task_loop", True),
             max_iterations=config.get("max_iterations", 15),
-            subagents=self._build_preset_subagents(model, config),
+            subagents=self._build_configured_subagents(model, config, config_base),
             tools=normalized_tool_cards,
             workspace=workspace_obj,
             skills=None,
@@ -1175,7 +1207,7 @@ class JiuWenClawDeepAdapter:
             raise RuntimeError("sys_operation is not available, maybe task is not running")
 
         self._sys_operation = sys_operation
-        preset_subagents = self._build_preset_subagents(model, config)
+        configured_subagents = self._build_configured_subagents(model, config, config_base)
         self._instance = create_deep_agent(
             model=model,
             card=agent_card,
@@ -1188,7 +1220,7 @@ class JiuWenClawDeepAdapter:
                 ),
             ),
             tools=tool_cards if tool_cards else [],
-            subagents=preset_subagents,
+            subagents=configured_subagents,
             rails=rails_list if rails_list else [],
             enable_task_loop=config.get("enable_task_loop", True),
             max_iterations=config.get("max_iterations", 15),

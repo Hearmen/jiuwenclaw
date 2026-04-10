@@ -71,6 +71,14 @@ class _TestableJiuWenClawDeepAdapter(JiuWenClawDeepAdapter):
     def set_workspace_dir(self, workspace_dir: str) -> None:
         self._workspace_dir = workspace_dir
 
+    def build_configured_subagents(
+        self,
+        model: Model,
+        config: dict,
+        config_base: dict | None = None,
+    ):
+        return self._build_configured_subagents(model, config, config_base)
+
 
 def create_text_response(content: str) -> AssistantMessage:
     return AssistantMessage(
@@ -122,6 +130,132 @@ def _make_fake_runtime() -> MagicMock:
     runtime.controller.run_action = AsyncMock()
     runtime.code_executor = None
     return runtime
+
+
+def test_build_configured_subagents_defaults_to_none_when_unconfigured(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    adapter = _TestableJiuWenClawDeepAdapter()
+    model = _build_model()
+    monkeypatch.setattr(
+        JiuWenClawDeepAdapter,
+        "_browser_runtime_enabled",
+        staticmethod(lambda: False),
+    )
+
+    subagents = adapter.build_configured_subagents(
+        model,
+        {"max_iterations": 8},
+        {"react": {"max_iterations": 8}},
+    )
+
+    assert subagents is None
+
+
+def test_build_configured_subagents_includes_browser_by_default_when_runtime_enabled(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    adapter = _TestableJiuWenClawDeepAdapter()
+    adapter.set_workspace_dir("/tmp/test-workspace")
+    model = _build_model()
+
+    monkeypatch.setattr(
+        interface_module,
+        "build_browser_agent_config",
+        lambda *args, **kwargs: {"name": "browser_agent", "kwargs": kwargs},
+    )
+    monkeypatch.setattr(
+        JiuWenClawDeepAdapter,
+        "_browser_runtime_enabled",
+        staticmethod(lambda: True),
+    )
+    monkeypatch.setenv("BROWSER_DRIVER", "managed")
+
+    subagents = adapter.build_configured_subagents(
+        model,
+        {"max_iterations": 8},
+        {},
+    )
+
+    assert subagents is not None
+    assert [item["name"] for item in subagents] == ["browser_agent"]
+    assert subagents[0]["kwargs"]["max_iterations"] == 8
+
+
+def test_build_configured_subagents_only_includes_explicitly_enabled_agents(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    adapter = _TestableJiuWenClawDeepAdapter()
+    adapter.set_workspace_dir("/tmp/test-workspace")
+    model = _build_model()
+
+    monkeypatch.setattr(
+        interface_module,
+        "build_code_agent_config",
+        lambda *args, **kwargs: {"name": "code_agent", "kwargs": kwargs},
+    )
+    monkeypatch.setattr(
+        interface_module,
+        "build_research_agent_config",
+        lambda *args, **kwargs: {"name": "research_agent", "kwargs": kwargs},
+    )
+    monkeypatch.setattr(
+        interface_module,
+        "build_browser_agent_config",
+        lambda *args, **kwargs: {"name": "browser_agent", "kwargs": kwargs},
+    )
+    monkeypatch.setattr(
+        JiuWenClawDeepAdapter,
+        "_browser_runtime_enabled",
+        staticmethod(lambda: True),
+    )
+    monkeypatch.setenv("BROWSER_DRIVER", "managed")
+
+    subagents = adapter.build_configured_subagents(
+        model,
+        {
+            "max_iterations": 8,
+            "subagents": {
+                "code_agent": {"enabled": True, "max_iterations": 5},
+                "research_agent": {"enabled": False},
+                "browser_agent": {"max_iterations": 7},
+            },
+        },
+        {},
+    )
+
+    assert subagents is not None
+    assert [item["name"] for item in subagents] == ["code_agent", "browser_agent"]
+    assert subagents[0]["kwargs"]["max_iterations"] == 5
+    assert subagents[1]["kwargs"]["max_iterations"] == 7
+
+
+def test_build_configured_subagents_skips_browser_without_runtime(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    adapter = _TestableJiuWenClawDeepAdapter()
+    model = _build_model()
+
+    monkeypatch.setattr(
+        JiuWenClawDeepAdapter,
+        "_browser_runtime_enabled",
+        staticmethod(lambda: False),
+    )
+    browser_builder = MagicMock()
+    monkeypatch.setattr(interface_module, "build_browser_agent_config", browser_builder)
+
+    subagents = adapter.build_configured_subagents(
+        model,
+        {
+            "subagents": {
+                "browser_agent": {"max_iterations": 7},
+            },
+        },
+        {},
+    )
+
+    assert subagents is None
+    browser_builder.assert_not_called()
 
 
 @pytest.mark.asyncio
