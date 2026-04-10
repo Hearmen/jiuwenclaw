@@ -451,7 +451,7 @@ def prepare_workspace(overwrite: bool = True, preferred_language: Optional[str] 
         _copy_dir(
             template_agent_workspace,
             deepagent_workspace,
-            ignore_patterns=("*_ZH.md", "*_EN.md"),
+            ignore_patterns=("*_ZH.md", "*_EN.md", "skills"),
         )
     else:
         deepagent_workspace.mkdir(parents=True, exist_ok=True)

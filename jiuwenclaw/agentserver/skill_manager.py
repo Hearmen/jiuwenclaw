@@ -1701,7 +1701,7 @@ class SkillManager:
     def _generate_agent_data_for_workspace(workspace_root: Path) -> None:
         """Generate agent/jiuwenclaw_workspace/agent-data.json from agent tree."""
         agent_root = workspace_root.resolve()
-        output_path = (agent_root / "jiuwenclaw_workspace" / "agent-data.json").resolve()
+        output_path = (agent_root / "agent-data.json").resolve()
         root_folder_key = "__root__"
 
         if not agent_root.exists() or not agent_root.is_dir():
@@ -1709,11 +1709,10 @@ class SkillManager:
 
         folder_data: dict[str, list[dict[str, str | bool]]] = {}
         seen_paths: dict[str, set[str]] = {}
-        for entry in sorted((agent_root / "jiuwenclaw_workspace").rglob("*")):
+        for entry in sorted(agent_root.rglob("*")):
             if not entry.is_file():
                 continue
-            relative_file_path = entry.relative_to(agent_root).as_posix()
-            relative_folder_path = entry.parent.relative_to(agent_root).as_posix()
+            relative_folder_path = entry.parent.relative_to(agent_root.parent).as_posix()
             folder_key = root_folder_key if relative_folder_path == "." else relative_folder_path
 
             display_name = SkillManager._normalize_lang_suffix(entry.name)

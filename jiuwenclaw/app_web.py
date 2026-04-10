@@ -19,7 +19,8 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import unquote, urlparse
 
-from jiuwenclaw.utils import get_logs_dir, get_root_dir, is_package_installation
+from jiuwenclaw.utils import get_agent_root_dir, get_logs_dir, \
+    get_root_dir, get_user_workspace_dir, is_package_installation
 
 
 def _get_package_dir() -> Path:
@@ -64,7 +65,8 @@ def _normalize_lang_suffix(name: str) -> str:
 def _generate_agent_data(project_root: Path) -> None:
     """Generate agent/jiuwenclaw_workspace/agent-data.json from agent tree."""
     agent_root = (project_root / "agent").resolve()
-    output_path = (agent_root / "jiuwenclaw_workspace" / "agent-data.json").resolve()
+    workspace_root = (agent_root / "jiuwenclaw_workspace").resolve()
+    output_path = (workspace_root / "agent-data.json").resolve()
     root_folder_key = "__root__"
 
     if not agent_root.exists():
@@ -74,7 +76,7 @@ def _generate_agent_data(project_root: Path) -> None:
 
     folder_data: dict[str, list[dict[str, str | bool]]] = {}
     seen_paths: dict[str, set[str]] = {}  # folder_key -> normalized paths，用于去重
-    for entry in sorted((agent_root / "jiuwenclaw_workspace").rglob("*")):
+    for entry in sorted(workspace_root.rglob("*")):
         if not entry.is_file() or entry.name.startswith("."):
             continue
         relative_folder_path = entry.parent.relative_to(agent_root).as_posix()
@@ -127,9 +129,9 @@ class _SpaStaticHandler(SimpleHTTPRequestHandler):
     api_target = ""
     ws_target = ""
     ws_disable_compress = False
-    project_root = Path(".").resolve()
-    workspace_root = Path(".").resolve()
-    logs_root = Path(".").resolve()
+    project_root = get_user_workspace_dir()
+    workspace_root = get_agent_root_dir()
+    logs_root = get_logs_dir()
     logger = logging.getLogger(__name__)
 
     _HOP_BY_HOP_HEADERS = {
@@ -833,7 +835,7 @@ def main() -> None:
 
     # default_project_root should be the user workspace root (~/.jiuwenclaw in package mode)
     # get_root_dir() already handles this correctly
-    default_project_root = get_root_dir()
+    default_project_root = get_user_workspace_dir()
 
     project_root = default_project_root
     workspace_root = (project_root / "agent").resolve()
