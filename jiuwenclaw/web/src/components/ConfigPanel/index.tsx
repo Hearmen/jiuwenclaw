@@ -25,6 +25,7 @@ const EMBED_KEYS = new Set(["embed_api_base", "embed_api_key", "embed_model"]);
 const EMAIL_KEYS = new Set(["email_address", "email_token"]);
 const THIRD_PARTY_API_KEYS = new Set([
   "jina_api_key",
+  "bocha_api_key",
   "perplexity_api_key",
   "serper_api_key",
   "github_token",

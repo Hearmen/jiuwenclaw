@@ -15,6 +15,7 @@ from jiuwenclaw.agentserver.tools.web_fetch_tools import mcp_fetch_webpage
 def _has_paid_search_api_key() -> bool:
     """Check if any paid search API key is configured."""
     return any([
+        os.environ.get("BOCHA_API_KEY"),
         os.environ.get("PERPLEXITY_API_KEY"),
         os.environ.get("SERPER_API_KEY"),
         os.environ.get("JINA_API_KEY"),

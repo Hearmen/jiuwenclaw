@@ -287,6 +287,79 @@ def _perplexity_search_sync(query: str, max_results: int, timeout_seconds: int) 
     }
 
 
+def _extract_bocha_urls(data: dict[str, Any], max_results: int) -> list[str]:
+    candidates: list[Any] = []
+    for container in (
+        data.get("data", {}).get("webPages", {}).get("value"),
+        data.get("webPages", {}).get("value"),
+        data.get("data", {}).get("webPages"),
+        data.get("webPages"),
+        data.get("data", {}).get("results"),
+        data.get("results"),
+    ):
+        if isinstance(container, list):
+            candidates = container
+            break
+
+    urls: list[str] = []
+    for item in candidates[:max_results]:
+        if not isinstance(item, dict):
+            continue
+        maybe_url = item.get("url") or item.get("link")
+        if maybe_url:
+            urls.append(str(maybe_url))
+    return urls
+
+
+def _extract_bocha_answer(data: dict[str, Any]) -> str:
+    candidates = [
+        data.get("summary"),
+        data.get("answer"),
+        data.get("data", {}).get("summary"),
+        data.get("data", {}).get("answer"),
+        data.get("data", {}).get("message"),
+    ]
+    for value in candidates:
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+
+    web_pages = data.get("data", {}).get("webPages", {})
+    if isinstance(web_pages, dict):
+        value = web_pages.get("value")
+        if isinstance(value, list):
+            snippets: list[str] = []
+            for item in value[:3]:
+                if not isinstance(item, dict):
+                    continue
+                snippet = item.get("summary") or item.get("snippet")
+                if isinstance(snippet, str) and snippet.strip():
+                    snippets.append(snippet.strip())
+            if snippets:
+                return "\n\n".join(snippets[:3])
+    return ""
+
+
+def _bocha_search_sync(query: str, max_results: int, timeout_seconds: int) -> dict[str, Any]:
+    bocha_key = os.environ.get("BOCHA_API_KEY", "")
+    if not bocha_key:
+        raise ValueError("BOCHA_API_KEY is not set")
+
+    response = _http_request(
+        "POST",
+        os.environ.get("BOCHA_API_URL", "https://api.bocha.cn/v1/web-search"),
+        headers={"Authorization": f"Bearer {bocha_key}", "Content-Type": "application/json"},
+        json={"query": query, "summary": True, "count": max_results},
+        timeout=timeout_seconds,
+    )
+    response.raise_for_status()
+    data = response.json()
+    return {
+        "provider": "bocha",
+        "answer": _extract_bocha_answer(data),
+        "urls": _extract_bocha_urls(data, max_results),
+    }
+
+
 def _serper_search_sync(query: str, max_results: int, timeout_seconds: int) -> dict[str, Any]:
     serper_key = os.environ.get("SERPER_API_KEY", "")
     if not serper_key:
@@ -371,7 +444,7 @@ async def mcp_free_search(query: str, max_results: int = 8, timeout_seconds: int
 
 @tool(
     name="mcp_paid_search",
-    description="Paid search via Perplexity/SERPER/JINA. Support provider=auto|perplexity|serper|jina.",
+    description="Paid search via Bocha/Perplexity/SERPER/JINA. Support provider=auto|bocha|perplexity|serper|jina.",
 )
 async def mcp_paid_search(
     query: str,
@@ -384,13 +457,16 @@ async def mcp_paid_search(
         return "[ERROR]: query cannot be empty."
 
     provider = (provider or "auto").strip().lower()
-    if provider not in {"auto", "jina", "serper", "perplexity"}:
-        return "[ERROR]: provider must be one of auto|jina|serper|perplexity."
+    if provider not in {"auto", "bocha", "jina", "serper", "perplexity"}:
+        return "[ERROR]: provider must be one of auto|bocha|jina|serper|perplexity."
 
     timeout_seconds = max(10, min(timeout_seconds, 120))
     max_results = max(1, min(max_results, 20))
 
     runners = {
+        "bocha": lambda: _bocha_search_sync(
+            query=query, max_results=max_results, timeout_seconds=timeout_seconds
+        ),
         "jina": lambda: _jina_search_sync(query=query, timeout_seconds=timeout_seconds),
         "serper": lambda: _serper_search_sync(
             query=query, max_results=max_results, timeout_seconds=timeout_seconds
@@ -401,6 +477,8 @@ async def mcp_paid_search(
     }
     
     available_providers = []
+    if os.environ.get("BOCHA_API_KEY"):
+        available_providers.append("bocha")
     if os.environ.get("PERPLEXITY_API_KEY"):
         available_providers.append("perplexity")
     if os.environ.get("SERPER_API_KEY"):
@@ -416,7 +494,7 @@ async def mcp_paid_search(
             return f"[ERROR]: {provider} API key not configured. Available providers: {', '.join(available_providers)}"
         order = [provider]
     else:
-        order = [p for p in ["perplexity", "serper", "jina"] if p in available_providers]
+        order = [p for p in ["bocha", "perplexity", "serper", "jina"] if p in available_providers]
 
     errors: list[str] = []
     for name in order:

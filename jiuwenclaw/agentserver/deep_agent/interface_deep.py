@@ -307,6 +307,36 @@ class JiuWenClawDeepAdapter:
         return value in {"1", "true", "yes", "on"}
 
     @staticmethod
+    def _resolve_managed_browser_binary_from_config() -> str:
+        """Resolve managed-browser binary from saved browser config."""
+        config_base = get_config()
+        if not isinstance(config_base, dict):
+            return ""
+        config = resolve_env_vars(config_base)
+        browser_cfg = config.get("browser", {}) if isinstance(config, dict) else {}
+        if not isinstance(browser_cfg, dict):
+            return ""
+        chrome_path = browser_cfg.get("chrome_path", "")
+        if isinstance(chrome_path, str):
+            return chrome_path.strip()
+        if not isinstance(chrome_path, dict):
+            return ""
+        platform_map = {
+            "win32": "windows",
+            "cygwin": "windows",
+            "darwin": "macos",
+            "linux": "linux",
+            "linux2": "linux",
+        }
+        os_key = platform_map.get(os.sys.platform, "default")
+        for key in (os_key, "default"):
+            value = chrome_path.get(key, "")
+            if isinstance(value, str) and value.strip():
+                return value.strip()
+        return ""
+
+
+    @staticmethod
     def _is_subagent_enabled(subagent_cfg: Any) -> bool:
         """Treat only explicit `enabled: true` as enabled."""
         return isinstance(subagent_cfg, dict) and bool(subagent_cfg.get("enabled", False))
@@ -363,6 +393,14 @@ class JiuWenClawDeepAdapter:
                     "[JiuWenClawDeepAdapter] browser subagent enabled without BROWSER_DRIVER; "
                     "defaulting to managed mode"
                 )
+            if not str(os.getenv("BROWSER_MANAGED_BINARY") or "").strip():
+                chrome_path = self._resolve_managed_browser_binary_from_config()
+                if chrome_path:
+                    os.environ["BROWSER_MANAGED_BINARY"] = chrome_path
+                    logger.info(
+                        "[JiuWenClawDeepAdapter] using browser.chrome_path for managed browser: %s",
+                        chrome_path,
+                    )
             subagents.append(
                 build_browser_agent_config(
                     model,
@@ -614,7 +652,7 @@ class JiuWenClawDeepAdapter:
             registered=self._paid_search_registered,
             enabled=any(
                 os.environ.get(key)
-                for key in ("PERPLEXITY_API_KEY", "SERPER_API_KEY", "JINA_API_KEY")
+                for key in ("BOCHA_API_KEY", "PERPLEXITY_API_KEY", "SERPER_API_KEY", "JINA_API_KEY")
             ),
             create_fn=lambda: [WebPaidSearchTool(language=self._resolve_runtime_language())],
             warn_label="paid search tool",
@@ -1069,7 +1107,7 @@ class JiuWenClawDeepAdapter:
         # 付费搜索工具：有任意一个付费 key 就注册
         if any(
             os.environ.get(key)
-            for key in ("PERPLEXITY_API_KEY", "SERPER_API_KEY", "JINA_API_KEY")
+            for key in ("BOCHA_API_KEY", "PERPLEXITY_API_KEY", "SERPER_API_KEY", "JINA_API_KEY")
         ):
             self._paid_search_tool = WebPaidSearchTool(language=self._resolve_runtime_language())
             Runner.resource_mgr.add_tool(self._paid_search_tool)
