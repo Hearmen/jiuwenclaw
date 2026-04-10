@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from jiuwenclaw.agentserver.permissions.checker import collect_permission_rail_tool_names
 from jiuwenclaw.utils import logger
 
 
@@ -40,10 +41,11 @@ def build_permission_rail(
         return None
 
     tools_config = permission_config.get("tools", {})
-    tool_names = list(tools_config.keys())
+    tool_names = collect_permission_rail_tool_names(permission_config)
     logger.info(
-        "[InterruptHelpers] tools_config keys: %s",
-        list(tools_config.keys())
+        "[InterruptHelpers] tools_config keys: %s, rail tool_names (with rules): %s",
+        list(tools_config.keys()),
+        tool_names,
     )
     logger.info(
         "[InterruptHelpers] Building PermissionInterruptRail with tool_names=%s llm=%s model_name=%s",

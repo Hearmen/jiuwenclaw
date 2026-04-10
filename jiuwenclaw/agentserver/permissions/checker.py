@@ -50,6 +50,36 @@ TOOL_PERMISSION_CHANNEL_ID: contextvars.ContextVar[str] = contextvars.ContextVar
 WEB_TOOL_PERMISSIONS_CHANNEL_ID = "web"
 
 
+def collect_permission_rail_tool_names(permission_config: dict[str, Any]) -> list[str]:
+    """构建 ``PermissionInterruptRail`` 应拦截的工具名列表（去重、排序）。
+
+    合并 ``permissions.tools`` 的键与 ``permissions.rules[*].tools`` 中的名称，
+    使仅出现在参数规则中的工具仍会进入护栏（before_tool_call）。
+    """
+    names: set[str] = set()
+    tools_cfg = permission_config.get("tools") or {}
+    if isinstance(tools_cfg, dict):
+        for key in tools_cfg.keys():
+            label = str(key).strip()
+            if label:
+                names.add(label)
+    rules = permission_config.get("rules") or []
+    if isinstance(rules, list):
+        for entry in rules:
+            if not isinstance(entry, dict):
+                continue
+            raw_tools = entry.get("tools")
+            if raw_tools is None:
+                continue
+            if isinstance(raw_tools, str):
+                raw_tools = [raw_tools]
+            if isinstance(raw_tools, list):
+                for item in raw_tools:
+                    if isinstance(item, str) and item.strip():
+                        names.add(item.strip())
+    return sorted(names)
+
+
 # ---------- 工具调用守卫 ----------
 
 
@@ -98,6 +128,8 @@ async def check_tool_permissions(
                 tool_args = json.loads(tool_args)
             except Exception:
                 tool_args = {}
+        if not isinstance(tool_args, dict):
+            tool_args = {}
 
         result = await engine.check_permission(
             tool_name=tool_name,

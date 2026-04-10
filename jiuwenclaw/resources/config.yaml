@@ -295,101 +295,141 @@ channels:
     enabled: false
     send_file_allowed: true
 
-# ========== 细粒度权限管控 ==========
+# ========== 细粒度权限管控（v_cc）==========
 #
-# 三种权限动作:
-#   allow  - 直接执行，无需确认
-#   ask    - 弹出确认框，用户决定
-#   deny   - 拒绝执行，返回错误
+# schema: v_cc 时由 evaluate_v_cc 求值；permission_mode: normal|strict 决定 severity 映射，见 v_cc.py。
+# severity（normal）：LOW/MEDIUM→allow，HIGH/CRITICAL→ask；strict 下 MEDIUM→ask、CRITICAL→deny。
+# 最终权限 = defaults.*、tools.<name>、命中 rules 的决策取最严（strictest）。
 #
-# 优先级规则:
-#   deny 绝对否决: 任何匹配到的 deny 规则都不会被覆盖
-#   来源优先级 (用于 ask/allow 之间的决断):
-#     1. tools.<tool>.patterns[i]         工具级模式规则
-#     2. tools.<tool>.*                   工具级默认
-#     3. defaults.*                       全局默认
-#   同一工具的 patterns 内部: deny > ask > allow (最严格者胜出)
+# 三种动作: allow / ask / deny
 permissions:
   enabled: false
+  schema: v_cc
+  permission_mode: normal
 
-  # 全局默认: 未匹配任何规则时的行为
   defaults:
     "*": "allow"
 
-  # 按具体工具名设置权限 (支持 patterns 子规则)
-  # tools 的 keys 即为需要权限控制的工具列表
   tools:
-    bash:
-      "*": "ask"
-      patterns:
-        "dir *": "allow"
-        "ls *": "allow"
-        "pwd": "allow"
-        "cd *": "allow"
-        "echo *": "allow"
-        "cat *": "allow"
-        "type *": "allow"
-        "head *": "allow"
-        "tail *": "allow"
-        "git status *": "allow"
-        "git log *": "allow"
-        "git diff *": "allow"
-        "git branch *": "allow"
-        "rm *": "ask"
-        "del *": "ask"
-        "rd *": "deny"
-        "format *": "deny"
-        "shutdown *": "deny"
-        "reboot *": "deny"
-        "mkfs *": "deny"
-        "diskpart *": "deny"
-        "sudo *": "deny"
-    write:
-      "*": "ask"
-    mcp_exec_command:
-      "*": "ask"           # 命令默认需确认
-      patterns:
-        "git status *": "allow"
-        "git log *": "allow"
-        "git diff *": "allow"
-        "git branch *": "allow"
-        "ls *": "allow"
-        "dir *": "allow"
-        "pwd *": "allow"
-        "cd *": "allow"
-        "echo *": "allow"
-        "cat *": "allow"
-        "type *": "allow"
-        "head *": "allow"
-        "tail *": "allow"
-        "rm *": "deny"
-        "del *": "deny"
-        "rd *": "deny"
-        "format *": "deny"
-        "shutdown *": "deny"
-        "reboot *": "deny"
-        "mkfs *": "deny"
-        "diskpart *": "deny"
-        "sudo *": "deny"
-    write_memory: "allow"
-    edit_memory: "allow"
-    read_memory: "allow"
-    memory_search: "allow"
-    memory_get: "allow"
-    mcp_free_search: "allow"
-    mcp_paid_search: "allow"
-    mcp_fetch_webpage: "allow"
-    cron_list_jobs: "allow"
-    cron_get_job: "allow"
-    cron_create_job: "allow"
-    cron_update_job: "allow"
-    cron_delete_job: "allow"
-    cron_toggle_job: "allow"
-    cron_preview_job: "allow"
+    bash: ask
+    mcp_exec_command: ask
+    write: ask
+    write_memory: allow
+    edit_memory: allow
+    read_memory: allow
+    memory_search: allow
+    memory_get: allow
+    mcp_free_search: allow
+    mcp_paid_search: allow
+    mcp_fetch_webpage: allow
+    cron_list_jobs: allow
+    cron_get_job: allow
+    cron_create_job: allow
+    cron_update_job: allow
+    cron_delete_job: allow
+    cron_toggle_job: allow
+    cron_preview_job: allow
 
-  # 外部目录访问 (访问 workspace 外路径时的权限)
+  rules:
+    - id: shell_allow_dir
+      tools: [bash, mcp_exec_command]
+      pattern: "dir *"
+      severity: LOW
+    - id: shell_allow_ls
+      tools: [bash, mcp_exec_command]
+      pattern: "ls *"
+      severity: LOW
+    - id: shell_allow_pwd
+      tools: [bash, mcp_exec_command]
+      pattern: "pwd *"
+      severity: LOW
+    - id: shell_allow_cd
+      tools: [bash, mcp_exec_command]
+      pattern: "cd *"
+      severity: LOW
+    - id: shell_allow_echo
+      tools: [bash, mcp_exec_command]
+      pattern: "echo *"
+      severity: LOW
+    - id: shell_allow_cat
+      tools: [bash, mcp_exec_command]
+      pattern: "cat *"
+      severity: LOW
+    - id: shell_allow_type
+      tools: [bash, mcp_exec_command]
+      pattern: "type *"
+      severity: LOW
+    - id: shell_allow_head
+      tools: [bash, mcp_exec_command]
+      pattern: "head *"
+      severity: LOW
+    - id: shell_allow_tail
+      tools: [bash, mcp_exec_command]
+      pattern: "tail *"
+      severity: LOW
+    - id: shell_allow_git_status
+      tools: [bash, mcp_exec_command]
+      pattern: "git status *"
+      severity: LOW
+    - id: shell_allow_git_log
+      tools: [bash, mcp_exec_command]
+      pattern: "git log *"
+      severity: LOW
+    - id: shell_allow_git_diff
+      tools: [bash, mcp_exec_command]
+      pattern: "git diff *"
+      severity: LOW
+    - id: shell_allow_git_branch
+      tools: [bash, mcp_exec_command]
+      pattern: "git branch *"
+      severity: LOW
+    - id: bash_rm
+      tools: [bash]
+      pattern: "rm *"
+      severity: HIGH
+    - id: bash_del
+      tools: [bash]
+      pattern: "del *"
+      severity: HIGH
+    - id: mcp_rm
+      tools: [mcp_exec_command]
+      pattern: "rm *"
+      severity: CRITICAL
+    - id: mcp_del
+      tools: [mcp_exec_command]
+      pattern: "del *"
+      severity: CRITICAL
+    - id: shell_deny_rd
+      tools: [bash, mcp_exec_command]
+      pattern: "rd *"
+      severity: CRITICAL
+    - id: shell_deny_format
+      tools: [bash, mcp_exec_command]
+      pattern: "format *"
+      severity: CRITICAL
+    - id: shell_deny_shutdown
+      tools: [bash, mcp_exec_command]
+      pattern: "shutdown *"
+      severity: CRITICAL
+    - id: shell_deny_reboot
+      tools: [bash, mcp_exec_command]
+      pattern: "reboot *"
+      severity: CRITICAL
+    - id: shell_deny_mkfs
+      tools: [bash, mcp_exec_command]
+      pattern: "mkfs *"
+      severity: CRITICAL
+    - id: shell_deny_diskpart
+      tools: [bash, mcp_exec_command]
+      pattern: "diskpart *"
+      severity: CRITICAL
+    - id: shell_deny_sudo
+      tools: [bash, mcp_exec_command]
+      pattern: "sudo *"
+      severity: CRITICAL
+
   external_directory:
-    "*": "ask"   # deny | ask | allow
+    "*": "ask"
 
 browser:
   # chrome_path can be a string or per-OS map.

@@ -24,6 +24,12 @@ from jiuwenclaw.agentserver.permissions.models import (
     PermissionLevel,
     PermissionResult,
 )
+from jiuwenclaw.agentserver.permissions.v_cc import (
+    evaluate_v_cc,
+    maybe_escalate_shell_operators,
+    permissions_schema_is_v_cc,
+    strictest as v_cc_strictest,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -96,27 +102,47 @@ class PermissionEngine:
                 reason=f"Skipped for channel: {normalized_channel}",
             )
 
-        # 1. 先检查工具是否允许
-        permission, matched_rule = self._tool_checker.check_tool(
-            tool_name, tool_args, channel_id
-        )
-        if permission is None:
-            permission = PermissionLevel.ASK
-            matched_rule = "default"
+        if not isinstance(tool_args, dict):
+            logger.warning(
+                "[PermissionEngine] tool_args is not a dict (type=%s), using {}",
+                type(tool_args).__name__,
+            )
+            tool_args = {}
 
-        logger.info(
-            "[PermissionEngine] Tool checker returned: permission=%s matched_rule=%s",
-            permission.value, matched_rule,
-        )
+        # 1. 工具级 + 参数规则 + 默认（legacy 或 v_cc）
+        external_paths: list[str] | None = None
+        if permissions_schema_is_v_cc(self.config):
+            permission, matched_rule = evaluate_v_cc(self.config, tool_name, tool_args)
+            permission = maybe_escalate_shell_operators(tool_name, tool_args, permission)
+            logger.info(
+                "[PermissionEngine] v_cc result: permission=%s matched_rule=%s",
+                permission.value, matched_rule,
+            )
+        else:
+            perm_t, rule_t = self._tool_checker.check_tool(
+                tool_name, tool_args, channel_id
+            )
+            if perm_t is None:
+                permission = PermissionLevel.ASK
+                matched_rule = "default"
+            else:
+                permission = perm_t
+                matched_rule = rule_t or "default"
+            logger.info(
+                "[PermissionEngine] Legacy checker: permission=%s matched_rule=%s",
+                permission.value, matched_rule,
+            )
 
-        # 2. 工具允许时，再检查外部路径（仅当工具通过后才检查路径）
-        if permission == PermissionLevel.ALLOW:
-            ext_result = self._external_checker.check_external_paths(tool_name, tool_args)
-            if ext_result:
-                logger.info("Tool %s blocked by external directory check", tool_name)
-                if ext_result.permission == PermissionLevel.ASK and ext_result.risk is None:
-                    ext_result.risk = await self._assess_command_risk(tool_name, tool_args)
-                return ext_result
+        # 2. 外部路径：与当前决策取更严（不放宽）
+        ext_result = self._external_checker.check_external_paths(tool_name, tool_args)
+        if ext_result is not None:
+            logger.info(
+                "Tool %s external_directory check: %s (merging with %s)",
+                tool_name, ext_result.permission.value, permission.value,
+            )
+            permission = v_cc_strictest(permission, ext_result.permission)
+            matched_rule = f"{matched_rule}|{ext_result.matched_rule or 'external_directory'}"
+            external_paths = ext_result.external_paths
 
         # 3. ASK 时进行风险评估
         risk = None
@@ -130,6 +156,7 @@ class PermissionEngine:
             matched_rule=matched_rule,
             reason=self._get_reason(permission, tool_name, matched_rule),
             risk=risk,
+            external_paths=external_paths,
         )
 
         logger.info(

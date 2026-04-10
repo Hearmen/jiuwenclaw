@@ -20,7 +20,10 @@ from openjiuwen.harness.rails.interrupt.confirm_rail import (
 )
 
 from jiuwenclaw.agentserver.permissions.core import PermissionEngine
-from jiuwenclaw.agentserver.permissions.checker import TOOL_PERMISSION_CHANNEL_ID
+from jiuwenclaw.agentserver.permissions.checker import (
+    TOOL_PERMISSION_CHANNEL_ID,
+    collect_permission_rail_tool_names,
+)
 from jiuwenclaw.agentserver.permissions import PermissionLevel, PermissionResult
 from jiuwenclaw.utils import logger
 
@@ -57,9 +60,11 @@ class PermissionInterruptRail(ConfirmInterruptRail):
                 model_name=model_name,
             )
         logger.info(
-            "[PermissionRail] Initialized with tool_names=%s config_keys=%s llm=%s model_name=%s",
-            list(self._tool_names), list(self._static_config.get("tools", {}).keys()),
-            self._engine._llm is not None, self._engine._model_name,
+            "[PermissionRail] Initialized with tool_names=%s tools.keys=%s llm=%s model_name=%s",
+            list(self._tool_names),
+            list((self._static_config.get("tools") or {}).keys()),
+            self._engine._llm is not None,
+            self._engine._model_name,
         )
 
     def _get_auto_confirm_key(self, tool_call: ToolCall) -> str:
@@ -107,12 +112,15 @@ class PermissionInterruptRail(ConfirmInterruptRail):
         """Hot-update static permission config and tool_names."""
         self._static_config = config
         self._engine.update_config(config)
+        merged = collect_permission_rail_tool_names(config)
         if tool_names is not None:
-            self._tool_names = set(tool_names)
-            logger.info(
-                "[PermissionRail] Hot-updated tool_names=%s",
-                list(self._tool_names)
-            )
+            extra = {str(x).strip() for x in tool_names if str(x).strip()}
+            merged = sorted(set(merged) | extra)
+        self._tool_names = set(merged)
+        logger.info(
+            "[PermissionRail] Hot-updated tool_names=%s",
+            list(self._tool_names),
+        )
 
     async def resolve_interrupt(
         self,
@@ -198,10 +206,13 @@ class PermissionInterruptRail(ConfirmInterruptRail):
         args = tool_call.arguments
         if isinstance(args, str):
             try:
-                return json.loads(args)
+                parsed = json.loads(args)
             except Exception:
                 return {}
-        return args or {}
+            return parsed if isinstance(parsed, dict) else {}
+        if isinstance(args, dict):
+            return args
+        return {}
 
     @staticmethod
     def _parse_confirm_payload(user_input: Any) -> Optional[ConfirmPayload]:
