@@ -67,6 +67,12 @@ from jiuwenclaw.agentserver.deep_agent.rails import (
     JiuClawStreamEventRail,
     RuntimePromptRail,
 )
+from jiuwenclaw.agentserver.deep_agent.permissions.owner_scopes import (
+    TOOL_PERMISSION_CONTEXT,
+    setup_permission_context,
+    cleanup_permission_context,
+)
+from jiuwenclaw.agentserver.permissions.core import init_permission_engine
 from jiuwenclaw.agentserver.memory import clear_memory_manager_cache
 from jiuwenclaw.agentserver.memory.config import clear_config_cache, get_memory_mode
 from jiuwenclaw.agentserver.permissions.checker import TOOL_PERMISSION_CHANNEL_ID
@@ -220,6 +226,7 @@ class JiuWenClawDeepAdapter:
         self._skill_evolution_rail: SkillEvolutionRail | None = None
         self._pending_evolution_data: dict[str, dict] = {}
         self._permission_rail: Any = None
+        self._avatar_rail: Any = None
         self._tool_cards = None
         self._sys_operation = None
         self._vision_model_config: VisionModelConfig | None = None
@@ -788,6 +795,18 @@ class JiuWenClawDeepAdapter:
             heartbeat_rail = None
         return heartbeat_rail
 
+    @staticmethod
+    def _build_avatar_rail() -> Any | None:
+        """Build AvatarPromptRail for digital avatar mode."""
+        try:
+            from jiuwenclaw.agentserver.deep_agent.rails.avatar_rail import AvatarPromptRail
+            rail = AvatarPromptRail()
+            logger.info("[JiuWenClawDeepAdapter] AvatarPromptRail create success")
+            return rail
+        except Exception as exc:
+            logger.warning("[JiuWenClawDeepAdapter] AvatarPromptRail create failed: %s", exc)
+            return None
+
     def _build_runtime_prompt_rail(self) -> RuntimePromptRail | None:
         """Build RuntimePromptRail for per-model-call time/channel injection."""
         try:
@@ -823,6 +842,7 @@ class JiuWenClawDeepAdapter:
             _RailBuildInfo("_task_planning_rail", self._build_task_planning_rail),
             _RailBuildInfo("_security_rail", self._build_security_rail),
             _RailBuildInfo("_heartbeat_rail", self._build_heartbeat_rail),
+            _RailBuildInfo("_avatar_rail", self._build_avatar_rail),
             _RailBuildInfo("_permission_rail", build_permission_rail, {"config": config_base, "llm": self._model,
                                                                        "model_name": config_base.get("models", {}).get(
                                                                            "default", {}).get("model_client_config",
@@ -953,6 +973,12 @@ class JiuWenClawDeepAdapter:
         rails_list = []
         if self._skill_rail is not None:
             rails_list.append(self._skill_rail)
+        if self._context_engineering_rail is not None:
+            rails_list.append(self._context_engineering_rail)
+        if self._memory_rail is not None:
+            rails_list.append(self._memory_rail)
+        if self._avatar_rail is not None:
+            rails_list.append(self._avatar_rail)
         if self._permission_rail is not None:
             rails_list.append(self._permission_rail)
         return rails_list
@@ -1092,6 +1118,14 @@ class JiuWenClawDeepAdapter:
 
         tool_cards = await self._get_tool_cards()
         self._tool_cards = tool_cards
+
+        permissions_cfg = config_base.get("permissions", {})
+        init_permission_engine(permissions_cfg)
+        logger.info(
+            "[JiuWenClawDeepAdapter] Permission engine initialized: enabled=%s",
+            permissions_cfg.get("enabled", True),
+        )
+
         rails_list = self._build_agent_rails(config, config_base)
 
         sys_operation = self._create_sys_operation()
@@ -1383,10 +1417,14 @@ class JiuWenClawDeepAdapter:
         # 定时工具：按当前 session 的 channel 注册（contextvar 已由 _bind_runtime_cron_context 设置）
         if session_id not in ("heartbeat", "cron"):
             try:
-                for cron_tool in self._build_cron_tools():
-                    if not Runner.resource_mgr.get_tool(cron_tool.card.id):
-                        Runner.resource_mgr.add_tool(cron_tool)
-                    self._instance.ability_manager.add(cron_tool.card)
+                cron_tools = self._build_cron_tools()
+                if cron_tools:
+                    logger.info("[JiuWenClawDeepAdapter] Registering %d cron tools", len(cron_tools))
+                    for cron_tool in cron_tools:
+                        if not Runner.resource_mgr.get_tool(cron_tool.card.id):
+                            Runner.resource_mgr.add_tool(cron_tool)
+                        self._instance.ability_manager.add(cron_tool.card)
+                    logger.info("[JiuWenClawDeepAdapter] Cron tools registered successfully")
             except Exception as exc:
                 logger.error("[JiuWenClawDeepAdapter] 定时工具注册失败: %s", exc)
 
@@ -1510,6 +1548,68 @@ class JiuWenClawDeepAdapter:
         await self._update_session_tools(session_id, request_id, channel_id=channel_id)
         self._refresh_acp_runtime_tools(session_id, request_id, channel_id, request_metadata)
         self._update_prompt_for_mode(mode, resolved_language)
+
+        # user_todos 工具注册（工具只注册一次，channel_id 每次请求由 ContextVar 更新）
+        try:
+            from jiuwenclaw.agentserver.tools.user_todo_tool import (
+                get_decorated_tools as _get_user_todo_tools,
+                set_global_workspace_dir as _set_user_todo_workspace,
+                set_global_channel_id as _set_user_todo_channel_id,
+            )
+            _set_user_todo_workspace(self._workspace_dir)
+            _set_user_todo_channel_id(_CRON_TOOL_CHANNEL_ID.get())
+            for tool in _get_user_todo_tools():
+                if not Runner.resource_mgr.get_tool(tool.card.id):
+                    Runner.resource_mgr.add_tool(tool)
+                self._instance.ability_manager.add(tool.card)
+        except ImportError:
+            pass
+
+        # 处理两种场景的记忆工具移除：
+        # 1. 群聊数字分身模式（group_digital_avatar=True + avatar_mode=True）：移除写入工具，但保留读取工具
+        # 2. 记忆完全禁用（enable_memory=False + group_digital_avatar=True + avatar_mode=True）：移除所有记忆工具（读取和写入）
+        perm_ctx = TOOL_PERMISSION_CONTEXT.get()
+        if perm_ctx is not None:
+            # 判断是否为群聊数字分身模式
+            is_group_digital_avatar = (
+                perm_ctx.group_digital_avatar
+                and perm_ctx.avatar_mode
+            )
+
+            # 判断是否为记忆完全禁用（三个条件同时满足）
+            should_disable_memory = (
+                not perm_ctx.enable_memory
+                and perm_ctx.group_digital_avatar
+                and perm_ctx.avatar_mode
+            )
+
+            # 场景2：记忆完全禁用 - 移除所有记忆工具
+            if should_disable_memory:
+                _all_memory_tools = ("write_memory", "edit_memory", "read_memory", "memory_search", "memory_get")
+                for tool_name in _all_memory_tools:
+                    try:
+                        self._instance.ability_manager.remove(tool_name)
+                        logger.info("[JiuWenClawDeepAdapter] 记忆系统已禁用，移除 %s", tool_name)
+                    except Exception:
+                        pass
+            # 场景1：群聊数字分身模式 - 只移除写入工具
+            elif is_group_digital_avatar:
+                for tool_name in ("write_memory", "edit_memory"):
+                    try:
+                        self._instance.ability_manager.remove(tool_name)
+                        logger.info("[JiuWenClawDeepAdapter] 群聊模式下禁止写入记忆，移除 %s", tool_name)
+                    except Exception:
+                        pass
+            # 非群聊数字分身且记忆启用时，恢复写入工具
+            else:
+                try:
+                    from openjiuwen.core.memory.lite.memory_tools import get_decorated_tools as _get_sdk_memory_tools
+                    for tool in _get_sdk_memory_tools():
+                        name = getattr(getattr(tool, "card", None), "name", "")
+                        if name in ("write_memory", "edit_memory"):
+                            self._instance.ability_manager.add(tool.card)
+                except ImportError:
+                    pass
 
     @staticmethod
     def _should_register_acp_runtime_tools(
@@ -2063,6 +2163,7 @@ class JiuWenClawDeepAdapter:
             mode=mode
         )
         token_cid = TOOL_PERMISSION_CHANNEL_ID.set((request.channel_id or "").strip())
+        token_perm = setup_permission_context(request)
         try:
             await self._update_runtime_config(
                 request.session_id,
@@ -2081,6 +2182,7 @@ class JiuWenClawDeepAdapter:
             raise
         finally:
             TOOL_PERMISSION_CHANNEL_ID.reset(token_cid)
+            cleanup_permission_context(token_perm)
             self._reset_runtime_cron_context(cron_context_tokens)
 
         content = result if isinstance(result, (str, dict)) else str(result)
@@ -2165,6 +2267,7 @@ class JiuWenClawDeepAdapter:
             mode=mode,
         )
         token_cid = TOOL_PERMISSION_CHANNEL_ID.set((request.channel_id or "").strip())
+        token_perm = setup_permission_context(request)
         try:
             await self._update_runtime_config(
                 request.session_id,
@@ -2404,6 +2507,7 @@ class JiuWenClawDeepAdapter:
             )
         finally:
             TOOL_PERMISSION_CHANNEL_ID.reset(token_cid)
+            cleanup_permission_context(token_perm)
             self._reset_runtime_cron_context(cron_context_tokens)
 
         yield AgentResponseChunk(

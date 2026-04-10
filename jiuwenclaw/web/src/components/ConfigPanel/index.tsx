@@ -32,6 +32,7 @@ const THIRD_PARTY_API_KEYS = new Set([
 const REQUIRED_MODEL_FIELDS = ["api_base", "api_key", "model", "model_provider"] as const;
 const REQUIRED_MODEL_FIELD_SET = new Set<string>(REQUIRED_MODEL_FIELDS);
 const EVOLUTION_KEYS = new Set(["evolution_auto_scan"]);
+const MEMORY_KEYS = new Set(["memory_forbidden_enabled", "memory_forbidden_description"]);
 
 function classifyKey(key: string): string {
   if (MODEL_DEFAULT_KEYS.has(key)) return "model_default";
@@ -42,6 +43,7 @@ function classifyKey(key: string): string {
   if (THIRD_PARTY_API_KEYS.has(key)) return "third_party_api";
   if (EMAIL_KEYS.has(key)) return "email";
   if (EVOLUTION_KEYS.has(key)) return "evolution";
+  if (MEMORY_KEYS.has(key)) return "memory";
   if (key === "context_engine_enabled") return "context_engine";
   if (key === "permissions_enabled") return "permissions";
   if (key.startsWith("feishu")) return "feishu";
@@ -90,6 +92,13 @@ function getGroupIcon(tag: string) {
       </svg>
     );
   }
+  if (tag === "memory") {
+    return (
+      <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={1.8}>
+        <path strokeLinecap="round" strokeLinejoin="round" d="M9 3.75H6.912a2.25 2.25 0 00-2.15 1.588L2.35 13.177a2.25 2.25 0 00-.1.661V18a2.25 2.25 0 002.25 2.25h15A2.25 2.25 0 0021.75 18v-4.162c0-.224-.034-.447-.1-.661L19.24 5.338a2.25 2.25 0 00-2.15-1.588H15M2.25 13.5h3.86a2.25 2.25 0 012.012 1.244l.256.512a2.25 2.25 0 002.013 1.244h3.218a2.25 2.25 0 002.013-1.244l.256-.512a2.25 2.25 0 012.013-1.244h3.859" />
+      </svg>
+    );
+  }
   if (tag === "context_engine") {
     return (
       <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={1.8}>
@@ -119,6 +128,7 @@ function getGroupToneClass(tag: string): string {
   if (tag === "embed") return "text-cyan-500 bg-cyan-500/10 border-cyan-500/20";
   if (tag === "third_party_api") return "text-indigo-500 bg-indigo-500/10 border-indigo-500/20";
   if (tag === "evolution") return "text-amber-500 bg-amber-500/10 border-amber-500/20";
+  if (tag === "memory") return "text-purple-500 bg-purple-500/10 border-purple-500/20";
   if (tag === "context_engine") return "text-sky-500 bg-sky-500/10 border-sky-500/20";
   if (tag === "permissions") return "text-rose-500 bg-rose-500/10 border-rose-500/20";
   if (tag === "email") return "text-emerald-500 bg-emerald-500/10 border-emerald-500/20";
@@ -137,7 +147,7 @@ function getNestedModelStyle(tag: string): string {
 }
 
 function isBooleanKey(key: string): boolean {
-  return EVOLUTION_KEYS.has(key) || key === "context_engine_enabled" || key === "permissions_enabled";
+  return EVOLUTION_KEYS.has(key) || key === "context_engine_enabled" || key === "permissions_enabled" || key === "memory_forbidden_enabled";
 }
 
 function parseBoolValue(value: string): boolean {
@@ -149,6 +159,7 @@ function getBooleanKeyLabel(key: string, t: (key: string) => string): string {
     evolution_auto_scan: t('config.booleanLabels.evolutionAutoScan'),
     context_engine_enabled: t('config.booleanLabels.enabled'),
     permissions_enabled: t('config.booleanLabels.enabled'),
+    memory_forbidden_enabled: t('config.booleanLabels.enabled'),
   };
   return labels[key] ?? key;
 }
@@ -186,8 +197,9 @@ function getGroupMeta(t: (key: string) => string): Record<string, { label: strin
     evolution: { label: t('config.groups.evolution.label'), order: 6, hint: t('config.groups.evolution.hint') },
     context_engine: { label: t('config.groups.contextEngine.label'), order: 7, hint: t('config.groups.contextEngine.hint') },
     permissions: { label: t('config.groups.permissions.label'), order: 8, hint: t('config.groups.permissions.hint') },
-    email: { label: t('config.groups.email.label'), order: 9, hint: t('config.groups.email.hint') },
-    other: { label: t('config.groups.other.label'), order: 10, hint: t('config.groups.other.hint') },
+    memory: { label: t('config.groups.memory.label'), order: 9, hint: t('config.groups.memory.hint') },
+    email: { label: t('config.groups.email.label'), order: 10, hint: t('config.groups.email.hint') },
+    other: { label: t('config.groups.other.label'), order: 11, hint: t('config.groups.other.hint') },
   };
 }
 
@@ -200,7 +212,23 @@ function isProviderKey(key: string): boolean {
 }
 
 /** 表格列显示用：video_api_base -> api_base，避免与分组标题重复 */
+/** i18n 键名映射：字段名 -> 翻译 key（显示名 / placeholder） */
+const KEY_DISPLAY_I18N: Record<string, string> = {
+  memory_forbidden_enabled: "config.keys.memoryForbiddenEnabled",
+  memory_forbidden_description: "config.keys.memoryForbiddenDescription",
+};
+const KEY_PLACEHOLDER_I18N: Record<string, string> = {
+  memory_forbidden_description: "config.keys.memoryForbiddenDescriptionPlaceholder",
+};
+
+/** 组内字段排序优先级，数字越小越靠前 */
+const KEY_SORT_PRIORITY: Record<string, number> = {
+  memory_forbidden_enabled: 0,
+  memory_forbidden_description: 1,
+};
+
 function getKeyDisplayLabel(key: string, t: (key: string) => string): string {
+  if (KEY_DISPLAY_I18N[key]) return t(KEY_DISPLAY_I18N[key]);
   const m = key.match(/^(video|audio|vision)_(.+)$/);
   if (m) return m[2];
   return getBooleanKeyLabel(key, t) ?? key;
@@ -346,7 +374,7 @@ function GroupSection({
                           type={isSensitiveKey(key) && !visibleFields[key] ? "password" : "text"}
                           value={draftValues[key] ?? value}
                           onChange={(e) => onChange(key, e.target.value)}
-                          placeholder={t('config.enterValue')}
+                          placeholder={KEY_PLACEHOLDER_I18N[key] ? t(KEY_PLACEHOLDER_I18N[key]) : t('config.enterValue')}
                           className={`w-full rounded-md border border-border bg-bg px-3 py-2 text-[13px] outline-none focus:border-accent ${isSensitiveKey(key) ? "pr-10" : ""}`}
                         />
                         {isSensitiveKey(key) ? (
@@ -487,7 +515,12 @@ export function ConfigPanel({
       (buckets[tag] ??= []).push([key, value]);
     }
     for (const entries of Object.values(buckets)) {
-      entries.sort(([a], [b]) => a.localeCompare(b));
+      entries.sort(([a], [b]) => {
+        const pa = KEY_SORT_PRIORITY[a] ?? 50;
+        const pb = KEY_SORT_PRIORITY[b] ?? 50;
+        if (pa !== pb) return pa - pb;
+        return a.localeCompare(b);
+      });
     }
     const groupMeta = getGroupMeta(t);
     return Object.entries(buckets)

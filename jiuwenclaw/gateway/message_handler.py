@@ -88,6 +88,7 @@ class MessageHandler(ABC):
         self._forward_task: asyncio.Task | None = None
         self._stream_tasks: dict[str, asyncio.Task] = {}  # request_id -> task
         self._stream_sessions: dict[str, str | None] = {}  # request_id -> session_id
+        self._stream_metadata: dict[str, dict[str, Any] | None] = {}  # request_id -> request metadata
         self._pending_evolution_approval: dict[str, str] = {}  # session_id -> approval_request_id
         self._queued_supplement_input: dict[str, str] = {}  # session_id -> queued_new_input
         self._session_evolution_in_progress: set[str] = set()
@@ -112,6 +113,16 @@ class MessageHandler(ABC):
         self._session_map = SessionMap()
         self._cron_controller = None
 
+        # IM Pipeline（数字分身）— None 时不执行，不影响原有逻辑
+        self._inbound_pipeline = None   # type: Any  # IMInboundPipeline | None
+        self._outbound_pipeline = None  # type: Any  # IMOutboundPipeline | None
+
+    def set_inbound_pipeline(self, pipeline: Any) -> None:
+        self._inbound_pipeline = pipeline
+
+    def set_outbound_pipeline(self, pipeline: Any) -> None:
+        self._outbound_pipeline = pipeline
+
         # 直接使用 jiuwenclaw.config 的 get_config_raw/set_config/update_channel_in_config
         # 避免在此处重复实现 config 模块加载逻辑。
         from jiuwenclaw.config import get_config_raw, update_channel_in_config
@@ -121,8 +132,8 @@ class MessageHandler(ABC):
 
         from jiuwenclaw.gateway.agent_client import WebSocketAgentServerClient
 
-        if isinstance(agent_client, WebSocketAgentServerClient):
-            agent_client.set_server_push_handler(self._handle_agent_server_push)
+        if isinstance(self._agent_client, WebSocketAgentServerClient):
+            self._agent_client.set_server_push_handler(self._handle_agent_server_push)
 
     @classmethod
     def get_instance(cls, agent_client: "AgentServerClient | None" = None) -> "MessageHandler":
@@ -196,21 +207,15 @@ class MessageHandler(ABC):
         return state
 
     def _save_channel_state_to_config(self, channel_id: str) -> None:
-        """将指定 Channel 的默认 session_id / mode 写回 config.yaml.
-
-        注意：仅更新默认值，不保存每个会话的状态。
-        """
-        try:
-            cfg: Dict[str, Any] = self._get_config_raw()
-        except Exception:  # noqa: BLE001
-            cfg = {}
-        channels_cfg = cfg.get("channels") or {}
-        ch_cfg = channels_cfg.get(channel_id) or {}
+        """将指定 Channel 的默认 session_id / mode 写回 config.yaml."""
+        state = self._channel_states.get(channel_id)
+        if not state:
+            return
         self._update_channel_in_config(
             channel_id,
             {
-                "default_session_id": ch_cfg.get("default_session_id") or "",
-                "default_mode": ch_cfg.get("default_mode") or "plan",
+                "default_session_id": state.session_id or "",
+                "default_mode": state.mode.value if hasattr(state.mode, 'value') else str(state.mode),
             },
         )
 
@@ -401,6 +406,12 @@ class MessageHandler(ABC):
 
     async def publish_robot_messages(self, msg: "Message") -> None:
         """将 Agent 响应放入 robot_messages 队列."""
+        # Outbound Pipeline（数字分身出站路由）— 在入队前运行
+        if self._outbound_pipeline is not None:
+            try:
+                await self._outbound_pipeline.apply(msg)
+            except Exception:
+                logger.exception("Outbound pipeline error, message queued without routing")
         await self._robot_messages.put(msg)
 
     def publish_robot_messages_nowait(self, msg: "Message") -> None:
@@ -568,6 +579,11 @@ class MessageHandler(ABC):
 
         metadata = MessageHandler._merge_agent_metadata(request_metadata, resp.metadata)
 
+        # 从 metadata 中提取 group_digital_avatar 和 enable_memory 字段
+        # 这些字段在 message_to_e2a 中被放入 metadata，需要在这里提取出来
+        group_digital_avatar = bool(metadata.get("group_digital_avatar", False)) if metadata else False
+        enable_memory = bool(metadata.get("enable_memory", True)) if metadata else True
+
         # 检查 payload 中是否包含 event_type，如果包含则创建事件消息
         event_type = None
         if resp.payload and isinstance(resp.payload, dict):
@@ -587,6 +603,8 @@ class MessageHandler(ABC):
                         payload=resp.payload,
                         event_type=event_type,
                         metadata=metadata,
+                        group_digital_avatar=group_digital_avatar,
+                        enable_memory=enable_memory,
                     )
                 except ValueError:
                     # 不是有效的 EventType，继续作为普通响应处理
@@ -602,7 +620,10 @@ class MessageHandler(ABC):
             timestamp=time.time(),
             ok=resp.ok,
             payload=resp.payload,
+            event_type=EventType.CHAT_FINAL,
             metadata=metadata,
+            group_digital_avatar=group_digital_avatar,
+            enable_memory=enable_memory,
         )
 
     async def _handle_agent_server_push(self, wire: dict[str, Any]) -> None:
@@ -620,16 +641,24 @@ class MessageHandler(ABC):
             session_id: str | None = str(sid_raw)
         else:
             session_id = self._stream_sessions.get(rid)
+        
+        # 获取原始请求的 metadata，用于合并
+        request_metadata = self._stream_metadata.get(rid)
+        
+        # 获取 AgentServer 返回的 metadata
         wmd = wire.get("metadata")
         if isinstance(wmd, dict):
-            bus_md = {
+            resp_md = {
                 k: v
                 for k, v in wmd.items()
                 if k not in E2A_WIRE_INTERNAL_METADATA_KEYS
             }
-            bus_metadata: dict[str, Any] | None = bus_md if bus_md else None
         else:
-            bus_metadata = None
+            resp_md = None
+
+        # 合并 metadata：请求 metadata 在前，响应 metadata 在后（响应优先）
+        bus_metadata = MessageHandler._merge_agent_metadata(request_metadata, resp_md)
+
         if chunk.channel_id == _ACP_CHANNEL_ID:
             session_id = self._resolve_acp_external_session_id(session_id, bus_metadata)
         if isinstance(chunk.payload, dict) and chunk.payload.get("event_type") == "cron.response":
@@ -715,6 +744,7 @@ class MessageHandler(ABC):
             },
             event_type=EventType.CHAT_TOOL_RESULT,
             metadata=metadata,
+            enable_streaming=False,  # 工具结果不开启流式，避免被发送到群聊
         )
         await self.publish_robot_messages(out)
 
@@ -728,6 +758,11 @@ class MessageHandler(ABC):
         metadata 传入 request 的 metadata，供 Feishu/Xiaoyi 等通道回发时使用平台身份。
         """
         from jiuwenclaw.schema.message import Message, EventType
+
+        # 从 metadata 中提取 group_digital_avatar 和 enable_memory 字段
+        # 这些字段在 message_to_e2a 中被放入 metadata，需要在这里提取出来
+        group_digital_avatar = bool(metadata.get("group_digital_avatar", False)) if metadata else False
+        enable_memory = bool(metadata.get("enable_memory", True)) if metadata else True
 
         # 从 payload 中提取 event_type（如果存在）
         event_type = None
@@ -750,6 +785,8 @@ class MessageHandler(ABC):
             payload=chunk.payload,
             event_type=event_type,
             metadata=metadata,
+            group_digital_avatar=group_digital_avatar,
+            enable_memory=enable_memory,
         )
 
     @staticmethod
@@ -1085,6 +1122,16 @@ class MessageHandler(ABC):
 
                     continue
 
+                # ---- Inbound Pipeline（数字分身入站过滤）----
+                if self._inbound_pipeline is not None and msg.req_method == ReqMethod.CHAT_SEND:
+                    try:
+                        should_forward = await self._inbound_pipeline.apply(msg)
+                    except Exception:
+                        logger.exception("Inbound pipeline error, fallback to forwarding")
+                    else:
+                        if not should_forward:
+                            continue  # 不相关消息，跳过
+
                 logger.info(
                     "[MessageHandler] 从 user_messages 取出，发往 AgentServer: id=%s channel_id=%s is_stream=%s",
                     msg.id, msg.channel_id, msg.is_stream,
@@ -1105,6 +1152,7 @@ class MessageHandler(ABC):
                         )
                         self._stream_tasks[stream_rid] = task
                         self._stream_sessions[stream_rid] = msg.session_id
+                        self._stream_metadata[stream_rid] = msg.metadata
                         logger.info(
                             "[MessageHandler] Stream 任务已启动（后台运行）: request_id=%s channel_id=%s 当前并发=%d",
                             stream_rid, msg.channel_id, len(self._stream_tasks),
@@ -1221,6 +1269,7 @@ class MessageHandler(ABC):
             # 清理状态
             self._stream_tasks.pop(rid, None)
             self._stream_sessions.pop(rid, None)
+            self._stream_metadata.pop(rid, None)
             if session_id is not None and session_id not in self._stream_sessions.values():
                 # Fallback cleanup when stream exits unexpectedly without evolution end signal.
                 self._clear_session_evolution_in_progress(session_id)
@@ -1258,9 +1307,9 @@ class MessageHandler(ABC):
             ok=True,
             payload={
                 "event_type": "chat.interrupt_result",
-                "intent": "pause",
+                "intent": "cancel",
                 "success": True,
-                "message": "任务已暂停",
+                "message": "任务已取消",
             },
             event_type=EventType.CHAT_INTERRUPT_RESULT,
             metadata=None,
@@ -1384,6 +1433,7 @@ class MessageHandler(ABC):
                     pass
         self._stream_tasks.clear()
         self._stream_sessions.clear()
+        self._stream_metadata.clear()
         self._session_evolution_in_progress.clear()
         self._pending_evolution_approval.clear()
         self._queued_supplement_input.clear()

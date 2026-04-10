@@ -521,6 +521,14 @@ async def _run(
     message_handler = MessageHandler(client)
     await message_handler.start_forwarding()
 
+    # IM Pipeline 初始化（数字分身）
+    from jiuwenclaw.gateway.im_pipeline.im_inbound import IMInboundPipeline
+    from jiuwenclaw.gateway.im_pipeline.im_outbound import IMOutboundPipeline
+    im_inbound = IMInboundPipeline()
+    im_outbound = IMOutboundPipeline()
+    message_handler.set_inbound_pipeline(im_inbound)
+    message_handler.set_outbound_pipeline(im_outbound)
+
     cron_store = CronJobStore(path=get_user_workspace_dir() / "gateway" / "cron_jobs.json")
     cron_scheduler = CronSchedulerService(
         store=cron_store,
@@ -844,8 +852,23 @@ async def _run(
                         chat_id=str(feishu_conf.get("chat_id") or "").strip(),
                         last_chat_id=str(feishu_conf.get("last_chat_id") or "").strip(),
                         last_open_id=str(feishu_conf.get("last_open_id") or "").strip(),
+                        group_digital_avatar=bool(feishu_conf.get("group_digital_avatar", False)),
+                        my_user_id=str(feishu_conf.get("my_user_id") or feishu_conf.get("my_open_id") or "").strip(),
+                        bot_name=str(feishu_conf.get("bot_name") or "").strip(),
+                        enable_memory=bool(feishu_conf.get("enable_memory", False)),
+                        message_merge_window_ms=int(feishu_conf.get("message_merge_window_ms", 15000)),
                     )
-                    feishu_channel = FeishuChannel(feishu_config, _DummyBus())
+                    # 数字分身：创建 adapter 并注册到 pipeline
+                    feishu_adapter = None
+                    if feishu_config.group_digital_avatar:
+                        from jiuwenclaw.channel.platform_adapter.feishu_im_adapter import FeishuIMPlatformAdapter
+                        feishu_adapter = FeishuIMPlatformAdapter(
+                            my_open_id=feishu_config.my_user_id,
+                            bot_name=feishu_config.bot_name,
+                        )
+                        im_inbound.register_adapter("feishu", feishu_adapter)
+                        im_outbound.register_adapter("feishu", feishu_adapter)
+                    feishu_channel = FeishuChannel(feishu_config, _DummyBus(), im_platform_adapter=feishu_adapter)
                     channel_manager.register_channel(feishu_channel)
                     feishu_task = asyncio.create_task(feishu_channel.start(), name="feishu")
                     logger.info("[App] FeishuChannel registered from config.yaml.channels.feishu")
@@ -859,6 +882,11 @@ async def _run(
                     task,
                     f"feishu_enterprise[{bot_key}]",
                 )
+            for _old_ch in feishu_enterprise_channels.values():
+                _old_ch_id = getattr(_old_ch, "_channel_id", "") or getattr(_old_ch, "name", "")
+                if _old_ch_id:
+                    im_inbound.unregister_adapter(_old_ch_id)
+                    im_outbound.unregister_adapter(_old_ch_id)
             feishu_enterprise_channels = {}
             feishu_enterprise_tasks = {}
 
@@ -901,8 +929,21 @@ async def _run(
                         bot_key=bot_key,
                         last_chat_id=str(bot_conf.get("last_chat_id") or "").strip(),
                         last_open_id=str(bot_conf.get("last_open_id") or "").strip(),
+                        my_user_id=str(bot_conf.get("my_user_id") or "").strip(),
+                        bot_name=str(bot_conf.get("bot_name") or "").strip(),
+                        group_digital_avatar=bool(bot_conf.get("group_digital_avatar", False)),
+                        enable_memory=bool(bot_conf.get("enable_memory", False)),
                     )
-                    channel = FeishuChannel(feishu_config, _DummyBus())
+                    feishu_adapter = None
+                    if feishu_config.group_digital_avatar:
+                        from jiuwenclaw.channel.platform_adapter.feishu_im_adapter import FeishuIMPlatformAdapter
+                        feishu_adapter = FeishuIMPlatformAdapter(
+                            my_open_id=feishu_config.my_user_id,
+                            bot_name=feishu_config.bot_name,
+                        )
+                        im_inbound.register_adapter(channel_id, feishu_adapter)
+                        im_outbound.register_adapter(channel_id, feishu_adapter)
+                    channel = FeishuChannel(feishu_config, _DummyBus(), im_platform_adapter=feishu_adapter)
                     channel_manager.register_channel(channel)
                     task = asyncio.create_task(channel.start(), name=f"feishu-enterprise-{bot_key}")
                     feishu_enterprise_channels[bot_key] = channel
@@ -1099,8 +1140,22 @@ async def _run(
                         allow_from=wecom_conf.get("allow_from") or [],
                         enable_streaming=bool(wecom_conf.get("enable_streaming", True)),
                         send_thinking_message=bool(wecom_conf.get("send_thinking_message", True)),
+                        group_digital_avatar=bool(wecom_conf.get("group_digital_avatar", False)),
+                        my_user_id=str(wecom_conf.get("my_user_id") or "").strip(),
+                        bot_name=str(wecom_conf.get("bot_name") or "").strip(),
+                        enable_memory=bool(wecom_conf.get("enable_memory", False)),
                     )
-                    wecom_channel = WecomChannel(wecom_config, _DummyBus())
+                    # 数字分身：创建 adapter 并注册到 pipeline
+                    wecom_adapter = None
+                    if wecom_config.group_digital_avatar:
+                        from jiuwenclaw.channel.platform_adapter.wecom_im_adapter import WecomIMPlatformAdapter
+                        wecom_adapter = WecomIMPlatformAdapter(
+                            my_user_id=wecom_config.my_user_id,
+                            bot_name=wecom_config.bot_name,
+                        )
+                        im_inbound.register_adapter("wecom", wecom_adapter)
+                        im_outbound.register_adapter("wecom", wecom_adapter)
+                    wecom_channel = WecomChannel(wecom_config, _DummyBus(), im_platform_adapter=wecom_adapter)
                     channel_manager.register_channel(wecom_channel)
                     wecom_task = asyncio.create_task(wecom_channel.start(), name="wecom")
                     logger.info("[App] WecomChannel registered from config.yaml.channels.wecom")

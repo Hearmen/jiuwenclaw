@@ -102,6 +102,8 @@ class CronJob:
     session_id: str | None = None
     created_at: float | None = None
     updated_at: float | None = None
+    # 记录定时任务是在群聊("group")还是私聊("p2p")中创建的，用于推送时决定是否走 IMOutboundPipeline
+    chat_type: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
         d: dict[str, Any] = {
@@ -119,6 +121,8 @@ class CronJob:
         }
         if self.session_id:
             d["session_id"] = self.session_id
+        if self.chat_type:
+            d["chat_type"] = self.chat_type
         return d
 
     @staticmethod
@@ -175,6 +179,13 @@ class CronJob:
         sid_raw = data.get("session_id", None)
         job_session_id = str(sid_raw).strip() if isinstance(sid_raw, str) and str(sid_raw).strip() else None
 
+        chat_type_raw = data.get("chat_type", None)
+        job_chat_type = (
+            str(chat_type_raw).strip()
+            if isinstance(chat_type_raw, str) and str(chat_type_raw).strip()
+            else None
+        )
+
         return CronJob(
             id=job_id,
             name=name,
@@ -188,6 +199,7 @@ class CronJob:
             session_id=job_session_id,
             created_at=created_at_f,
             updated_at=updated_at_f,
+            chat_type=job_chat_type,
         )
 
 

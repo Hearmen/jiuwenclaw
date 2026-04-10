@@ -13,9 +13,11 @@ from collections import OrderedDict
 from dataclasses import dataclass
 from typing import Any, Callable
 
+import requests
 from pydantic import BaseModel, Field
 
 from jiuwenclaw.channel.base import RobotMessageRouter, BaseChannel
+from jiuwenclaw.channel.platform_adapter.message import MessageStore
 from jiuwenclaw.schema.message import Message, ReqMethod, EventType
 from jiuwenclaw.channel.feishu_file_service import (
     FeishuFileService,
@@ -51,6 +53,13 @@ class FeishuConfig(BaseModel):
     download_timeout: int = 60  # 下载超时时间（秒）
     enable_file_upload: bool = True  # 是否启用文件上传功能
     temp_file_dir: str = ""  # 临时文件存储目录，默认使用工作空间
+
+    # 数字分身配置
+    my_user_id: str = ""  # 可选：当前数字分身对应的用户open_id
+    bot_name: str = ""  # 可选：机器人在群聊中的名称，用于@识别
+    group_digital_avatar: bool = False  # 是否启用群聊数字分身功能
+    enable_memory: bool = False  # 是否启用群聊记忆功能
+    message_merge_window_ms: int = 15000  # 连续消息合并窗口（毫秒）
 
 
 try:
@@ -147,13 +156,19 @@ class FeishuChannel(BaseChannel):
     _ws_loop_proxy_lock = threading.Lock()
     _ws_loop_proxy_installed = False
 
-    def __init__(self, config: FeishuConfig, router: RobotMessageRouter):
+    def __init__(
+        self,
+        config: FeishuConfig,
+        router: RobotMessageRouter,
+        im_platform_adapter: Any | None = None,
+    ):
         """
         初始化飞书通道实例。
 
         Args:
             config: 飞书配置对象
             router: 消息路由器实例
+            im_platform_adapter: 平台适配器实例（可选，用于数字分身功能）
         """
         super().__init__(config, router)
         self.config: FeishuConfig = config
@@ -165,6 +180,12 @@ class FeishuChannel(BaseChannel):
         self._main_loop: asyncio.AbstractEventLoop | None = None  # 主线程事件循环
         self._ws_thread_loop: asyncio.AbstractEventLoop | None = None  # WebSocket线程事件循环
         self._message_callback: Callable[[Message], None] | None = None  # 网关模式回调
+        self._im_platform_adapter = im_platform_adapter
+        self._message_storage = MessageStore(api_client=None, platform_adapter=self._im_platform_adapter)
+        self._pending_message_batches: dict[tuple[str, str], dict[str, Any]] = {}
+        self._pending_message_lock = asyncio.Lock()
+        self._pending_group_progress_tasks: dict[str, asyncio.Task[None]] = {}
+        self._sent_group_progress_requests: set[str] = set()
         self._stopping = False
         # 按 request_id 聚合 chat.delta，避免同一任务被拆分成多条消息发送到飞书。
         self._stream_text_buffers: dict[str, str] = {}
@@ -205,6 +226,19 @@ class FeishuChannel(BaseChannel):
         # Message 的 id 必须全局唯一；多 bot 同群时飞书消息 message_id 相同，需加上 channel_id 防止冲突。
         msg_id = f"{self.channel_id}:{inbound.message_id}"
         params = {"content": inbound.content, "query": inbound.content} if inbound.params is None else inbound.params
+        _meta = inbound.metadata or {}
+        _chat_type = _meta.get("chat_type", "")
+        _is_group = _chat_type == "group"
+        _msg_enable_streaming = self.config.enable_streaming
+        _is_stream = True
+        if self.config.group_digital_avatar and _is_group:
+            _msg_enable_streaming = False
+            _is_stream = False
+            _meta = dict(_meta)
+            _meta["avatar_mode"] = True
+            _meta["principal_user_id"] = self._get_target_user_open_id()
+            _meta["triggering_user_id"] = str(inbound.user_id or "")
+        _effective_group_digital_avatar = self.config.group_digital_avatar and _is_group
         msg = Message(
             id=msg_id,
             type="req",
@@ -217,8 +251,11 @@ class FeishuChannel(BaseChannel):
             user_id=str(inbound.user_id or ""),
             bot_id=str(inbound.bot_id or self.config.app_id or ""),
             req_method=ReqMethod.CHAT_SEND,
-            is_stream=True,
-            metadata=inbound.metadata,
+            is_stream=_is_stream,
+            metadata=_meta,
+            group_digital_avatar=_effective_group_digital_avatar,
+            enable_memory=self.config.enable_memory,
+            enable_streaming=_msg_enable_streaming,
         )
         if self._message_callback:
             self._message_callback(msg)
@@ -263,6 +300,11 @@ class FeishuChannel(BaseChannel):
             .log_level(lark.LogLevel.INFO)
             .build()
         )
+        self._message_storage.set_api_client(self._api_client)
+        if self._im_platform_adapter and hasattr(self._im_platform_adapter, "set_api_client"):
+            self._im_platform_adapter.set_api_client(self._api_client)
+        if hasattr(self._message_storage, 'set_platform_adapter'):
+            self._message_storage.set_platform_adapter(self._im_platform_adapter)
         # 初始化文件服务
         from jiuwenclaw.utils import get_agent_workspace_dir
         workspace_dir = self.config.temp_file_dir or str(get_agent_workspace_dir())
@@ -500,6 +542,545 @@ class FeishuChannel(BaseChannel):
         loop = asyncio.get_running_loop()
         await loop.run_in_executor(None, self._add_reaction_sync, message_id, emoji_type)
 
+    def _get_target_user_open_id(self) -> str:
+        """返回当前数字分身对应的用户 open_id。"""
+        return str(
+            (self.config.my_user_id or "").strip()
+            or os.getenv("MY_USER_ID", "").strip()
+        )
+
+    @staticmethod
+    def _extract_mentioned_users(message: Any) -> list[dict[str, str]]:
+        """从飞书消息事件中提取被 @ 用户的 open_id 和姓名。"""
+        mentions = getattr(message, "mentions", None) or []
+        users: list[dict[str, str]] = []
+        for mention in mentions:
+            open_id = ""
+            name = str(getattr(mention, "name", "") or "").strip()
+            mention_id = getattr(mention, "id", None)
+            if isinstance(mention_id, dict):
+                open_id = str(mention_id.get("open_id") or mention_id.get("id") or "").strip()
+            elif isinstance(mention_id, str):
+                open_id = mention_id.strip()
+            elif mention_id is not None:
+                nested_open_id = getattr(mention_id, "open_id", None)
+                if nested_open_id:
+                    open_id = str(nested_open_id).strip()
+            else:
+                open_id = str(getattr(mention, "open_id", "") or "").strip()
+            if open_id and all(user["open_id"] != open_id for user in users):
+                users.append({"open_id": open_id, "name": name})
+        return users
+
+    def _resolve_user_display_name(self, open_id: str, fallback_name: str = "") -> str:
+        """优先使用已知姓名，必要时再查询飞书联系人信息。"""
+        if fallback_name.strip():
+            return fallback_name.strip()
+        if self._im_platform_adapter and hasattr(self._im_platform_adapter, 'get_user_name_by_open_id'):
+            return self._im_platform_adapter.get_user_name_by_open_id(open_id).strip()
+        else:
+            return ""
+
+    def _replace_mentions_with_names(self, message: Any, text: str) -> str:
+        """
+        将消息中的 @mentions 占位符（如 @_user_1）替换为真实用户名。
+        当 @all 时，替换为数字分身用户本人的名字。
+
+        Args:
+            message: 飞书消息对象
+            text: 原始文本内容
+
+        Returns:
+            str: 替换后的文本内容
+        """
+        mentions = getattr(message, "mentions", None) or []
+
+        result = text
+        target_user_open_id = self._get_target_user_open_id()
+        target_user_name = ""
+        if target_user_open_id:
+            target_user_name = self._resolve_user_display_name(target_user_open_id, "")
+
+        if "@_all" in result and target_user_name:
+            result = result.replace("@_all", f"@{target_user_name}")
+
+        if not mentions:
+            return result
+
+        for mention in mentions:
+            mention_key = getattr(mention, "key", None)
+
+            if not mention_key:
+                mention_id = getattr(mention, "id", None)
+                if isinstance(mention_id, dict):
+                    mention_key = mention_id.get("key", "")
+                elif isinstance(mention_id, str):
+                    if "_" in mention_id:
+                        mention_key = mention_id.split("_")[-1]
+
+            if not mention_key:
+                continue
+
+            name = str(getattr(mention, "name", "") or "").strip()
+            if not name:
+                bot_name = getattr(message, "bot_name", "") or ""
+                name = bot_name or mention_key
+
+            if mention_key.startswith("@"):
+                old_pattern = mention_key
+            else:
+                old_pattern = f"@{mention_key}"
+            new_pattern = f"@{name}"
+            result = result.replace(old_pattern, new_pattern)
+
+        return result
+
+    _GROUP_PROGRESS_HINT_DELAY_SECONDS = 6.0
+    _GROUP_PROGRESS_HINT_TEXTS: tuple[str, ...] = (
+        "收到，我先看一下。",
+        "我先确认下，马上回复。",
+        "这个我在处理，稍等我一下。",
+    )
+
+    @staticmethod
+    def _should_send_group_ack(metadata: dict[str, Any]) -> bool:
+        """仅在待办/提醒类私发场景下，才补发群内短确认。"""
+        # 定时任务消息不发送群确认
+        if bool(metadata.get("is_cron_job")):
+            return False
+        if str(metadata.get("reply_scope") or "").strip().lower() != "dm":
+            return False
+        if str(metadata.get("reply_reason") or "").strip() not in {
+            "mentioned_target_user",
+            "processor_target_user",
+        }:
+            return False
+        if not str(metadata.get("feishu_chat_id") or "").strip():
+            return False
+        return bool(metadata.get("reply_personal_action"))
+
+    @staticmethod
+    def _fallback_group_ack() -> str:
+        """群内短回复兜底文案，保持第一人称口吻。"""
+        return "好的，我知道了，会跟进处理。"
+
+    @classmethod
+    def _normalize_group_ack_text(cls, target_name: str, text: str) -> str:
+        """过滤掉机器人旁白式短回复，尽量保留像用户本人说的话。"""
+        normalized = re.split(r"[\r\n]+", (text or "").strip(), maxsplit=1)[0]
+        normalized = re.sub(r"\s+", " ", normalized).strip(' "\'""''「」')
+        if not normalized:
+            return ""
+
+        forbidden_phrases = (
+            "已提醒",
+            "已通知",
+            "私下通知",
+            "私聊",
+            "转告",
+            "提醒了",
+            "通知了",
+            "告诉了",
+            "帮你",
+            "帮您",
+            "代为",
+        )
+        if target_name and target_name in normalized:
+            return ""
+        if any(phrase in normalized for phrase in forbidden_phrases):
+            return ""
+        return normalized
+
+    def _generate_group_ack_sync(self, target_name: str, content: str) -> str:
+        """调用轻量 LLM 生成群内简短确认文案。"""
+        api_key = os.getenv("API_KEY", "").strip()
+        api_base = os.getenv("API_BASE", "").strip()
+        model_name = os.getenv("MODEL_NAME", "").strip() or "GLM-4.7"
+        if not api_key or not api_base:
+            return self._fallback_group_ack()
+
+        prompt = (
+            "你是一个飞书群聊机器人。群里有一条需要{name}关注的消息,"
+            "你已经把详细回复私发给了{name}。"
+            "现在群里需要补一句很短的话，但这句话必须像{name}本人在群里的直接回复,"
+            "而不是机器人旁白或转述。\n\n"
+            "要求：\n"
+            "- 一句话，不超过30个字\n"
+            "- 用第一人称口吻，像当事人本人在说话\n"
+            "- 不要提到{name}的名字\n"
+            "- 不要写成'我已经提醒了{name}''已通知{name}''我帮{name}处理了'这类机器人/第三人称表达\n"
+            "- 更像'好的，我知道了，会准时参加会议''收到，我会跟进这件事'\n"
+            "- 不要照搬原文，保留核心动作即可\n\n"
+            "你私发给{name}的内容是：\n{content}"
+        ).format(   
+            name=target_name,
+            content=content[:500],
+        )
+        try:
+            resp = requests.post(
+                f"{api_base.rstrip('/')}/chat/completions",
+                headers={
+                    "Authorization": f"Bearer {api_key}",
+                    "Content-Type": "application/json",
+                },
+                json={
+                    "model": model_name,
+                    "messages": [{"role": "user", "content": prompt}],
+                    "temperature": 0.7,
+                    "max_tokens": 80,
+                },
+                timeout=30,
+            )
+            resp.raise_for_status()
+            choices = resp.json().get("choices") or []
+            if choices:
+                text = (choices[0].get("message") or {}).get("content", "").strip()
+                text = self._normalize_group_ack_text(target_name, text)
+                if text:
+                    return text
+        except Exception as e:
+            logger.warning("[FeishuChannel] 生成群确认文案失败，使用回退: %s", e)
+
+        return self._fallback_group_ack()
+
+    async def _send_group_ack(self, metadata: dict[str, Any], content: str) -> None:
+        """后台生成并发送群内简短确认，不阻塞主回复。"""
+        try:
+            target_name = str(metadata.get("reply_target_name") or "").strip() or "对方"
+            group_chat_id = str(metadata.get("feishu_chat_id") or "").strip()
+            if not group_chat_id:
+                return
+
+            ack_text = await asyncio.to_thread(
+                self._generate_group_ack_sync, target_name, content
+            )
+            if ack_text:
+                card = self._build_card_content(ack_text)
+                await self._send_feishu_message(group_chat_id, "chat_id", card, "group_ack")
+                logger.info("[FeishuChannel] 群确认已发送: chat_id=%s text=%s", group_chat_id, ack_text[:50])
+        except Exception as e:
+            logger.warning("[FeishuChannel] 后台群确认发送失败: %s", e)
+
+    @staticmethod
+    def _should_send_group_progress_hint(metadata: dict[str, Any]) -> bool:
+        """仅对群聊消息展示轻量处理进度。"""
+        return (
+            str(metadata.get("chat_type") or "").strip() == "group"
+            and bool(str(metadata.get("feishu_chat_id") or "").strip())
+        )
+
+    def _build_group_progress_hint_text(self, metadata: dict[str, Any]) -> str:
+        """根据场景挑选一条尽量自然的群内处理提示。"""
+        try:
+            merged_count = int(metadata.get("merged_count", 1) or 1)
+        except (TypeError, ValueError):
+            merged_count = 1
+
+        if str(metadata.get("reply_scope") or "").strip().lower() == "dm":
+            return self._GROUP_PROGRESS_HINT_TEXTS[1]
+        if merged_count > 1:
+            return self._GROUP_PROGRESS_HINT_TEXTS[2]
+        return self._GROUP_PROGRESS_HINT_TEXTS[0]
+
+    def _clear_group_progress_state(self, request_id: str) -> None:
+        """清理指定请求的延迟提示任务和已发送标记。"""
+        pending_task = self._pending_group_progress_tasks.pop(request_id, None)
+        if pending_task and not pending_task.done():
+            pending_task.cancel()
+        self._sent_group_progress_requests.discard(request_id)
+
+    def _should_skip_group_progress_scheduling(self, request_id: str, metadata: dict[str, Any]) -> bool:
+        """判断是否应该跳过群内处理提示的调度。"""
+        if not request_id:
+            return True
+        if request_id in self._pending_group_progress_tasks:
+            return True
+        if request_id in self._sent_group_progress_requests:
+            return True
+        if not self._should_send_group_progress_hint(metadata):
+            return True
+        return False
+
+    def _schedule_group_progress_hint(self, request_id: str, metadata: dict[str, Any]) -> None:
+        """为慢请求安排一条延迟发送的群内处理提示。"""
+        if self._should_skip_group_progress_scheduling(request_id, metadata):
+            return
+
+        task = asyncio.create_task(
+            self._send_group_progress_hint_after_delay(request_id, dict(metadata)),
+            name=f"feishu-progress-{request_id}",
+        )
+        self._pending_group_progress_tasks[request_id] = task
+
+    async def _send_group_progress_hint_after_delay(
+        self, request_id: str, metadata: dict[str, Any]
+    ) -> None:
+        """仅在请求持续较久时，补发一条极短群内处理提示。"""
+        try:
+            await asyncio.sleep(self._GROUP_PROGRESS_HINT_DELAY_SECONDS)
+            if self._pending_group_progress_tasks.get(request_id) is not asyncio.current_task():
+                return
+            if request_id in self._sent_group_progress_requests:
+                return
+            if not self._should_send_group_progress_hint(metadata):
+                return
+
+            group_chat_id = str(metadata.get("feishu_chat_id") or "").strip()
+            hint_text = self._build_group_progress_hint_text(metadata)
+            if not group_chat_id or not hint_text:
+                return
+
+            card = self._build_card_content(hint_text)
+            await self._send_feishu_message(
+                group_chat_id,
+                "chat_id",
+                card,
+                f"group_progress:{request_id}",
+            )
+            self._sent_group_progress_requests.add(request_id)
+            logger.info(
+                "[FeishuChannel] 群进度提示已发送: request_id=%s chat_id=%s text=%s",
+                request_id,
+                group_chat_id,
+                hint_text,
+            )
+        except Exception as e:
+            logger.warning("[FeishuChannel] 群进度提示发送失败: %s", e)
+        finally:
+            if self._pending_group_progress_tasks.get(request_id) is asyncio.current_task():
+                self._pending_group_progress_tasks.pop(request_id, None)
+
+    async def _handle_processing_status_event(
+        self, msg: Message, metadata: dict[str, Any], payload: dict[str, Any]
+    ) -> None:
+        """处理网关发出的 processing_status 事件。"""
+        request_id = str(msg.id or "").strip()
+        if not request_id or not self._should_send_group_progress_hint(metadata):
+            return
+
+        if bool(payload.get("is_processing")):
+            self._schedule_group_progress_hint(request_id, metadata)
+            return
+
+        self._clear_group_progress_state(request_id)
+
+    def _build_reply_metadata(
+        self, *, message: Any, sender_open_id: str, base_metadata: dict[str, Any]
+    ) -> dict[str, Any]:
+        """根据群聊上下文补充默认的回复投递意图。"""
+        if not self.config.group_digital_avatar:
+            return dict(base_metadata)
+        metadata = dict(base_metadata)
+        target_user_open_id = self._get_target_user_open_id()
+        mentioned_users = self._extract_mentioned_users(message)
+        mentioned_open_ids = [user["open_id"] for user in mentioned_users]
+
+        message_content = ""
+        try:
+            content_obj = json.loads(message.content or "{}")
+            message_content = content_obj.get("text", "") or ""
+        except Exception:
+            message_content = str(message.content or "")
+
+        mention_all = "@_all" in message_content
+        if mention_all and target_user_open_id and target_user_open_id not in mentioned_open_ids:
+            mentioned_open_ids.append(target_user_open_id)
+
+        if mentioned_open_ids:
+            metadata["mentioned_open_ids"] = mentioned_open_ids
+            metadata["im_mentioned_user_ids"] = mentioned_open_ids
+
+        is_group_chat = str(getattr(message, "chat_type", "") or "").strip() == "group"
+        if not is_group_chat or not target_user_open_id:
+            return metadata
+
+        if target_user_open_id in mentioned_open_ids:
+            target_user_name = ""
+            for user in mentioned_users:
+                if user["open_id"] == target_user_open_id:
+                    target_user_name = self._resolve_user_display_name(
+                        target_user_open_id, user.get("name", "")
+                    )
+                    break
+            metadata["reply_candidate_feishu_open_id"] = target_user_open_id
+            metadata["reply_candidate_reason"] = "mentioned_target_user"
+            if target_user_name:
+                metadata["reply_target_name"] = target_user_name
+            return metadata
+
+        if sender_open_id == target_user_open_id:
+            metadata["reply_scope"] = "dm"
+            metadata["reply_feishu_open_id"] = target_user_open_id
+            metadata["reply_reason"] = "sender_is_target_user"
+            return metadata
+
+        return metadata
+
+    @staticmethod
+    def _is_control_message(content: str) -> bool:
+        text = content.strip()
+        return text in {"/new_session", "/mode plan", "/mode agent"}
+
+    async def _enqueue_message_batch(
+        self,
+        *,
+        chat_id: str,
+        open_id: str,
+        content: str,
+        timestamp_ms: int,
+        metadata: dict[str, Any],
+    ) -> None:
+        """将同一用户的连续消息做短暂聚合，再统一交给 gateway 入站链路。"""
+        if self._is_control_message(content):
+            await self._process_batched_message(
+                chat_id=chat_id,
+                open_id=open_id,
+                merged_content=content,
+                timestamp_ms=timestamp_ms,
+                metadata=metadata,
+            )
+            return
+
+        merge_window_ms = max(int(self.config.message_merge_window_ms or 0), 0)
+        if merge_window_ms <= 0:
+            await self._process_batched_message(
+                chat_id=chat_id,
+                open_id=open_id,
+                merged_content=content,
+                timestamp_ms=timestamp_ms,
+                metadata=metadata,
+            )
+            return
+
+        batch_key = (chat_id, open_id or "")
+        async with self._pending_message_lock:
+            batch = self._pending_message_batches.get(batch_key)
+            if batch is None:
+                batch = {
+                    "chat_id": chat_id,
+                    "open_id": open_id,
+                    "items": [],
+                    "flush_task": None,
+                }
+                self._pending_message_batches[batch_key] = batch
+
+            batch["items"].append(
+                {
+                    "content": content,
+                    "timestamp_ms": timestamp_ms,
+                    "metadata": dict(metadata),
+                }
+            )
+
+            old_task = batch.get("flush_task")
+            if old_task and not old_task.done():
+                old_task.cancel()
+
+            delay_seconds = merge_window_ms / 1000
+            batch["flush_task"] = asyncio.create_task(
+                self._flush_message_batch_after_delay(batch_key, delay_seconds)
+            )
+
+    async def _flush_message_batch_after_delay(
+        self, batch_key: tuple[str, str], delay_seconds: float
+    ) -> None:
+        try:
+            await asyncio.sleep(delay_seconds)
+        except asyncio.CancelledError:
+            return
+
+        async with self._pending_message_lock:
+            batch = self._pending_message_batches.get(batch_key)
+            if not batch or batch.get("flush_task") is not asyncio.current_task():
+                return
+            self._pending_message_batches.pop(batch_key, None)
+
+        items = batch.get("items") or []
+        if not items:
+            return
+
+        merged_content = "\n".join(
+            item["content"].strip() for item in items if item.get("content", "").strip()
+        ).strip()
+        if not merged_content:
+            return
+
+        last_item = items[-1]
+        merged_metadata = dict(last_item["metadata"])
+        merged_metadata["merged_message_ids"] = [
+            item["metadata"].get("message_id", "") for item in items
+        ]
+        merged_metadata["merged_msg_types"] = [
+            item["metadata"].get("msg_type", "") for item in items
+        ]
+        merged_metadata["merged_count"] = len(items)
+        for key in (
+            "reply_scope",
+            "reply_feishu_open_id",
+            "reply_feishu_chat_id",
+            "reply_reason",
+            "reply_target_name",
+        ):
+            for item in reversed(items):
+                value = item["metadata"].get(key)
+                if isinstance(value, str) and value.strip():
+                    merged_metadata[key] = value
+                    break
+
+        mentioned_open_ids: list[str] = []
+        for item in items:
+            for open_id in item["metadata"].get("mentioned_open_ids", []) or []:
+                if open_id and open_id not in mentioned_open_ids:
+                    mentioned_open_ids.append(open_id)
+        if mentioned_open_ids:
+            merged_metadata["mentioned_open_ids"] = mentioned_open_ids
+
+        if len(items) > 1:
+            logger.info(
+                "[FeishuChannel] 合并连续消息: chat_id=%s open_id=%s count=%s",
+                batch.get("chat_id", ""),
+                batch.get("open_id", ""),
+                len(items),
+            )
+
+        await self._process_batched_message(
+            chat_id=batch["chat_id"],
+            open_id=batch["open_id"],
+            merged_content=merged_content,
+            timestamp_ms=int(last_item["timestamp_ms"]),
+            metadata=merged_metadata,
+        )
+
+    async def _process_batched_message(
+        self,
+        *,
+        chat_id: str,
+        open_id: str,
+        merged_content: str,
+        timestamp_ms: int,
+        metadata: dict[str, Any],
+    ) -> None:
+        """对单条或合并后的消息做平台整理后转发。"""
+        chat_type = metadata.get("chat_type", "")
+        is_group_chat = chat_type == "group"
+
+        enriched_metadata = dict(metadata)
+        enriched_metadata["timestamp_ms"] = timestamp_ms
+        enriched_metadata["im_platform"] = "feishu"
+        enriched_metadata["im_chat_type"] = "group" if is_group_chat else "direct"
+        enriched_metadata["im_sender_user_id"] = open_id
+        enriched_metadata["im_thread_id"] = chat_id
+
+        inbound = FeishuInboundMessage(
+            message_id=enriched_metadata.get("message_id", ""),
+            chat_id=chat_id,
+            content=merged_content,
+            user_id=open_id,
+            bot_id=self.config.app_id or "",
+            metadata=enriched_metadata,
+        )
+        await self._handle_message(inbound)
+
     # Markdown表格正则表达式（标题行+分隔符行+数据行）
     _TABLE_RE = re.compile(
         r"((?:^[ \t]*\|.+\|[ \t]*\n)(?:^[ \t]*\|[-:\s|]+\|[ \t]*\n)(?:^[ \t]*\|.+\|[ \t]*\n?)+)",
@@ -688,7 +1269,10 @@ class FeishuChannel(BaseChannel):
             payload = msg.payload if isinstance(msg.payload, dict) else {}
             event_name = getattr(msg.event_type, "value", None) or payload.get("event_type") or ""
             stream_key = str(getattr(msg, "id", "") or "")
-            streaming_enabled = bool(self.config.enable_streaming)
+            _msg_streaming = getattr(msg, "enable_streaming", None)
+            streaming_enabled = bool(_msg_streaming if _msg_streaming is not None else self.config.enable_streaming)
+
+            meta = dict(getattr(msg, "metadata", None) or {})
 
             # 处理文件消息
             if msg.event_type == EventType.CHAT_FILE:
@@ -720,6 +1304,7 @@ class FeishuChannel(BaseChannel):
                 is_processing = payload.get("is_processing")
                 if is_processing is not False:
                     if not streaming_enabled:
+                        await self._handle_processing_status_event(msg, meta, payload)
                         return
                     content_str = self._extract_message_content(msg)
                     if not content_str.strip():
@@ -728,6 +1313,7 @@ class FeishuChannel(BaseChannel):
                     content_str = self._stream_text_buffers.pop(stream_key, "")
                     if not content_str.strip():
                         if not streaming_enabled:
+                            await self._handle_processing_status_event(msg, meta, payload)
                             return
                         content_str = self._extract_message_content(msg)
                         if not content_str.strip():
@@ -758,6 +1344,13 @@ class FeishuChannel(BaseChannel):
             if not content_str.strip():
                 logger.warning("飞书发送：消息内容为空，跳过发送")
                 return
+
+            request_id = str(msg.id or "").strip()
+            if request_id and msg.event_type != EventType.HEARTBEAT_RELAY:
+                self._clear_group_progress_state(request_id)
+
+            # 过滤群聊消息中的用户敏感信息
+            content_str = self._filter_user_info_for_group(content_str, meta)
 
             # 兜底：chat.final 中提到了 workspace 文件但 LLM 未调用 send_file_to_user 时，
             # 自动提取文件路径并发送，避免用户收不到文件。
@@ -793,6 +1386,42 @@ class FeishuChannel(BaseChannel):
 
             card_content = self._build_card_content(content_str)
             await self._send_feishu_message(receive_id, id_type, card_content, msg.id)
+
+            # 用LLM在群内补发简短回复
+            if msg.group_digital_avatar and self._should_send_group_ack(meta):
+                group_chat_id = str(meta.get("feishu_chat_id") or "").strip()
+                if group_chat_id and group_chat_id != receive_id:
+                    asyncio.create_task(self._send_group_ack(meta, content_str))
+
+            try:
+                chat_id = ""
+
+                if not chat_id:
+                    meta = getattr(msg, "metadata", None) or {}
+                    reply_scope = str(meta.get("reply_scope") or "").strip().lower()
+
+                    if reply_scope == "dm" and id_type == "open_id":
+                        chat_id = receive_id
+                    elif id_type == "chat_id":
+                        chat_id = receive_id
+                    else:
+                        chat_id = meta.get("feishu_chat_id") or ""
+
+                # 记录机器人回复消息到群聊历史中去
+                if chat_id:
+                    self._message_storage.add_message_to_memory(
+                        chat_id=chat_id,
+                        message={
+                            "message_id": f"bot_{int(time.time() * 1000)}_{msg.id}",
+                            "content": content_str,
+                            "timestamp": int(time.time() * 1000),
+                            "msg_type": "interactive",
+                            "open_id": f"bot_{self.config.app_id}",
+                            "chat_type": "bot_reply",
+                        }
+                    )
+            except Exception as e:
+                logger.warning(f"记录机器人回复消息失败: {e}")
 
         except Exception as e:
             logger.error(f"发送飞书消息时发生异常: {e}")
@@ -867,16 +1496,33 @@ class FeishuChannel(BaseChannel):
         receive_id = ""
         id_type = "open_id"
 
-        # 1) 优先用 metadata 中的平台身份
-        feishu_chat_id = (meta.get("feishu_chat_id") or "").strip()
-        feishu_open_id = (meta.get("feishu_open_id") or "").strip()
+        # 0) 群聊数字分身场景：仅当 outbound pipeline 确认 reply_scope=dm 时，
+        #    才用 reply_candidate_feishu_open_id 作为私发目标；
+        #    否则 candidate 仅作为候选，不影响实际发送路由。
+        reply_scope = str(meta.get("reply_scope") or "").strip().lower()
+        if reply_scope == "dm":
+            # 优先使用 reply_candidate_feishu_open_id（由 outbound pipeline 设置）
+            # 兼容 reply_feishu_open_id（由入站阶段 sender_is_target_user 场景设置）
+            reply_candidate_open_id = (
+                meta.get("reply_candidate_feishu_open_id")
+                or meta.get("reply_feishu_open_id")
+                or ""
+            ).strip()
+            if reply_candidate_open_id:
+                receive_id = reply_candidate_open_id
+                id_type = "open_id"
 
-        if feishu_chat_id:
-            receive_id = feishu_chat_id
-            id_type = "chat_id" if feishu_chat_id.startswith("oc_") else "open_id"
-        elif feishu_open_id:
-            receive_id = feishu_open_id
-            id_type = "open_id"
+        # 1) 优先用 metadata 中的平台身份
+        if not receive_id:
+            feishu_chat_id = (meta.get("feishu_chat_id") or "").strip()
+            feishu_open_id = (meta.get("feishu_open_id") or "").strip()
+
+            if feishu_chat_id:
+                receive_id = feishu_chat_id
+                id_type = "chat_id" if feishu_chat_id.startswith("oc_") else "open_id"
+            elif feishu_open_id:
+                receive_id = feishu_open_id
+                id_type = "open_id"
 
         # 2) 若 metadata 中没有平台身份，则使用配置中的 chat_id 作为固定推送目标
         if not receive_id:
@@ -1229,8 +1875,9 @@ class FeishuChannel(BaseChannel):
             if sender.sender_type == "bot":
                 return
 
-            # 后台添加"已读"反应，不阻塞消息处理
-            asyncio.create_task(self._add_reaction(message.message_id, "THUMBSUP"))
+            # 群聊数字分身模式下不自动点赞
+            if not self.config.group_digital_avatar:
+                asyncio.create_task(self._add_reaction(message.message_id, "THUMBSUP"))
 
             # 解析消息内容（支持文件类型）
             content, file_info = await self._parse_message_content_with_file(message)
@@ -1290,25 +1937,47 @@ class FeishuChannel(BaseChannel):
             if file_info:
                 params["files"] = [file_info]
 
-            # 处理消息：将平台身份写入 metadata，供回发时使用（与 session_id 解耦，\new_session 后仍可正确回发）
-            inbound = FeishuInboundMessage(
-                message_id=message.message_id,
+            # 构建基础 metadata
+            base_metadata = {
+                "message_id": message.message_id,
+                "chat_type": message.chat_type,
+                "msg_type": message.message_type,
+                "open_id": open_id,
+                "feishu_open_id": open_id,
+                "feishu_chat_id": getattr(message, "chat_id", None) or "",
+                **({"file_info": file_info} if file_info else {}),
+            }
+
+            # 记录消息到本地存储（支持数字分身记忆功能）
+            try:
+                self._message_storage.add_message_to_memory(
+                    chat_id=message.chat_id,
+                    message={
+                        "message_id": message.message_id,
+                        "content": content,
+                        "timestamp": getattr(message, "create_time", int(time.time() * 1000)),
+                        "msg_type": message.message_type,
+                        "open_id": open_id,
+                        "chat_type": message.chat_type,
+                    }
+                )
+            except Exception as e:
+                logger.warning(f"记录消息到本地存储失败: {e}")
+
+            # 使用消息批次处理（支持数字分身功能）
+            await self._enqueue_message_batch(
                 chat_id=message.chat_id,
+                open_id=open_id or "",
                 content=content,
-                user_id=open_id,
-                bot_id=self.config.app_id or "",
-                metadata={
-                    "message_id": message.message_id,
-                    "chat_type": message.chat_type,
-                    "msg_type": message.message_type,
-                    "open_id": open_id,
-                    "feishu_open_id": open_id,
-                    "feishu_chat_id": getattr(message, "chat_id", None) or "",
-                    **({"file_info": file_info} if file_info else {}),
-                },
-                params=params,
+                timestamp_ms=int(
+                    getattr(message, "create_time", int(time.time() * 1000))
+                ),
+                metadata=self._build_reply_metadata(
+                    message=message,
+                    sender_open_id=open_id,
+                    base_metadata=base_metadata,
+                ),
             )
-            await self._handle_message(inbound)
 
         except Exception as e:
             logger.error(f"处理飞书消息时发生异常: {e}")
@@ -1360,7 +2029,10 @@ class FeishuChannel(BaseChannel):
 
         if msg_type == "text":
             try:
-                return json.loads(message.content).get("text", "")
+                text = json.loads(message.content).get("text", "")
+                # 替换 @mentions 占位符为真实用户名
+                text = self._replace_mentions_with_names(message, text)
+                return text
             except json.JSONDecodeError:
                 return message.content or ""
         else:
@@ -1387,7 +2059,10 @@ class FeishuChannel(BaseChannel):
         # 文本消息
         if msg_type == "text":
             try:
-                return json.loads(message.content).get("text", ""), None
+                text = json.loads(message.content).get("text", "")
+                # 替换 @mentions 占位符为真实用户名
+                text = self._replace_mentions_with_names(message, text)
+                return text, None
             except json.JSONDecodeError:
                 return message.content or "", None
 
@@ -1826,3 +2501,43 @@ class FeishuChannel(BaseChannel):
         发送媒体消息（video/audio）入口，与文件消息统一处理。
         """
         await self._send_file_message(msg)
+
+    def _filter_user_info_for_group(self, content: str, metadata: dict[str, Any]) -> str:
+        """
+        过滤群聊消息中的用户实际信息。
+
+        在群聊中回复时，移除可能包含用户隐私信息的内容。
+        私聊时不过滤。
+
+        Args:
+            content: 原始消息内容
+            metadata: 消息元数据
+
+        Returns:
+            str: 过滤后的消息内容
+        """
+        chat_type = str(metadata.get("chat_type") or "").strip()
+        im_chat_type = str(metadata.get("im_chat_type") or "").strip()
+        is_group = chat_type == "group" or im_chat_type == "group"
+
+        if not is_group:
+            return content
+
+        filtered_content = content
+
+        user_sensitive_patterns = [
+            r'\b[\w\.-]+@[\w\.-]+\.\w+\b',
+            r'\b(?:电话|手机|联系方式|手机号|电话号码)[:：]?\s*[\d\s-]{7,15}\b',
+            r'\b1[3-9]\d{9}\b',
+            r'\b(?:身份证|身份证号|ID)[:：]?\s*\d{15,18}\b',
+            r'\b\d{15,18}\b',
+            r'ou_[a-zA-Z0-9]{20,}',
+            r'on_[a-zA-Z0-9]{20,}',
+            r'\b(?:密码|password|pwd)[:：]?\s*\S+\b',
+            r'\b(?:地址|住址|家庭住址)[:：]?\s*[^\n]{10,50}\b',
+        ]
+
+        for pattern in user_sensitive_patterns:
+            filtered_content = re.sub(pattern, '[已过滤]', filtered_content, flags=re.IGNORECASE)
+
+        return filtered_content

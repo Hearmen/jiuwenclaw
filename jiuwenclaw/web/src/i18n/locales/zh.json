@@ -376,6 +376,11 @@
     "empty": "暂未获取到配置，请确认后端服务状态。",
     "selectModelProvider": "请选择模型提供商",
     "enterValue": "请输入配置值",
+    "keys": {
+      "memoryForbiddenEnabled": "启用",
+      "memoryForbiddenDescription": "禁止记忆内容描述",
+      "memoryForbiddenDescriptionPlaceholder": "例如：密码、API密钥、Secret、Token、信用卡号、身份证号、手机号等敏感信息"
+    },
     "hideValue": "隐藏明文",
     "showValue": "显示明文",
     "groups": {
@@ -389,6 +394,7 @@
       "evolution": { "label": "自演进配置", "hint": "Skills 在线自演进参数" },
       "contextEngine": { "label": "上下文压缩", "hint": "控制对话上下文是否启用压缩" },
       "permissions": { "label": "工具安全护栏", "hint": "控制工具调用时的权限检查" },
+      "memory": { "label": "记忆系统敏感信息过滤", "hint": "配置禁止写入记忆的敏感信息类型" },
       "email": { "label": "邮箱配置", "hint": "邮件账号与令牌参数" },
       "other": { "label": "其他配置", "hint": "未归类的扩展参数" }
     },
@@ -895,5 +901,36 @@
     "help1": "Rail 扩展文件必须继承 DeepAgentRail 或 AgentRail 基类",
     "help2": "修改扩展状态后需要重新加载 Agent 配置才能生效",
     "help3": "扩展文件会被保存到 ~/.jiuwenclaw/agent/jiuwenclaw_workspace/extensions/ 目录"
+  },
+  "ownerScopes": {
+    "title": "分身权限配置",
+    "setUserIdFirst": "请先在上方配置 my_user_id",
+    "loading": "加载权限配置中...",
+    "quickSet": "快速设置",
+    "allowAll": "全部允许",
+    "denyAll": "全部禁止",
+    "externalDirectory": "外部目录访问",
+    "externalDirectoryDesc": "允许访问 workspace 外路径",
+    "toolPermissions": "工具权限",
+    "saved": "已保存",
+    "saveBtn": "保存权限",
+    "groups": {
+      "userTodo": "用户待办",
+      "userTodoDesc": "管理用户个人待办事项",
+      "todoToolkits": "任务规划工具",
+      "todoToolkitsDesc": "Agent 内部任务创建/完成/排序",
+      "searchTools": "搜索工具",
+      "searchToolsDesc": "免费/付费网络搜索",
+      "webFetchTools": "网页抓取",
+      "webFetchToolsDesc": "获取指定网页内容",
+      "commandTools": "命令执行",
+      "commandToolsDesc": "执行系统命令",
+      "skill": "技能调用",
+      "skillDesc": "调用已注册技能",
+      "cronTools": "定时任务",
+      "cronToolsDesc": "创建/管理定时任务",
+      "sendFile": "发送文件",
+      "sendFileDesc": "向用户发送文件"
+    }
   }
 }

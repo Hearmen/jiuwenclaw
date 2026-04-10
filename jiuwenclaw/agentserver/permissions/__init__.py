@@ -56,6 +56,10 @@ from jiuwenclaw.agentserver.permissions.models import (
     PermissionLevel,
     PermissionResult,
 )
+from jiuwenclaw.agentserver.permissions.owner_scopes import (
+    TOOL_PERMISSION_CONTEXT,
+    check_tool_permissions_with_context,
+)
 
 __all__ = [
     # Models
@@ -75,4 +79,7 @@ __all__ = [
     # Risk
     "assess_command_risk_static",
     "assess_command_risk_with_llm",
+    # Owner Scopes (数字分身)
+    "TOOL_PERMISSION_CONTEXT",
+    "check_tool_permissions_with_context",
 ]

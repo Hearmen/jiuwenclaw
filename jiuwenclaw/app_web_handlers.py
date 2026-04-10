@@ -28,6 +28,8 @@ from jiuwenclaw.config import (
     update_preferred_language_in_config,
     update_context_engine_enabled_in_config,
     update_permissions_enabled_in_config,
+    update_memory_forbidden_enabled_in_config,
+    update_memory_forbidden_description_in_config,
     update_updater_in_config,
 )
 from jiuwenclaw.jiuwen_core_patch import apply_openai_model_client_patch
@@ -174,7 +176,12 @@ _CONFIG_SET_ENV_MAP = {
 CONFIG_KEYS = tuple(_CONFIG_SET_ENV_MAP.keys())
 
 # 来自 config.yaml 的配置项（前端 param 名 -> config.yaml 路径）
-_CONFIG_YAML_KEYS = frozenset({"context_engine_enabled", "permissions_enabled"})
+_CONFIG_YAML_KEYS = frozenset({
+    "context_engine_enabled",
+    "permissions_enabled",
+    "memory_forbidden_enabled",
+    "memory_forbidden_description",
+})
 
 
 async def _clear_agent_config_cache(agent_client=None) -> None:
@@ -310,9 +317,16 @@ def _register_web_handlers(bind: WebHandlersBindParams) -> None:
             payload["context_engine_enabled"] = "true" if ctx_cfg.get("enabled", False) else "false"
             perm_cfg = raw.get("permissions") or {}
             payload["permissions_enabled"] = "true" if perm_cfg.get("enabled", False) else "false"
+            memory_cfg = (raw.get("memory") or {}).get("forbidden_memory_definition") or {}
+            payload["memory_forbidden_enabled"] = "true" if memory_cfg.get("enabled", False) else "false"
+            memory_desc = memory_cfg.get("description") or {}
+            preferred_lang = raw.get("preferred_language", "zh")
+            payload["memory_forbidden_description"] = memory_desc.get(preferred_lang, memory_desc.get("zh", ""))
         except Exception:  # noqa: BLE001
             payload.setdefault("context_engine_enabled", "false")
             payload.setdefault("permissions_enabled", "false")
+            payload.setdefault("memory_forbidden_enabled", "false")
+            payload.setdefault("memory_forbidden_description", "")
         await channel.send_response(ws, req_id, ok=True, payload=payload)
 
     def _persist_env_updates(updates: dict[str, str]) -> None:
@@ -376,6 +390,9 @@ def _register_web_handlers(bind: WebHandlersBindParams) -> None:
             else:
                 env_updates[env_key] = str(val).strip()
 
+        raw = get_config_raw()
+        preferred_lang = raw.get("preferred_language", "zh")
+
         for param_key in _CONFIG_YAML_KEYS:
             if param_key not in params:
                 continue
@@ -386,6 +403,11 @@ def _register_web_handlers(bind: WebHandlersBindParams) -> None:
                     update_context_engine_enabled_in_config(parsed)
                 elif param_key == "permissions_enabled":
                     update_permissions_enabled_in_config(parsed)
+                elif param_key == "memory_forbidden_enabled":
+                    update_memory_forbidden_enabled_in_config(parsed)
+                elif param_key == "memory_forbidden_description":
+                    desc_val = str(val).strip()
+                    update_memory_forbidden_description_in_config({preferred_lang: desc_val})
                 yaml_updated.append(param_key)
             except Exception as e:  # noqa: BLE001
                 logger.warning("[config.set] 写回 config.yaml 失败 %s: %s", param_key, e)
@@ -1436,3 +1458,60 @@ def _register_web_handlers(bind: WebHandlersBindParams) -> None:
     channel.register_method("cron.job.toggle", _cron_job_toggle)
     channel.register_method("cron.job.preview", _cron_job_preview)
     channel.register_method("cron.job.run_now", _cron_job_run_now)
+
+    # 数字分身 — permissions.owner_scopes WebSocket API
+    async def _permissions_owner_scopes_get(ws, req_id, params, session_id):
+        from jiuwenclaw.config import get_permissions_owner_scopes
+        try:
+            payload = get_permissions_owner_scopes()
+            await channel.send_response(ws, req_id, ok=True, payload=payload)
+        except Exception as e:
+            logger.exception("[permissions.owner_scopes.get] %s", e)
+            await channel.send_response(ws, req_id, ok=False, error=str(e), code="INTERNAL_ERROR")
+
+    async def _permissions_owner_scopes_set(ws, req_id, params, session_id):
+        from jiuwenclaw.config import update_permissions_owner_scopes_in_config
+        from jiuwenclaw.agentserver.permissions.core import get_permission_engine
+        if not isinstance(params, dict):
+            await channel.send_response(ws, req_id, ok=False, error="params must be object", code="BAD_REQUEST")
+            return
+        try:
+            owner_scopes = params.get("owner_scopes", {})
+            deny_guidance = params.get("deny_guidance_message")
+            update_permissions_owner_scopes_in_config(owner_scopes, deny_guidance)
+            # 热更新 permission engine
+            try:
+                perm_cfg = get_config().get("permissions", {})
+                get_permission_engine().update_config(perm_cfg)
+            except Exception as e:
+                logger.warning("[permissions.owner_scopes.set] Failed to hot reload permission engine: %s", e)
+            await channel.send_response(ws, req_id, ok=True, payload={"ok": True})
+        except Exception as e:
+            logger.exception("[permissions.owner_scopes.set] %s", e)
+            await channel.send_response(ws, req_id, ok=False, error=str(e), code="INTERNAL_ERROR")
+
+    async def _memory_forbidden_get(ws, req_id, params, session_id):
+        try:
+            cfg = get_config() or {}
+            payload = cfg.get("memory", {}).get("forbidden_memory_definition", {})
+            await channel.send_response(ws, req_id, ok=True, payload=payload)
+        except Exception as e:
+            logger.exception("[memory.forbidden.get] %s", e)
+            await channel.send_response(ws, req_id, ok=False, error=str(e), code="INTERNAL_ERROR")
+
+    async def _memory_forbidden_set(ws, req_id, params, session_id):
+        from jiuwenclaw.config import update_memory_forbidden_in_config
+        if not isinstance(params, dict):
+            await channel.send_response(ws, req_id, ok=False, error="params must be object", code="BAD_REQUEST")
+            return
+        try:
+            update_memory_forbidden_in_config(params)
+            await channel.send_response(ws, req_id, ok=True, payload={"ok": True})
+        except Exception as e:
+            logger.exception("[memory.forbidden.set] %s", e)
+            await channel.send_response(ws, req_id, ok=False, error=str(e), code="INTERNAL_ERROR")
+
+    channel.register_method("permissions.owner_scopes.get", _permissions_owner_scopes_get)
+    channel.register_method("permissions.owner_scopes.set", _permissions_owner_scopes_set)
+    channel.register_method("memory.forbidden.get", _memory_forbidden_get)
+    channel.register_method("memory.forbidden.set", _memory_forbidden_set)

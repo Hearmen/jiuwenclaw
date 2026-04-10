@@ -68,6 +68,21 @@ class PermissionEngine:
     def enabled(self) -> bool:
         return self._enabled
 
+    def check_tool_permission_directly(
+        self,
+        tool_name: str,
+        tool_args: dict[str, Any],
+        channel_id: str = "web",
+    ) -> tuple[PermissionLevel | None, str | None]:
+        """直接检查工具权限，不受 enabled 开关和 channel 限制.
+
+        用于 owner_scopes 等需要获取原始权限级别的场景。
+
+        Returns:
+            (permission_level, matched_rule) - 权限级别可能为 None（无匹配规则）.
+        """
+        return self._tool_checker.check_tool(tool_name, tool_args, channel_id)
+
     # ---------- 权限检查 ----------
 
     async def check_permission(

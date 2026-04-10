@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import time
 from copy import deepcopy
 from typing import Any
@@ -33,10 +34,12 @@ class _CronToolsCronBackend(CronToolBackend):
             if isinstance(context.session_id, str) and context.session_id.strip()
             else None
         )
+        chat_type = str(metadata.get("chat_type") or "").strip() or None
         return CronToolRoute(
             request_id=request_id,
             channel_id=channel_id,
             session_id=session_id,
+            chat_type=chat_type,
         )
 
     async def list_jobs(self, *, include_disabled: bool = True) -> list[dict[str, Any]]:
@@ -164,6 +167,10 @@ class _CronToolsCronBackend(CronToolBackend):
         )
         await self._message_handler.publish_user_messages(msg)
         return {"queued": True}
+
+    async def ensure_scheduler_started(self) -> None:
+        """确保scheduler已启动，如果未启动则异步启动"""
+        await self._cron_tools.ensure_scheduler()
 
     @staticmethod
     def _to_backend_job(job: dict[str, Any]) -> dict[str, Any]:
@@ -325,16 +332,43 @@ class CronRuntimeBridge:
 
         backend: CronToolBackend = _CronToolsCronBackend(CronTools(), message_handler=message_handler)
         self._resolved_backend = backend
+        logger.info("[CronRuntimeBridge] CronTools backend initialized successfully")
         return backend
 
+    def ensure_scheduler_started(self) -> None:
+        """确保scheduler已启动，如果未启动则异步启动"""
+        backend = self.get_backend()
+        if backend is None:
+            return
+        
+        if not isinstance(backend, _CronToolsCronBackend):
+            return
+        
+        try:
+            loop = asyncio.get_event_loop()
+            if loop.is_running():
+                asyncio.create_task(backend.ensure_scheduler_started())
+            else:
+                loop.run_until_complete(backend.ensure_scheduler_started())
+        except Exception as exc:
+            logger.warning("[CronRuntimeBridge] Failed to start scheduler: %s", exc)
+
     def build_tools(self, *, context: Any) -> list[Any]:
+        """Build cron tools."""
         backend = self.get_backend()
         if backend is None:
             logger.warning("[CronRuntimeBridge] cron backend is not ready, skip builtin cron tools")
             return []
-        return create_cron_tools(
+        
+        logger.info("[CronRuntimeBridge] Building cron tools for context: %s", 
+                    getattr(context, 'tool_scope', 'unknown'))
+        tools = create_cron_tools(
             backend,
             context=context,
             target_channels=[channel.value for channel in CronTargetChannel],
             default_target_channel=None,
         )
+        logger.info("[CronRuntimeBridge] Built %d cron tools: %s", 
+                    len(tools), 
+                    [tool.card.name if hasattr(tool, 'card') else str(tool) for tool in tools])
+        return tools

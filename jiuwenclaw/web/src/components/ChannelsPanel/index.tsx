@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { webRequest } from '../../services/webClient';
+import { AvatarPermEditor } from './AvatarPermEditor';
 import { WechatQrModal } from './WechatQrModal';
 import { WechatUnbindConfirmModal } from './WechatUnbindConfirmModal';
 import {
@@ -49,6 +50,10 @@ type FeishuConfig = {
   verification_token: string;
   chat_id: string;
   allow_from: string[];
+  group_digital_avatar: boolean;
+  my_user_id: string;
+  bot_name: string;
+  enable_memory: boolean;
 };
 
 type FeishuDraft = {
@@ -60,6 +65,10 @@ type FeishuDraft = {
   verification_token: string;
   chat_id: string;
   allow_from: string;
+  group_digital_avatar: boolean;
+  my_user_id: string;
+  bot_name: string;
+  enable_memory: boolean;
 };
 
 type XiaoyiConfig = {
@@ -162,6 +171,10 @@ type WecomConfig = {
   send_thinking_message: boolean;
   /** 心跳/定时推送目标 chatid，不填则用最近一次聊天的 last_chat_id */
   default_chat_id: string;
+  group_digital_avatar: boolean;
+  my_user_id: string;
+  bot_name: string;
+  enable_memory: boolean;
 };
 
 type WecomDraft = {
@@ -173,6 +186,10 @@ type WecomDraft = {
   enable_streaming: boolean;
   send_thinking_message: boolean;
   default_chat_id: string;
+  group_digital_avatar: boolean;
+  my_user_id: string;
+  bot_name: string;
+  enable_memory: boolean;
 };
 
 const DEFAULT_FEISHU_CONF: FeishuConfig = {
@@ -184,6 +201,10 @@ const DEFAULT_FEISHU_CONF: FeishuConfig = {
   verification_token: '',
   chat_id: '',
   allow_from: [],
+  group_digital_avatar: false,
+  my_user_id: '',
+  bot_name: '',
+  enable_memory: false,
 };
 
 const DEFAULT_XIAOYI_CONF: XiaoyiConfig = {
@@ -240,6 +261,10 @@ const DEFAULT_WECOM_CONF: WecomConfig = {
   enable_streaming: true,
   send_thinking_message: false,
   default_chat_id: '',
+  group_digital_avatar: false,
+  my_user_id: '',
+  bot_name: '',
+  enable_memory: false,
 };
 
 const SUPPORTED_CHANNELS: Array<{ channel_id: SupportedChannelId; logo_src: string | null }> = [
@@ -324,6 +349,10 @@ function normalizeFeishuConfig(input: unknown): FeishuConfig {
     verification_token: String(data.verification_token ?? '').trim(),
     chat_id: String(data.chat_id ?? '').trim(),
     allow_from: allowFrom,
+    group_digital_avatar: Boolean(data.group_digital_avatar),
+    my_user_id: String(data.my_user_id ?? '').trim(),
+    bot_name: String(data.bot_name ?? '').trim(),
+    enable_memory: Boolean(data.enable_memory),
   };
 }
 
@@ -337,6 +366,10 @@ function draftFromFeishuConfig(conf: FeishuConfig): FeishuDraft {
     verification_token: conf.verification_token,
     chat_id: conf.chat_id,
     allow_from: conf.allow_from.join('\n'),
+    group_digital_avatar: conf.group_digital_avatar,
+    my_user_id: conf.my_user_id,
+    bot_name: conf.bot_name,
+    enable_memory: conf.enable_memory,
   };
 }
 
@@ -357,6 +390,10 @@ function buildFeishuPayload(draft: FeishuDraft): Record<string, unknown> {
     verification_token: draft.verification_token.trim(),
     chat_id: draft.chat_id.trim(),
     allow_from: normalizeAllowFromText(draft.allow_from),
+    group_digital_avatar: draft.group_digital_avatar,
+    my_user_id: draft.my_user_id.trim(),
+    bot_name: draft.bot_name.trim(),
+    enable_memory: draft.enable_memory,
   };
 }
 
@@ -591,6 +628,10 @@ function normalizeWecomConfig(input: unknown): WecomConfig {
     enable_streaming: data.enable_streaming === undefined ? true : Boolean(data.enable_streaming),
     send_thinking_message: data.send_thinking_message === undefined ? true : Boolean(data.send_thinking_message),
     default_chat_id: String(data.default_chat_id ?? data.last_chat_id ?? '').trim(),
+    group_digital_avatar: Boolean(data.group_digital_avatar),
+    my_user_id: String(data.my_user_id ?? '').trim(),
+    bot_name: String(data.bot_name ?? '').trim(),
+    enable_memory: Boolean(data.enable_memory),
   };
 }
 
@@ -604,6 +645,10 @@ function draftFromWecomConfig(conf: WecomConfig): WecomDraft {
     enable_streaming: conf.enable_streaming,
     send_thinking_message: conf.send_thinking_message,
     default_chat_id: conf.default_chat_id,
+    group_digital_avatar: conf.group_digital_avatar,
+    my_user_id: conf.my_user_id,
+    bot_name: conf.bot_name,
+    enable_memory: conf.enable_memory,
   };
 }
 
@@ -614,6 +659,10 @@ function buildWecomPayload(draft: WecomDraft): Record<string, unknown> {
     secret: draft.secret.trim(),
     allow_from: normalizeAllowFromText(draft.allow_from),
     default_chat_id: draft.default_chat_id.trim(),
+    group_digital_avatar: draft.group_digital_avatar,
+    my_user_id: draft.my_user_id.trim(),
+    bot_name: draft.bot_name.trim(),
+    enable_memory: draft.enable_memory,
   };
 }
 
@@ -1023,7 +1072,11 @@ export function ChannelsPanel({ isConnected }: ChannelsPanelProps) {
       baseDraft.encrypt_key !== draft.encrypt_key ||
       baseDraft.verification_token !== draft.verification_token ||
       baseDraft.chat_id !== draft.chat_id ||
-      normalizeAllowFromText(baseDraft.allow_from).join('\n') !== normalizeAllowFromText(draft.allow_from).join('\n')
+      normalizeAllowFromText(baseDraft.allow_from).join('\n') !== normalizeAllowFromText(draft.allow_from).join('\n') ||
+      baseDraft.group_digital_avatar !== draft.group_digital_avatar ||
+      baseDraft.my_user_id !== draft.my_user_id ||
+      baseDraft.bot_name !== draft.bot_name ||
+      baseDraft.enable_memory !== draft.enable_memory
     );
   }, [draft, feishuConfig]);
   const hasXiaoyiConfigChanges = useMemo(() => {
@@ -1089,7 +1142,11 @@ export function ChannelsPanel({ isConnected }: ChannelsPanelProps) {
       baseDraft.bot_id !== wecomDraft.bot_id ||
       baseDraft.secret !== wecomDraft.secret ||
       baseDraft.default_chat_id !== wecomDraft.default_chat_id ||
-      normalizeAllowFromText(baseDraft.allow_from).join('\n') !== normalizeAllowFromText(wecomDraft.allow_from).join('\n')
+      normalizeAllowFromText(baseDraft.allow_from).join('\n') !== normalizeAllowFromText(wecomDraft.allow_from).join('\n') ||
+      baseDraft.group_digital_avatar !== wecomDraft.group_digital_avatar ||
+      baseDraft.my_user_id !== wecomDraft.my_user_id ||
+      baseDraft.bot_name !== wecomDraft.bot_name ||
+      baseDraft.enable_memory !== wecomDraft.enable_memory
     );
   }, [wecomConfig, wecomDraft]);
 
@@ -2031,8 +2088,84 @@ export function ChannelsPanel({ isConnected }: ChannelsPanelProps) {
                                 />
                               </td>
                             </tr>
+                            <tr className="border-t border-border first:border-t-0 even:bg-secondary/10">
+                              <td className="px-4 py-2.5 align-middle mono text-xs text-text-muted w-[32%]">group_digital_avatar</td>
+                              <td className="px-4 py-2.5 align-middle">
+                                <button
+                                  type="button"
+                                  role="switch"
+                                  aria-checked={draft.group_digital_avatar}
+                                  onClick={() => handleFieldChange('group_digital_avatar', !draft.group_digital_avatar)}
+                                  className={`relative inline-flex h-5 w-9 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 focus:outline-none ${
+                                    draft.group_digital_avatar ? 'bg-ok' : 'bg-secondary'
+                                  }`}
+                                >
+                                  <span
+                                    className={`pointer-events-none inline-block h-4 w-4 transform rounded-full bg-white shadow transition duration-200 ${
+                                      draft.group_digital_avatar ? 'translate-x-4' : 'translate-x-0'
+                                    }`}
+                                  />
+                                </button>
+                              </td>
+                            </tr>
+                            {draft.group_digital_avatar && (
+                              <>
+                                <tr className="border-t border-border first:border-t-0 even:bg-secondary/10">
+                                  <td className="px-4 py-2.5 align-middle mono text-xs text-text-muted w-[32%]">my_user_id</td>
+                                  <td className="px-4 py-2.5 break-all text-[13px] align-middle">
+                                    <input
+                                      type="text"
+                                      value={draft.my_user_id}
+                                      onChange={(e) => handleFieldChange('my_user_id', e.target.value)}
+                                      placeholder={t('channels.placeholders.configValue')}
+                                      className="w-full rounded-md border border-border bg-bg px-3 py-2 text-[13px] outline-none focus:border-accent"
+                                    />
+                                  </td>
+                                </tr>
+                                <tr className="border-t border-border first:border-t-0 even:bg-secondary/10">
+                                  <td className="px-4 py-2.5 align-middle mono text-xs text-text-muted w-[32%]">bot_name</td>
+                                  <td className="px-4 py-2.5 break-all text-[13px] align-middle">
+                                    <input
+                                      type="text"
+                                      value={draft.bot_name}
+                                      onChange={(e) => handleFieldChange('bot_name', e.target.value)}
+                                      placeholder={t('channels.placeholders.configValue')}
+                                      className="w-full rounded-md border border-border bg-bg px-3 py-2 text-[13px] outline-none focus:border-accent"
+                                    />
+                                  </td>
+                                </tr>
+                                <tr className="border-t border-border first:border-t-0 even:bg-secondary/10">
+                                  <td className="px-4 py-2.5 align-middle mono text-xs text-text-muted w-[32%]">enable_memory</td>
+                                  <td className="px-4 py-2.5 align-middle">
+                                    <button
+                                      type="button"
+                                      role="switch"
+                                      aria-checked={draft.enable_memory}
+                                      onClick={() => handleFieldChange('enable_memory', !draft.enable_memory)}
+                                      className={`relative inline-flex h-5 w-9 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 focus:outline-none ${
+                                        draft.enable_memory ? 'bg-ok' : 'bg-secondary'
+                                      }`}
+                                    >
+                                      <span
+                                        className={`pointer-events-none inline-block h-4 w-4 transform rounded-full bg-white shadow transition duration-200 ${
+                                          draft.enable_memory ? 'translate-x-4' : 'translate-x-0'
+                                        }`}
+                                      />
+                                    </button>
+                                  </td>
+                                </tr>
+                              </>
+                            )}
                           </tbody>
                         </table>
+                      )}
+
+                      {/* 数字分身权限编辑器 — 放在 table 外部 */}
+                      {draft.group_digital_avatar && (
+                        <div className="mt-4 px-4 py-3 border-t border-border">
+                          <h5 className="text-xs font-medium text-text-muted mb-2">{t("ownerScopes.toolPermissions")}</h5>
+                          <AvatarPermEditor channelId="feishu" userId={draft.my_user_id} />
+                        </div>
                       )}
                     </div>
                   </div>
@@ -2803,6 +2936,80 @@ export function ChannelsPanel({ isConnected }: ChannelsPanelProps) {
                                 />
                               </td>
                             </tr>
+                            <tr className="border-t border-border first:border-t-0 even:bg-secondary/10">
+                              <td className="px-4 py-2.5 align-middle mono text-xs text-text-muted w-[32%]">group_digital_avatar</td>
+                              <td className="px-4 py-2.5 align-middle">
+                                <button
+                                  type="button"
+                                  role="switch"
+                                  aria-checked={wecomDraft.group_digital_avatar}
+                                  onClick={() => handleWecomFieldChange('group_digital_avatar', !wecomDraft.group_digital_avatar)}
+                                  className={`relative inline-flex h-5 w-9 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 focus:outline-none ${
+                                    wecomDraft.group_digital_avatar ? 'bg-ok' : 'bg-secondary'
+                                  }`}
+                                >
+                                  <span
+                                    className={`pointer-events-none inline-block h-4 w-4 transform rounded-full bg-white shadow transition duration-200 ${
+                                      wecomDraft.group_digital_avatar ? 'translate-x-4' : 'translate-x-0'
+                                    }`}
+                                  />
+                                </button>
+                              </td>
+                            </tr>
+                            {wecomDraft.group_digital_avatar && (
+                              <>
+                                <tr className="border-t border-border first:border-t-0 even:bg-secondary/10">
+                                  <td className="px-4 py-2.5 align-middle mono text-xs text-text-muted w-[32%]">my_user_id</td>
+                                  <td className="px-4 py-2.5 break-all text-[13px] align-middle">
+                                    <input
+                                      type="text"
+                                      value={wecomDraft.my_user_id}
+                                      onChange={(e) => handleWecomFieldChange('my_user_id', e.target.value)}
+                                      placeholder={t('channels.placeholders.configValue')}
+                                      className="w-full rounded-md border border-border bg-bg px-3 py-2 text-[13px] outline-none focus:border-accent"
+                                    />
+                                  </td>
+                                </tr>
+                                <tr className="border-t border-border first:border-t-0 even:bg-secondary/10">
+                                  <td className="px-4 py-2.5 align-middle mono text-xs text-text-muted w-[32%]">bot_name</td>
+                                  <td className="px-4 py-2.5 break-all text-[13px] align-middle">
+                                    <input
+                                      type="text"
+                                      value={wecomDraft.bot_name}
+                                      onChange={(e) => handleWecomFieldChange('bot_name', e.target.value)}
+                                      placeholder={t('channels.placeholders.configValue')}
+                                      className="w-full rounded-md border border-border bg-bg px-3 py-2 text-[13px] outline-none focus:border-accent"
+                                    />
+                                  </td>
+                                </tr>
+                                <tr className="border-t border-border first:border-t-0 even:bg-secondary/10">
+                                  <td className="px-4 py-2.5 align-middle mono text-xs text-text-muted w-[32%]">enable_memory</td>
+                                  <td className="px-4 py-2.5 align-middle">
+                                    <button
+                                      type="button"
+                                      role="switch"
+                                      aria-checked={wecomDraft.enable_memory}
+                                      onClick={() => handleWecomFieldChange('enable_memory', !wecomDraft.enable_memory)}
+                                      className={`relative inline-flex h-5 w-9 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 focus:outline-none ${
+                                        wecomDraft.enable_memory ? 'bg-ok' : 'bg-secondary'
+                                      }`}
+                                    >
+                                      <span
+                                        className={`pointer-events-none inline-block h-4 w-4 transform rounded-full bg-white shadow transition duration-200 ${
+                                          wecomDraft.enable_memory ? 'translate-x-4' : 'translate-x-0'
+                                        }`}
+                                      />
+                                    </button>
+                                  </td>
+                                </tr>
+                                <tr className="border-t border-border first:border-t-0">
+                                  <td colSpan={2} className="px-4 py-3">
+                                    <p className="text-xs font-medium text-text-muted mb-2">{t('ownerScopes.toolPermissions')}</p>
+                                    <AvatarPermEditor channelId="wecom" userId={wecomDraft.my_user_id} />
+                                  </td>
+                                </tr>
+                              </>
+                            )}
                           </tbody>
                         </table>
                       )}

@@ -219,3 +219,89 @@ def update_updater_in_config(updates: dict[str, Any]) -> None:
     for key, value in updates.items():
         section[key] = value
     _dump_yaml_round_trip(_CONFIG_YAML_PATH, data)
+
+
+# ---------- 数字分身相关配置 ----------
+
+def get_permissions_owner_scopes() -> dict[str, Any]:
+    """读取 permissions.owner_scopes 及 deny_guidance_message."""
+    cfg = get_config() or {}
+    perm = cfg.get("permissions", {})
+    return {
+        "owner_scopes": perm.get("owner_scopes", {}),
+        "deny_guidance_message": perm.get("deny_guidance_message", ""),
+    }
+
+
+def update_permissions_owner_scopes_in_config(
+    owner_scopes: dict[str, Any],
+    deny_guidance_message: str | None = None,
+) -> None:
+    """更新 permissions.owner_scopes（及可选 deny_guidance_message）并写回。"""
+    data = _load_yaml_round_trip(_CONFIG_YAML_PATH)
+    if "permissions" not in data:
+        data["permissions"] = {}
+    data["permissions"]["owner_scopes"] = owner_scopes
+    if deny_guidance_message is not None:
+        data["permissions"]["deny_guidance_message"] = deny_guidance_message
+    _dump_yaml_round_trip(_CONFIG_YAML_PATH, data)
+
+
+def get_permissions_deny_guidance() -> str:
+    """读取 permissions.deny_guidance_message."""
+    cfg = get_config() or {}
+    return cfg.get("permissions", {}).get("deny_guidance_message", "")
+
+
+def update_permissions_deny_guidance_in_config(msg: str) -> None:
+    """更新 permissions.deny_guidance_message 并写回。"""
+    data = _load_yaml_round_trip(_CONFIG_YAML_PATH)
+    if "permissions" not in data:
+        data["permissions"] = {}
+    data["permissions"]["deny_guidance_message"] = msg
+    _dump_yaml_round_trip(_CONFIG_YAML_PATH, data)
+
+
+def update_memory_forbidden_enabled_in_config(value: bool) -> None:
+    """更新 memory.forbidden_memory_definition.enabled（记忆系统敏感信息过滤开关）并写回。"""
+    data = _load_yaml_round_trip(_CONFIG_YAML_PATH)
+    if "memory" not in data:
+        data["memory"] = {}
+    if "forbidden_memory_definition" not in data["memory"]:
+        data["memory"]["forbidden_memory_definition"] = {}
+    data["memory"]["forbidden_memory_definition"]["enabled"] = value
+    _dump_yaml_round_trip(_CONFIG_YAML_PATH, data)
+
+
+def update_memory_forbidden_description_in_config(description: dict[str, str]) -> None:
+    """更新 memory.forbidden_memory_definition.description（禁止记忆内容描述）并写回。"""
+    data = _load_yaml_round_trip(_CONFIG_YAML_PATH)
+    if "memory" not in data:
+        data["memory"] = {}
+    if "forbidden_memory_definition" not in data["memory"]:
+        data["memory"]["forbidden_memory_definition"] = {}
+    if "description" not in data["memory"]["forbidden_memory_definition"]:
+        data["memory"]["forbidden_memory_definition"]["description"] = {}
+    # 合并描述，保留其他语言的描述
+    current_desc = data["memory"]["forbidden_memory_definition"]["description"] or {}
+    if isinstance(current_desc, dict):
+        data["memory"]["forbidden_memory_definition"]["description"] = {**current_desc, **description}
+    else:
+        data["memory"]["forbidden_memory_definition"]["description"] = description
+    _dump_yaml_round_trip(_CONFIG_YAML_PATH, data)
+
+
+def update_memory_forbidden_in_config(updates: dict[str, Any]) -> None:
+    """更新 memory.forbidden_memory_definition 并写回。"""
+    data = _load_yaml_round_trip(_CONFIG_YAML_PATH)
+    if "memory" not in data:
+        data["memory"] = {}
+    if "forbidden_memory_definition" not in data["memory"]:
+        data["memory"]["forbidden_memory_definition"] = {}
+    section = data["memory"]["forbidden_memory_definition"]
+    for k, v in updates.items():
+        if k == "description" and isinstance(v, dict) and isinstance(section.get("description"), dict):
+            section["description"] = {**section["description"], **v}
+        else:
+            section[k] = v
+    _dump_yaml_round_trip(_CONFIG_YAML_PATH, data)

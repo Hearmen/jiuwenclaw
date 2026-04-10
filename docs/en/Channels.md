@@ -2,6 +2,12 @@
 
 **Channels** are how JiuwenClaw connects to chat platforms. **HarmonyOS Xiaoyi**, **Feishu (Lark)**, and more are supported, with more coming. You can talk to JiuwenClaw from **Feishu**, **Xiaoyi on Harmony devices**, and others.
 
+## Digital Avatar
+
+JiuwenClaw supports **Group Digital Avatar** on **Feishu** and **WeCom** channels. When enabled, the bot acts as a designated user's "digital avatar" in group chats — it automatically identifies messages relevant to that user and replies on their behalf in first person. For personal action items such as to-dos and reminders, the avatar sends the reply as a private message to the user while posting a brief confirmation in the group. Irrelevant messages are filtered out automatically, saving Agent resources.
+
+This feature is disabled by default. See the configuration instructions under each channel below.
+
 Configure channels in either of two ways:
 
 * **Web UI (recommended)** — In the app, open **Agent** / **Channels**, then fill in the channel form.
@@ -148,7 +154,82 @@ Option 2: On a Harmony phone, open the published agent in the Xiaoyi app.
 ## 8. Enable Feishu channel in JiuwenClaw
 Start the web UI, open **Channels → Feishu**, enable, and paste **App ID** and **App Secret**.
 
-## 9. Multiple Feishu bots (`feishu_enterprise`)
+## 9. Enable Group Digital Avatar (optional)
+
+After completing the basic Feishu bot setup, you can enable the digital avatar feature so the bot automatically replies in group chats on behalf of a designated user.
+
+> In Feishu, the digital avatar responds when someone **@mentions the bot**, **@mentions the represented user**, or **mentions the user's name** in the message text.
+
+### Prerequisites
+
+- Feishu bot has been created, published, and added to the target group (see step 7)
+
+### Configuration steps
+
+1. In the JiuwenClaw channel management page, open the Feishu channel settings and enable the **`group_digital_avatar`** toggle. Configure **`my_user_id`** and **`bot_name`**.
+
+   ![Feishu digital avatar toggle](../assets/images/feishu_group_avatar.png)
+
+2. Set **`my_user_id`** (required): the Feishu `open_id` of the user this avatar represents. To obtain it:
+   - Sign in to the Feishu API Explorer, open the [Send Message API](https://open.feishu.cn/document/server-docs/im-v1/message/create)
+   - Set `receive_id_type` to **open_id**
+   - Click **Quick copy open_id**, select the target user — the copied value is `my_user_id`
+
+   ![Get Feishu open_id step 1](../assets/images/feishu_user_id_1.png)
+
+   ![Get Feishu open_id step 2](../assets/images/feishu_user_id_2.png)
+
+3. Set **`bot_name`**: the bot's display name in the group, used for @mention detection.
+
+4. (Optional) Enable **`enable_memory`** to let the bot read and search local memory files in group chats.
+
+5. **Configure tool / path permissions**: the digital avatar operates autonomously in group chats and cannot prompt the user for confirmation like in DMs. You must pre-configure which tools are allowed and which paths are accessible. After enabling the avatar, open the permission settings and set each tool's permission (`allow` / `deny`). Without explicit configuration, any operation that would require confirmation (`ask`) is automatically downgraded to `deny`.
+
+   ![Feishu digital avatar permissions](../assets/images/feishu_group_avatar_permission.png)
+
+You can also configure via `~/.jiuwenclaw/config/config.yaml`:
+
+``````
+channels:
+  feishu:
+    app_id: "your App ID"
+    app_secret: "your App Secret"
+    enabled: true
+    # Group digital avatar
+    group_digital_avatar: true
+    my_user_id: "ou_xxxx"       # Feishu open_id of the represented user
+    bot_name: "bot name"        # Bot display name in the group
+    enable_memory: false         # Enable group chat memory
+
+# Digital avatar tool permissions (scoped by channel_id + user_id)
+permissions:
+  owner_scopes:
+    feishu:
+      "ou_xxxx":                 # Must match my_user_id above
+        defaults:
+          "*": "allow"           # Global default: allow / deny
+        tools:
+          bash:
+            "*": "deny"          # Deny bash by default
+            patterns:
+              "git status *": "allow"
+              "git log *": "allow"
+          write:
+            "*": "deny"
+  deny_guidance_message: "This tool is not authorized in digital avatar mode."
+``````
+
+### Fields
+
+| Field | Description |
+|:------|:------------|
+| `group_digital_avatar` | Enable group digital avatar. When on, the bot acts as the designated user's avatar in group chats — it filters irrelevant messages, rewrites relevant ones, and routes personal action replies (to-dos, reminders) as private messages while posting a brief confirmation in the group |
+| `my_user_id` | **Required** when avatar is on: the Feishu `open_id` (e.g. `ou_xxx`) of the represented user. Avatar does not work without this |
+| `bot_name` | Bot display name in the group, used for @mention detection |
+| `enable_memory` | Enable group chat memory. When on, the bot can read and search local memory files in group chats |
+| `owner_scopes` | Tool permissions scoped by `channel_id` + `user_id`. Supports `allow` / `deny`; `ask` is automatically downgraded to `deny` in avatar mode. Web UI configuration is recommended |
+
+## 10. Multiple Feishu bots (`feishu_enterprise`)
 
 Use `channels.feishu_enterprise` when one JiuwenClaw instance must serve **multiple Feishu apps** (multiple bots).
 
@@ -311,6 +392,82 @@ In JiuwenClaw **Channels → DingTalk**, enable and paste **client_id** / **clie
 
 ![WeCom PC](../assets/images/wecom/10_客户端验证.png?msec=1774269205911)
 ![WeCom mobile](../assets/images/wecom/11_手机端验证.png)
+
+## 4. Enable Group Digital Avatar (optional)
+
+After completing the basic WeCom bot setup, you can enable the digital avatar feature.
+
+> ⚠️ **Note**: In WeCom, group messages must **@mention the bot** for the bot to receive them. Messages that do not @mention the bot will not trigger the digital avatar.
+
+### Prerequisites
+
+- WeCom bot has been created and linked to JiuwenClaw
+- Bot has been added to the target group: open WeCom, enter the group, tap add member → **Group bots** → **Smart bot**, and search for your app
+
+### Configuration steps
+
+1. In the JiuwenClaw channel management page, open the WeCom channel settings and enable the **`group_digital_avatar`** toggle. Configure **`my_user_id`** and **`bot_name`**.
+
+   ![WeCom digital avatar toggle](../assets/images/wecom/14_group_avatar.png)
+
+2. Set **`my_user_id`** (required): the WeCom account of the user this avatar represents. To obtain it:
+   - Open the [WeCom Admin Console](https://work.weixin.qq.com/wework_admin/login)
+   - Go to **Contacts → Organization → Department → Member details**
+   - The **Account** field is the `my_user_id`
+
+   ![Get WeCom user_id step 1](../assets/images/wecom/12_user_id_获取.png)
+
+   ![Get WeCom user_id step 2](../assets/images/wecom/13_user_id_获取_2.png)
+
+3. Set **`bot_name`** (optional): the bot's display name in the group, used for @mention detection.
+
+4. (Optional) Enable **`enable_memory`** to let the bot read and search local memory files in group chats (memory is not written in group chats).
+
+5. **Configure tool / path permissions**: the digital avatar operates autonomously in group chats and cannot prompt the user for confirmation like in DMs. You must pre-configure which tools are allowed and which paths are accessible. After enabling the avatar, open the permission settings and set each tool's permission (`allow` / `deny`). Without explicit configuration, any operation that would require confirmation (`ask`) is automatically downgraded to `deny`.
+
+   ![WeCom digital avatar permissions](../assets/images/wecom/15_group_avatar_permission.png)
+
+You can also configure via `~/.jiuwenclaw/config/config.yaml`:
+
+``````
+channels:
+  wecom:
+    bot_id: "your Bot ID"
+    secret: "your Secret"
+    enabled: true
+    # Group digital avatar
+    group_digital_avatar: true
+    my_user_id: "account"        # WeCom account of the represented user
+    bot_name: "bot name"         # Bot display name in the group (optional)
+    enable_memory: false          # Enable group chat memory
+
+# Digital avatar tool permissions (scoped by channel_id + user_id)
+permissions:
+  owner_scopes:
+    wecom:
+      "account":                  # Must match my_user_id above
+        defaults:
+          "*": "allow"           # Global default: allow / deny
+        tools:
+          bash:
+            "*": "deny"
+            patterns:
+              "git status *": "allow"
+              "git log *": "allow"
+          write:
+            "*": "deny"
+  deny_guidance_message: "This tool is not authorized in digital avatar mode."
+``````
+
+### Fields
+
+| Field | Description |
+|:------|:------------|
+| `group_digital_avatar` | Enable group digital avatar. When on, the bot acts as the designated user's avatar in group chats — it filters irrelevant messages, rewrites relevant ones, and routes personal action replies (to-dos, reminders) as private messages while posting a brief confirmation in the group |
+| `my_user_id` | **Required** when avatar is on: the WeCom account of the represented user. Avatar does not work without this |
+| `bot_name` | Optional: bot display name in the group, used for @mention detection |
+| `enable_memory` | Enable group chat memory. When on, the bot can read and search local memory files in group chats; memory is not written in group chats |
+| `owner_scopes` | Tool permissions scoped by `channel_id` + `user_id`. Supports `allow` / `deny`; `ask` is automatically downgraded to `deny` in avatar mode. Web UI configuration is recommended |
 
 # Telegram
 

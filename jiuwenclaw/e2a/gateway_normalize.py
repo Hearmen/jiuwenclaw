@@ -121,8 +121,33 @@ def message_to_e2a(msg: "Message") -> E2AEnvelope:
     }
     if msg.req_method is not None:
         d["method"] = msg.req_method.value
-    if msg.metadata:
-        d["metadata"] = dict(msg.metadata)
+    # 合并 metadata 和独立字段（enable_memory, group_digital_avatar 等）
+    metadata: dict[str, Any] = dict(msg.metadata or {})
+
+    # enable_memory 逻辑：只有当 enable_memory=False 且 group_digital_avatar=True 且 is_group_chat=True 时才禁用记忆
+    # is_group_chat 通过 metadata 中的 avatar_mode 判断
+    is_group_chat = bool(metadata.get("avatar_mode", False))
+    should_disable_memory = (
+        msg.enable_memory is False  # 配置中明确设置为 false
+        and msg.group_digital_avatar is True  # 数字分身模式
+        and is_group_chat is True  # 群聊消息
+    )
+    # 默认启用记忆，只有在上述三个条件同时满足时才禁用
+    final_enable_memory = not should_disable_memory
+    # 只有当 msg.enable_memory 不为 None 时，才将 enable_memory 写入 metadata
+    if msg.enable_memory is not None:
+        metadata["enable_memory"] = final_enable_memory
+    logger.info(
+        "[E2A][enable_memory] msg.enable_memory=%s msg.group_digital_avatar=%s "
+        "is_group_chat=%s should_disable=%s final=%s",
+        msg.enable_memory, msg.group_digital_avatar, is_group_chat,
+        should_disable_memory, final_enable_memory
+    )
+
+    if msg.group_digital_avatar:
+        metadata["group_digital_avatar"] = msg.group_digital_avatar
+    if metadata:
+        d["metadata"] = metadata
     return E2AEnvelope.from_dict(d)
 
 

@@ -95,6 +95,32 @@ class CronSchedulerService:
         self._seq = 0
         self._runs: dict[str, CronRunState] = {}  # run_id -> state
         self._run_tasks: dict[str, asyncio.Task] = {}
+        self._last_store_mtime: float = 0.0
+        self._store_poll_interval: float = 5.0  # seconds
+
+    def _get_store_mtime(self) -> float:
+        """Return mtime of the cron_jobs.json file, or 0.0 if unavailable."""
+        try:
+            return self._store.path.stat().st_mtime
+        except OSError:
+            return 0.0
+
+    def _sync_store_mtime(self) -> None:
+        """Snapshot current store file mtime to avoid redundant reloads."""
+        self._last_store_mtime = self._get_store_mtime()
+
+    async def _check_store_changed(self) -> bool:
+        """If cron_jobs.json was modified externally, reload and return True."""
+        mtime = self._get_store_mtime()
+        if mtime and mtime != self._last_store_mtime and self._last_store_mtime != 0.0:
+            logger.info(
+                "[Cron] store file changed (mtime %.3f -> %.3f), reloading",
+                self._last_store_mtime,
+                mtime,
+            )
+            await self.reload()
+            return True
+        return False
 
     def is_running(self) -> bool:
         return self._running
@@ -127,8 +153,16 @@ class CronSchedulerService:
         """Reload jobs from store and rebuild the event queue."""
         jobs = await self._store.list_jobs()
         self._jobs = {j.id: j for j in jobs}
+        # 保留飞行中的 push_update 事件（单次任务 push 后即 disabled，但补发结果还未完成）
+        pending_push_updates = [
+            (at_ts, seq, ev)
+            for at_ts, seq, ev in self._events
+            if ev.kind == "push_update"
+        ]
         self._events.clear()
         self._seq = 0
+        for item in pending_push_updates:
+            heapq.heappush(self._events, item)
 
         now = self._now_fn()
         for job in jobs:
@@ -155,6 +189,7 @@ class CronSchedulerService:
             self._schedule_event(wake_dt, "wake", job.id, run_id)
             self._schedule_event(push_dt, "push", job.id, run_id)
 
+        self._sync_store_mtime()
         self._reload_event.set()
 
     async def trigger_run_now(self, job_id: str) -> str:
@@ -201,7 +236,13 @@ class CronSchedulerService:
             try:
                 if not self._events:
                     self._reload_event.clear()
-                    await self._reload_event.wait()
+                    try:
+                        await asyncio.wait_for(
+                            self._reload_event.wait(),
+                            timeout=self._store_poll_interval,
+                        )
+                    except asyncio.TimeoutError:
+                        await self._check_store_changed()
                     continue
 
                 now = self._now_fn()
@@ -211,10 +252,18 @@ class CronSchedulerService:
                 if delay > 0:
                     self._reload_event.clear()
                     try:
-                        await asyncio.wait_for(self._reload_event.wait(), timeout=delay)
+                        await asyncio.wait_for(
+                            self._reload_event.wait(),
+                            timeout=min(delay, self._store_poll_interval),
+                        )
                         continue
                     except asyncio.TimeoutError:
-                        pass
+                        # Check if store changed before processing the event
+                        if await self._check_store_changed():
+                            continue
+                        # If delay hasn't elapsed yet, loop back to re-check
+                        if self._now_fn() < at_ts:
+                            continue
 
                 # due
                 heapq.heappop(self._events)
@@ -229,7 +278,8 @@ class CronSchedulerService:
         job = self._jobs.get(ev.job_id)
         if job is None:
             return
-        if not job.enabled:
+        # push_update 是对已触发任务的补发，即使单次任务已过期也必须放行，否则真正结果永远发不出去
+        if not job.enabled and ev.kind != "push_update":
             return
 
         if ev.kind == "wake":
@@ -447,6 +497,8 @@ class CronSchedulerService:
         # 针对 feishu/xiaoyi/whatsapp：从 config.yaml 取最近一次可回发的平台身份，写入 metadata
         # 这样即使 cron 推送没有 session_id，也能让 Channel.send 正常路由到对应会话。
         if metadata is None:
+            channels_cfg: dict = {}
+            ch_cfg: dict = {}
             try:
                 from jiuwenclaw.config import get_config_raw
 
@@ -495,9 +547,11 @@ class CronSchedulerService:
                         }
                 elif channel_id == "wecom":
                     last_chat_id = str(ch_cfg.get("last_chat_id") or "").strip()
-                    if last_chat_id:
+                    last_user_id = str(ch_cfg.get("last_user_id") or "").strip()
+                    if last_chat_id or last_user_id:
                         metadata = {
                             "wecom_chat_id": last_chat_id,
+                            "wecom_user_id": last_user_id,
                         }
                 elif channel_id == "wechat":
                     last_user_id = str(ch_cfg.get("last_user_id") or "").strip()
@@ -513,6 +567,65 @@ class CronSchedulerService:
             except Exception:
                 metadata = None
 
+        if metadata is None:
+            metadata = {}
+
+        # 获取 group_digital_avatar 和 my_user_id 配置
+        _group_digital_avatar = False
+        _my_user_id = ""
+        if channel_id == "wecom":
+            _group_digital_avatar = bool(ch_cfg.get("group_digital_avatar") or False)
+            _my_user_id = str(ch_cfg.get("my_user_id") or "").strip()
+        elif channel_id == "feishu":
+            _group_digital_avatar = bool(ch_cfg.get("group_digital_avatar") or False)
+            _my_user_id = str(ch_cfg.get("my_user_id") or "").strip()
+        elif channel_id.startswith("feishu_enterprise:"):
+            app_id = channel_id.split(":", 1)[1].strip()
+            enterprise_cfg = channels_cfg.get("feishu_enterprise") or {}
+            if isinstance(enterprise_cfg, dict) and app_id:
+                for _, bot_cfg in enterprise_cfg.items():
+                    if not isinstance(bot_cfg, dict):
+                        continue
+                    bot_app_id = str(bot_cfg.get("app_id") or "").strip()
+                    if bot_app_id != app_id:
+                        continue
+                    _group_digital_avatar = bool(bot_cfg.get("group_digital_avatar") or False)
+                    _my_user_id = str(bot_cfg.get("my_user_id") or "").strip()
+                    break
+
+        if _group_digital_avatar and _my_user_id:
+            # 判断定时任务是在群聊还是私聊中创建的
+            # 优先使用 job.chat_type（创建时保存的），如果没有则尝试从 session_id 推断
+            _is_cron_from_group = job.chat_type == "group"
+
+            # 只有同时满足以下条件才启用 IMOutboundPipeline 路由决策：
+            # 1. 开启了 group_digital_avatar
+            # 2. 配置了 my_user_id
+            # 3. 定时任务是在群聊中创建的（私聊创建的任务直接推送，不走路由决策）
+            if _is_cron_from_group:
+                # 不在此处硬编码 reply_scope，交由 IMOutboundPipeline 根据内容决定 DM 还是群聊。
+                # 只需补充 outbound pipeline 所需的 metadata 前置条件：
+                #   - chat_type=group（pipeline 仅对群聊做路由决策）
+                #   - reply_candidate_feishu_open_id / reply_candidate_reason（pipeline 需要知道目标用户）
+                metadata["chat_type"] = "group"
+                if channel_id == "wecom":
+                    metadata["reply_wecom_user_id"] = _my_user_id
+                elif channel_id == "feishu" or channel_id.startswith("feishu_enterprise:"):
+                    metadata["reply_candidate_feishu_open_id"] = _my_user_id
+                metadata["reply_candidate_reason"] = "cron_target_user"
+                metadata["reply_target_name"] = _my_user_id
+                # 标记为定时任务消息，避免在群聊中重复发送确认消息
+                metadata["is_cron_job"] = True
+                logger.info(
+                    "[Cron] 定时任务创建于群聊，启用 IMOutboundPipeline 路由决策: my_user_id=%s channel=%s job_id=%s",
+                    _my_user_id, channel_id, job.id,
+                )
+            else:
+                logger.info(
+                    "[Cron] 定时任务创建于私聊，跳过 IMOutboundPipeline 路由决策: job.chat_type=%s channel=%s job_id=%s",
+                    job.chat_type, channel_id, job.id,
+                )
+
         msg = Message(
             id=f"cron-push-{state.run_id}-{channel_id}",
             type="event",
@@ -524,5 +637,6 @@ class CronSchedulerService:
             payload=payload_extra,
             event_type=EventType.CHAT_FINAL,
             metadata=metadata,
+            group_digital_avatar=_group_digital_avatar,
         )
         await self._message_handler.publish_robot_messages(msg)

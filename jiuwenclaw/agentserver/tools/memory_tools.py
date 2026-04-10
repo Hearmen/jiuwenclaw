@@ -2,6 +2,7 @@
 
 """Memory tools for JiuWenClaw - Using @tool decorator for openjiuwen."""
 
+import contextvars
 import logging
 import os
 import re
@@ -18,10 +19,42 @@ from ..memory import (
 
 logger = logging.getLogger(__name__)
 
+# 群聊模式标记：群聊中禁止 write_memory / edit_memory
+_GROUP_CHAT_MODE: contextvars.ContextVar[bool] = contextvars.ContextVar(
+    "group_chat_mode", default=False,
+)
+
+
+def set_group_chat_mode(enabled: bool) -> contextvars.Token:
+    return _GROUP_CHAT_MODE.set(enabled)
+
+
+def is_group_chat_mode() -> bool:
+    return _GROUP_CHAT_MODE.get()
+
+
 _global_manager: Optional[MemoryIndexManager] = None
 _global_workspace_dir: str = "."
 _global_settings: Optional[MemorySettings] = None
 _global_agent_id: str = "default"
+
+
+def _is_path_traversal_attempt(normalized: str) -> bool:
+    """Check if path contains directory traversal patterns.
+    
+    Args:
+        normalized: Normalized path with forward slashes
+    
+    Returns:
+        True if path traversal is detected
+    """
+    if ".." in normalized:
+        return True
+    if normalized.startswith("/"):
+        return True
+    if len(normalized) >= 2 and normalized[1] == ":":
+        return True
+    return False
 
 
 def _validate_memory_path(path: str) -> tuple[bool, str]:
@@ -35,7 +68,8 @@ def _validate_memory_path(path: str) -> tuple[bool, str]:
     Returns:
         (is_valid, resolved_path_or_error)
     """
-    if ".." in path or path.startswith("/"):
+    normalized = path.replace("\\", "/")
+    if _is_path_traversal_attempt(normalized):
         return (False, "Invalid path: directory traversal not allowed")
     
     if path in ("memory/USER.md", "memory/MEMORY.md"):
@@ -268,6 +302,8 @@ async def write_memory(
     Returns:
         操作结果字典
     """
+    if is_group_chat_mode():
+        return {"success": False, "error": "群聊模式下禁止写入记忆文件"}
     try:
         is_valid, result = _validate_memory_path(path)
         if not is_valid:
@@ -327,6 +363,8 @@ async def edit_memory(
     Returns:
         操作结果字典
     """
+    if is_group_chat_mode():
+        return {"success": False, "error": "群聊模式下禁止编辑记忆文件"}
     try:
         is_valid, result = _validate_memory_path(path)
         if not is_valid:

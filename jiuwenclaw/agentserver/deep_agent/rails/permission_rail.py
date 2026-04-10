@@ -10,6 +10,7 @@ from __future__ import annotations
 import json
 from typing import Any, Iterable, Optional
 
+from openjiuwen.core.foundation.llm import ToolMessage
 from openjiuwen.core.foundation.llm.schema.tool_call import ToolCall
 from openjiuwen.core.single_agent.interrupt.response import InterruptRequest
 from openjiuwen.core.single_agent.interrupt.state import INTERRUPT_AUTO_CONFIRM_KEY
@@ -26,6 +27,14 @@ from jiuwenclaw.agentserver.permissions.checker import (
 )
 from jiuwenclaw.agentserver.permissions import PermissionLevel, PermissionResult
 from jiuwenclaw.utils import logger
+
+
+TOOL_NAME_ALIASES = {
+    "free_search": "mcp_free_search",
+    "paid_search": "mcp_paid_search",
+    "fetch_webpage": "mcp_fetch_webpage",
+    "exec_command": "mcp_exec_command",
+}
 
 
 class PermissionInterruptRail(ConfirmInterruptRail):
@@ -67,6 +76,13 @@ class PermissionInterruptRail(ConfirmInterruptRail):
             self._engine._model_name,
         )
 
+    def _normalize_tool_name(self, tool_name: str) -> str:
+        """Normalize tool name using aliases.
+
+        Maps tool names from openjiuwen.harness.tools to mcp_* names used in config.
+        """
+        return TOOL_NAME_ALIASES.get(tool_name, tool_name)
+
     def _get_auto_confirm_key(self, tool_call: ToolCall) -> str:
         """Generate fine-grained auto-confirm key based on tool call.
         
@@ -102,11 +118,33 @@ class PermissionInterruptRail(ConfirmInterruptRail):
 
     async def before_tool_call(self, ctx: AgentCallbackContext) -> None:
         tool_name = ctx.inputs.tool_name
+        tool_call = ctx.inputs.tool_call
+        normalized_name = self._normalize_tool_name(tool_name)
         logger.info(
-            "[PermissionRail] before_tool_call: tool_name=%s _tool_names=%s will_intercept=%s",
-            tool_name, list(self._tool_names), tool_name in self._tool_names
+            "[PermissionRail] before_tool_call: tool_name=%s normalized=%s _tool_names=%s",
+            tool_name, normalized_name, list(self._tool_names)
         )
-        await super().before_tool_call(ctx)
+        decision = await self.resolve_interrupt(
+            ctx=ctx,
+            tool_call=tool_call,
+            user_input=None,
+            auto_confirm_config=ctx.session.get_state(INTERRUPT_AUTO_CONFIRM_KEY) if ctx.session else None,
+        )
+        if decision is not None:
+            ctx.extra["_interrupt_decision"] = decision
+            
+            if hasattr(decision, 'tool_result') and decision.tool_result is not None:
+                tool_call_id = tool_call.id if tool_call else ""
+                ctx.extra["_skip_tool"] = True
+                ctx.inputs.tool_result = decision.tool_result
+                ctx.inputs.tool_msg = ToolMessage(
+                    content=ctx.inputs.tool_result,
+                    tool_call_id=tool_call_id,
+                )
+                logger.info(
+                    "[PermissionRail] Rejecting tool=%s with result=%s",
+                    tool_name, ctx.inputs.tool_result
+                )
 
     def update_config(self, config: dict, tool_names: Optional[Iterable[str]] = None) -> None:
         """Hot-update static permission config and tool_names."""
@@ -130,19 +168,73 @@ class PermissionInterruptRail(ConfirmInterruptRail):
         auto_confirm_config: Optional[dict] = None,
     ):
         tool_name = tool_call.name if tool_call is not None else ""
+        normalized_name = self._normalize_tool_name(tool_name)
         tool_args = self._parse_tool_args(tool_call)
         auto_confirm_key = self._get_auto_confirm_key(tool_call)
 
         logger.info(
-            "[PermissionRail] resolve_interrupt called: tool_name=%s tool_args=%s auto_confirm_key=%s user_input=%s",
-            tool_name, tool_args, auto_confirm_key, type(user_input).__name__ if user_input else None
+            "[PermissionRail] resolve_interrupt called: tool_name=%s normalized=%s "
+            "tool_args=%s auto_confirm_key=%s user_input=%s",
+            tool_name, normalized_name, tool_args, auto_confirm_key,
+            type(user_input).__name__ if user_input else None
         )
 
+        from jiuwenclaw.agentserver.deep_agent.permissions.owner_scopes import (
+            TOOL_PERMISSION_CONTEXT,
+            check_avatar_permission,
+            _resolve_owner_scope_level,
+        )
+        perm_ctx = TOOL_PERMISSION_CONTEXT.get()
+
+        if perm_ctx is not None:
+            logger.info(
+                "[PermissionRail] perm_ctx: scene=%s channel_id=%s principal_user_id=%s",
+                perm_ctx.scene, perm_ctx.channel_id, perm_ctx.principal_user_id
+            )
+            if perm_ctx.scene == "group_digital_avatar":
+                if user_input is None:
+                    level = await check_avatar_permission(
+                        normalized_name, tool_args,
+                        channel_id=self._resolve_channel_id(),
+                        session_id=None,
+                    )
+                    if level == "allow":
+                        return self.approve()
+                    return self.reject(
+                        tool_result="[PERMISSION_DENIED] 该工具未被授权在数字分身场景下使用"
+                    )
+                return self.reject(tool_result="[PERMISSION_DENIED] 数字分身场景不支持交互审批")
+
+            if perm_ctx.principal_user_id:
+                owner_scopes = self._static_config.get("owner_scopes", {})
+                logger.info(
+                    "[PermissionRail] owner_scopes lookup: channel_id=%s user_id=%s owner_scopes_keys=%s",
+                    perm_ctx.channel_id, perm_ctx.principal_user_id, list(owner_scopes.keys()) if owner_scopes else []
+                )
+                if isinstance(owner_scopes, dict) and owner_scopes:
+                    cid = perm_ctx.channel_id.strip()
+                    uid = perm_ctx.principal_user_id.strip()
+                    scope_cfg = (owner_scopes.get(cid) or {}).get(uid)
+                    owner_level = _resolve_owner_scope_level(scope_cfg, normalized_name, tool_args)
+                    if owner_level is not None:
+                        logger.info(
+                            "[PermissionRail] owner_scopes matched: tool=%s normalized=%s level=%s",
+                            tool_name, normalized_name, owner_level
+                        )
+                        if owner_level == "allow":
+                            return self.approve()
+                        return self.reject(
+                            tool_result=f"[PERMISSION_DENIED] 该工具未被授权 (owner_scopes: {owner_level})"
+                        )
+
         if user_input is None:
-            logger.info("[PermissionRail] First call - checking permission for tool=%s", tool_name)
+            logger.info(
+                "[PermissionRail] First call - checking permission for tool=%s normalized=%s",
+                tool_name, normalized_name
+            )
             self._engine.update_config(self._static_config)
             result = await self._engine.check_permission(
-                tool_name=tool_name,
+                tool_name=normalized_name,
                 tool_args=tool_args,
                 channel_id=self._resolve_channel_id(),
             )

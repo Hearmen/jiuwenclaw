@@ -143,3 +143,6 @@ class Message:
     stream_seq: int | None = None
     stream_id: str | None = None
     metadata: dict[str, Any] | None = None
+    group_digital_avatar: bool = False
+    enable_memory: bool | None = None
+    enable_streaming: bool = True

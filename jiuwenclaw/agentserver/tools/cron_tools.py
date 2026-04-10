@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import contextvars
 import logging
 from dataclasses import dataclass
@@ -9,7 +10,7 @@ from zoneinfo import ZoneInfo
 
 from openjiuwen.core.foundation.tool import LocalFunction, Tool, ToolCard
 from jiuwenclaw.gateway.cron.store import CronJobStore
-from jiuwenclaw.gateway.cron.scheduler import _cron_next_push_dt
+from jiuwenclaw.gateway.cron.scheduler import _cron_next_push_dt, CronSchedulerService
 from jiuwenclaw.gateway.cron.models import (
     CronTargetChannel,
     is_valid_target_channel_id,
@@ -31,11 +32,12 @@ _cron_route_ctx: contextvars.ContextVar[CronToolRoute | None] = contextvars.Cont
 
 @dataclass(frozen=True, slots=True)
 class CronToolRoute:
-    """当前请求同步到 Gateway 时使用的路由（request_id / channel / session）。"""
+    """当前请求同步到 Gateway 时使用的路由（request_id / channel / session / chat_type）。"""
 
     request_id: str = ""
     channel_id: str = CronTargetChannel.WEB.value
     session_id: str | None = None
+    chat_type: str | None = None  # "group" 表示群聊, "p2p" 或 None 表示私聊
 
 
 class CronTools:
@@ -43,13 +45,87 @@ class CronTools:
 
     路由用 ContextVar 按 Task 隔离（与 interface 中 ``push_cron_route`` / ``reset_cron_route`` 配对）；
     同进程一套 LocalFunction，并发安全依赖当前 asyncio 任务的上下文而非单例可变字段。
+    
+    包含内置调度器，即使 Gateway 未启动也能执行定时任务。
     """
 
-    def __init__(self, gateway_push: GatewayPushTransport | None = None) -> None:
+    def __init__(
+        self,
+        gateway_push: GatewayPushTransport | None = None,
+        *,
+        agent_client: Any | None = None,
+        message_handler: Any | None = None,
+    ) -> None:
         self._gateway_push: GatewayPushTransport = gateway_push or WebSocketGatewayPushTransport()
         self._local_store = CronJobStore(
             path=get_user_workspace_dir() / "agent" / "home" / "cron_jobs.json"
         )
+        # 内置调度器，用于在 Agent-side 执行定时任务
+        self._scheduler: CronSchedulerService | None = None
+        self._agent_client = agent_client
+        self._message_handler = message_handler
+        self._scheduler_started = False
+
+    async def ensure_scheduler(self) -> CronSchedulerService | None:
+        """Ensure the scheduler is started."""
+        if self._scheduler is not None and self._scheduler.is_running():
+            return self._scheduler
+        
+        if self._scheduler_started:
+            # Already tried to start but failed or stopped
+            return self._scheduler
+        
+        # Try to create and start scheduler
+        try:
+            # Lazy import to avoid circular dependency
+            from jiuwenclaw.gateway.agent_client import AgentServerClient
+            
+            agent_client = self._agent_client
+            message_handler = self._message_handler
+            
+            # If not provided, try to get from singletons
+            if agent_client is None:
+                try:
+                    agent_client = AgentServerClient.get_instance()
+                except RuntimeError:
+                    agent_client = None
+            
+            if message_handler is None:
+                try:
+                    from jiuwenclaw.gateway.message_handler import MessageHandler
+                    message_handler = MessageHandler.get_instance()
+                except RuntimeError:
+                    message_handler = None
+            
+            if agent_client is None:
+                logger.warning("[CronTools] Cannot start scheduler: AgentServerClient not available")
+                self._scheduler_started = True  # Mark as tried
+                return None
+            
+            self._scheduler = CronSchedulerService(
+                store=self._local_store,
+                agent_client=agent_client,
+                message_handler=message_handler,
+            )
+            await self._scheduler.start()
+            logger.info("[CronTools] Scheduler started successfully")
+            self._scheduler_started = True
+            return self._scheduler
+            
+        except Exception as exc:
+            logger.warning("[CronTools] Failed to start scheduler: %s", exc)
+            self._scheduler_started = True  # Mark as tried
+            return None
+
+    async def _reload_scheduler(self) -> None:
+        """Reload scheduler if it's running."""
+        scheduler = await self.ensure_scheduler()
+        if scheduler is not None:
+            try:
+                await scheduler.reload()
+                logger.debug("[CronTools] Scheduler reloaded")
+            except Exception as exc:
+                logger.warning("[CronTools] Failed to reload scheduler: %s", exc)
 
     @staticmethod
     def push_cron_route(route: CronToolRoute) -> contextvars.Token:
@@ -163,6 +239,9 @@ class CronTools:
             sid = self._route().session_id
             if isinstance(sid, str) and sid.strip():
                 session_kw["session_id"] = sid.strip()
+        chat_type = self._route().chat_type
+        if chat_type:
+            session_kw["chat_type"] = chat_type
         job = await self._local_store.create_job(
             job_id=str(normalized.get("id") or "").strip() or None,
             name=str(normalized.get("name") or "").strip(),
@@ -178,6 +257,10 @@ class CronTools:
             await self._send("create", job.to_dict())
         except Exception as exc:  # noqa: BLE001
             logger.warning("[CronTools] sync create to gateway failed: %s", exc)
+        
+        # Reload scheduler to pick up the new job
+        await self._reload_scheduler()
+        
         return job.to_dict()
 
     async def update_job(self, job_id: str, patch: dict[str, Any]) -> Any:
@@ -192,11 +275,17 @@ class CronTools:
                     normalized_patch["session_id"] = sid.strip()
             else:
                 normalized_patch["session_id"] = None
+        chat_type = self._route().chat_type
+        normalized_patch["chat_type"] = chat_type if chat_type else None
         job = await self._local_store.update_job(job_id, normalized_patch)
         try:
             await self._send("update", {"job_id": job_id, "patch": normalized_patch})
         except Exception as exc:  # noqa: BLE001
             logger.warning("[CronTools] sync update to gateway failed: %s", exc)
+        
+        # Reload scheduler to pick up the changes
+        await self._reload_scheduler()
+        
         return job.to_dict()
 
     async def delete_job(self, job_id: str) -> Any:
@@ -205,6 +294,10 @@ class CronTools:
             await self._send("delete", {"job_id": job_id})
         except Exception as exc:  # noqa: BLE001
             logger.warning("[CronTools] sync delete to gateway failed: %s", exc)
+        
+        # Reload scheduler to pick up the changes
+        await self._reload_scheduler()
+        
         return deleted
 
     async def toggle_job(self, job_id: str, enabled: bool) -> Any:
@@ -213,6 +306,10 @@ class CronTools:
             await self._send("toggle", {"job_id": job_id, "enabled": bool(enabled)})
         except Exception as exc:  # noqa: BLE001
             logger.warning("[CronTools] sync toggle to gateway failed: %s", exc)
+        
+        # Reload scheduler to pick up the changes
+        await self._reload_scheduler()
+        
         return job.to_dict()
 
     async def preview_job(self, job_id: str, count: int = 5) -> Any:

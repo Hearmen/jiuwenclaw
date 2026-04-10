@@ -377,6 +377,11 @@
     "empty": "No configuration loaded yet. Please check the backend service status.",
     "selectModelProvider": "Select a model provider",
     "enterValue": "Enter a configuration value",
+    "keys": {
+      "memoryForbiddenEnabled": "Enable",
+      "memoryForbiddenDescription": "Forbidden memory content description",
+      "memoryForbiddenDescriptionPlaceholder": "e.g. passwords, API keys, secrets, tokens, credit card numbers, ID numbers, phone numbers"
+    },
     "hideValue": "Hide value",
     "showValue": "Show value",
     "groups": {
@@ -390,6 +395,7 @@
       "evolution": { "label": "Evolution Settings", "hint": "Online skill evolution settings" },
       "contextEngine": { "label": "Context Compression", "hint": "Enable or disable dialogue context compression" },
       "permissions": { "label": "Tool Safety Guardrail", "hint": "Enable or disable permission checks for tool calls" },
+      "memory": { "label": "Memory Sensitive Info Filter", "hint": "Configure sensitive content types forbidden from memory" },
       "email": { "label": "Email Settings", "hint": "Email account and token settings" },
       "other": { "label": "Other Settings", "hint": "Unclassified extended parameters" }
     },
@@ -895,5 +901,36 @@
     "help1": "Rail extension files must inherit from DeepAgentRail or AgentRail base class",
     "help2": "Changes to extension status require reloading Agent configuration to take effect",
     "help3": "Extension files are saved to ~/.jiuwenclaw/agent/jiuwenclaw_workspace/extensions/ directory"
+  },
+  "ownerScopes": {
+    "title": "Avatar Permission",
+    "setUserIdFirst": "Please set my_user_id above first",
+    "loading": "Loading permission config...",
+    "quickSet": "Quick set",
+    "allowAll": "Allow All",
+    "denyAll": "Deny All",
+    "externalDirectory": "External Directory Access",
+    "externalDirectoryDesc": "Allow access to paths outside workspace",
+    "toolPermissions": "Tool Permissions",
+    "saved": "Saved",
+    "saveBtn": "Save Permissions",
+    "groups": {
+      "userTodo": "User Todos",
+      "userTodoDesc": "Manage user personal todos",
+      "todoToolkits": "Task Planning Tools",
+      "todoToolkitsDesc": "Agent internal task create/complete/sort",
+      "searchTools": "Search Tools",
+      "searchToolsDesc": "Free/paid web search",
+      "webFetchTools": "Web Fetch",
+      "webFetchToolsDesc": "Fetch specific webpage content",
+      "commandTools": "Command Execution",
+      "commandToolsDesc": "Execute system commands",
+      "skill": "Skill Invocation",
+      "skillDesc": "Invoke registered skills",
+      "cronTools": "Scheduled Tasks",
+      "cronToolsDesc": "Create/manage scheduled tasks",
+      "sendFile": "Send File",
+      "sendFileDesc": "Send files to user"
+    }
   }
 }

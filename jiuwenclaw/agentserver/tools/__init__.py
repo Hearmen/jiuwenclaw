@@ -11,6 +11,8 @@ from .memory_tools import (
     write_memory,
     edit_memory,
     read_memory,
+    set_group_chat_mode,
+    is_group_chat_mode,
 )
 
 from .send_file_to_user import (
@@ -48,6 +50,8 @@ __all__ = [
     "write_memory",
     "edit_memory",
     "read_memory",
+    "set_group_chat_mode",
+    "is_group_chat_mode",
     "SendFileToolkit",
     # openjiuwen re-exports
     "tool",

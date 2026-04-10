@@ -221,6 +221,10 @@ class JiuWenClaw:
             "language": language,
         }
 
+        # 传递 enable_memory 参数
+        enable_memory = request.metadata.get("enable_memory", True) if request.metadata else True
+        inputs["enable_memory"] = enable_memory
+
         run = request.params.get("run")
         if run:
             inputs["run"] = run
