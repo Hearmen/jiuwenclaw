@@ -275,7 +275,7 @@ class JiuWenClawDeepAdapter:
         channel = session_id.split("_", 1)[0]
         if channel == "sess":
             return "web"
-        if channel in {"acp", "cron", "heartbeat", "feishu", "web"}:
+        if channel in {"acp", "cron", "heartbeat", "feishu", "web", "dingtalk", "wecom"}:
             return channel
         return "web"
 
