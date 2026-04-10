@@ -23,6 +23,8 @@ from .base import BaseChannel, ChannelMetadata, RobotMessageRouter
 logger = logging.getLogger(__name__)
 main_logger = logging.getLogger("__main__")
 
+MAX_MESSAGES_SEND_TO_WECHAT = 10
+
 
 class StreamDeltaAccumulator:
     """最小增量聚合器：按 session key 缓存并在 flush 时输出。"""
@@ -65,10 +67,10 @@ class StreamDeltaAccumulator:
 
 
 def format_tool_call_message(payload: dict[str, Any]) -> str:
-    tool_name = str(payload.get("tool_name") or payload.get("name") or "工具调用")
-    args = payload.get("arguments")
-    args_str = json.dumps(args, ensure_ascii=False) if args is not None else ""
-    return f"[{tool_name}] 调用中\n{args_str}".strip()
+    tool_name = str(payload.get("tool_call", {}).get("name") or payload.get("name") or "工具调用")
+    args = payload.get("tool_call", {}).get("arguments")
+    args_str = str(args) if args is not None else ""
+    return f"[{tool_name}] 调用中...\n{args_str}".strip()
 
 
 def format_tool_result_message(payload: dict[str, Any]) -> str:
@@ -340,6 +342,7 @@ class WechatChannel(BaseChannel):
         self._backoff_sec: float = self.config.backoff_base_sec
         self._delta_accumulator = StreamDeltaAccumulator()
         self._delta_leading: dict[str, str] = {}
+        self.current_round: int = 0
 
     @property
     def channel_id(self) -> str:
@@ -426,28 +429,32 @@ class WechatChannel(BaseChannel):
                 return
             content = self._extract_content(msg)
             if content:
+                if self.current_round == MAX_MESSAGES_SEND_TO_WECHAT - 1:
+                    logger.info(f"WechatChannel sendmessage: Message exceeds 10 messages, ignoring.")
+                    return
                 await self._send_text_chunks_to_user(msg, content)
             return
 
         if msg.event_type == EventType.CHAT_TOOL_CALL:
             if not streaming:
                 return
+            if self.current_round == MAX_MESSAGES_SEND_TO_WECHAT - 1:
+                logger.info(f"WechatChannel sendmessage: Message exceeds 10 messages, ignoring.")
+                return
             flushed = self._take_accumulated_delta(msg)
-            await self._send_flushed_delta_if_present(msg, flushed)
             payload = msg.payload if isinstance(msg.payload, dict) else {}
-            await self._send_text_chunks_to_user(msg, format_tool_call_message(payload))
+            tool_call_str = format_tool_call_message(payload)
+            content = f"{flushed}\n\n{tool_call_str}" if flushed else f"\n{tool_call_str}"
+            await self._send_text_chunks_to_user(msg, content)
             return
 
         if msg.event_type == EventType.CHAT_TOOL_RESULT:
-            if not streaming:
-                return
-            flushed = self._take_accumulated_delta(msg)
-            await self._send_flushed_delta_if_present(msg, flushed)
-            payload = msg.payload if isinstance(msg.payload, dict) else {}
-            await self._send_text_chunks_to_user(msg, format_tool_result_message(payload))
             return
 
         if msg.event_type == EventType.CHAT_ERROR:
+            if self.current_round == MAX_MESSAGES_SEND_TO_WECHAT - 1:
+                logger.info(f"WechatChannel sendmessage: Message exceeds 10 messages, ignoring.")
+                return
             self._clear_delta_session(msg)
             err_line = self._extract_content(msg)
             if err_line:
@@ -482,9 +489,6 @@ class WechatChannel(BaseChannel):
             return
 
         flushed_for_dedup: str | None = None
-        if msg.event_type in final_like_events:
-            flushed_for_dedup = self._take_accumulated_delta(msg)
-            await self._send_flushed_delta_if_present(msg, flushed_for_dedup)
 
         user_id = self._extract_platform_user_id(msg)
         if not user_id:
@@ -504,6 +508,8 @@ class WechatChannel(BaseChannel):
             logger.debug("WechatChannel 消息内容为空或仅为思考占位，跳过发送")
             return
         await self._send_text_chunks_to_user(msg, content_str)
+        self._clear_delta_session(msg)
+        self.current_round = 0
 
     def _delta_session_key(self, msg: Message) -> str:
         return str(msg.session_id or msg.id or "")
@@ -514,7 +520,7 @@ class WechatChannel(BaseChannel):
             return None
         tail = self._delta_accumulator.flush(sk) or ""
         head = self._delta_leading.pop(sk, "") or ""
-        combined = head + tail
+        combined = head + tail if head != tail else head
         return combined if combined.strip() else None
 
     def _clear_delta_session(self, msg: Message) -> None:
@@ -522,11 +528,6 @@ class WechatChannel(BaseChannel):
         if sk:
             self._delta_accumulator.clear(sk)
             self._delta_leading.pop(sk, None)
-
-    async def _send_flushed_delta_if_present(self, msg: Message, flushed: str | None) -> None:
-        if not flushed or not str(flushed).strip():
-            return
-        await self._send_text_chunks_to_user(msg, flushed)
 
     async def _send_text_chunks_to_user(self, msg: Message, text: str) -> None:
         cleaned = self._strip_think_tags(str(text or "")).strip()
@@ -546,6 +547,7 @@ class WechatChannel(BaseChannel):
         for part in self._chunk_text(cleaned, 2000):
             await self._send_message(user_id, context_token, part)
             await asyncio.sleep(0.25)
+        self.current_round += 1
 
     @staticmethod
     def _strip_think_tags(text: str) -> str:
@@ -922,7 +924,7 @@ class WechatChannel(BaseChannel):
             timestamp=time.time(),
             ok=True,
             req_method=ReqMethod.CHAT_SEND,
-            is_stream=True,
+            is_stream=self.config.enable_streaming,
             metadata={
                 "wechat_user_id": user_id,
                 "reply_to_user_id": user_id,
