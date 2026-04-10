@@ -46,6 +46,8 @@ from openjiuwen.agent_evolving.online.schema import (
 from openjiuwen.agent_evolving.online.signal_detector import SignalDetector
 from openjiuwen.harness.rails.memory_rail import MemoryRail
 from openjiuwen.harness.subagents.browser_agent import build_browser_agent_config
+from openjiuwen.harness.subagents.code_agent import build_code_agent_config
+from openjiuwen.harness.subagents.research_agent import build_research_agent_config
 from openjiuwen.harness.tools import (
     WebFetchWebpageTool,
     WebFreeSearchTool,
@@ -65,6 +67,7 @@ from jiuwenclaw.agentserver.deep_agent.prompt_builder import build_identity_prom
 from jiuwenclaw.agentserver.deep_agent.rails import (
     JiuClawContextEngineeringRail,
     JiuClawStreamEventRail,
+    ResponsePromptRail,
     RuntimePromptRail,
 )
 from jiuwenclaw.agentserver.deep_agent.permissions.owner_scopes import (
@@ -220,6 +223,7 @@ class JiuWenClawDeepAdapter:
         self._task_planning_rail: TaskPlanningRail | None = None
         self._context_engineering_rail: ContextEngineeringRail | None = None
         self._runtime_prompt_rail: RuntimePromptRail | None = None
+        self._response_prompt_rail: ResponsePromptRail | None = None
         self._security_rail: SecurityRail | None = None
         self._memory_rail: MemoryRail | None = None
         self._heartbeat_rail: HeartbeatRail | None = None
@@ -285,6 +289,12 @@ class JiuWenClawDeepAdapter:
         """Resolve normalized runtime language shared by rails and tools."""
         return resolve_language(self._resolve_prompt_language())
 
+    def _resolve_model_name(self) -> str:
+        """Resolve current model name from model request config."""
+        if self._model_request_config and hasattr(self._model_request_config, 'model'):
+            return self._model_request_config.model or "unknown"
+        return "unknown"
+
 
     @staticmethod
     def _browser_runtime_enabled() -> bool:
@@ -296,32 +306,50 @@ class JiuWenClawDeepAdapter:
         ).strip().lower()
         return value in {"1", "true", "yes", "on"}
 
-    def _build_browser_subagents(
+    def _build_preset_subagents(
             self,
             model: Model,
             config: dict[str, Any],
-    ) -> list[Any] | None:
-        """Build browser subagent config when browser runtime is enabled."""
+    ) -> list[Any]:
+        """Build built-in subagent presets exposed through task_tool."""
+        workspace = self._workspace_dir or "./"
+        language = self._resolve_runtime_language()
+        max_iterations = config.get("max_iterations", 15)
+        subagents: list[Any] = [
+            build_code_agent_config(
+                model,
+                workspace=workspace,
+                language=language,
+                max_iterations=max_iterations,
+            ),
+            build_research_agent_config(
+                model,
+                workspace=workspace,
+                language=language,
+                max_iterations=max_iterations,
+            ),
+        ]
+
         if not self._browser_runtime_enabled():
-            return None
+            return subagents
         if not str(os.getenv("BROWSER_DRIVER") or "").strip():
             os.environ["BROWSER_DRIVER"] = "managed"
             logger.info(
                 "[JiuWenClawDeepAdapter] browser runtime enabled without BROWSER_DRIVER; defaulting to managed mode"
             )
 
-
-        return [
+        subagents.append(
             build_browser_agent_config(
                 model,
-                workspace=self._workspace_dir or "./",
-                language=self._resolve_runtime_language(),
+                workspace=workspace,
+                language=language,
                 max_iterations=_parse_int(
                     os.getenv("BROWSER_AGENT_MAX_ITERATIONS"),
-                    config.get("max_iterations", 15),
+                    max_iterations,
                 ),
             )
-        ]
+        )
+        return subagents
 
     def _build_vision_model_config(
             self,
@@ -629,6 +657,17 @@ class JiuWenClawDeepAdapter:
         return SkillUseRail.SKILL_MODE_ALL
 
     @staticmethod
+    def _build_response_prompt_rail() -> ResponsePromptRail | None:
+        """Build ResponsePromptRail so message rules keep priority ordering."""
+        try:
+            rail = ResponsePromptRail()
+            logger.info("[JiuWenClawDeepAdapter] ResponsePromptRail create success")
+        except Exception as exc:
+            logger.warning("[JiuWenClawDeepAdapter] ResponsePromptRail create failed: %s", exc)
+            rail = None
+        return rail
+
+    @staticmethod
     def _create_sys_operation() -> SysOperation | None:
         """Create a sys operation."""
         try:
@@ -808,7 +847,7 @@ class JiuWenClawDeepAdapter:
             return None
 
     def _build_runtime_prompt_rail(self) -> RuntimePromptRail | None:
-        """Build RuntimePromptRail for per-model-call time/channel injection."""
+        """Build RuntimePromptRail for per-model-call time/channel/runtime injection."""
         try:
             default_channel = (
                 "acp" if self._is_acp_tool_profile(self._instance_overrides)
@@ -817,6 +856,8 @@ class JiuWenClawDeepAdapter:
             rail = RuntimePromptRail(
                 language=self._resolve_runtime_language(),
                 channel=default_channel,
+                agent_name=self._agent_name,
+                model_name=self._resolve_model_name(),
             )
             logger.info("[JiuWenClawDeepAdapter] RuntimePromptRail create success")
         except Exception as exc:
@@ -838,6 +879,7 @@ class JiuWenClawDeepAdapter:
 
         rail_infos = [
             _RailBuildInfo("_runtime_prompt_rail", self._build_runtime_prompt_rail),
+            _RailBuildInfo("_response_prompt_rail", self._build_response_prompt_rail),
             _RailBuildInfo("_stream_event_rail", self._build_stream_event_rail),
             _RailBuildInfo("_task_planning_rail", self._build_task_planning_rail),
             _RailBuildInfo("_security_rail", self._build_security_rail),
@@ -916,7 +958,7 @@ class JiuWenClawDeepAdapter:
             ),
             enable_task_loop=config.get("enable_task_loop", True),
             max_iterations=config.get("max_iterations", 15),
-            subagents=self._build_browser_subagents(model, config),
+            subagents=self._build_preset_subagents(model, config),
             tools=normalized_tool_cards,
             workspace=workspace_obj,
             skills=None,
@@ -1133,7 +1175,7 @@ class JiuWenClawDeepAdapter:
             raise RuntimeError("sys_operation is not available, maybe task is not running")
 
         self._sys_operation = sys_operation
-        browser_subagents = self._build_browser_subagents(model, config)
+        preset_subagents = self._build_preset_subagents(model, config)
         self._instance = create_deep_agent(
             model=model,
             card=agent_card,
@@ -1146,7 +1188,7 @@ class JiuWenClawDeepAdapter:
                 ),
             ),
             tools=tool_cards if tool_cards else [],
-            subagents=browser_subagents,
+            subagents=preset_subagents,
             rails=rails_list if rails_list else [],
             enable_task_loop=config.get("enable_task_loop", True),
             max_iterations=config.get("max_iterations", 15),

@@ -660,12 +660,12 @@ def get_deepagent_heartbeat_path() -> Path:
 
 
 def get_deepagent_agent_md_path() -> Path:
-    """Get the DeepAgent Agent.md file path.
+    """Get the DeepAgent AGENT.md file path.
 
     Returns:
-        Path to Agent.md: ~/.jiuwenclaw/agent/jiuwenclaw_workspace/Agent.md
+        Path to AGENT.md: ~/.jiuwenclaw/agent/jiuwenclaw_workspace/AGENT.md
     """
-    return get_agent_workspace_dir() / "Agent.md"
+    return get_agent_workspace_dir() / "AGENT.md"
 
 
 def get_deepagent_soul_md_path() -> Path:
@@ -678,12 +678,12 @@ def get_deepagent_soul_md_path() -> Path:
 
 
 def get_deepagent_identity_md_path() -> Path:
-    """Get the DeepAgent Identity.md file path.
+    """Get the DeepAgent IDENTITY.md file path.
 
     Returns:
-        Path to Identity.md: ~/.jiuwenclaw/agent/jiuwenclaw_workspace/Identity.md
+        Path to IDENTITY.md: ~/.jiuwenclaw/agent/jiuwenclaw_workspace/IDENTITY.md
     """
-    return get_agent_workspace_dir() / "Identity.md"
+    return get_agent_workspace_dir() / "IDENTITY.md"
 
 
 def get_deepagent_user_md_path() -> Path:
