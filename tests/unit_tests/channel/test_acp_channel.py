@@ -209,6 +209,7 @@ async def test_jsonrpc_session_prompt_emits_updates_and_final_result(monkeypatch
 
     async def _on_message(msg):
         seen.append(msg)
+        # 发送思考过程 (CHAT_DELTA with reasoning)
         await channel.send(
             Message(
                 id=msg.id,
@@ -222,6 +223,7 @@ async def test_jsonrpc_session_prompt_emits_updates_and_final_result(monkeypatch
                 event_type=EventType.CHAT_DELTA,
             )
         )
+        # 发送最终回复 (CHAT_DELTA with text)
         await channel.send(
             Message(
                 id=msg.id,
@@ -232,7 +234,21 @@ async def test_jsonrpc_session_prompt_emits_updates_and_final_result(monkeypatch
                 timestamp=time.time(),
                 ok=True,
                 payload={"content": "final answer"},
-                event_type=EventType.CHAT_FINAL,
+                event_type=EventType.CHAT_DELTA,
+            )
+        )
+        # 发送 is_processing=false 触发最终响应
+        await channel.send(
+            Message(
+                id=msg.id,
+                type="event",
+                channel_id="acp",
+                session_id=msg.session_id,
+                params={},
+                timestamp=time.time(),
+                ok=True,
+                payload={"is_processing": False},
+                event_type=EventType.CHAT_PROCESSING_STATUS,
             )
         )
 
@@ -246,10 +262,11 @@ async def test_jsonrpc_session_prompt_emits_updates_and_final_result(monkeypatch
     assert req.params.get("query") == "hello"
 
     responses = fake_stdout.buffer.json_lines()
-    assert len(responses) == 3
+    assert len(responses) == 4
     thought_update = responses[0].get("params")
-    final_chunk = responses[1].get("params")
-    result = responses[2].get("result")
+    message_chunk = responses[1].get("params")
+    idle_update = responses[2].get("params")
+    result = responses[3].get("result")
 
     assert isinstance(thought_update, dict)
     assert thought_update.get("sessionId") == "sess-2"
@@ -257,13 +274,19 @@ async def test_jsonrpc_session_prompt_emits_updates_and_final_result(monkeypatch
     assert isinstance(update_one, dict)
     assert update_one.get("sessionUpdate") == "agent_thought_chunk"
 
-    assert isinstance(final_chunk, dict)
-    update_two = final_chunk.get("update")
+    assert isinstance(message_chunk, dict)
+    update_two = message_chunk.get("update")
     assert isinstance(update_two, dict)
     assert update_two.get("sessionUpdate") == "agent_message_chunk"
 
+    assert isinstance(idle_update, dict)
+    update_three = idle_update.get("update")
+    assert isinstance(update_three, dict)
+    assert update_three.get("sessionUpdate") == "session_info_update"
+    assert update_three.get("status") == "idle"
+
     assert isinstance(result, dict)
-    assert responses[2].get("id") == 3
+    assert responses[3].get("id") == 3
     assert result.get("stopReason") == "end_turn"
 
 
@@ -294,6 +317,7 @@ async def test_jsonrpc_session_prompt_accepts_text_param(monkeypatch):
 
     async def _on_message(msg):
         seen.append(msg)
+        # 发送最终回复 (CHAT_DELTA)
         await channel.send(
             Message(
                 id=msg.id,
@@ -304,7 +328,21 @@ async def test_jsonrpc_session_prompt_accepts_text_param(monkeypatch):
                 timestamp=time.time(),
                 ok=True,
                 payload={"content": "final answer"},
-                event_type=EventType.CHAT_FINAL,
+                event_type=EventType.CHAT_DELTA,
+            )
+        )
+        # 发送 is_processing=false 触发最终响应
+        await channel.send(
+            Message(
+                id=msg.id,
+                type="event",
+                channel_id="acp",
+                session_id=msg.session_id,
+                params={},
+                timestamp=time.time(),
+                ok=True,
+                payload={"is_processing": False},
+                event_type=EventType.CHAT_PROCESSING_STATUS,
             )
         )
 
@@ -317,11 +355,25 @@ async def test_jsonrpc_session_prompt_accepts_text_param(monkeypatch):
     assert seen[0].params.get("query") == "hello from text"
 
     responses = fake_stdout.buffer.json_lines()
-    assert responses[-1] == {
-        "jsonrpc": "2.0",
-        "id": 301,
-        "result": {"stopReason": "end_turn"},
-    }
+    assert len(responses) == 3
+    message_chunk = responses[0].get("params")
+    idle_update = responses[1].get("params")
+    result = responses[2].get("result")
+
+    assert isinstance(message_chunk, dict)
+    update_one = message_chunk.get("update")
+    assert isinstance(update_one, dict)
+    assert update_one.get("sessionUpdate") == "agent_message_chunk"
+
+    assert isinstance(idle_update, dict)
+    update_two = idle_update.get("update")
+    assert isinstance(update_two, dict)
+    assert update_two.get("sessionUpdate") == "session_info_update"
+    assert update_two.get("status") == "idle"
+
+    assert isinstance(result, dict)
+    assert responses[2].get("id") == 301
+    assert result.get("stopReason") == "end_turn"
 
 
 @pytest.mark.asyncio
@@ -363,6 +415,7 @@ async def test_jsonrpc_session_prompt_merges_session_context(monkeypatch):
 
     async def _on_message(msg):
         seen.append(msg)
+        # 发送最终回复 (CHAT_DELTA)
         await channel.send(
             Message(
                 id=msg.id,
@@ -373,7 +426,21 @@ async def test_jsonrpc_session_prompt_merges_session_context(monkeypatch):
                 timestamp=time.time(),
                 ok=True,
                 payload={"content": "done"},
-                event_type=EventType.CHAT_FINAL,
+                event_type=EventType.CHAT_DELTA,
+            )
+        )
+        # 发送 is_processing=false 触发最终响应
+        await channel.send(
+            Message(
+                id=msg.id,
+                type="event",
+                channel_id="acp",
+                session_id=msg.session_id,
+                params={},
+                timestamp=time.time(),
+                ok=True,
+                payload={"is_processing": False},
+                event_type=EventType.CHAT_PROCESSING_STATUS,
             )
         )
 
@@ -433,7 +500,13 @@ async def test_jsonrpc_session_prompt_auto_finalizes_after_idle(monkeypatch):
 
     responses = fake_stdout.buffer.json_lines()
     assert len(responses) == 2
+    # 第一个响应是 agent_message_chunk
     assert responses[0].get("method") == "session/update"
+    message_chunk = responses[0].get("params")
+    assert isinstance(message_chunk, dict)
+    assert message_chunk.get("update").get("sessionUpdate") == "agent_message_chunk"
+    
+    # 第二个响应是 idle finalize 触发的 end_turn
     result = responses[1].get("result")
     assert isinstance(result, dict)
     assert responses[1].get("id") == 12
@@ -490,6 +563,7 @@ async def test_jsonrpc_session_cancel_finalizes_active_prompt(monkeypatch):
                     event_type=EventType.CHAT_DELTA,
                 )
             )
+            # 注意：cancel 会立即触发 finalize，不需要等待 is_processing=false
 
     channel.on_message(_on_message)
     await channel.start()
@@ -595,6 +669,7 @@ async def test_jsonrpc_session_prompt_emits_tool_call_update(monkeypatch):
     monkeypatch.setattr("jiuwenclaw.channel.acp_channel._ACP_STDOUT", fake_stdout)
 
     async def _on_message(msg):
+        # 发送工具调用
         await channel.send(
             Message(
                 id=msg.id,
@@ -614,6 +689,7 @@ async def test_jsonrpc_session_prompt_emits_tool_call_update(monkeypatch):
                 event_type=EventType.CHAT_TOOL_CALL,
             )
         )
+        # 发送最终回复 (CHAT_DELTA)
         await channel.send(
             Message(
                 id=msg.id,
@@ -624,7 +700,21 @@ async def test_jsonrpc_session_prompt_emits_tool_call_update(monkeypatch):
                 timestamp=time.time(),
                 ok=True,
                 payload={"content": "done"},
-                event_type=EventType.CHAT_FINAL,
+                event_type=EventType.CHAT_DELTA,
+            )
+        )
+        # 发送 is_processing=false 触发最终响应
+        await channel.send(
+            Message(
+                id=msg.id,
+                type="event",
+                channel_id="acp",
+                session_id=msg.session_id,
+                params={},
+                timestamp=time.time(),
+                ok=True,
+                payload={"is_processing": False},
+                event_type=EventType.CHAT_PROCESSING_STATUS,
             )
         )
 
@@ -632,7 +722,7 @@ async def test_jsonrpc_session_prompt_emits_tool_call_update(monkeypatch):
     await channel.start()
 
     responses = fake_stdout.buffer.json_lines()
-    assert len(responses) == 3
+    assert len(responses) == 4
     assert responses[0]["params"]["update"] == {
         "sessionUpdate": "tool_call",
         "toolCall": {
@@ -641,6 +731,15 @@ async def test_jsonrpc_session_prompt_emits_tool_call_update(monkeypatch):
             "arguments": {"path": "demo.txt"},
         },
     }
+    
+    message_chunk = responses[1]["params"]["update"]
+    assert message_chunk["sessionUpdate"] == "agent_message_chunk"
+    
+    idle_update = responses[2]["params"]["update"]
+    assert idle_update["sessionUpdate"] == "session_info_update"
+    assert idle_update["status"] == "idle"
+    
+    assert responses[3]["result"]["stopReason"] == "end_turn"
 
 
 @pytest.mark.asyncio
@@ -668,6 +767,7 @@ async def test_jsonrpc_session_prompt_emits_tool_result_update(monkeypatch):
     monkeypatch.setattr("jiuwenclaw.channel.acp_channel._ACP_STDOUT", fake_stdout)
 
     async def _on_message(msg):
+        # 发送工具结果
         await channel.send(
             Message(
                 id=msg.id,
@@ -685,6 +785,7 @@ async def test_jsonrpc_session_prompt_emits_tool_result_update(monkeypatch):
                 event_type=EventType.CHAT_TOOL_RESULT,
             )
         )
+        # 发送最终回复 (CHAT_DELTA)
         await channel.send(
             Message(
                 id=msg.id,
@@ -695,7 +796,21 @@ async def test_jsonrpc_session_prompt_emits_tool_result_update(monkeypatch):
                 timestamp=time.time(),
                 ok=True,
                 payload={"content": "done"},
-                event_type=EventType.CHAT_FINAL,
+                event_type=EventType.CHAT_DELTA,
+            )
+        )
+        # 发送 is_processing=false 触发最终响应
+        await channel.send(
+            Message(
+                id=msg.id,
+                type="event",
+                channel_id="acp",
+                session_id=msg.session_id,
+                params={},
+                timestamp=time.time(),
+                ok=True,
+                payload={"is_processing": False},
+                event_type=EventType.CHAT_PROCESSING_STATUS,
             )
         )
 
@@ -703,13 +818,22 @@ async def test_jsonrpc_session_prompt_emits_tool_result_update(monkeypatch):
     await channel.start()
 
     responses = fake_stdout.buffer.json_lines()
-    assert len(responses) == 3
+    assert len(responses) == 4
     assert responses[0]["params"]["update"] == {
         "sessionUpdate": "tool_call_update",
         "toolCallId": "tool-call-2",
         "toolName": "read_file",
         "result": "file contents",
     }
+    
+    message_chunk = responses[1]["params"]["update"]
+    assert message_chunk["sessionUpdate"] == "agent_message_chunk"
+    
+    idle_update = responses[2]["params"]["update"]
+    assert idle_update["sessionUpdate"] == "session_info_update"
+    assert idle_update["status"] == "idle"
+    
+    assert responses[3]["result"]["stopReason"] == "end_turn"
 
 
 @pytest.mark.asyncio
@@ -737,6 +861,7 @@ async def test_jsonrpc_session_prompt_emits_plan_update(monkeypatch):
     monkeypatch.setattr("jiuwenclaw.channel.acp_channel._ACP_STDOUT", fake_stdout)
 
     async def _on_message(msg):
+        # 发送子任务更新
         await channel.send(
             Message(
                 id=msg.id,
@@ -758,6 +883,7 @@ async def test_jsonrpc_session_prompt_emits_plan_update(monkeypatch):
                 event_type=EventType.CHAT_SUBTASK_UPDATE,
             )
         )
+        # 发送最终回复 (CHAT_DELTA)
         await channel.send(
             Message(
                 id=msg.id,
@@ -768,7 +894,21 @@ async def test_jsonrpc_session_prompt_emits_plan_update(monkeypatch):
                 timestamp=time.time(),
                 ok=True,
                 payload={"content": "done"},
-                event_type=EventType.CHAT_FINAL,
+                event_type=EventType.CHAT_DELTA,
+            )
+        )
+        # 发送 is_processing=false 触发最终响应
+        await channel.send(
+            Message(
+                id=msg.id,
+                type="event",
+                channel_id="acp",
+                session_id=msg.session_id,
+                params={},
+                timestamp=time.time(),
+                ok=True,
+                payload={"is_processing": False},
+                event_type=EventType.CHAT_PROCESSING_STATUS,
             )
         )
 
@@ -776,11 +916,20 @@ async def test_jsonrpc_session_prompt_emits_plan_update(monkeypatch):
     await channel.start()
 
     responses = fake_stdout.buffer.json_lines()
-    assert len(responses) == 3
+    assert len(responses) == 4
     update = responses[0]["params"]["update"]
     assert update["sessionUpdate"] == "plan"
     assert update["plan"]["description"] == "并行执行两个任务"
     assert update["plan"]["is_parallel"] is True
+    
+    message_chunk = responses[1]["params"]["update"]
+    assert message_chunk["sessionUpdate"] == "agent_message_chunk"
+    
+    idle_update = responses[2]["params"]["update"]
+    assert idle_update["sessionUpdate"] == "session_info_update"
+    assert idle_update["status"] == "idle"
+    
+    assert responses[3]["result"]["stopReason"] == "end_turn"
 
 
 @pytest.mark.asyncio
@@ -876,6 +1025,7 @@ async def test_jsonrpc_session_prompt_emits_usage_update_before_result(monkeypat
     monkeypatch.setattr("jiuwenclaw.channel.acp_channel._ACP_STDOUT", fake_stdout)
 
     async def _on_message(msg):
+        # 发送 usage 信息 (通过 CHAT_DELTA 携带 usage)
         await channel.send(
             Message(
                 id=msg.id,
@@ -892,7 +1042,21 @@ async def test_jsonrpc_session_prompt_emits_usage_update_before_result(monkeypat
                         "outputTokens": 34,
                     },
                 },
-                event_type=EventType.CHAT_FINAL,
+                event_type=EventType.CHAT_DELTA,
+            )
+        )
+        # 发送 is_processing=false 触发最终响应
+        await channel.send(
+            Message(
+                id=msg.id,
+                type="event",
+                channel_id="acp",
+                session_id=msg.session_id,
+                params={},
+                timestamp=time.time(),
+                ok=True,
+                payload={"is_processing": False},
+                event_type=EventType.CHAT_PROCESSING_STATUS,
             )
         )
 
@@ -900,7 +1064,7 @@ async def test_jsonrpc_session_prompt_emits_usage_update_before_result(monkeypat
     await channel.start()
 
     responses = fake_stdout.buffer.json_lines()
-    assert len(responses) == 3
+    assert len(responses) == 4
     assert responses[0]["params"]["update"]["sessionUpdate"] == "agent_message_chunk"
     assert responses[1]["params"]["update"] == {
         "sessionUpdate": "usage_update",
@@ -909,7 +1073,12 @@ async def test_jsonrpc_session_prompt_emits_usage_update_before_result(monkeypat
             "outputTokens": 34,
         },
     }
-    assert responses[2] == {
+    
+    idle_update = responses[2]["params"]["update"]
+    assert idle_update["sessionUpdate"] == "session_info_update"
+    assert idle_update["status"] == "idle"
+    
+    assert responses[3] == {
         "jsonrpc": "2.0",
         "id": 34,
         "result": {"stopReason": "end_turn"},

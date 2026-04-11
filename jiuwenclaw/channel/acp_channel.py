@@ -690,6 +690,16 @@ class AcpChannel(BaseChannel):
             if update is None:
                 return False
             await self._write_acp_session_update(session_id, update)
+            # 如果 CHAT_DELTA 携带 usage，也发送 usage_update
+            usage = payload.get("usage")
+            if isinstance(usage, dict) and usage:
+                await self._write_acp_session_update(
+                    session_id,
+                    {
+                        "sessionUpdate": "usage_update",
+                        "usage": dict(usage),
+                    },
+                )
             return False
 
         if msg.type == "event" and msg.event_type in (
@@ -708,21 +718,31 @@ class AcpChannel(BaseChannel):
             return False
 
         if msg.type == "event" and msg.event_type == EventType.CHAT_FINAL:
-            task = ctx.idle_finalize_task
-            if task is not None:
-                task.cancel()
-                ctx.idle_finalize_task = None
+            # ACP 兜底：不要立即发送 end_turn，因为 AgentServer 可能还会发送更多事件
+            # 只记录内容，等待 is_processing=false 时再发送最终响应
             content = str(payload.get("content", "") or "")
-            if content and not ctx.assistant_message_id:
-                ctx.assistant_message_id = f"msg_{uuid.uuid4().hex[:12]}"
+            if not content:
+                return False
+            # 检查 payload.event_type 是否是 reasoning，决定使用哪种 sessionUpdate 类型
+            payload_event_type = str(payload.get("event_type") or "")
+            is_reasoning = payload_event_type == "chat.reasoning"
+            if is_reasoning:
+                # reasoning 内容作为 thought 发送
+                if not ctx.thought_message_id:
+                    ctx.thought_message_id = f"thought_{uuid.uuid4().hex[:12]}"
                 await self._write_acp_session_update(
                     session_id,
                     {
-                        "sessionUpdate": "agent_message_chunk",
-                        "messageId": ctx.assistant_message_id,
+                        "sessionUpdate": "agent_thought_chunk",
+                        "messageId": ctx.thought_message_id,
                         "content": {"type": "text", "text": content},
                     },
                 )
+            else:
+                # chat.final 内容不发送 agent_message_chunk，因为 chat.delta 已经发送过了
+                # 只记录 messageId 用于后续可能的引用
+                if not ctx.assistant_message_id:
+                    ctx.assistant_message_id = f"msg_{uuid.uuid4().hex[:12]}"
             usage = payload.get("usage")
             if isinstance(usage, dict) and usage:
                 await self._write_acp_session_update(
@@ -732,13 +752,8 @@ class AcpChannel(BaseChannel):
                         "usage": dict(usage),
                     },
                 )
-            await self._write_jsonrpc_result(
-                ctx.jsonrpc_id,
-                {
-                    "stopReason": "end_turn",
-                },
-            )
-            return True
+            # 不发送 end_turn，等待 is_processing=false 时再发送
+            return False
 
         if msg.type == "event" and msg.event_type == EventType.CHAT_ERROR:
             task = ctx.idle_finalize_task
@@ -828,7 +843,14 @@ class AcpChannel(BaseChannel):
             if not text:
                 return None
             source_chunk_type = str(payload.get("source_chunk_type") or "")
-            if source_chunk_type == "llm_reasoning":
+            # ACP 兜底：检查 payload 中的原始 event_type，如果是 chat.reasoning 则作为 thought 处理
+            payload_event_type = str(payload.get("event_type") or "")
+            is_reasoning = (
+                source_chunk_type == "llm_reasoning"
+                or payload_event_type == "chat.reasoning"
+            )
+
+            if is_reasoning:
                 if not ctx.thought_message_id:
                     ctx.thought_message_id = f"thought_{uuid.uuid4().hex[:12]}"
                 return {
@@ -1149,6 +1171,10 @@ class AcpChannel(BaseChannel):
         for item in EventType:
             if item.value == event_name:
                 return item
+        # ACP 兜底：AgentServer 会发送 chat.reasoning 事件，但 EventType 枚举中没有
+        # 这里将其映射为 CHAT_DELTA，让后续处理能正确识别
+        if event_name == "chat.reasoning":
+            return EventType.CHAT_DELTA
         return None
 
 
