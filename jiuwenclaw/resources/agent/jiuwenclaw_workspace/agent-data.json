@@ -198,11 +198,106 @@
       "isMarkdown": false
     }
   ],
-  "jiuwenclaw_workspace/skills/skill-creation": [
+  "jiuwenclaw_workspace/skills/skill-creator": [
+    {
+      "name": "LICENSE.txt",
+      "path": "agent/jiuwenclaw_workspace/skills/skill-creator/LICENSE.txt",
+      "isMarkdown": false
+    },
     {
       "name": "SKILL.md",
-      "path": "agent/jiuwenclaw_workspace/skills/skill-creation/SKILL.md",
+      "path": "agent/jiuwenclaw_workspace/skills/skill-creator/SKILL.md",
       "isMarkdown": true
+    }
+  ],
+  "jiuwenclaw_workspace/skills/skill-creator/agents": [
+    {
+      "name": "analyzer.md",
+      "path": "agent/jiuwenclaw_workspace/skills/skill-creator/agents/analyzer.md",
+      "isMarkdown": true
+    },
+    {
+      "name": "comparator.md",
+      "path": "agent/jiuwenclaw_workspace/skills/skill-creator/agents/comparator.md",
+      "isMarkdown": true
+    },
+    {
+      "name": "grader.md",
+      "path": "agent/jiuwenclaw_workspace/skills/skill-creator/agents/grader.md",
+      "isMarkdown": true
+    }
+  ],
+  "jiuwenclaw_workspace/skills/skill-creator/assets": [
+    {
+      "name": "eval_review.html",
+      "path": "agent/jiuwenclaw_workspace/skills/skill-creator/assets/eval_review.html",
+      "isMarkdown": false
+    }
+  ],
+  "jiuwenclaw_workspace/skills/skill-creator/eval-viewer": [
+    {
+      "name": "generate_review.py",
+      "path": "agent/jiuwenclaw_workspace/skills/skill-creator/eval-viewer/generate_review.py",
+      "isMarkdown": false
+    },
+    {
+      "name": "viewer.html",
+      "path": "agent/jiuwenclaw_workspace/skills/skill-creator/eval-viewer/viewer.html",
+      "isMarkdown": false
+    }
+  ],
+  "jiuwenclaw_workspace/skills/skill-creator/references": [
+    {
+      "name": "schemas.md",
+      "path": "agent/jiuwenclaw_workspace/skills/skill-creator/references/schemas.md",
+      "isMarkdown": true
+    }
+  ],
+  "jiuwenclaw_workspace/skills/skill-creator/scripts": [
+    {
+      "name": "__init__.py",
+      "path": "agent/jiuwenclaw_workspace/skills/skill-creator/scripts/__init__.py",
+      "isMarkdown": false
+    },
+    {
+      "name": "aggregate_benchmark.py",
+      "path": "agent/jiuwenclaw_workspace/skills/skill-creator/scripts/aggregate_benchmark.py",
+      "isMarkdown": false
+    },
+    {
+      "name": "generate_report.py",
+      "path": "agent/jiuwenclaw_workspace/skills/skill-creator/scripts/generate_report.py",
+      "isMarkdown": false
+    },
+    {
+      "name": "improve_description.py",
+      "path": "agent/jiuwenclaw_workspace/skills/skill-creator/scripts/improve_description.py",
+      "isMarkdown": false
+    },
+    {
+      "name": "package_skill.py",
+      "path": "agent/jiuwenclaw_workspace/skills/skill-creator/scripts/package_skill.py",
+      "isMarkdown": false
+    },
+    {
+      "name": "quick_validate.py",
+      "path": "agent/jiuwenclaw_workspace/skills/skill-creator/scripts/quick_validate.py",
+      "isMarkdown": false
+    },
+    {
+      "name": "run_eval.py",
+      "path": "agent/jiuwenclaw_workspace/skills/skill-creator/scripts/run_eval.py",
+      "isMarkdown": false
+    },
+    {
+      "name": "run_loop.py",
+      "path": "agent/jiuwenclaw_workspace/skills/skill-creator/scripts/run_loop.py",
+      "isMarkdown": false
+    },
+    {
+      "name": "utils.py",
+      "path": "agent/jiuwenclaw_workspace/skills/skill-creator/scripts/utils.py",
+      "isMarkdown": false
     }
   ]
 }
