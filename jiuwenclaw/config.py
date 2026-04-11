@@ -201,6 +201,18 @@ def update_context_engine_enabled_in_config(value: bool) -> None:
     _dump_yaml_round_trip(_CONFIG_YAML_PATH, data)
 
 
+def update_kv_cache_affinity_enabled_in_config(value: bool) -> None:
+    """更新 react.context_engine_config.enable_kv_cache_release（算力/KV 亲和释放）并写回。"""
+    data = _load_yaml_round_trip(_CONFIG_YAML_PATH)
+    if "react" not in data:
+        data["react"] = {}
+    react = data["react"]
+    if "context_engine_config" not in react:
+        react["context_engine_config"] = {}
+    react["context_engine_config"]["enable_kv_cache_release"] = value
+    _dump_yaml_round_trip(_CONFIG_YAML_PATH, data)
+
+
 def update_permissions_enabled_in_config(value: bool) -> None:
     """更新 permissions.enabled（工具安全护栏开关）并写回。"""
     data = _load_yaml_round_trip(_CONFIG_YAML_PATH)

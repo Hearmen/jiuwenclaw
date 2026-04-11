@@ -45,7 +45,7 @@ function classifyKey(key: string): string {
   if (EMAIL_KEYS.has(key)) return "email";
   if (EVOLUTION_KEYS.has(key)) return "evolution";
   if (MEMORY_KEYS.has(key)) return "memory";
-  if (key === "context_engine_enabled") return "context_engine";
+  if (key === "context_engine_enabled" || key === "kv_cache_affinity_enabled") return "context_engine";
   if (key === "permissions_enabled") return "permissions";
   if (key.startsWith("feishu")) return "feishu";
   return "other";
@@ -148,7 +148,13 @@ function getNestedModelStyle(tag: string): string {
 }
 
 function isBooleanKey(key: string): boolean {
-  return EVOLUTION_KEYS.has(key) || key === "context_engine_enabled" || key === "permissions_enabled" || key === "memory_forbidden_enabled";
+  return (
+    EVOLUTION_KEYS.has(key) ||
+    key === "context_engine_enabled" ||
+    key === "kv_cache_affinity_enabled" ||
+    key === "permissions_enabled" ||
+    key === "memory_forbidden_enabled"
+  );
 }
 
 function parseBoolValue(value: string): boolean {
@@ -159,6 +165,7 @@ function getBooleanKeyLabel(key: string, t: (key: string) => string): string {
   const labels: Record<string, string> = {
     evolution_auto_scan: t('config.booleanLabels.evolutionAutoScan'),
     context_engine_enabled: t('config.booleanLabels.enabled'),
+    kv_cache_affinity_enabled: t('config.booleanLabels.kvCacheAffinity'),
     permissions_enabled: t('config.booleanLabels.enabled'),
     memory_forbidden_enabled: t('config.booleanLabels.enabled'),
   };
@@ -355,6 +362,7 @@ function GroupSection({
                             <>
                               <option value="DashScope">DashScope</option>
                               <option value="SiliconFlow">SiliconFlow</option>
+                              <option value="InferenceAffinity">InferenceAffinity</option>
                             </>
                           )}
                         </select>

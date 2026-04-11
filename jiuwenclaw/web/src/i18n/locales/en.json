@@ -401,7 +401,8 @@
     },
     "booleanLabels": {
       "evolutionAutoScan": "Auto-detect evolution signals",
-      "enabled": "Enable"
+      "enabled": "Enable",
+      "kvCacheAffinity": "Compute affinity (KV cache release)"
     },
     "errors": {
       "requiredModelFields": "These model fields are required: {{fields}}. Complete them before saving and restarting.",

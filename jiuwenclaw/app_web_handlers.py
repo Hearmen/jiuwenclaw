@@ -27,6 +27,7 @@ from jiuwenclaw.config import (
     update_browser_in_config,
     update_preferred_language_in_config,
     update_context_engine_enabled_in_config,
+    update_kv_cache_affinity_enabled_in_config,
     update_permissions_enabled_in_config,
     update_memory_forbidden_enabled_in_config,
     update_memory_forbidden_description_in_config,
@@ -179,6 +180,7 @@ CONFIG_KEYS = tuple(_CONFIG_SET_ENV_MAP.keys())
 # 来自 config.yaml 的配置项（前端 param 名 -> config.yaml 路径）
 _CONFIG_YAML_KEYS = frozenset({
     "context_engine_enabled",
+    "kv_cache_affinity_enabled",
     "permissions_enabled",
     "memory_forbidden_enabled",
     "memory_forbidden_description",
@@ -316,6 +318,9 @@ def _register_web_handlers(bind: WebHandlersBindParams) -> None:
                     payload[key] = ExtensionRegistry.get_instance().get_crypto_provider().decrypt(val)
             ctx_cfg = (raw.get("react") or {}).get("context_engine_config") or {}
             payload["context_engine_enabled"] = "true" if ctx_cfg.get("enabled", False) else "false"
+            payload["kv_cache_affinity_enabled"] = (
+                "true" if ctx_cfg.get("enable_kv_cache_release", False) else "false"
+            )
             perm_cfg = raw.get("permissions") or {}
             payload["permissions_enabled"] = "true" if perm_cfg.get("enabled", False) else "false"
             memory_cfg = (raw.get("memory") or {}).get("forbidden_memory_definition") or {}
@@ -325,6 +330,7 @@ def _register_web_handlers(bind: WebHandlersBindParams) -> None:
             payload["memory_forbidden_description"] = memory_desc.get(preferred_lang, memory_desc.get("zh", ""))
         except Exception:  # noqa: BLE001
             payload.setdefault("context_engine_enabled", "false")
+            payload.setdefault("kv_cache_affinity_enabled", "false")
             payload.setdefault("permissions_enabled", "false")
             payload.setdefault("memory_forbidden_enabled", "false")
             payload.setdefault("memory_forbidden_description", "")
@@ -402,6 +408,8 @@ def _register_web_handlers(bind: WebHandlersBindParams) -> None:
             try:
                 if param_key == "context_engine_enabled":
                     update_context_engine_enabled_in_config(parsed)
+                elif param_key == "kv_cache_affinity_enabled":
+                    update_kv_cache_affinity_enabled_in_config(parsed)
                 elif param_key == "permissions_enabled":
                     update_permissions_enabled_in_config(parsed)
                 elif param_key == "memory_forbidden_enabled":

@@ -17,6 +17,7 @@ from dataclasses import dataclass
 from typing import Any, AsyncIterator, Callable, List, Tuple
 
 from dotenv import load_dotenv
+from openjiuwen.core.context_engine.schema.config import ContextEngineConfig
 from openjiuwen.core.foundation.llm import ModelRequestConfig, ModelClientConfig, Model
 from openjiuwen.core.foundation.store.base_embedding import EmbeddingConfig
 from openjiuwen.core.foundation.tool import ToolCard
@@ -166,6 +167,20 @@ def _parse_int(value: Any, default: int) -> int:
         return int(value)
     except (TypeError, ValueError):
         return default
+
+
+def _deep_agent_context_engine_config(react_cfg: dict[str, Any] | None) -> ContextEngineConfig:
+    """供 ``create_deep_agent(..., context_engine_config=...)`` 使用（与 agent-core 集成测试方法二一致）。
+
+    仅根据 ``react.context_engine_config.enable_kv_cache_release`` 切换亲和开关；
+    其余字段与 ``ReActAgentConfig`` 默认 ``context_engine_config`` 一致。
+    """
+    react_cfg = react_cfg or {}
+    cec = react_cfg.get("context_engine_config")
+    enable_kv = bool(cec.get("enable_kv_cache_release", False)) if isinstance(cec, dict) else False
+    return ReActAgentConfig().context_engine_config.model_copy(
+        update={"enable_kv_cache_release": enable_kv}
+    )
 
 
 class _RuntimeCronToolContext:
@@ -1026,6 +1041,7 @@ class JiuWenClawDeepAdapter:
                     else self._resolve_prompt_channel()
                 ),
             ),
+            context_engine_config=_deep_agent_context_engine_config(config),
             enable_task_loop=config.get("enable_task_loop", True),
             max_iterations=config.get("max_iterations", 15),
             subagents=self._build_configured_subagents(model, config, config_base),
@@ -1260,6 +1276,7 @@ class JiuWenClawDeepAdapter:
             tools=tool_cards if tool_cards else [],
             subagents=configured_subagents,
             rails=rails_list if rails_list else [],
+            context_engine_config=_deep_agent_context_engine_config(config),
             enable_task_loop=config.get("enable_task_loop", True),
             max_iterations=config.get("max_iterations", 15),
             workspace=Workspace(

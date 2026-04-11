@@ -400,7 +400,8 @@
     },
     "booleanLabels": {
       "evolutionAutoScan": "自动检测可演进信号",
-      "enabled": "启用"
+      "enabled": "启用",
+      "kvCacheAffinity": "算力亲和（KV 释放）"
     },
     "errors": {
       "requiredModelFields": "模型配置为必填：{{fields}}。请完整填写后再保存并重启。",
