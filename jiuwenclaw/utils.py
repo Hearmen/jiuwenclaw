@@ -386,6 +386,11 @@ def prepare_workspace(overwrite: bool = True, preferred_language: Optional[str] 
     if overwrite or not config_yaml_dest.exists():
         shutil.copy2(config_yaml_src, config_yaml_dest)
 
+    builtin_rules_src = resources_dir / "builtin_rules.yaml"
+    builtin_rules_dest = config_dest_dir / "builtin_rules.yaml"
+    if builtin_rules_src.is_file() and (overwrite or not builtin_rules_dest.exists()):
+        shutil.copy2(builtin_rules_src, builtin_rules_dest)
+
     resolved_lang = _resolve_preferred_language(config_yaml_dest, preferred_language)
 
     # ----- 内置模板根目录：<package>/resources（含 agent/、skills_state.json）-----
@@ -497,6 +502,7 @@ def init_user_workspace(overwrite: bool = True) -> Path | Literal["cancelled"]:
 
     上述内容会被复制到:
     - ~/.jiuwenclaw/config/config.yaml（含 preferred_language）
+    - ~/.jiuwenclaw/config/builtin_rules.yaml（内置 shell 安全规则模板，与 config 同目录）
     - ~/.jiuwenclaw/config/.env
     - ~/.jiuwenclaw/agent/...
 

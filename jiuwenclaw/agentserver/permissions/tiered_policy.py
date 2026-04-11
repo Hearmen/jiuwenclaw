@@ -1,13 +1,16 @@
 # Copyright (c) Huawei Technologies Co., Ltd. 2026. All rights reserved.
 
-"""v_cc 权限模型：整工具 + rules(severity) + defaults，命中项取最严."""
+"""分层工具权限策略（tiered_policy）：内置参数规则 > 用户参数规则；整工具存在则不用默认。"""
 
 from __future__ import annotations
 
 import logging
 import re
 import sys
+from pathlib import Path
 from typing import Any
+
+import yaml
 
 from jiuwenclaw.agentserver.permissions.models import PermissionLevel
 from jiuwenclaw.agentserver.permissions.patterns import match_path, match_wildcard
@@ -15,6 +18,9 @@ from jiuwenclaw.agentserver.permissions.patterns import match_path, match_wildca
 logger = logging.getLogger(__name__)
 
 _STRICT_ORDER = {PermissionLevel.DENY: 0, PermissionLevel.ASK: 1, PermissionLevel.ALLOW: 2}
+
+# ``permissions.schema`` / ``version`` 识别为分层策略（含旧别名）
+_TIERED_POLICY_SCHEMA_KEYS = frozenset({"tiered_policy", "v_cc", "v4.2"})
 
 # 规则内 tools 必须同类（与产品设计一致）
 _SHELL_TOOLS = frozenset({"bash", "mcp_exec_command"})
@@ -32,14 +38,80 @@ _PATH_ARG_KEYS = frozenset({
     "source_path", "dest_path", "directory", "dir",
 })
 
+# (resolved_path_str, mtime, rules)；文件变更后 mtime 变化会重新加载
+_BUILTIN_RULES_CACHE: tuple[str, float, list[dict[str, Any]]] | None = None
 
-def permissions_schema_is_v_cc(config: dict[str, Any]) -> bool:
-    """``permissions.schema`` / ``permissions.version`` 为 v_cc（或兼容 v4.2）时启用."""
+_MR = "tiered_policy"
+
+
+def _package_builtin_rules_path() -> Path:
+    return Path(__file__).resolve().parent.parent.parent / "resources" / "builtin_rules.yaml"
+
+
+def _resolve_builtin_rules_yaml_path() -> Path | None:
+    """优先用户配置目录（与 ``config.yaml`` 同目录）下的 ``builtin_rules.yaml``，否则包内 resources。"""
+    from jiuwenclaw.utils import get_config_dir
+
+    user_path = get_config_dir() / "builtin_rules.yaml"
+    if user_path.is_file():
+        return user_path
+    pkg_path = _package_builtin_rules_path()
+    if pkg_path.is_file():
+        return pkg_path
+    logger.warning(
+        "builtin_rules.yaml not found under %s or %s",
+        user_path,
+        pkg_path,
+    )
+    return None
+
+
+def get_builtin_security_rules() -> list[dict[str, Any]]:
+    """内置安全规则列表（进程内按路径+mtime 缓存）。
+
+    加载顺序：``get_config_dir()/builtin_rules.yaml`` → 包内 ``resources/builtin_rules.yaml``。
+    """
+    global _BUILTIN_RULES_CACHE
+    path = _resolve_builtin_rules_yaml_path()
+    if path is None:
+        return []
+    try:
+        mtime = path.stat().st_mtime
+    except OSError:
+        mtime = -1.0
+    key = str(path.resolve())
+    if _BUILTIN_RULES_CACHE is not None:
+        ck, mt, rules = _BUILTIN_RULES_CACHE
+        if ck == key and mt == mtime:
+            return rules
+    with path.open(encoding="utf-8") as f:
+        data = yaml.safe_load(f) or {}
+    rules = [r for r in (data.get("rules") or []) if isinstance(r, dict)]
+    _BUILTIN_RULES_CACHE = (key, mtime, rules)
+    return rules
+
+
+def collect_builtin_permission_rail_tool_names() -> list[str]:
+    """内置规则中出现的工具名（供护栏合并）。"""
+    names: set[str] = set()
+    for rule in get_builtin_security_rules():
+        raw_tools = rule.get("tools") or []
+        if isinstance(raw_tools, str):
+            raw_tools = [raw_tools]
+        if isinstance(raw_tools, list):
+            for item in raw_tools:
+                if isinstance(item, str) and item.strip():
+                    names.add(item.strip())
+    return sorted(names)
+
+
+def permissions_schema_is_tiered_policy(config: dict[str, Any]) -> bool:
+    """``permissions.schema`` / ``permissions.version`` 为 tiered_policy（或兼容 v_cc / v4.2）时启用."""
     raw = config.get("schema") or config.get("version")
     if not isinstance(raw, str):
         return False
     key = raw.strip().lower().replace(" ", "")
-    return key in ("v_cc", "v4.2")
+    return key in _TIERED_POLICY_SCHEMA_KEYS
 
 
 def _parse_level(value: str) -> PermissionLevel:
@@ -66,7 +138,7 @@ def severity_to_decision(severity: str, permission_mode: str) -> PermissionLevel
         return PermissionLevel.ASK
     if sev == "CRITICAL":
         return PermissionLevel.DENY if mode == "strict" else PermissionLevel.ASK
-    logger.warning("[v_cc] unknown severity %r, treating as HIGH", severity)
+    logger.warning("unknown severity %r, treating as HIGH", severity)
     return PermissionLevel.ASK
 
 
@@ -106,7 +178,7 @@ def _shell_pattern_matches(pattern: str, command: str) -> bool:
         try:
             return bool(re.search(expr, command, flags))
         except re.error:
-            logger.warning("[v_cc] invalid shell regex %r", expr)
+            logger.warning("invalid shell regex %r", expr)
             return False
     glob_chars = frozenset("*?[")
     if any(ch in p for ch in glob_chars):
@@ -124,7 +196,7 @@ def _path_pattern_matches(pattern: str, value: str) -> bool:
         try:
             return bool(re.search(expr, value.replace("\\", "/"), flags))
         except re.error:
-            logger.warning("[v_cc] invalid path regex %r", expr)
+            logger.warning("invalid path regex %r", expr)
             return False
     return match_path(p, value)
 
@@ -148,7 +220,47 @@ def _iter_path_strings(_tool_name: str, tool_args: dict[str, Any]) -> list[str]:
     return out
 
 
-def v_cc_rule_matches(
+def _collect_param_rule_hits(
+        rules: list[dict[str, Any]],
+        tool_name: str,
+        tool_args: dict[str, Any],
+        mode: str,
+        label_ns: str,
+) -> list[tuple[PermissionLevel, str]]:
+    """参数级规则命中列表 (level, label)；``label_ns`` 为 ``builtin`` 或 ``rules``。"""
+    hits: list[tuple[PermissionLevel, str]] = []
+    for rule in rules:
+        if not isinstance(rule, dict):
+            continue
+        r_tools = rule.get("tools") or []
+        if isinstance(r_tools, str):
+            r_tools = [r_tools]
+        if not isinstance(r_tools, list) or tool_name not in r_tools:
+            continue
+        r_tools_s = [str(x).strip() for x in r_tools if isinstance(x, str) and str(x).strip()]
+        if not rule_tools_category_consistent(r_tools_s):
+            logger.warning(
+                "skip rule %r: tools must be same category %s",
+                rule.get("id"),
+                r_tools_s,
+            )
+            continue
+        pattern = rule.get("pattern")
+        if not isinstance(pattern, str) or not pattern.strip():
+            continue
+        if not tiered_policy_rule_matches(tool_name, pattern, tool_args, r_tools_s):
+            continue
+        sev = rule.get("severity", "HIGH")
+        if not isinstance(sev, str):
+            sev = "HIGH"
+        dec = severity_to_decision(sev, mode)
+        rid = rule.get("id", "")
+        label = f"{label_ns}[{rid}]" if rid else f"{label_ns}[?]"
+        hits.append((dec, label))
+    return hits
+
+
+def tiered_policy_rule_matches(
         tool_name: str,
         pattern: str,
         tool_args: dict[str, Any],
@@ -179,27 +291,43 @@ def _baseline_level(tools_cfg: dict[str, Any], tool_name: str) -> tuple[Permissi
         try:
             return _parse_level(raw), f"tools.{tool_name}"
         except ValueError:
-            logger.warning("[v_cc] invalid tools.%s level %r", tool_name, raw)
+            logger.warning("invalid tools.%s level %r", tool_name, raw)
             return None, None
     if isinstance(raw, dict) and isinstance(raw.get("*"), str):
         try:
             logger.warning(
-                "[v_cc] tools.%s uses legacy dict; v_cc expects scalar — using '*' only",
+                "tools.%s uses legacy dict; tiered_policy expects scalar — using '*' only",
                 tool_name,
             )
             return _parse_level(raw["*"]), f"tools.{tool_name}.*"
         except ValueError:
             return None, None
-    logger.warning("[v_cc] tools.%s is not a scalar allow|ask|deny; ignored for baseline", tool_name)
+    logger.warning("tools.%s is not a scalar allow|ask|deny; ignored for baseline", tool_name)
     return None, None
 
 
-def evaluate_v_cc(
+def _finalize_hits(hits: list[tuple[PermissionLevel, str]], prefix: str) -> tuple[PermissionLevel, str]:
+    if any(lev == PermissionLevel.DENY for lev, _ in hits):
+        contributing = sorted({r for lev, r in hits if lev == PermissionLevel.DENY})
+        return PermissionLevel.DENY, f"{_MR}:{prefix}:deny:" + "+".join(contributing)
+    final = strictest(*(h[0] for h in hits))
+    contributing = sorted({r for lev, r in hits if lev == final})
+    matched = f"{_MR}:{prefix}:" + "+".join(contributing) if contributing else f"{_MR}:{prefix}"
+    return final, matched
+
+
+def evaluate_tiered_policy(
         permission_config: dict[str, Any],
         tool_name: str,
         tool_args: dict[str, Any],
 ) -> tuple[PermissionLevel, str]:
-    """返回 (最终权限, matched_rule 摘要)."""
+    """返回 (最终权限, matched_rule 摘要).
+
+    - 整工具 ``deny`` 优先于参数级放行。
+    - 内置参数规则一旦命中则不再看用户 ``rules``。
+    - 有参数级命中时结果仅来自该层（内置或用户）。
+    - 无参数级命中时：仅有整工具则用整工具；否则仅用默认（整工具存在则忽略默认）。
+    """
     mode = str(permission_config.get("permission_mode") or "normal").strip().lower()
     if mode not in ("normal", "strict"):
         mode = "normal"
@@ -216,54 +344,31 @@ def evaluate_v_cc(
     if not isinstance(rules, list):
         rules = []
 
-    candidates: list[tuple[PermissionLevel, str]] = []
-
     bl, bl_rule = _baseline_level(tools_cfg, tool_name)
-    if bl is not None:
-        candidates.append((bl, bl_rule))
+    if bl == PermissionLevel.DENY:
+        return PermissionLevel.DENY, bl_rule or f"{_MR}:tools.deny"
 
-    for rule in rules:
-        if not isinstance(rule, dict):
-            continue
-        r_tools = rule.get("tools") or []
-        if isinstance(r_tools, str):
-            r_tools = [r_tools]
-        if not isinstance(r_tools, list) or tool_name not in r_tools:
-            continue
-        r_tools_s = [str(x).strip() for x in r_tools if isinstance(x, str) and str(x).strip()]
-        if not rule_tools_category_consistent(r_tools_s):
-            logger.warning(
-                "[v_cc] skip rule %r: tools must be same category %s",
-                rule.get("id"),
-                r_tools_s,
-            )
-            continue
-        pattern = rule.get("pattern")
-        if not isinstance(pattern, str) or not pattern.strip():
-            continue
-        if not v_cc_rule_matches(tool_name, pattern, tool_args, r_tools_s):
-            continue
-        sev = rule.get("severity", "HIGH")
-        if not isinstance(sev, str):
-            sev = "HIGH"
-        dec = severity_to_decision(sev, mode)
-        rid = rule.get("id", "")
-        label = f"rules[{rid}]" if rid else "rules[?]"
-        candidates.append((dec, label))
+    builtin_hits = _collect_param_rule_hits(
+        get_builtin_security_rules(), tool_name, tool_args, mode, "builtin",
+    )
+    if builtin_hits:
+        return _finalize_hits(builtin_hits, "builtin")
+
+    user_hits = _collect_param_rule_hits(rules, tool_name, tool_args, mode, "rules")
+    if user_hits:
+        return _finalize_hits(user_hits, "rules")
+
+    if bl is not None:
+        return bl, bl_rule or f"{_MR}:tools"
 
     if "*" in defaults_cfg and isinstance(defaults_cfg["*"], str):
         try:
-            candidates.append((_parse_level(defaults_cfg["*"]), "defaults.*"))
+            dl = _parse_level(defaults_cfg["*"])
+            return dl, f"{_MR}:defaults.*"
         except ValueError:
-            logger.warning("[v_cc] invalid defaults.* %r", defaults_cfg["*"])
+            logger.warning("invalid defaults.* %r", defaults_cfg["*"])
 
-    if not candidates:
-        return PermissionLevel.ASK, "v_cc:fallback(no_config)"
-
-    final = strictest(*(c[0] for c in candidates))
-    contributing = sorted({r for lev, r in candidates if lev == final})
-    matched = "v_cc:" + "+".join(contributing) if contributing else "v_cc"
-    return final, matched
+    return PermissionLevel.ASK, f"{_MR}:fallback(no_config)"
 
 
 def maybe_escalate_shell_operators(

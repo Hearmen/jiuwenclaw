@@ -1,0 +1,120 @@
+
+# jiuwenclaw built-in shell high-risk rules.
+#
+# 运行时可放在与 config.yaml 同目录：~/.jiuwenclaw/config/builtin_rules.yaml（优先加载）；
+# 若不存在则使用包内本文件。
+#
+# This file stores built-in parameter-level rules in the shell guardrail
+# design format. These rules are intended to be merged into the built-in
+# guardrail layer before user-defined permissions.
+#
+# Severity mapping is owned by the permissions engine:
+# - LOW / MEDIUM / HIGH / CRITICAL are risk labels, not direct decisions.
+# - In normal mode, HIGH and CRITICAL typically require confirmation.
+# - In strict mode, CRITICAL should be denied.
+
+rules:
+  - id: shell_fs_recursive_or_forced_delete
+    description: "递归、强制或批量删除文件，可能造成不可恢复的数据破坏"
+    tools: [bash, mcp_exec_command]
+    match_type: command
+    pattern: 're:(?i)(^|[\s;&|()])((rm\s+[^;&|]*(-[A-Za-z]*[rR][A-Za-z]*[fF]|-[A-Za-z]*[fF][A-Za-z]*[rR]|--recursive|--force)[^;&|]*(/[^;&|\s]*|\*|~[^;&|\s]*|\$HOME[^;&|\s]*|\.{1,2}(/[^;&|\s]*)?)(\s|$))|(find\s+[^;&|]*\s-delete\b)|(shred\b)|(del\s+[^;&|]*/[A-Za-z]*[fqs][A-Za-z]*)|(rd\s+[^;&|]*/s\b[^;&|]*/q\b))'
+    severity: CRITICAL
+
+  - id: shell_disk_partition_or_raw_device_write
+    description: "格式化、分区或直接写入块设备，可能破坏磁盘和文件系统"
+    tools: [bash, mcp_exec_command]
+    match_type: command
+    pattern: 're:(?i)(^|[\s;&|()])((mkfs(\.[A-Za-z0-9_]+)?|mke2fs|fdisk|parted|diskpart|format)\b|(dd\b[^;&|]*(\bof=/dev/|\\\\\.\\PhysicalDrive))|(>\s*/dev/(sd[a-z][0-9]*|vd[a-z][0-9]*|xvd[a-z][0-9]*|nvme[0-9]+n[0-9]+(p[0-9]+)?|disk[0-9]+)))'
+    severity: CRITICAL
+
+  - id: shell_download_and_execute
+    description: "从网络下载内容后直接交给 shell、PowerShell 或动态执行器执行"
+    tools: [bash, mcp_exec_command]
+    match_type: command
+    pattern: 're:(?i)(^|[\s;&|()])(((curl|wget|fetch|ftp)\b[^;&]*\|\s*(bash|sh|zsh|dash|ash|source)\b)|(iwr|irm|Invoke-WebRequest|Invoke-RestMethod)\b[^;&|]*\|\s*(iex|Invoke-Expression)\b|((bash|sh|zsh|pwsh|powershell)\b[^;&|]*<\s*<\s*\(?\s*(curl|wget)\b))'
+    severity: CRITICAL
+
+  - id: shell_obfuscated_or_dynamic_execution
+    description: "编码载荷、解码后执行、eval/iex 或内联解释器执行，命令难以审计"
+    tools: [bash, mcp_exec_command]
+    match_type: command
+    pattern: 're:(?i)(^|[\s;&|()])((base64\s+(-d|--decode)\b[^;&|]*\|\s*(bash|sh|zsh|dash|ash)\b)|(certutil\s+-decode\b)|(-EncodedCommand\b|-[Ee]nc\b)|(\[Convert\]::FromBase64String\()|(eval\s+[`$])|(\b(iex|Invoke-Expression)\b)|((python3?|perl|ruby|node)\s+(-c|-e)\b[^;&|]*(socket|subprocess|exec|eval|child_process)))'
+    severity: CRITICAL
+
+  - id: shell_reverse_shell_or_bind_shell
+    description: "反向 shell、绑定 shell 或可疑网络执行通道"
+    tools: [bash, mcp_exec_command]
+    match_type: command
+    pattern: 're:(?i)(/dev/(tcp|udp)/|(^|[\s;&|()])(nc|ncat)\b[^;&|]*\s(-e|--exec)\s|\bsocat\b[^;&|]*(EXEC:|SYSTEM:|PTY)|\bbash\s+-i\b[^;&|]*/dev/tcp/|\bpython3?\b[^;&|]*(socket|pty\.spawn|subprocess)|\bperl\b[^;&|]*Socket)'
+    severity: CRITICAL
+
+  - id: shell_privilege_escalation
+    description: "通过 sudo、su、doas、pkexec、runas 或管理员启动方式提升权限"
+    tools: [bash, mcp_exec_command]
+    match_type: command
+    pattern: 're:(?i)(^|[\s;&|()])((sudo|doas|pkexec)\s+|su\s+(-|root|\w)|runas\b|Start-Process\b[^;&|]*-Verb\s+RunAs\b|psexec\b|schtasks\b[^;&|]*/ru\s+SYSTEM\b)'
+    severity: CRITICAL
+
+  - id: shell_credential_or_persistence_tampering
+    description: "访问或篡改账号、SSH、sudo、cron、启动项等凭证和持久化入口"
+    tools: [bash, mcp_exec_command]
+    match_type: command
+    pattern: 're:(?i)(/etc/(passwd|shadow|sudoers|sudoers\.d/|crontab)\b|/var/spool/cron\b|(^|[\s;&|()])crontab\b|authorized_keys\b|~?/?\.ssh/(config|authorized_keys|id_rsa|id_ed25519)\b|\.(bashrc|bash_profile|zshrc|zprofile)\b|\\Run(Once)?\b|HKLM:|HKCU:|HKEY_LOCAL_MACHINE|HKEY_CURRENT_USER)'
+    severity: CRITICAL
+
+  - id: shell_secret_file_access_or_collection
+    description: "读取、打包或收集密钥、token、云凭证和环境密钥文件"
+    tools: [bash, mcp_exec_command]
+    match_type: command
+    pattern: 're:(?i)(^|[\s;&|()])((cat|type|less|more|head|tail|grep|find|Get-Content|Select-String|zip|tar|7z|Compress-Archive)\b[^;&|]*(id_rsa|id_ed25519|\.pem\b|\.pfx\b|\.key\b|\.kube/config|\.aws/(credentials|config)|\.npmrc\b|\.env(\.[A-Za-z0-9_-]+)?\b|credentials|secret|access_token|refresh_token|api[_-]?key))'
+    severity: HIGH
+
+  - id: shell_data_exfiltration
+    description: "通过 HTTP、scp、rsync、ftp、nc 等方式上传本地文件或命令输出"
+    tools: [bash, mcp_exec_command]
+    match_type: command
+    pattern: 're:(?i)(^|[\s;&|()])(((curl|wget|Invoke-WebRequest|iwr|Invoke-RestMethod|irm)\b[^;&|]*(--data|--data-binary|--upload-file|-d\b|-F\b|-T\b|POST|PUT))|(scp\b[^;&|]+\s+\S+:)|(rsync\b[^;&|]+\s+\S+:)|(sftp|ftp)\b|\bnc\b[^;&|]*\s(443|80|8080|53)\b)'
+    severity: CRITICAL
+
+  - id: shell_unsafe_permission_or_owner_change
+    description: "宽权限、SUID/SGID、root 属主、ACL 或不可变标志等危险权限变更"
+    tools: [bash, mcp_exec_command]
+    match_type: command
+    pattern: 're:(?i)(^|[\s;&|()])((chmod\b[^;&|]*(777|666|a\+rwx|u\+s|g\+s))|(chown\b[^;&|]*(root|:root))|(icacls\b[^;&|]*(Everyone:F|/grant))|(setfacl\b)|(chattr\s+\+i\b))'
+    severity: HIGH
+
+  - id: shell_service_process_or_system_control
+    description: "停止、重启、禁用系统服务，强杀进程，或关闭/重启主机"
+    tools: [bash, mcp_exec_command]
+    match_type: command
+    pattern: 're:(?i)(^|[\s;&|()])((shutdown|reboot|halt|poweroff)\b|(init|telinit)\s+(0|6)\b|(systemctl\s+(restart|stop|disable|enable|mask|unmask|kill)\b)|(service\s+\S+\s+(restart|stop|start|reload)\b)|(launchctl\s+(load|unload|stop|start|kickstart|kill|bootstrap|bootout)\b)|((pkill|killall)\b)|(kill\s+-(9|KILL|15|TERM)\b)|(taskkill\b[^;&|]*/F\b)|(Stop-Process\b[^;&|]*-Force\b)|(Stop-Service|Restart-Service|Set-Service)\b)'
+    severity: HIGH
+
+  - id: shell_network_firewall_or_defense_tampering
+    description: "修改网络、路由、防火墙或终端防护策略"
+    tools: [bash, mcp_exec_command]
+    match_type: command
+    pattern: 're:(?i)(^|[\s;&|()])((iptables|nft|ufw|pfctl)\b|(ip\s+(link|addr|route|rule)\b)|(route\s+)|ifconfig\b|netsh\s+advfirewall\b|Set-NetFirewallProfile\b|Set-MpPreference\b|Add-MpPreference\b|Remove-MpPreference\b|DisableRealtimeMonitoring\b|Set-ExecutionPolicy\b|-ExecutionPolicy\s+Bypass\b|-ep\s+Bypass\b)'
+    severity: HIGH
+
+  - id: shell_remote_execution_or_lateral_movement
+    description: "远程会话、远程进程创建或横向移动命令"
+    tools: [bash, mcp_exec_command]
+    match_type: command
+    pattern: 're:(?i)(^|[\s;&|()])((Invoke-Command|Enter-PSSession|New-PSSession)\b|winrs\b|wmic\b[^;&|]*process\s+call\s+create|psexec\b|ssh\b[^;&|]*\s\S+\s+["''][^"'']+["''])'
+    severity: CRITICAL
+
+  - id: shell_fork_bomb_or_resource_abuse
+    description: "fork bomb、解除进程限制或批量终止关键进程"
+    tools: [bash, mcp_exec_command]
+    match_type: command
+    pattern: 're:(?i)(:\s*\(\s*\)\s*\{\s*:\s*\|\s*:\s*&\s*\}\s*;\s*:|(^|[\s;&|()])kill\s+-9\s+(-1|1)\b|(^|[\s;&|()])ulimit\s+-u\s+unlimited\b)'
+    severity: CRITICAL
+
+  - id: shell_archive_extract_overwrite
+    description: "归档解包覆盖现有文件，可能被路径穿越或覆盖关键文件利用"
+    tools: [bash, mcp_exec_command]
+    match_type: command
+    pattern: 're:(?i)(^|[\s;&|()])((tar\b[^;&|]*(\s-x|--extract)\b)|(unzip\b[^;&|]*\s-o\b)|(7z\b[^;&|]*\sx\b)|(cpio\b[^;&|]*\s-i\b))'
+    severity: HIGH

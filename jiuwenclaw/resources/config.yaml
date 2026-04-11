@@ -321,16 +321,17 @@ channels:
     bot_name: ""
     enable_memory: false
 
-# ========== 细粒度权限管控（v_cc）==========
+# ========== 细粒度权限管控（tiered_policy）==========
 #
-# schema: v_cc 时由 evaluate_v_cc 求值；permission_mode: normal|strict 决定 severity 映射，见 v_cc.py。
+# schema: tiered_policy（或兼容 v_cc / v4.2）时由 tiered_policy.evaluate_tiered_policy 求值；
+# permission_mode: normal|strict 决定 severity 映射，见 agentserver/permissions/tiered_policy.py。
 # severity（normal）：LOW/MEDIUM→allow，HIGH/CRITICAL→ask；strict 下 MEDIUM→ask、CRITICAL→deny。
-# 最终权限 = defaults.*、tools.<name>、命中 rules 的决策取最严（strictest）。
+# 内置参数规则 > 用户 rules；整工具存在则不用 defaults；详见 tiered_policy 模块说明。
 #
 # 三种动作: allow / ask / deny
 permissions:
   enabled: false
-  schema: v_cc
+  schema: tiered_policy
   permission_mode: normal
 
   defaults:

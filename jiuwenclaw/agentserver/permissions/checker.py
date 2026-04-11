@@ -28,6 +28,7 @@ from jiuwenclaw.agentserver.permissions.models import (
     PermissionLevel,
     PermissionResult,
 )
+from jiuwenclaw.agentserver.permissions.tiered_policy import collect_builtin_permission_rail_tool_names
 from jiuwenclaw.agentserver.permissions.patterns import (
     contains_path,
     match_command,
@@ -52,9 +53,9 @@ WEB_TOOL_PERMISSIONS_CHANNEL_ID = "web"
 
 def collect_permission_rail_tool_names(permission_config: dict[str, Any]) -> list[str]:
     """构建 ``PermissionInterruptRail`` 应拦截的工具名列表（去重、排序）。
-
-    合并 ``permissions.tools`` 的键与 ``permissions.rules[*].tools`` 中的名称，
-    使仅出现在参数规则中的工具仍会进入护栏（before_tool_call）。
+    合并 ``permissions.tools``、``permissions.rules[*].tools`` 以及内置
+     ``builtin_rules.yaml``（与 ``config.yaml`` 同目录者优先）中的工具名，
+     使内置参数规则仍走护栏。
     """
     names: set[str] = set()
     tools_cfg = permission_config.get("tools") or {}
@@ -77,6 +78,8 @@ def collect_permission_rail_tool_names(permission_config: dict[str, Any]) -> lis
                 for item in raw_tools:
                     if isinstance(item, str) and item.strip():
                         names.add(item.strip())
+    for name in collect_builtin_permission_rail_tool_names():
+        names.add(name)
     return sorted(names)
 
 

@@ -5,9 +5,8 @@
 职责:
   1. 加载 / 热更新 permissions 配置
   2. 评估工具调用权限 (allow / ask / deny)
-  3. LLM/静态风险评估
 
-审批流程由 rail 处理，引擎本身只负责权限判定和风险评估。
+审批流程由 rail 处理，引擎本身只负责权限判定。
 """
 from __future__ import annotations
 
@@ -17,25 +16,23 @@ from typing import Any
 from jiuwenclaw.agentserver.permissions.checker import (
     ExternalDirectoryChecker,
     ToolPermissionChecker,
-    assess_command_risk_static,
-    assess_command_risk_with_llm,
 )
 from jiuwenclaw.agentserver.permissions.models import (
     PermissionLevel,
     PermissionResult,
 )
-from jiuwenclaw.agentserver.permissions.v_cc import (
-    evaluate_v_cc,
+from jiuwenclaw.agentserver.permissions.tiered_policy import (
+    evaluate_tiered_policy,
     maybe_escalate_shell_operators,
-    permissions_schema_is_v_cc,
-    strictest as v_cc_strictest,
+    permissions_schema_is_tiered_policy,
+    strictest as tiered_policy_strictest,
 )
 
 logger = logging.getLogger(__name__)
 
 
 class PermissionEngine:
-    """权限引擎 - 负责加载配置、评估权限、风险评估."""
+    """权限引擎 - 负责加载配置、评估权限."""
 
     def __init__(
         self,
@@ -60,7 +57,7 @@ class PermissionEngine:
         self._external_checker = ExternalDirectoryChecker(config)
 
     def update_llm(self, llm: Any, model_name: str | None) -> None:
-        """Hot-update LLM config for risk assessment."""
+        """保留接口供 PermissionInterruptRail 等热更新模型（当前不用于权限路径）。"""
         self._llm = llm
         self._model_name = model_name
 
@@ -124,13 +121,13 @@ class PermissionEngine:
             )
             tool_args = {}
 
-        # 1. 工具级 + 参数规则 + 默认（legacy 或 v_cc）
+        # 1. 工具级 + 参数规则 + 默认（legacy 或 tiered_policy）
         external_paths: list[str] | None = None
-        if permissions_schema_is_v_cc(self.config):
-            permission, matched_rule = evaluate_v_cc(self.config, tool_name, tool_args)
+        if permissions_schema_is_tiered_policy(self.config):
+            permission, matched_rule = evaluate_tiered_policy(self.config, tool_name, tool_args)
             permission = maybe_escalate_shell_operators(tool_name, tool_args, permission)
             logger.info(
-                "[PermissionEngine] v_cc result: permission=%s matched_rule=%s",
+                "[PermissionEngine] tiered_policy result: permission=%s matched_rule=%s",
                 permission.value, matched_rule,
             )
         else:
@@ -155,22 +152,15 @@ class PermissionEngine:
                 "Tool %s external_directory check: %s (merging with %s)",
                 tool_name, ext_result.permission.value, permission.value,
             )
-            permission = v_cc_strictest(permission, ext_result.permission)
+            permission = tiered_policy_strictest(permission, ext_result.permission)
             matched_rule = f"{matched_rule}|{ext_result.matched_rule or 'external_directory'}"
             external_paths = ext_result.external_paths
-
-        # 3. ASK 时进行风险评估
-        risk = None
-        if permission == PermissionLevel.ASK:
-            logger.info("[PermissionEngine] ASK permission, assessing risk for tool=%s", tool_name)
-            risk = await self._assess_command_risk(tool_name, tool_args)
-            logger.info("[PermissionEngine] Risk assessment completed: %s", risk)
 
         result = PermissionResult(
             permission=permission,
             matched_rule=matched_rule,
             reason=self._get_reason(permission, tool_name, matched_rule),
-            risk=risk,
+            risk=None,
             external_paths=external_paths,
         )
 
@@ -181,17 +171,6 @@ class PermissionEngine:
         return result
 
     # ---------- 辅助 ----------
-
-    async def _assess_command_risk(self, tool_name: str, tool_args: dict) -> dict:
-        """评估命令风险，优先使用 LLM，回退到静态评估."""
-        if self._llm is not None and self._model_name:
-            try:
-                return await assess_command_risk_with_llm(
-                    self._llm, self._model_name, tool_name, tool_args
-                )
-            except Exception as e:
-                logger.warning("[PermissionEngine] LLM risk assessment failed: %s", e)
-        return assess_command_risk_static(tool_name, tool_args)
 
     @staticmethod
     def _get_reason(
