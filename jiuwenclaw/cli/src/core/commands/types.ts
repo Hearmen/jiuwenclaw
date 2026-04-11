@@ -1,0 +1,63 @@
+import type { HistoryItem } from "../types.js";
+import type { AccentColorName, ThemeName } from "../../ui/theme.js";
+
+export type ConnectionStatus = "idle" | "connecting" | "connected" | "reconnecting" | "auth_failed";
+
+export enum CommandKind {
+  BUILT_IN = "built-in",
+}
+
+export interface CommandSuggestion {
+  value: string;
+  description?: string;
+  usage?: string;
+  example?: string;
+}
+
+export interface CommandContext {
+  sendEventOnly: (method: string, params: Record<string, unknown>) => string;
+  request: <T = Record<string, unknown>>(
+    method: string,
+    params: Record<string, unknown>,
+  ) => Promise<T>;
+  sendMessage: (content: string, mode?: "plan" | "agent" | "team") => string | null;
+  sessionId: string;
+  entries: HistoryItem[];
+  themeName: ThemeName;
+  accentColor: AccentColorName;
+  updateSession: (id: string) => void;
+  addItem: (item: HistoryItem) => void;
+  clearEntries: () => void;
+  restoreHistory: (sessionId: string) => Promise<void>;
+  exitApp: () => void;
+  isProcessing: boolean;
+  connectionStatus: ConnectionStatus;
+  mode: "plan" | "agent" | "team";
+  setMode: (mode: "plan" | "agent" | "team") => void;
+  setThemeName: (theme: ThemeName) => void;
+  setAccentColor: (color: AccentColorName) => void;
+  transcriptMode: "compact" | "detailed";
+  setTranscriptMode: (mode: "compact" | "detailed") => void;
+  transcriptFoldMode: "none" | "tools" | "thinking" | "all";
+  setTranscriptFoldMode: (mode: "none" | "tools" | "thinking" | "all") => void;
+  collapsedToolGroupCount: number;
+  collapseToolGroups: (scope: "last" | "all") => void;
+  expandToolGroups: (scope: "last" | "all") => void;
+}
+
+export interface SlashCommand {
+  name: string;
+  altNames?: string[];
+  description: string;
+  usage?: string;
+  example?: string;
+  hidden?: boolean;
+  isSafeConcurrent?: boolean;
+  kind: CommandKind;
+  action: (ctx: CommandContext, args: string) => void | Promise<void>;
+  completion?: (ctx: CommandContext, partial: string) => string[] | Promise<string[]>;
+  takesArgs?: boolean;
+  subCommands?: SlashCommand[];
+}
+
+export type SlashCommandListProvider = () => readonly SlashCommand[];

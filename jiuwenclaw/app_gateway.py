@@ -20,13 +20,14 @@ import os
 import sys
 import time
 import uuid as uuid_module
-from dataclasses import dataclass
-from typing import Any
+from dataclasses import dataclass, field
+from typing import Any, Awaitable, Callable
 from urllib.parse import urlparse
 
 from dotenv import load_dotenv
 from openjiuwen.core.common.logging import LogManager
 
+from jiuwenclaw.gateway.route_binding import GatewayRouteBinding
 from jiuwenclaw.jiuwen_core_patch import apply_openai_model_client_patch
 from jiuwenclaw.utils import get_user_workspace_dir, get_env_file, prepare_workspace
 
@@ -47,16 +48,9 @@ logger = logging.getLogger(__name__)
 
 
 def _normalize_and_forward_message(msg, channel_manager) -> bool:
-    from jiuwenclaw.app_web_handlers import (
-        _FORWARD_NO_LOCAL_HANDLER_METHODS,
-        _FORWARD_REQ_METHODS,
-    )
     from jiuwenclaw.schema.message import Message, ReqMethod
 
     method_val = getattr(getattr(msg, "req_method", None), "value", None) or ""
-    if method_val not in _FORWARD_REQ_METHODS:
-        return False
-
     is_stream = bool(
         msg.is_stream
         or method_val in (ReqMethod.CHAT_SEND.value, ReqMethod.HISTORY_GET.value)
@@ -81,8 +75,8 @@ def _normalize_and_forward_message(msg, channel_manager) -> bool:
         metadata=msg.metadata,
     )
     channel_manager.deliver_to_message_handler(normalized)
-    logger.info("[App] ACP/Web inbound -> MessageHandler: id=%s channel_id=%s", msg.id, msg.channel_id)
-    return method_val in _FORWARD_NO_LOCAL_HANDLER_METHODS
+    logger.info("[App] Gateway inbound -> MessageHandler: id=%s channel_id=%s", msg.id, msg.channel_id)
+    return False
 
 
 class _InboundGatewayServer:
@@ -129,6 +123,98 @@ class _InboundGatewayServer:
                 logger.exception("[App] Gateway inbound handling failed: id=%s", getattr(msg, "id", None))
 
 
+class AcpRouteHandler:
+    """ACP 路由的 JSON-RPC 桥接逻辑。
+
+    ACP 专属协议桥接，不属于通用 GatewayServer。
+    """
+
+    def __init__(self, on_message_cb) -> None:
+        self._on_message_cb = on_message_cb
+        self._pending_client_rpc_session_by_id: dict[str, tuple[str, Any]] = {}
+
+    async def inbound_intercept(self, ws: Any, data: dict[str, Any]) -> bool:
+        """拦截 ACP JSON-RPC response 帧。"""
+        if not (
+            isinstance(data, dict)
+            and str(data.get("jsonrpc") or "").strip() == "2.0"
+            and str(data.get("id") or "").strip() != ""
+            and ("result" in data or "error" in data)
+        ):
+            return False
+
+        from jiuwenclaw.schema.message import Message, ReqMethod
+
+        jsonrpc_id = str(data.get("id") or "").strip()
+        pending = self._pending_client_rpc_session_by_id.pop(jsonrpc_id, None)
+        session_id = ""
+        if isinstance(pending, tuple) and len(pending) == 2:
+            session_id = str(pending[0] or "").strip()
+
+        if not jsonrpc_id or not session_id:
+            await ws.send(
+                json.dumps(
+                    {
+                        "type": "res",
+                        "id": jsonrpc_id,
+                        "ok": False,
+                        "error": f"unknown acp tool response id: {jsonrpc_id}",
+                    },
+                    ensure_ascii=False,
+                )
+            )
+            return True
+
+        msg = Message(
+            id=f"acp_tool_resp_{uuid_module.uuid4().hex[:12]}",
+            type="req",
+            channel_id="acp",
+            session_id=session_id,
+            params={
+                "jsonrpc_id": jsonrpc_id,
+                "response": dict(data),
+                "session_id": session_id,
+            },
+            timestamp=time.time(),
+            ok=True,
+            req_method=ReqMethod.ACP_TOOL_RESPONSE,
+            is_stream=False,
+            metadata={"acp": {"jsonrpc_id": jsonrpc_id, "kind": "tool_response"}},
+        )
+        if self._on_message_cb is not None:
+            result = self._on_message_cb(msg)
+            if asyncio.iscoroutine(result):
+                await result
+        return True
+
+    async def outbound_intercept(self, msg, ws: Any) -> bool:
+        """拦截 ACP output_request 出站消息。"""
+        if (
+            msg.type == "event"
+            and isinstance(msg.payload, dict)
+            and str(msg.payload.get("event_type") or "").strip() == "acp.output_request"
+        ):
+            raw_jsonrpc = msg.payload.get("jsonrpc")
+            if isinstance(raw_jsonrpc, dict):
+                jsonrpc_id = str(raw_jsonrpc.get("id") or "").strip()
+                session_id = str(msg.session_id or "").strip()
+                if jsonrpc_id and session_id:
+                    self._pending_client_rpc_session_by_id[jsonrpc_id] = (session_id, ws)
+                await ws.send(json.dumps(raw_jsonrpc, ensure_ascii=False))
+            return True
+        return False
+
+    def cleanup(self, ws: Any) -> None:
+        """ws 断开时清理关联的 pending RPC 条目。"""
+        stale = [
+            jsonrpc_id
+            for jsonrpc_id, (_, client) in self._pending_client_rpc_session_by_id.items()
+            if client is ws
+        ]
+        for jsonrpc_id in stale:
+            self._pending_client_rpc_session_by_id.pop(jsonrpc_id, None)
+
+
 
 
 async def _connect_with_retry(
@@ -163,16 +249,33 @@ async def _connect_with_retry(
 
 
 @dataclass
+class RouteConfig:
+    """单条路由的配置（/acp, /cli 等）。"""
+
+    path: str
+    channel_id: str
+    forward_methods: frozenset[str] = frozenset()
+    forward_no_local_handler_methods: frozenset[str] = frozenset()
+    local_handlers: dict[str, Callable[..., Awaitable[None]]] = field(default_factory=dict)
+    inbound_interceptor: Callable[..., Awaitable[bool]] | None = None
+    outbound_interceptor: Callable[..., Awaitable[bool]] | None = None
+    cleanup_handler: Callable[..., Any] | None = None
+
+
+@dataclass
 class GatewayServerConfig:
     enabled: bool = True
     host: str = "127.0.0.1"
     port: int = 19001
-    path: str = "/acp"
-    channel_id: str = "acp"
+    routes: dict[str, RouteConfig] = field(default_factory=dict)  # path -> config
 
 
 class GatewayServer:
-    """ACP 专用的 GatewayServer。"""
+    """通用多路路由 WebSocket Gateway Server。
+
+    支持多个路径（如 /acp、/cli），每条路径可以有独立的 channel_id 和本地 handler。
+    本地 handler 优先处理请求，未处理或无匹配则 forward 到 MessageHandler。
+    """
 
     def __init__(self, config: GatewayServerConfig, router) -> None:
         self.config = config
@@ -181,16 +284,66 @@ class GatewayServer:
         self._running = False
         self._on_message_cb = None
         self._clients: set[Any] = set()
-        self._request_to_client: dict[str, Any] = {}
-        self._session_to_client: dict[str, Any] = {}
-        self._pending_client_rpc_session_by_id: dict[str, tuple[str, Any]] = {}
+        self._request_to_client: dict[tuple[str, str], Any] = {}
+        self._session_to_client: dict[tuple[str, str], Any] = {}
 
-    @property
-    def channel_id(self) -> str:
-        return self.config.channel_id
+    @staticmethod
+    def _client_route_key(channel_id: str | None, scoped_id: str | None) -> tuple[str, str] | None:
+        channel = str(channel_id or "").strip()
+        scope = str(scoped_id or "").strip()
+        if not channel or not scope:
+            return None
+        return channel, scope
 
     def on_message(self, callback) -> None:
         self._on_message_cb = callback
+
+    def register_local_handler(self, path: str, method: str, handler: Callable[..., Awaitable[None]]) -> None:
+        """为指定路径注册本地方法 handler。"""
+        route = self.config.routes.get(path)
+        if route is None:
+            route = RouteConfig(path=path, channel_id=path.strip("/"))
+            self.config.routes[path] = route
+        route.local_handlers[method] = handler
+
+    async def send_response(
+        self,
+        ws: Any,
+        req_id: str,
+        *,
+        ok: bool,
+        payload: dict[str, Any] | None = None,
+        error: str | None = None,
+        code: str | None = None,
+    ) -> None:
+        """向指定客户端发送 res 帧（供本地 handler 使用）。"""
+        frame: dict[str, Any] = {
+            "type": "res",
+            "id": req_id,
+            "ok": ok,
+            "payload": payload or {},
+        }
+        if not ok:
+            frame["error"] = error or "request failed"
+            if code:
+                frame["code"] = code
+        try:
+            await ws.send(json.dumps(frame, ensure_ascii=False))
+        except Exception:
+            logger.debug("send_response failed (client disconnected?)", exc_info=True)
+
+    async def send_event(
+        self,
+        ws: Any,
+        event: str,
+        payload: dict[str, Any],
+    ) -> None:
+        """向指定客户端发送 event 帧（供本地 handler 使用）。"""
+        frame: dict[str, Any] = {"type": "event", "event": event, "payload": payload}
+        try:
+            await ws.send(json.dumps(frame, ensure_ascii=False))
+        except Exception:
+            logger.debug("send_event failed (client disconnected?)", exc_info=True)
 
     async def start(self) -> None:
         if self._running or not self.config.enabled:
@@ -208,11 +361,12 @@ class GatewayServer:
             ping_timeout=20,
         )
         self._running = True
+        paths = ", ".join(self.config.routes.keys())
         logger.info(
-            "[App] ACP Gateway server started: ws://%s:%s%s",
+            "[App] Gateway server started: ws://%s:%s [%s]",
             self.config.host,
             self.config.port,
-            self.config.path,
+            paths,
         )
 
     async def stop(self) -> None:
@@ -223,33 +377,43 @@ class GatewayServer:
         self._clients.clear()
         self._request_to_client.clear()
         self._session_to_client.clear()
-        self._pending_client_rpc_session_by_id.clear()
         if self._server is not None:
             self._server.close()
             await self._server.wait_closed()
             self._server = None
-        logger.info("[App] ACP Gateway server stopped")
+        logger.info("[App] Gateway server stopped")
 
     async def send(self, msg) -> None:
-        ws = self._request_to_client.get(str(msg.id))
-        if ws is None and msg.session_id:
-            ws = self._session_to_client.get(str(msg.session_id))
+        ws = None
+        request_key = self._client_route_key(getattr(msg, "channel_id", None), getattr(msg, "id", None))
+        if request_key is not None:
+            ws = self._request_to_client.get(request_key)
+        if ws is None:
+            session_key = self._client_route_key(
+                getattr(msg, "channel_id", None),
+                getattr(msg, "session_id", None),
+            )
+            if session_key is not None:
+                ws = self._session_to_client.get(session_key)
         if ws is None or bool(getattr(ws, "closed", False)):
             return
 
-        if (
-            msg.type == "event"
-            and isinstance(msg.payload, dict)
-            and str(msg.payload.get("event_type") or "").strip() == "acp.output_request"
-        ):
-            raw_jsonrpc = msg.payload.get("jsonrpc")
-            if isinstance(raw_jsonrpc, dict):
-                jsonrpc_id = str(raw_jsonrpc.get("id") or "").strip()
-                session_id = str(msg.session_id or "").strip()
-                if jsonrpc_id and session_id:
-                    self._pending_client_rpc_session_by_id[jsonrpc_id] = (session_id, ws)
-                await ws.send(json.dumps(raw_jsonrpc, ensure_ascii=False))
-            return
+        # 让 route 的 outbound_interceptor 有机会拦截
+        for route in self.config.routes.values():
+            if route.channel_id == msg.channel_id and route.outbound_interceptor is not None:
+                try:
+                    handled = route.outbound_interceptor(msg, ws)
+                    if asyncio.iscoroutine(handled):
+                        handled = await handled
+                    if handled:
+                        return
+                except Exception:
+                    logger.warning(
+                        "GatewayServer outbound interceptor failed: channel_id=%s",
+                        msg.channel_id,
+                        exc_info=True,
+                    )
+                break
 
         if msg.type == "res":
             payload = dict(msg.payload or {}) if isinstance(msg.payload, dict) else {}
@@ -281,14 +445,31 @@ class GatewayServer:
         raw_path = path if path is not None else getattr(ws, "path", "")
         parsed = urlparse(raw_path)
         request_path = parsed.path or raw_path
-        if request_path != self.config.path:
+
+        route = self.config.routes.get(request_path)
+        if route is None:
             await ws.close(code=1008, reason=f"unsupported path: {request_path}")
             return
 
         self._clients.add(ws)
+
+        # connection.ack
+        try:
+            await ws.send(json.dumps({
+                "type": "event",
+                "event": "connection.ack",
+                "payload": {
+                    "protocol_version": "1.0",
+                    "transport": route.channel_id,
+                },
+            }, ensure_ascii=False))
+        except Exception:
+            self._clients.discard(ws)
+            return
+
         try:
             async for raw in ws:
-                await self._handle_raw_message(ws, raw)
+                await self._handle_raw_message(ws, raw, request_path, route)
         finally:
             self._clients.discard(ws)
             stale_request_ids = [request_id for request_id, client in self._request_to_client.items() if client is ws]
@@ -297,69 +478,17 @@ class GatewayServer:
             stale_session_ids = [session_id for session_id, client in self._session_to_client.items() if client is ws]
             for session_id in stale_session_ids:
                 self._session_to_client.pop(session_id, None)
-            stale_jsonrpc_ids = [
-                jsonrpc_id
-                for jsonrpc_id, (_, client) in self._pending_client_rpc_session_by_id.items()
-                if client is ws
-            ]
-            for jsonrpc_id in stale_jsonrpc_ids:
-                self._pending_client_rpc_session_by_id.pop(jsonrpc_id, None)
+            if route.cleanup_handler is not None:
+                try:
+                    route.cleanup_handler(ws)
+                except Exception:
+                    logger.warning(
+                        "GatewayServer cleanup handler failed: path=%s",
+                        request_path,
+                        exc_info=True,
+                    )
 
-    @staticmethod
-    def _is_jsonrpc_response(data: dict[str, Any]) -> bool:
-        return (
-            isinstance(data, dict)
-            and str(data.get("jsonrpc") or "").strip() == "2.0"
-            and str(data.get("id") or "").strip() != ""
-            and ("result" in data or "error" in data)
-        )
-
-    async def _handle_jsonrpc_response(self, ws: Any, data: dict[str, Any]) -> None:
-        from jiuwenclaw.schema.message import Message, ReqMethod
-
-        jsonrpc_id = str(data.get("id") or "").strip()
-        pending = self._pending_client_rpc_session_by_id.pop(jsonrpc_id, None)
-        session_id = ""
-        if isinstance(pending, tuple) and len(pending) == 2:
-            session_id = str(pending[0] or "").strip()
-
-        if not jsonrpc_id or not session_id:
-            await ws.send(
-                json.dumps(
-                    {
-                        "type": "res",
-                        "id": jsonrpc_id,
-                        "ok": False,
-                        "error": f"unknown acp tool response id: {jsonrpc_id}",
-                    },
-                    ensure_ascii=False,
-                )
-            )
-            return
-
-        msg = Message(
-            id=f"acp_tool_resp_{uuid_module.uuid4().hex[:12]}",
-            type="req",
-            channel_id=self.channel_id,
-            session_id=session_id,
-            params={
-                "jsonrpc_id": jsonrpc_id,
-                "response": dict(data),
-                "session_id": session_id,
-            },
-            timestamp=time.time(),
-            ok=True,
-            req_method=ReqMethod.ACP_TOOL_RESPONSE,
-            is_stream=False,
-            metadata={"acp": {"jsonrpc_id": jsonrpc_id, "kind": "tool_response"}},
-        )
-        if self._on_message_cb is None:
-            return
-        result = self._on_message_cb(msg)
-        if asyncio.iscoroutine(result):
-            await result
-
-    async def _handle_raw_message(self, ws: Any, raw: str) -> None:
+    async def _handle_raw_message(self, ws: Any, raw: str, request_path: str, route: RouteConfig) -> None:
         from jiuwenclaw.schema.message import Message, Mode, ReqMethod
 
         try:
@@ -373,9 +502,20 @@ class GatewayServer:
             )
             return
 
-        if self._is_jsonrpc_response(data):
-            await self._handle_jsonrpc_response(ws, data)
-            return
+        # route 级别的原始帧拦截（如 ACP JSON-RPC response）
+        if route.inbound_interceptor is not None:
+            try:
+                handled = route.inbound_interceptor(ws, data)
+                if asyncio.iscoroutine(handled):
+                    handled = await handled
+                if handled:
+                    return
+            except Exception:
+                logger.warning(
+                    "GatewayServer inbound interceptor failed: path=%s",
+                    request_path,
+                    exc_info=True,
+                )
 
         if not isinstance(data, dict) or data.get("type") != "req":
             await ws.send(
@@ -399,49 +539,129 @@ class GatewayServer:
             return
 
         session_id = str(params.get("session_id") or "").strip() or req_id
-        req_method = None
-        for item in ReqMethod:
-            if item.value == method:
-                req_method = item
-                break
-        if req_method is None:
-            await ws.send(
-                json.dumps(
-                    {"type": "res", "id": req_id, "ok": False, "error": f"unknown method: {method}"},
-                    ensure_ascii=False,
+
+        # 1. forward 优先：方法在 forward_methods 中则转发到 MessageHandler
+        if method in route.forward_methods:
+            req_method = None
+            for item in ReqMethod:
+                if item.value == method:
+                    req_method = item
+                    break
+
+            if req_method is None:
+                await ws.send(
+                    json.dumps(
+                        {"type": "res", "id": req_id, "ok": False, "error": f"unknown method: {method}"},
+                        ensure_ascii=False,
+                    )
                 )
+                return
+
+            request_key = self._client_route_key(route.channel_id, req_id)
+            if request_key is not None:
+                self._request_to_client[request_key] = ws
+            session_key = self._client_route_key(route.channel_id, session_id)
+            if session_key is not None:
+                self._session_to_client[session_key] = ws
+
+            mode = Mode.PLAN
+            raw_mode = params.get("mode")
+            if isinstance(raw_mode, str):
+                try:
+                    mode = Mode(raw_mode.strip().lower())
+                except ValueError:
+                    mode = Mode.PLAN
+
+            msg = Message(
+                id=req_id,
+                type="req",
+                channel_id=route.channel_id,
+                session_id=session_id,
+                params=params,
+                timestamp=time.time(),
+                ok=True,
+                req_method=req_method,
+                mode=mode,
+                metadata={"method": method},
             )
+
+            if self._on_message_cb is not None:
+                result = self._on_message_cb(msg)
+                if asyncio.iscoroutine(result):
+                    await result
+
+            # 如果在 forward_no_local_handler_methods 中，不需要本地 ack
+            if method in route.forward_no_local_handler_methods:
+                return
+
+        # 2. 本地 handler：发 ack 或纯本地处理
+        local_handler = route.local_handlers.get(method)
+        if local_handler is not None:
+            try:
+                await local_handler(ws, req_id, params, session_id)
+            except Exception as e:
+                ws_closed = bool(getattr(ws, "closed", False))
+                if ws_closed:
+                    logger.warning("GatewayServer local handler aborted on closed ws (%s): %s", method, e)
+                    return
+                logger.error("GatewayServer local handler error (%s): %s", method, e)
+                try:
+                    await self.send_response(
+                        ws, req_id, ok=False,
+                        error=f"handler error: {e}", code="INTERNAL_ERROR",
+                    )
+                except Exception:
+                    logger.debug(
+                        "GatewayServer failed to send handler error response: method=%s id=%s",
+                        method,
+                        req_id,
+                        exc_info=True,
+                    )
             return
 
-        self._request_to_client[req_id] = ws
-        self._session_to_client[session_id] = ws
-
-        mode = Mode.PLAN
-        raw_mode = params.get("mode")
-        if isinstance(raw_mode, str):
-            try:
-                mode = Mode(raw_mode.strip().lower())
-            except ValueError:
-                mode = Mode.PLAN
-
-        msg = Message(
-            id=req_id,
-            type="req",
-            channel_id=self.channel_id,
-            session_id=session_id,
-            params=params,
-            timestamp=time.time(),
-            ok=True,
-            req_method=req_method,
-            mode=mode,
-            metadata={"method": method},
+        # 3. 无 forward 也无本地 handler
+        await ws.send(
+            json.dumps(
+                {"type": "res", "id": req_id, "ok": False, "error": f"unknown method: {method}"},
+                ensure_ascii=False,
+            )
         )
 
-        if self._on_message_cb is None:
-            return
-        result = self._on_message_cb(msg)
-        if asyncio.iscoroutine(result):
-            await result
+
+
+def _build_acp_route_binding(
+    *,
+    path: str,
+    channel_id: str,
+    forward_methods: frozenset[str],
+    forward_no_local_handler_methods: frozenset[str],
+    on_message_cb,
+) -> GatewayRouteBinding:
+    acp_handler = AcpRouteHandler(on_message_cb)
+    return GatewayRouteBinding(
+        path=path,
+        channel_id=channel_id,
+        forward_methods=forward_methods,
+        forward_no_local_handler_methods=forward_no_local_handler_methods,
+        inbound_interceptor=acp_handler.inbound_intercept,
+        outbound_interceptor=acp_handler.outbound_intercept,
+        cleanup_handler=acp_handler.cleanup,
+    )
+
+
+def _build_route_config_map(bindings: list[GatewayRouteBinding]) -> dict[str, RouteConfig]:
+    return {
+        binding.path: RouteConfig(
+            path=binding.path,
+            channel_id=binding.channel_id,
+            forward_methods=binding.forward_methods,
+            forward_no_local_handler_methods=binding.forward_no_local_handler_methods,
+            inbound_interceptor=binding.inbound_interceptor,
+            outbound_interceptor=binding.outbound_interceptor,
+            cleanup_handler=binding.cleanup_handler,
+        )
+        for binding in bindings
+    }
 
 
 async def _run(
@@ -472,6 +692,10 @@ async def _run(
         _FORWARD_NO_LOCAL_HANDLER_METHODS,
         _FORWARD_REQ_METHODS,
         _register_web_handlers,
+    )
+    from jiuwenclaw.channel.cli_channel import (
+        CliRouteBindParams,
+        build_cli_route_binding,
     )
     from jiuwenclaw.extensions.manager import ExtensionManager
     from jiuwenclaw.extensions.registry import ExtensionRegistry
@@ -665,54 +889,89 @@ async def _run(
         )
     )
 
-    def _norm_and_forward(msg: Message) -> bool:
-        method_val = getattr(getattr(msg, "req_method", None), "value", None) or ""
-        if method_val not in _FORWARD_REQ_METHODS:
+    def _make_norm_and_forward(
+        forward_methods: set[str] | frozenset[str],
+        no_local_methods: set[str] | frozenset[str],
+        source_label: str,
+    ):
+        def _norm_and_forward(msg: Message) -> bool:
+            method_val = getattr(getattr(msg, "req_method", None), "value", None) or ""
+            if method_val not in forward_methods:
+                return False
+            is_stream = bool(
+                msg.is_stream
+                or method_val in (ReqMethod.CHAT_SEND.value, ReqMethod.HISTORY_GET.value)
+            )
+            params = dict(msg.params or {})
+            if "query" not in params and "content" in params:
+                params["query"] = params["content"]
+            normalized = Message(
+                id=msg.id,
+                type=msg.type,
+                channel_id=msg.channel_id,
+                session_id=msg.session_id,
+                params=params,
+                timestamp=msg.timestamp,
+                ok=msg.ok,
+                req_method=getattr(msg, "req_method", None) or ReqMethod.CHAT_SEND,
+                mode=msg.mode,
+                is_stream=is_stream,
+                stream_seq=msg.stream_seq,
+                stream_id=msg.stream_id,
+                metadata=msg.metadata,
+            )
+            channel_manager.deliver_to_message_handler(normalized)
+            logger.info("[App] %s 入站 -> MessageHandler: id=%s channel_id=%s", source_label, msg.id, msg.channel_id)
+            if method_val in no_local_methods:
+                return True
             return False
-        is_stream = bool(
-            msg.is_stream
-            or method_val in (ReqMethod.CHAT_SEND.value, ReqMethod.HISTORY_GET.value)
-        )
-        params = dict(msg.params or {})
-        if "query" not in params and "content" in params:
-            params["query"] = params["content"]
-        normalized = Message(
-            id=msg.id,
-            type=msg.type,
-            channel_id=msg.channel_id,
-            session_id=msg.session_id,
-            params=params,
-            timestamp=msg.timestamp,
-            ok=msg.ok,
-            req_method=getattr(msg, "req_method", None) or ReqMethod.CHAT_SEND,
-            mode=msg.mode,
-            is_stream=is_stream,
-            stream_seq=msg.stream_seq,
-            stream_id=msg.stream_id,
-            metadata=msg.metadata,
-        )
-        channel_manager.deliver_to_message_handler(normalized)
-        logger.info("[App] Web inbound -> MessageHandler: id=%s channel_id=%s", msg.id, msg.channel_id)
-        if method_val in _FORWARD_NO_LOCAL_HANDLER_METHODS:
-            return True
-        return False
 
-    if web_channel is not None:
-        channel_manager.register_channel_with_inbound(web_channel, _norm_and_forward)
+        return _norm_and_forward
 
-    gateway_server_config = GatewayServerConfig(
-        enabled=True,
-        host=os.getenv("ACP_GATEWAY_HOST", "127.0.0.1"),
-        port=int(os.getenv("ACP_GATEWAY_PORT", "19001")),
-        path=os.getenv("ACP_GATEWAY_PATH", "/acp"),
-        channel_id=str(os.getenv("ACP_GATEWAY_CHANNEL_ID", "acp")).strip() or "acp",
+    web_norm_and_forward = _make_norm_and_forward(
+        _FORWARD_REQ_METHODS,
+        _FORWARD_NO_LOCAL_HANDLER_METHODS,
+        "Web",
     )
+    channel_manager.register_channel_with_inbound(web_channel, web_norm_and_forward)
+
     acp_inbound_server = _InboundGatewayServer(
         lambda msg: _normalize_and_forward_message(msg, channel_manager)
     )
     await acp_inbound_server.start()
+
+    route_bindings = [
+        _build_acp_route_binding(
+            path="/acp",
+            channel_id="acp",
+            forward_methods=_FORWARD_REQ_METHODS,
+            forward_no_local_handler_methods=_FORWARD_NO_LOCAL_HANDLER_METHODS,
+            on_message_cb=acp_inbound_server.handle_message,
+        ),
+        build_cli_route_binding(
+            CliRouteBindParams(
+                agent_client=client,
+                message_handler=message_handler,
+                on_config_saved=_on_config_saved,
+                path="/cli",
+                channel_id="cli",
+            )
+        ),
+    ]
+
+    gateway_server_config = GatewayServerConfig(
+        enabled=True,
+        host=os.getenv("GATEWAY_HOST", "127.0.0.1"),
+        port=int(os.getenv("GATEWAY_PORT", "19001")),
+        routes=_build_route_config_map(route_bindings),
+    )
     gateway_server = GatewayServer(gateway_server_config, _DummyBus())
-    channel_manager.register_channel_with_inbound(gateway_server, acp_inbound_server.handle_message)
+    for binding in route_bindings:
+        route_config = gateway_server_config.routes[binding.path]
+        channel_manager.register_external_channel(route_config.channel_id, gateway_server)
+        if binding.install is not None:
+            binding.install(gateway_server)
+    gateway_server.on_message(acp_inbound_server.handle_message)
 
     feishu_channel = None
     feishu_task = None
@@ -1374,4 +1633,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-

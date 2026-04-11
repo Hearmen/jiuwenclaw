@@ -1159,15 +1159,13 @@ def main() -> None:
     )
     args = parser.parse_args()
 
-    web_host = os.getenv("ACP_GATEWAY_HOST", "127.0.0.1")
-    web_port = os.getenv("ACP_GATEWAY_PORT", "19001")
-    web_path = os.getenv("ACP_GATEWAY_PATH", "/acp")
+    gateway_host = os.getenv("GATEWAY_HOST", "127.0.0.1")
+    gateway_port = os.getenv("GATEWAY_PORT", "19001")
     gateway_url = (
         getattr(args, "gateway_url", None)
         or getattr(args, "agent_server_url", None)
-        or os.getenv("ACP_GATEWAY_URL")
         or os.getenv("GATEWAY_URL")
-        or f"ws://{web_host}:{web_port}{web_path}"
+        or f"ws://{gateway_host}:{gateway_port}/acp"
     )
 
     asyncio.run(_run(gateway_url))

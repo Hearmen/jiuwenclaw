@@ -303,6 +303,27 @@ class AgentWebSocketServer:
                 else:
                     await self._handle_history_get(ws, request, send_lock)
                 return
+            if request.req_method == ReqMethod.COMMAND_ADD_DIR:
+                await self._handle_command_add_dir(ws, request, send_lock)
+                return
+            if request.req_method == ReqMethod.COMMAND_CHROME:
+                await self._handle_command_chrome(ws, request, send_lock)
+                return
+            if request.req_method == ReqMethod.COMMAND_COMPACT:
+                await self._handle_command_compact(ws, request, send_lock)
+                return
+            if request.req_method == ReqMethod.COMMAND_DIFF:
+                await self._handle_command_diff(ws, request, send_lock)
+                return
+            if request.req_method == ReqMethod.COMMAND_MODEL:
+                await self._handle_command_model(ws, request, send_lock)
+                return
+            if request.req_method == ReqMethod.COMMAND_RESUME:
+                await self._handle_command_resume(ws, request, send_lock)
+                return
+            if request.req_method == ReqMethod.COMMAND_SESSION:
+                await self._handle_command_session(ws, request, send_lock)
+                return
             if request.req_method == ReqMethod.BROWSER_START:
                 await self._handle_browser_start(ws, request, send_lock)
                 return
@@ -557,6 +578,179 @@ class AgentWebSocketServer:
         )
         async with send_lock:
             await ws.send(json.dumps(wire_done, ensure_ascii=False))
+
+    async def _handle_command_add_dir(self, ws: Any, request: AgentRequest, send_lock: asyncio.Lock) -> None:
+        try:
+            params = request.params or {}
+            directory_path = params.get("path")
+            remember = params.get("remember", False)
+            resp = AgentResponse(
+                request_id=request.request_id,
+                channel_id=request.channel_id,
+                ok=True,
+                payload={"path": directory_path, "remember": remember},
+            )
+        except Exception as e:  # noqa: BLE001
+            logger.exception("[AgentWebSocketServer] command.add_dir failed: %s", e)
+            resp = AgentResponse(
+                request_id=request.request_id,
+                channel_id=request.channel_id,
+                ok=False,
+                payload={"error": str(e)},
+            )
+        wire = encode_agent_response_for_wire(resp, response_id=request.request_id)
+        async with send_lock:
+            await ws.send(json.dumps(wire, ensure_ascii=False))
+
+    async def _handle_command_chrome(self, ws: Any, request: AgentRequest, send_lock: asyncio.Lock) -> None:
+        try:
+            resp = AgentResponse(
+                request_id=request.request_id,
+                channel_id=request.channel_id,
+                ok=True,
+                payload={},
+            )
+        except Exception as e:  # noqa: BLE001
+            logger.exception("[AgentWebSocketServer] command.chrome failed: %s", e)
+            resp = AgentResponse(
+                request_id=request.request_id,
+                channel_id=request.channel_id,
+                ok=False,
+                payload={"error": str(e)},
+            )
+        wire = encode_agent_response_for_wire(resp, response_id=request.request_id)
+        async with send_lock:
+            await ws.send(json.dumps(wire, ensure_ascii=False))
+
+    async def _handle_command_compact(self, ws: Any, request: AgentRequest, send_lock: asyncio.Lock) -> None:
+        try:
+            params = request.params or {}
+            custom_instructions = params.get("instructions")
+            resp = AgentResponse(
+                request_id=request.request_id,
+                channel_id=request.channel_id,
+                ok=True,
+                payload={"instructions": custom_instructions},
+            )
+        except Exception as e:  # noqa: BLE001
+            logger.exception("[AgentWebSocketServer] command.compact failed: %s", e)
+            resp = AgentResponse(
+                request_id=request.request_id,
+                channel_id=request.channel_id,
+                ok=False,
+                payload={"error": str(e)},
+            )
+        wire = encode_agent_response_for_wire(resp, response_id=request.request_id)
+        async with send_lock:
+            await ws.send(json.dumps(wire, ensure_ascii=False))
+
+    async def _handle_command_diff(self, ws: Any, request: AgentRequest, send_lock: asyncio.Lock) -> None:
+        try:
+            resp = AgentResponse(
+                request_id=request.request_id,
+                channel_id=request.channel_id,
+                ok=True,
+                payload={
+                    "summary": "Workspace diff preview",
+                    "items": [
+                        {"label": "files_changed", "value": "3"},
+                        {"label": "insertions", "value": "24"},
+                        {"label": "deletions", "value": "7"},
+                    ],
+                },
+            )
+        except Exception as e:  # noqa: BLE001
+            logger.exception("[AgentWebSocketServer] command.diff failed: %s", e)
+            resp = AgentResponse(
+                request_id=request.request_id,
+                channel_id=request.channel_id,
+                ok=False,
+                payload={"error": str(e)},
+            )
+        wire = encode_agent_response_for_wire(resp, response_id=request.request_id)
+        async with send_lock:
+            await ws.send(json.dumps(wire, ensure_ascii=False))
+
+    async def _handle_command_model(self, ws: Any, request: AgentRequest, send_lock: asyncio.Lock) -> None:
+        try:
+            params = request.params or {}
+            requested = params.get("model")
+            current = requested if isinstance(requested, str) and requested.strip() else "default-model"
+            resp = AgentResponse(
+                request_id=request.request_id,
+                channel_id=request.channel_id,
+                ok=True,
+                payload={
+                    "current": current,
+                    "requested": requested if isinstance(requested, str) and requested.strip() else None,
+                    "applied": bool(isinstance(requested, str) and requested.strip()),
+                    "available": ["default-model", "planner-model", "coder-model"],
+                },
+            )
+        except Exception as e:  # noqa: BLE001
+            logger.exception("[AgentWebSocketServer] command.model failed: %s", e)
+            resp = AgentResponse(
+                request_id=request.request_id,
+                channel_id=request.channel_id,
+                ok=False,
+                payload={"error": str(e)},
+            )
+        wire = encode_agent_response_for_wire(resp, response_id=request.request_id)
+        async with send_lock:
+            await ws.send(json.dumps(wire, ensure_ascii=False))
+
+    async def _handle_command_resume(self, ws: Any, request: AgentRequest, send_lock: asyncio.Lock) -> None:
+        try:
+            params = request.params or {}
+            query = params.get("query")
+            session_id = query if isinstance(query, str) and query.strip() else "sess_mock_resume"
+            resp = AgentResponse(
+                request_id=request.request_id,
+                channel_id=request.channel_id,
+                ok=True,
+                payload={
+                    "session_id": session_id,
+                    "query": query if isinstance(query, str) else "",
+                    "resumed": True,
+                    "preview": "Mock resumed conversation",
+                },
+            )
+        except Exception as e:  # noqa: BLE001
+            logger.exception("[AgentWebSocketServer] command.resume failed: %s", e)
+            resp = AgentResponse(
+                request_id=request.request_id,
+                channel_id=request.channel_id,
+                ok=False,
+                payload={"error": str(e)},
+            )
+        wire = encode_agent_response_for_wire(resp, response_id=request.request_id)
+        async with send_lock:
+            await ws.send(json.dumps(wire, ensure_ascii=False))
+
+    async def _handle_command_session(self, ws: Any, request: AgentRequest, send_lock: asyncio.Lock) -> None:
+        try:
+            session_id = request.session_id or "sess_mock"
+            resp = AgentResponse(
+                request_id=request.request_id,
+                channel_id=request.channel_id,
+                ok=True,
+                payload={
+                    "session_id": session_id,
+                    "remote_url": f"https://example.com/session/{session_id}",
+                    "qr_text": f"session:{session_id}",
+                },
+            )
+        except Exception as e:  # noqa: BLE001
+            logger.exception("[AgentWebSocketServer] command.session failed: %s", e)
+            resp = AgentResponse(
+                request_id=request.request_id,
+                channel_id=request.channel_id,
+                ok=False,
+                payload={"error": str(e)},
+            )
+        wire = encode_agent_response_for_wire(resp, response_id=request.request_id)
+        async with send_lock:
+            await ws.send(json.dumps(wire, ensure_ascii=False))
 
     async def _handle_browser_start(self, ws: Any, request: AgentRequest, send_lock: asyncio.Lock) -> None:
         """启动浏览器并返回执行结果（returncode）。"""

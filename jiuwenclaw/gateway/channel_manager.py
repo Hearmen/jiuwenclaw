@@ -82,6 +82,10 @@ class ChannelManager(ABC):
         self._channels[channel.channel_id] = channel
         channel.on_message(on_message)
 
+    def register_external_channel(self, channel_id: str, channel: Any) -> None:
+        """登记一个已由外部完成入站装配的 channel 实例。"""
+        self._channels[channel_id] = channel
+
     def deliver_to_message_handler(self, msg: "Message") -> None:
         """将消息交给 MessageHandler（供自定义入站路径使用）。"""
         self._message_handler.handle_message(msg)

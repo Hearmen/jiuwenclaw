@@ -1,9 +1,10 @@
 import json
 import time
+from typing import Any
 
 import pytest
 
-from jiuwenclaw.app_gateway import GatewayServer, GatewayServerConfig
+from jiuwenclaw.app_gateway import AcpRouteHandler, GatewayServer, GatewayServerConfig, RouteConfig
 from jiuwenclaw.schema.message import EventType, Message, ReqMethod
 
 
@@ -27,14 +28,30 @@ class FakeWebSocket:
 
 
 class GatewayServerProbe(GatewayServer):
-    def bind_request_client(self, request_id: str, ws) -> None:
-        self._request_to_client[request_id] = ws
+    def __init__(self, config: GatewayServerConfig, router) -> None:
+        super().__init__(config, router)
+        self._probe_on_message = None
 
-    def bind_session_client(self, session_id: str, ws) -> None:
-        self._session_to_client[session_id] = ws
+    def on_message(self, callback) -> None:
+        self._probe_on_message = callback
+        super().on_message(callback)
 
-    async def handle_raw_message_public(self, ws, raw: str) -> None:
-        await self._handle_raw_message(ws, raw)
+    def bind_request_client(self, request_id: str, ws, *, channel_id: str = "acp") -> None:
+        self._request_to_client[(channel_id, request_id)] = ws
+
+    def bind_session_client(self, session_id: str, ws, *, channel_id: str = "acp") -> None:
+        self._session_to_client[(channel_id, session_id)] = ws
+
+    async def handle_raw_message_public(self, ws, raw: str, *, path: str = "/acp") -> None:
+        await self._handle_raw_message(ws, raw, path, self.config.routes[path])
+
+    async def dispatch_public_message(self, msg: Any) -> bool:
+        if self._probe_on_message is None:
+            return False
+        result = self._probe_on_message(msg)
+        if hasattr(result, "__await__"):
+            result = await result
+        return bool(result)
 
 
 def build_server() -> GatewayServerProbe:
@@ -42,10 +59,25 @@ def build_server() -> GatewayServerProbe:
         enabled=True,
         host="127.0.0.1",
         port=19001,
-        path="/acp",
-        channel_id="acp",
+        routes={},
     )
-    return GatewayServerProbe(config, DummyBus())
+    server = GatewayServerProbe(config, DummyBus())
+    acp_handler = AcpRouteHandler(server.dispatch_public_message)
+    config.routes.update({
+        "/acp": RouteConfig(
+            path="/acp",
+            channel_id="acp",
+            forward_methods=frozenset({ReqMethod.CHAT_SEND.value, ReqMethod.HISTORY_GET.value}),
+            outbound_interceptor=acp_handler.outbound_intercept,
+            inbound_interceptor=acp_handler.inbound_intercept,
+        ),
+        "/cli": RouteConfig(
+            path="/cli",
+            channel_id="cli",
+            forward_methods=frozenset({ReqMethod.CHAT_SEND.value, ReqMethod.HISTORY_GET.value}),
+        ),
+    })
+    return server
 
 
 @pytest.mark.asyncio
@@ -269,3 +301,38 @@ async def test_gateway_server_handle_raw_message_rejects_unknown_method():
     assert frame["id"] == "req-4"
     assert frame["ok"] is False
     assert frame["error"] == "unknown method: unknown.method"
+
+
+@pytest.mark.asyncio
+async def test_gateway_server_send_event_routes_same_session_id_by_channel():
+    server = build_server()
+    acp_ws = FakeWebSocket()
+    cli_ws = FakeWebSocket()
+    server.bind_session_client("shared-session", acp_ws, channel_id="acp")
+    server.bind_session_client("shared-session", cli_ws, channel_id="cli")
+
+    await server.send(
+        Message(
+            id="req-cli",
+            type="event",
+            channel_id="cli",
+            session_id="shared-session",
+            params={},
+            timestamp=time.time(),
+            ok=True,
+            payload={"content": "hello cli"},
+            event_type=EventType.CHAT_DELTA,
+        )
+    )
+
+    assert acp_ws.sent_frames == []
+    assert cli_ws.sent_frames == [
+        {
+            "type": "event",
+            "event": "chat.delta",
+            "payload": {
+                "content": "hello cli",
+                "session_id": "shared-session",
+            },
+        }
+    ]

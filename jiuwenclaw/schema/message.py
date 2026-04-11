@@ -16,6 +16,13 @@ class ReqMethod(Enum):
     CHAT_CANCEL = "chat.interrupt"
     CHAT_ANSWER = "chat.user_answer"
     HISTORY_GET = "history.get"
+    COMMAND_ADD_DIR = "command.add_dir"
+    COMMAND_CHROME = "command.chrome"
+    COMMAND_COMPACT = "command.compact"
+    COMMAND_DIFF = "command.diff"
+    COMMAND_MODEL = "command.model"
+    COMMAND_RESUME = "command.resume"
+    COMMAND_SESSION = "command.session"
 
     CONFIG_GET = "config.get"
     CONFIG_SET = "config.set"

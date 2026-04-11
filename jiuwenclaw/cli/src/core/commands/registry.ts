@@ -1,0 +1,46 @@
+import type { SlashCommand } from "./types.js";
+import { createAddDirCommand } from "./builtins/add-dir.js";
+import { createCancelCommand } from "./builtins/cancel.js";
+import { createChromeCommand } from "./builtins/chrome.js";
+import { createClearCommand } from "./builtins/clear.js";
+import { createColorCommand } from "./builtins/color.js";
+import { createCompactCommand } from "./builtins/compact.js";
+import { createConfigCommand } from "./builtins/config.js";
+import { createCopyCommand } from "./builtins/copy.js";
+import { createDiffCommand } from "./builtins/diff.js";
+import { createExitCommand } from "./builtins/exit.js";
+import { createHelpCommand } from "./builtins/help.js";
+import { createHotkeyCommand } from "./builtins/hotkey.js";
+import { createModelCommand } from "./builtins/model.js";
+import { createPlanCommand } from "./builtins/plan.js";
+import { createResumeCommand } from "./builtins/resume.js";
+import { createSessionCommand } from "./builtins/session.js";
+import { createSkillsCommand } from "./builtins/skills.js";
+import { createTeamCommand } from "./builtins/team.js";
+import { createThemeCommand } from "./builtins/theme.js";
+
+export function createBuiltinCommands(): SlashCommand[] {
+  const commands: SlashCommand[] = [
+    createHelpCommand(() => commands),
+    createAddDirCommand(),
+    createCancelCommand(),
+    createChromeCommand(),
+    createClearCommand(),
+    createColorCommand(),
+    createCompactCommand(),
+    createConfigCommand(),
+    createCopyCommand(),
+    createDiffCommand(),
+    createExitCommand(),
+    createModelCommand(),
+    createPlanCommand(),
+    createResumeCommand(),
+    createSessionCommand(),
+    createSkillsCommand(),
+    createTeamCommand(),
+    createThemeCommand(),
+    createHotkeyCommand(),
+  ];
+
+  return commands;
+}
