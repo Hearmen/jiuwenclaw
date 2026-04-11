@@ -13,6 +13,8 @@
 
 from __future__ import annotations
 
+import time
+import uuid as uuid_module
 from typing import Any
 
 from jiuwenclaw.e2a.constants import (
@@ -222,3 +224,34 @@ def e2a_response_to_a2a_stream_payload(response: E2AResponse) -> dict[str, Any] 
     if outer is None:
         return None
     return {outer: payload}
+
+
+def build_acp_tool_response_message(
+    jsonrpc_id: str,
+    response_data: dict[str, Any],
+    session_id: str | None,
+    channel_id: str = "acp",
+) -> Any:
+    """Build an internal Message for an ACP tool response (JSON-RPC response from client).
+
+    Shared by AcpRouteHandler (WebSocket gateway mode) and AcpChannel (stdio mode)
+    to avoid duplicated Message construction logic.
+    """
+    from jiuwenclaw.schema.message import Message, ReqMethod
+
+    return Message(
+        id=f"acp_tool_resp_{uuid_module.uuid4().hex[:12]}",
+        type="req",
+        channel_id=channel_id,
+        session_id=session_id,
+        params={
+            "jsonrpc_id": jsonrpc_id,
+            "response": dict(response_data),
+            "session_id": session_id,
+        },
+        timestamp=time.time(),
+        ok=True,
+        req_method=ReqMethod.ACP_TOOL_RESPONSE,
+        is_stream=False,
+        metadata={"acp": {"jsonrpc_id": jsonrpc_id, "kind": "tool_response"}},
+    )

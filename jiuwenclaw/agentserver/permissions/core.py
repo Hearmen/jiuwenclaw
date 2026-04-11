@@ -31,6 +31,8 @@ from jiuwenclaw.agentserver.permissions.tiered_policy import (
 
 logger = logging.getLogger(__name__)
 
+_PERMISSION_ENABLED_CHANNELS = frozenset({"web", "acp"})
+
 
 class PermissionEngine:
     """权限引擎 - 负责加载配置、评估权限."""
@@ -147,8 +149,8 @@ class PermissionEngine:
             )
 
         normalized_channel = (channel_id or "").strip() or "web"
-        if normalized_channel != "web":
-            logger.info("[PermissionEngine] Skipping permission check for non-web channel: %s", normalized_channel)
+        if normalized_channel not in _PERMISSION_ENABLED_CHANNELS:
+            logger.info("[PermissionEngine] Skipping permission check for channel: %s", normalized_channel)
             return PermissionResult(
                 permission=PermissionLevel.ALLOW,
                 reason=f"Skipped for channel: {normalized_channel}",

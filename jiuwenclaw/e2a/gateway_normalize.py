@@ -550,7 +550,7 @@ def e2a_response_to_agent_chunk(e2a: E2AResponse) -> "AgentResponseChunk":
                 "event_type": "acp.output_request",
                 "jsonrpc": dict(body),
             },
-            is_complete=True,
+            is_complete=False,
         )
 
     raise ValueError(

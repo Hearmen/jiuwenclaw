@@ -33,6 +33,9 @@ _ACP_PROTOCOL_VERSION = 1
 _ACP_STDOUT = getattr(sys, "__stdout__", sys.stdout)
 _STDIN_EOF_GRACE_SECONDS = 5.0
 _PROMPT_IDLE_FINALIZE_SECONDS = 3.0
+_ACP_PENDING_RPC_TIMEOUT_SECONDS = 60.0
+_ACP_GATEWAY_CONNECT_MAX_ATTEMPTS = 12
+_ACP_GATEWAY_CONNECT_BASE_DELAY_SEC = 0.15
 
 
 @dataclass
@@ -81,7 +84,8 @@ class AcpChannel(BaseChannel):
         self._request_ctx: dict[str, _AcpRequestContext] = {}
         self._session_ctx: dict[str, dict[str, Any]] = {}
         self._active_prompt_request_by_session: dict[str, str] = {}
-        self._pending_client_rpc_session_by_id: dict[str, str] = {}
+        # value: (session_id, created_at)
+        self._pending_client_rpc_session_by_id: dict[str, tuple[str, float]] = {}
 
     @property
     def channel_id(self) -> str:
@@ -141,6 +145,18 @@ class AcpChannel(BaseChannel):
         self._pending_client_rpc_session_by_id.clear()
         await self._close_gateway_connection()
 
+    def _sweep_stale_pending(self) -> None:
+        """移除超时的 pending RPC 条目，防止永久堆积。"""
+        now = time.time()
+        stale = [
+            jsonrpc_id
+            for jsonrpc_id, entry in self._pending_client_rpc_session_by_id.items()
+            if isinstance(entry, tuple) and len(entry) >= 2 and (now - entry[1]) > _ACP_PENDING_RPC_TIMEOUT_SECONDS
+        ]
+        for jsonrpc_id in stale:
+            self._pending_client_rpc_session_by_id.pop(jsonrpc_id, None)
+            logger.info("[ACP] pending RPC entry expired: jsonrpc_id=%s", jsonrpc_id)
+
     async def send(self, msg: Message) -> None:
         ctx = self._request_ctx.get(str(msg.id))
         if ctx is None:
@@ -181,26 +197,19 @@ class AcpChannel(BaseChannel):
         await self._dispatch_message(msg)
 
     async def _handle_jsonrpc_response(self, data: dict[str, Any]) -> None:
+        from jiuwenclaw.e2a.adapters import build_acp_tool_response_message
+
         jsonrpc_id = str(data.get("id") or "").strip()
         if not jsonrpc_id:
             return
 
-        session_id = self._pending_client_rpc_session_by_id.pop(jsonrpc_id, None)
-        msg = Message(
-            id=f"acp_tool_resp_{uuid.uuid4().hex[:12]}",
-            type="req",
-            channel_id=self.channel_id,
+        pending = self._pending_client_rpc_session_by_id.pop(jsonrpc_id, None)
+        session_id = pending[0] if isinstance(pending, tuple) else None
+        msg = build_acp_tool_response_message(
+            jsonrpc_id=jsonrpc_id,
+            response_data=data,
             session_id=session_id,
-            params={
-                "jsonrpc_id": jsonrpc_id,
-                "response": dict(data),
-                "session_id": session_id,
-            },
-            timestamp=time.time(),
-            ok=True,
-            req_method=ReqMethod.ACP_TOOL_RESPONSE,
-            is_stream=False,
-            metadata={"acp": {"jsonrpc_id": jsonrpc_id, "kind": "tool_response"}},
+            channel_id=self.channel_id,
         )
         await self._dispatch_message(msg)
 
@@ -526,11 +535,13 @@ class AcpChannel(BaseChannel):
         if not session_id:
             raise ValueError("sessionId is required")
 
-        prompt = params.get("prompt")
-        if not isinstance(prompt, list) or not prompt:
-            raise ValueError("prompt is required")
-
         rpc_params = dict(params)
+        prompt = rpc_params.get("prompt")
+        if not isinstance(prompt, list) or not prompt:
+            text = self._extract_prompt_text(rpc_params)
+            if not text:
+                raise ValueError("prompt is required")
+            rpc_params["prompt"] = [{"type": "text", "text": text}]
         rpc_params["session_id"] = session_id
         session_ctx = self._session_ctx.get(session_id)
         if isinstance(session_ctx, dict):
@@ -617,16 +628,22 @@ class AcpChannel(BaseChannel):
         task = ctx.idle_finalize_task
         if task is not None:
             task.cancel()
-        ctx.idle_finalize_task = asyncio.create_task(
+        new_task = asyncio.create_task(
             self._idle_finalize_after_timeout(str(request_id)),
             name=f"acp-idle-finalize-{request_id}",
         )
+        ctx.idle_finalize_task = new_task
 
     async def _idle_finalize_after_timeout(self, request_id: str) -> None:
+        current_task = asyncio.current_task()
         try:
             await asyncio.sleep(_PROMPT_IDLE_FINALIZE_SECONDS)
             ctx = self._request_ctx.get(str(request_id))
             if ctx is None or ctx.response_mode != "jsonrpc":
+                return
+            # Guard: verify this task is still the active idle_finalize_task
+            # to prevent a superseded task from finalizing after being replaced.
+            if ctx.idle_finalize_task is not current_task:
                 return
             await self._write_jsonrpc_result(
                 ctx.jsonrpc_id,
@@ -937,11 +954,43 @@ class AcpChannel(BaseChannel):
         except Exception:  # pragma: no cover
             from websockets import connect as ws_connect
 
-        self._gateway_ws = await ws_connect(self._gateway_url, ping_interval=20, ping_timeout=20)
-        self._gateway_reader_task = asyncio.create_task(
-            self._gateway_reader_loop(),
-            name="acp-gateway-reader",
-        )
+        last_exc: BaseException | None = None
+        for attempt in range(1, _ACP_GATEWAY_CONNECT_MAX_ATTEMPTS + 1):
+            try:
+                self._gateway_ws = await ws_connect(
+                    self._gateway_url,
+                    ping_interval=20,
+                    ping_timeout=20,
+                    open_timeout=30,
+                )
+                self._gateway_reader_task = asyncio.create_task(
+                    self._gateway_reader_loop(),
+                    name="acp-gateway-reader",
+                )
+                if attempt > 1:
+                    logger.info("[ACP] gateway connected after %d attempts: %s", attempt, self._gateway_url)
+                return
+            except BaseException as exc:
+                last_exc = exc
+                self._gateway_ws = None
+                self._gateway_reader_task = None
+                if attempt >= _ACP_GATEWAY_CONNECT_MAX_ATTEMPTS:
+                    break
+                delay = min(
+                    _ACP_GATEWAY_CONNECT_BASE_DELAY_SEC * (2 ** (attempt - 1)),
+                    2.0,
+                )
+                logger.warning(
+                    "[ACP] gateway connect attempt %d/%d failed (%s); retry in %.2fs",
+                    attempt,
+                    _ACP_GATEWAY_CONNECT_MAX_ATTEMPTS,
+                    exc,
+                    delay,
+                )
+                await asyncio.sleep(delay)
+        raise RuntimeError(
+            f"ACP gateway connect failed after {_ACP_GATEWAY_CONNECT_MAX_ATTEMPTS} attempts: {self._gateway_url}"
+        ) from last_exc
 
     async def _close_gateway_connection(self) -> None:
         reader_task = self._gateway_reader_task
@@ -1023,11 +1072,12 @@ class AcpChannel(BaseChannel):
 
     def set_pending_client_rpc_session_for_test(self, jsonrpc_id: str, session_id: str) -> None:
         """Public test helper to seed ACP client RPC session mappings."""
-        self._pending_client_rpc_session_by_id[jsonrpc_id] = session_id
+        self._pending_client_rpc_session_by_id[jsonrpc_id] = (session_id, time.time())
 
     def get_pending_client_rpc_session_for_test(self, jsonrpc_id: str) -> str | None:
         """Public test helper to inspect ACP client RPC session mappings."""
-        return self._pending_client_rpc_session_by_id.get(jsonrpc_id)
+        entry = self._pending_client_rpc_session_by_id.get(jsonrpc_id)
+        return entry[0] if isinstance(entry, tuple) else None
 
     async def handle_gateway_frame_for_test(self, data: dict[str, Any]) -> None:
         """Public test helper that delegates to gateway frame handling."""
@@ -1038,7 +1088,8 @@ class AcpChannel(BaseChannel):
         params = data.get("params") if isinstance(data.get("params"), dict) else {}
         session_id = str(params.get("sessionId") or params.get("session_id") or "").strip()
         if jsonrpc_id and session_id:
-            self._pending_client_rpc_session_by_id[jsonrpc_id] = session_id
+            self._pending_client_rpc_session_by_id[jsonrpc_id] = (session_id, time.time())
+        self._sweep_stale_pending()
         _ACP_STDOUT.buffer.write((json.dumps(data, ensure_ascii=False) + "\n").encode("utf-8"))
         _ACP_STDOUT.buffer.flush()
 

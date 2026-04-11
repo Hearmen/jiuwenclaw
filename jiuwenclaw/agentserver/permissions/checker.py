@@ -46,9 +46,8 @@ TOOL_PERMISSION_CHANNEL_ID: contextvars.ContextVar[str] = contextvars.ContextVar
     default="",
 )
 
-# 与 jiuwenclaw.channel.web_channel.WebChannel.name / channel_id 一致。
-# 仅当 TOOL_PERMISSION_CHANNEL_ID strip 后等于本常量时才做工具权限与 ask 审批；其它通道跳过。
-WEB_TOOL_PERMISSIONS_CHANNEL_ID = "web"
+# 启用工具权限检查的通道集合。仅当通道 ID 在此集合内时才执行权限校验，其它通道跳过。
+_PERMISSION_ENABLED_CHANNELS = frozenset({"web", "acp"})
 
 
 def collect_permission_rail_tool_names(permission_config: dict[str, Any]) -> list[str]:
@@ -97,7 +96,7 @@ async def check_tool_permissions(
 
     Args:
         tool_calls: 待执行的工具调用列表
-        channel_id: 频道 ID；仅 strip 后等于 WEB_TOOL_PERMISSIONS_CHANNEL_ID 时执行校验，否则全量放行
+        channel_id: 频道 ID；仅通道在 _PERMISSION_ENABLED_CHANNELS 内时执行校验，否则全量放行
         session_id: 会话 ID
         session: 会话对象，用于发起审批弹窗
         request_approval_callback: 当 needs_approval 时的回调 -> "allow_always"|"allow_once"|"deny"
@@ -113,7 +112,7 @@ async def check_tool_permissions(
         return list(tool_calls), []
 
     normalized_channel_id = (channel_id or "").strip()
-    if normalized_channel_id != WEB_TOOL_PERMISSIONS_CHANNEL_ID:
+    if normalized_channel_id not in _PERMISSION_ENABLED_CHANNELS:
         logger.info(
             "Tool permissions check skipped for channel=%s",
             normalized_channel_id or "(empty)",

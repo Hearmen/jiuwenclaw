@@ -24,7 +24,7 @@ _STRICT_ORDER = {PermissionLevel.DENY: 0, PermissionLevel.ASK: 1, PermissionLeve
 _TIERED_POLICY_SCHEMA_KEYS = frozenset({"tiered_policy", "v_cc", "v4.2"})
 
 # 规则内 tools 必须同类（与产品设计一致）
-_SHELL_TOOLS = frozenset({"bash", "mcp_exec_command"})
+_SHELL_TOOLS = frozenset({"bash", "mcp_exec_command", "create_terminal"})
 _PATH_TOOLS = frozenset({
     "read_file", "write_file", "edit_file",
     "read_text_file", "write_text_file",
@@ -439,7 +439,7 @@ def maybe_escalate_shell_operators(
         permission: PermissionLevel,
 ) -> PermissionLevel:
     """与旧版一致：命令含链式/注入元字符时 ALLOW→ASK."""
-    if tool_name not in ("mcp_exec_command", "bash"):
+    if tool_name not in ("mcp_exec_command", "bash", "create_terminal"):
         return permission
     if permission != PermissionLevel.ALLOW:
         return permission

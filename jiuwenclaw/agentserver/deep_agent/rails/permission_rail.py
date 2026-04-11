@@ -86,6 +86,7 @@ class PermissionInterruptRail(ConfirmInterruptRail):
         
         For bash tool: key = "bash_<command>" (e.g., "bash_dir", "bash_rm")
         For mcp_exec_command: key = "mcp_exec_command_<command>"
+        For create_terminal: key = "create_terminal_<command>"
         For other tools: key = tool_name
         
         This enables pattern-based auto-confirm like the old mcp_exec_command patterns.
@@ -96,20 +97,12 @@ class PermissionInterruptRail(ConfirmInterruptRail):
         tool_name = tool_call.name or ""
         tool_args = self._parse_tool_args(tool_call)
         
-        if tool_name == "bash":
+        if tool_name in {"bash", "mcp_exec_command", "create_terminal"}:
             cmd = tool_args.get("command", tool_args.get("cmd", ""))
             if cmd:
                 cmd_base = cmd.strip().split()[0] if cmd.strip() else ""
                 if cmd_base:
-                    return f"bash_{cmd_base}"
-            return tool_name
-        
-        if tool_name == "mcp_exec_command":
-            cmd = tool_args.get("command", tool_args.get("cmd", ""))
-            if cmd:
-                cmd_base = cmd.strip().split()[0] if cmd.strip() else ""
-                if cmd_base:
-                    return f"mcp_exec_command_{cmd_base}"
+                    return f"{tool_name}_{cmd_base}"
             return tool_name
         
         return tool_name
@@ -252,6 +245,31 @@ class PermissionInterruptRail(ConfirmInterruptRail):
                 logger.info("[PermissionRail] AUTO_CONFIRM key=%s", auto_confirm_key)
                 return self.approve()
 
+            resolved_channel = self._resolve_channel_id()
+            if resolved_channel == "acp":
+                confirm_payload = await self._request_acp_permission(
+                    ctx=ctx,
+                    tool_call=tool_call,
+                    result=result,
+                    auto_confirm_key=auto_confirm_key,
+                )
+                if confirm_payload is None:
+                    return self.reject(
+                        tool_result=(
+                            f"[PERMISSION_DENIED] {result.reason or 'Operation requires approval'} "
+                            "(ACP permission request failed)"
+                        )
+                    )
+                if confirm_payload.auto_confirm and ctx.session is not None and auto_confirm_key:
+                    self._store_auto_confirm(ctx, auto_confirm_key)
+                if confirm_payload.approved:
+                    logger.info("[PermissionRail] ACP user approved tool=%s", tool_name)
+                    return self.approve()
+                logger.info("[PermissionRail] ACP user rejected tool=%s", tool_name)
+                return self.reject(
+                    tool_result=confirm_payload.feedback or "[PERMISSION_REJECTED] User rejected the request."
+                )
+
             logger.info("[PermissionRail] ASK - triggering interrupt for tool=%s", tool_name)
             message = self._build_message(tool_call, result)
             return self.interrupt(InterruptRequest(
@@ -273,12 +291,7 @@ class PermissionInterruptRail(ConfirmInterruptRail):
             ))
 
         if payload.auto_confirm and ctx.session is not None and auto_confirm_key:
-            config = ctx.session.get_state(INTERRUPT_AUTO_CONFIRM_KEY) or {}
-            if not isinstance(config, dict):
-                config = {}
-            config[auto_confirm_key] = True
-            ctx.session.update_state({INTERRUPT_AUTO_CONFIRM_KEY: config})
-            logger.info("[PermissionRail] Stored auto_confirm for key=%s", auto_confirm_key)
+            self._store_auto_confirm(ctx, auto_confirm_key)
 
         if payload.approved:
             logger.info("[PermissionRail] User approved tool=%s", tool_name)
@@ -327,6 +340,187 @@ class PermissionInterruptRail(ConfirmInterruptRail):
         if auto_confirm_config is None:
             return False
         return auto_confirm_config.get(tool_name, False)
+
+    @staticmethod
+    def _store_auto_confirm(ctx: AgentCallbackContext, auto_confirm_key: str) -> None:
+        config = ctx.session.get_state(INTERRUPT_AUTO_CONFIRM_KEY) or {}
+        if not isinstance(config, dict):
+            config = {}
+        config[auto_confirm_key] = True
+        ctx.session.update_state({INTERRUPT_AUTO_CONFIRM_KEY: config})
+        logger.info("[PermissionRail] Stored auto_confirm for key=%s", auto_confirm_key)
+
+    @staticmethod
+    def _read_session_attr_value(session: Any, attr_name: str) -> Any:
+        attr = getattr(session, attr_name, None)
+        if not callable(attr):
+            return attr
+        try:
+            return attr()
+        except Exception:
+            logger.debug(
+                "[PermissionRail] Failed to read session attribute: %s",
+                attr_name,
+                exc_info=True,
+            )
+            return None
+
+    @staticmethod
+    def _resolve_session_id(ctx: AgentCallbackContext) -> str | None:
+        session = getattr(ctx, "session", None)
+        if session is None:
+            return None
+
+        for attr_name in ("get_session_id", "session_id"):
+            value = PermissionInterruptRail._read_session_attr_value(session, attr_name)
+            if isinstance(value, str) and value.strip():
+                return value.strip()
+        return None
+
+    @staticmethod
+    def _tool_kind_for_permission(tool_name: str) -> str:
+        if tool_name in {"bash", "mcp_exec_command", "create_terminal", "exec_command"}:
+            return "execute"
+        if tool_name in {"read_file", "read_text_file", "memory_get"}:
+            return "read"
+        if tool_name in {"write_file", "write_text_file", "edit_file", "write"}:
+            return "edit"
+        if tool_name in {"grep", "glob_file_search", "mcp_free_search", "mcp_paid_search"}:
+            return "search"
+        if tool_name in {"fetch_webpage", "mcp_fetch_webpage"}:
+            return "fetch"
+        return "other"
+
+    def _build_acp_permission_request(
+        self,
+        tool_call: Optional[ToolCall],
+        result: PermissionResult,
+    ) -> dict[str, Any]:
+        tool_name = tool_call.name if tool_call else ""
+        tool_args = self._parse_tool_args(tool_call)
+        tool_call_id = str(getattr(tool_call, "id", "") or f"permission_{tool_name or 'tool'}").strip()
+
+        title = f"Approve `{tool_name}`"
+        if result.reason:
+            title = f"{title}: {result.reason}"
+
+        request: dict[str, Any] = {
+            "toolCall": {
+                "toolCallId": tool_call_id,
+                "title": title,
+                "kind": self._tool_kind_for_permission(tool_name),
+                "status": "pending",
+            },
+            "options": [
+                {
+                    "optionId": "allow-once",
+                    "name": "Allow once",
+                    "kind": "allow_once",
+                },
+                {
+                    "optionId": "allow-always",
+                    "name": "Always allow",
+                    "kind": "allow_always",
+                },
+                {
+                    "optionId": "reject-once",
+                    "name": "Reject",
+                    "kind": "reject_once",
+                },
+            ],
+        }
+        if tool_args:
+            request["toolCall"]["rawInput"] = tool_args
+        return request
+
+    async def _request_acp_permission(
+        self,
+        ctx: AgentCallbackContext,
+        tool_call: Optional[ToolCall],
+        result: PermissionResult,
+        auto_confirm_key: str,
+    ) -> ConfirmPayload | None:
+        session_id = self._resolve_session_id(ctx)
+        if not session_id:
+            logger.warning("[PermissionRail] ACP permission request skipped: missing session_id")
+            return None
+
+        from jiuwenclaw.agentserver.tools.acp_output_tools import get_acp_output_manager
+
+        request_params = self._build_acp_permission_request(tool_call, result)
+        logger.info(
+            "[PermissionRail] ACP permission request: session_id=%s tool=%s auto_confirm_key=%s",
+            session_id,
+            tool_call.name if tool_call else "",
+            auto_confirm_key,
+        )
+        try:
+            response = await get_acp_output_manager().send_jsonrpc_request(
+                "session/request_permission",
+                request_params,
+                session_id=session_id,
+            )
+        except Exception as exc:
+            logger.warning("[PermissionRail] ACP permission request failed: %s", exc)
+            return None
+
+        if not isinstance(response, dict):
+            logger.warning("[PermissionRail] ACP permission request returned invalid response: %s", response)
+            return None
+
+        if isinstance(response.get("error"), dict):
+            err = response["error"]
+            message = str(err.get("message") or "Permission request failed")
+            logger.warning("[PermissionRail] ACP permission request error: %s", message)
+            return ConfirmPayload(
+                approved=False,
+                auto_confirm=False,
+                feedback=f"[PERMISSION_DENIED] {message}",
+            )
+
+        result_payload = response.get("result") if isinstance(response.get("result"), dict) else {}
+        outcome = result_payload.get("outcome") if isinstance(result_payload.get("outcome"), dict) else {}
+        outcome_kind = str(outcome.get("outcome") or "").strip().lower()
+        option_id = str(outcome.get("optionId") or "").strip().lower()
+
+        if outcome_kind == "selected":
+            if option_id == "allow-once":
+                return ConfirmPayload(approved=True, auto_confirm=False, feedback="")
+            if option_id == "allow-always":
+                return ConfirmPayload(approved=True, auto_confirm=True, feedback="")
+            if option_id in {"reject-once", "reject-always"}:
+                return ConfirmPayload(
+                    approved=False,
+                    auto_confirm=False,
+                    feedback="[PERMISSION_REJECTED] User rejected the request.",
+                )
+            logger.warning(
+                "[PermissionRail] ACP permission request returned unknown option_id=%s",
+                option_id,
+            )
+            return ConfirmPayload(
+                approved=False,
+                auto_confirm=False,
+                feedback=f"[PERMISSION_DENIED] Unknown permission option: {option_id or 'empty'}",
+            )
+
+        if outcome_kind == "cancelled":
+            return ConfirmPayload(
+                approved=False,
+                auto_confirm=False,
+                feedback="[PERMISSION_REJECTED] Permission request was cancelled.",
+            )
+
+        logger.warning(
+            "[PermissionRail] ACP permission request returned unknown outcome=%s payload=%s",
+            outcome_kind,
+            result_payload,
+        )
+        return ConfirmPayload(
+            approved=False,
+            auto_confirm=False,
+            feedback="[PERMISSION_DENIED] Invalid ACP permission response.",
+        )
 
     @staticmethod
     def _format_args_preview(tool_args: dict) -> str:
@@ -382,6 +576,10 @@ class PermissionInterruptRail(ConfirmInterruptRail):
             cmd = tool_args.get("command", tool_args.get("cmd", ""))
             if cmd:
                 return f'\n\n> 选择"总是允许"将自动放行 `{cmd}` 命令'
+        if tool_name == "create_terminal":
+            cmd = tool_args.get("command", tool_args.get("cmd", ""))
+            if cmd:
+                return f'\n\n> 选择"总是允许"将自动放行 `{cmd}` 终端命令'
         if auto_confirm_key:
             return f'\n\n> 选择"总是允许"将自动放行 `{auto_confirm_key}` 调用'
         return ""

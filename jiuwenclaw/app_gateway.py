@@ -123,6 +123,17 @@ class _InboundGatewayServer:
                 logger.exception("[App] Gateway inbound handling failed: id=%s", getattr(msg, "id", None))
 
 
+_ACP_PENDING_RPC_TIMEOUT_SECONDS = 60.0
+
+
+@dataclass
+class _GatewayAcpRequestContext:
+    jsonrpc_id: str | int | None
+    session_id: str
+    assistant_message_id: str | None = None
+    thought_message_id: str | None = None
+
+
 class AcpRouteHandler:
     """ACP 路由的 JSON-RPC 桥接逻辑。
 
@@ -131,7 +142,8 @@ class AcpRouteHandler:
 
     def __init__(self, on_message_cb) -> None:
         self._on_message_cb = on_message_cb
-        self._pending_client_rpc_session_by_id: dict[str, tuple[str, Any]] = {}
+        # value: (session_id, ws, created_at)
+        self._pending_client_rpc_session_by_id: dict[str, tuple[str, Any, float]] = {}
 
     async def inbound_intercept(self, ws: Any, data: dict[str, Any]) -> bool:
         """拦截 ACP JSON-RPC response 帧。"""
@@ -143,12 +155,12 @@ class AcpRouteHandler:
         ):
             return False
 
-        from jiuwenclaw.schema.message import Message, ReqMethod
+        from jiuwenclaw.e2a.adapters import build_acp_tool_response_message
 
         jsonrpc_id = str(data.get("id") or "").strip()
         pending = self._pending_client_rpc_session_by_id.pop(jsonrpc_id, None)
         session_id = ""
-        if isinstance(pending, tuple) and len(pending) == 2:
+        if isinstance(pending, tuple) and len(pending) >= 2:
             session_id = str(pending[0] or "").strip()
 
         if not jsonrpc_id or not session_id:
@@ -165,21 +177,11 @@ class AcpRouteHandler:
             )
             return True
 
-        msg = Message(
-            id=f"acp_tool_resp_{uuid_module.uuid4().hex[:12]}",
-            type="req",
-            channel_id="acp",
+        msg = build_acp_tool_response_message(
+            jsonrpc_id=jsonrpc_id,
+            response_data=data,
             session_id=session_id,
-            params={
-                "jsonrpc_id": jsonrpc_id,
-                "response": dict(data),
-                "session_id": session_id,
-            },
-            timestamp=time.time(),
-            ok=True,
-            req_method=ReqMethod.ACP_TOOL_RESPONSE,
-            is_stream=False,
-            metadata={"acp": {"jsonrpc_id": jsonrpc_id, "kind": "tool_response"}},
+            channel_id="acp",
         )
         if self._on_message_cb is not None:
             result = self._on_message_cb(msg)
@@ -195,12 +197,24 @@ class AcpRouteHandler:
             and str(msg.payload.get("event_type") or "").strip() == "acp.output_request"
         ):
             raw_jsonrpc = msg.payload.get("jsonrpc")
-            if isinstance(raw_jsonrpc, dict):
-                jsonrpc_id = str(raw_jsonrpc.get("id") or "").strip()
-                session_id = str(msg.session_id or "").strip()
-                if jsonrpc_id and session_id:
-                    self._pending_client_rpc_session_by_id[jsonrpc_id] = (session_id, ws)
-                await ws.send(json.dumps(raw_jsonrpc, ensure_ascii=False))
+            if not isinstance(raw_jsonrpc, dict):
+                logger.warning(
+                    "[ACP] outbound_intercept: invalid jsonrpc payload (not dict), dropping frame"
+                )
+                return True
+            jsonrpc_id = str(raw_jsonrpc.get("id") or "").strip()
+            session_id = str(msg.session_id or "").strip()
+            if not jsonrpc_id or not session_id:
+                logger.warning(
+                    "[ACP] outbound_intercept: missing jsonrpc_id=%r or session_id=%r, "
+                    "forwarding without pending registration",
+                    jsonrpc_id,
+                    session_id,
+                )
+            else:
+                self._pending_client_rpc_session_by_id[jsonrpc_id] = (session_id, ws, time.time())
+            self._sweep_stale_pending()
+            await ws.send(json.dumps(raw_jsonrpc, ensure_ascii=False))
             return True
         return False
 
@@ -208,11 +222,25 @@ class AcpRouteHandler:
         """ws 断开时清理关联的 pending RPC 条目。"""
         stale = [
             jsonrpc_id
-            for jsonrpc_id, (_, client) in self._pending_client_rpc_session_by_id.items()
-            if client is ws
+            for jsonrpc_id, entry in self._pending_client_rpc_session_by_id.items()
+            if len(entry) >= 2 and entry[1] is ws
         ]
         for jsonrpc_id in stale:
             self._pending_client_rpc_session_by_id.pop(jsonrpc_id, None)
+
+    def _sweep_stale_pending(self) -> None:
+        """移除超时的 pending RPC 条目，防止永久堆积。"""
+        now = time.time()
+        stale = [
+            jsonrpc_id
+            for jsonrpc_id, entry in self._pending_client_rpc_session_by_id.items()
+            if len(entry) >= 3 and (now - entry[2]) > _ACP_PENDING_RPC_TIMEOUT_SECONDS
+        ]
+        for jsonrpc_id in stale:
+            self._pending_client_rpc_session_by_id.pop(jsonrpc_id, None)
+            logger.info(
+                "[ACP] pending RPC entry expired: jsonrpc_id=%s", jsonrpc_id
+            )
 
 
 
@@ -267,7 +295,17 @@ class GatewayServerConfig:
     enabled: bool = True
     host: str = "127.0.0.1"
     port: int = 19001
-    routes: dict[str, RouteConfig] = field(default_factory=dict)  # path -> config
+    routes: dict[str, RouteConfig] = field(default_factory=dict)
+    path: str | None = None
+    channel_id: str | None = None
+
+    def __post_init__(self) -> None:
+        if self.routes:
+            return
+        path = str(self.path or "").strip()
+        channel_id = str(self.channel_id or "").strip()
+        if path and channel_id:
+            self.routes[path] = RouteConfig(path=path, channel_id=channel_id)
 
 
 class GatewayServer:
@@ -286,6 +324,9 @@ class GatewayServer:
         self._clients: set[Any] = set()
         self._request_to_client: dict[tuple[str, str], Any] = {}
         self._session_to_client: dict[tuple[str, str], Any] = {}
+        self._acp_request_ctx_by_request_id: dict[str, _GatewayAcpRequestContext] = {}
+        self._acp_active_prompt_request_by_session: dict[str, str] = {}
+        self._install_default_route_hooks()
 
     @staticmethod
     def _client_route_key(channel_id: str | None, scoped_id: str | None) -> tuple[str, str] | None:
@@ -297,6 +338,127 @@ class GatewayServer:
 
     def on_message(self, callback) -> None:
         self._on_message_cb = callback
+
+    async def _dispatch_on_message(self, msg) -> bool:
+        if self._on_message_cb is None:
+            return False
+        result = self._on_message_cb(msg)
+        if asyncio.iscoroutine(result):
+            result = await result
+        return bool(result)
+
+    def _install_default_route_hooks(self) -> None:
+        for route in self.config.routes.values():
+            if route.channel_id != "acp":
+                continue
+            if route.inbound_interceptor is not None and route.outbound_interceptor is not None:
+                continue
+            acp_handler = AcpRouteHandler(self._dispatch_on_message)
+            route.inbound_interceptor = route.inbound_interceptor or acp_handler.inbound_intercept
+            route.outbound_interceptor = route.outbound_interceptor or acp_handler.outbound_intercept
+            route.cleanup_handler = route.cleanup_handler or acp_handler.cleanup
+
+    @staticmethod
+    def _is_acp_jsonrpc_request(data: Any) -> bool:
+        return (
+            isinstance(data, dict)
+            and data.get("jsonrpc") == "2.0"
+            and isinstance(data.get("method"), str)
+        )
+
+    @staticmethod
+    def _acp_extract_prompt_text(params: dict[str, Any]) -> str:
+        prompt = params.get("prompt")
+        if isinstance(prompt, list):
+            texts: list[str] = []
+            for item in prompt:
+                if isinstance(item, dict) and item.get("type") == "text":
+                    text = item.get("text")
+                    if isinstance(text, str) and text:
+                        texts.append(text)
+            if texts:
+                return "\n".join(texts)
+        for key in ("text", "content", "query"):
+            value = params.get(key)
+            if isinstance(value, str) and value.strip():
+                return value.strip()
+        return ""
+
+    @staticmethod
+    async def _send_raw_jsonrpc_result(ws: Any, rpc_id: str | int | None, result: Any) -> None:
+        await ws.send(json.dumps({"jsonrpc": "2.0", "id": rpc_id, "result": result}, ensure_ascii=False))
+
+    @staticmethod
+    async def _send_raw_jsonrpc_error(ws: Any, rpc_id: str | int | None, code: int, message: str) -> None:
+        await ws.send(
+            json.dumps(
+                {
+                    "jsonrpc": "2.0",
+                    "id": rpc_id,
+                    "error": {"code": code, "message": message},
+                },
+                ensure_ascii=False,
+            )
+        )
+
+    @staticmethod
+    async def _send_raw_jsonrpc_notification(ws: Any, method: str, params: dict[str, Any]) -> None:
+        await ws.send(json.dumps({"jsonrpc": "2.0", "method": method, "params": params}, ensure_ascii=False))
+
+    @staticmethod
+    def _acp_initialize_result() -> dict[str, Any]:
+        from jiuwenclaw.version import __version__
+
+        return {
+            "protocolVersion": 1,
+            "agentInfo": {
+                "name": "jiuwenclaw",
+                "title": "JiuwenClaw",
+                "version": __version__,
+            },
+            "agentCapabilities": {
+                "loadSession": False,
+                "promptCapabilities": {
+                    "image": False,
+                    "audio": False,
+                    "embeddedContext": False,
+                },
+                "sessionCapabilities": {
+                    "list": {},
+                },
+                "fs": {
+                    "readTextFile": True,
+                    "writeTextFile": True,
+                },
+                "terminal": {
+                    "create": True,
+                    "output": True,
+                    "waitForExit": True,
+                    "release": True,
+                },
+            },
+            "authMethods": [],
+        }
+
+    def _resolve_route(self, request_path: str) -> tuple[RouteConfig | None, str]:
+        """按精确路径匹配路由；支持常见变体（如尾部斜杠）以避免客户端握手失败。"""
+        routes = self.config.routes
+        p = (request_path or "").strip()
+        if not p:
+            return None, request_path
+        if p in routes:
+            return routes[p], p
+        if p != "/" and p.endswith("/") and p.rstrip("/") in routes:
+            return routes[p.rstrip("/")], p.rstrip("/")
+        if not p.endswith("/") and f"{p}/" in routes:
+            return routes[f"{p}/"], f"{p}/"
+        return None, p
+
+    async def wait_until_closed(self) -> None:
+        """阻塞至底层 WebSocket 服务完全关闭（与 :meth:`start` 配对供主循环持有任务）。"""
+        if self._server is None:
+            return
+        await self._server.wait_closed()
 
     def register_local_handler(self, path: str, method: str, handler: Callable[..., Awaitable[None]]) -> None:
         """为指定路径注册本地方法 handler。"""
@@ -388,6 +550,8 @@ class GatewayServer:
         request_key = self._client_route_key(getattr(msg, "channel_id", None), getattr(msg, "id", None))
         if request_key is not None:
             ws = self._request_to_client.get(request_key)
+            if ws is None:
+                ws = self._request_to_client.get(request_key[1])
         if ws is None:
             session_key = self._client_route_key(
                 getattr(msg, "channel_id", None),
@@ -395,8 +559,15 @@ class GatewayServer:
             )
             if session_key is not None:
                 ws = self._session_to_client.get(session_key)
+                if ws is None:
+                    ws = self._session_to_client.get(session_key[1])
         if ws is None or bool(getattr(ws, "closed", False)):
             return
+
+        if getattr(msg, "channel_id", None) == "acp":
+            handled = await self._send_acp_jsonrpc_message(msg, ws)
+            if handled:
+                return
 
         # 让 route 的 outbound_interceptor 有机会拦截
         for route in self.config.routes.values():
@@ -441,12 +612,86 @@ class GatewayServer:
         frame = {"type": "event", "event": event_name, "payload": payload}
         await ws.send(json.dumps(frame, ensure_ascii=False))
 
+    async def _send_acp_jsonrpc_message(self, msg, ws: Any) -> bool:
+        from jiuwenclaw.schema.message import EventType
+
+        ctx = self._acp_request_ctx_by_request_id.get(str(getattr(msg, "id", "")))
+        payload = dict(getattr(msg, "payload", None) or {})
+        session_id = str(getattr(msg, "session_id", None) or "")
+
+        if ctx is None:
+            return False
+
+        if msg.type == "event" and msg.event_type == EventType.CHAT_DELTA:
+            text = str(payload.get("content", "") or "")
+            if not text:
+                return True
+            source_chunk_type = str(payload.get("source_chunk_type") or "")
+            if source_chunk_type == "llm_reasoning":
+                if not ctx.thought_message_id:
+                    ctx.thought_message_id = f"thought_{uuid_module.uuid4().hex[:12]}"
+                update = {
+                    "sessionUpdate": "agent_thought_chunk",
+                    "messageId": ctx.thought_message_id,
+                    "content": {"type": "text", "text": text},
+                }
+            else:
+                if not ctx.assistant_message_id:
+                    ctx.assistant_message_id = f"msg_{uuid_module.uuid4().hex[:12]}"
+                update = {
+                    "sessionUpdate": "agent_message_chunk",
+                    "messageId": ctx.assistant_message_id,
+                    "content": {"type": "text", "text": text},
+                }
+            await self._send_raw_jsonrpc_notification(
+                ws,
+                "session/update",
+                {"sessionId": session_id or ctx.session_id, "update": update},
+            )
+            return True
+
+        if msg.type == "event" and msg.event_type == EventType.CHAT_FINAL:
+            content = str(payload.get("content", "") or "")
+            if content and not ctx.assistant_message_id:
+                ctx.assistant_message_id = f"msg_{uuid_module.uuid4().hex[:12]}"
+                await self._send_raw_jsonrpc_notification(
+                    ws,
+                    "session/update",
+                    {
+                        "sessionId": session_id or ctx.session_id,
+                        "update": {
+                            "sessionUpdate": "agent_message_chunk",
+                            "messageId": ctx.assistant_message_id,
+                            "content": {"type": "text", "text": content},
+                        },
+                    },
+                )
+            await self._send_raw_jsonrpc_result(ws, ctx.jsonrpc_id, {"stopReason": "end_turn"})
+            self._acp_request_ctx_by_request_id.pop(str(msg.id), None)
+            if self._acp_active_prompt_request_by_session.get(ctx.session_id) == str(msg.id):
+                self._acp_active_prompt_request_by_session.pop(ctx.session_id, None)
+            return True
+
+        if msg.type == "event" and msg.event_type == EventType.CHAT_ERROR:
+            await self._send_raw_jsonrpc_error(
+                ws,
+                ctx.jsonrpc_id,
+                -32603,
+                str(payload.get("error") or payload.get("content") or "Agent error"),
+            )
+            self._acp_request_ctx_by_request_id.pop(str(msg.id), None)
+            if self._acp_active_prompt_request_by_session.get(ctx.session_id) == str(msg.id):
+                self._acp_active_prompt_request_by_session.pop(ctx.session_id, None)
+            return True
+
+        return False
+
     async def _connection_handler(self, ws: Any, path: str | None = None) -> None:
         raw_path = path if path is not None else getattr(ws, "path", "")
         parsed = urlparse(raw_path)
         request_path = parsed.path or raw_path
 
-        route = self.config.routes.get(request_path)
+        route, matched_path = self._resolve_route(request_path)
         if route is None:
             await ws.close(code=1008, reason=f"unsupported path: {request_path}")
             return
@@ -469,7 +714,7 @@ class GatewayServer:
 
         try:
             async for raw in ws:
-                await self._handle_raw_message(ws, raw, request_path, route)
+                await self._handle_raw_message(ws, raw, matched_path, route)
         finally:
             self._clients.discard(ws)
             stale_request_ids = [request_id for request_id, client in self._request_to_client.items() if client is ws]
@@ -500,6 +745,84 @@ class GatewayServer:
                     ensure_ascii=False,
                 )
             )
+            return
+
+        if route.channel_id == "acp" and self._is_acp_jsonrpc_request(data):
+            rpc_id = data.get("id")
+            method = str(data.get("method") or "").strip()
+            params = data.get("params") if isinstance(data.get("params"), dict) else {}
+            try:
+                if method == "initialize":
+                    await self._send_raw_jsonrpc_result(ws, rpc_id, self._acp_initialize_result())
+                    return
+                if method == "session/new":
+                    session_id = str(params.get("sessionId") or f"acp_{uuid_module.uuid4().hex[:12]}").strip()
+                    if session_id:
+                        session_key = self._client_route_key(route.channel_id, session_id)
+                        if session_key is not None:
+                            self._session_to_client[session_key] = ws
+                    await self._send_raw_jsonrpc_result(ws, rpc_id, {"sessionId": session_id})
+                    return
+                if method == "session/prompt":
+                    session_id = str(params.get("sessionId") or "").strip()
+                    if not session_id:
+                        raise ValueError("sessionId is required")
+                    text = self._acp_extract_prompt_text(params)
+                    if not text:
+                        raise ValueError("prompt is required")
+                    request_id = f"acp_{uuid_module.uuid4().hex[:12]}"
+                    session_key = self._client_route_key(route.channel_id, session_id)
+                    if session_key is not None:
+                        self._session_to_client[session_key] = ws
+                    self._acp_request_ctx_by_request_id[request_id] = _GatewayAcpRequestContext(
+                        jsonrpc_id=rpc_id,
+                        session_id=session_id,
+                    )
+                    self._acp_active_prompt_request_by_session[session_id] = request_id
+                    msg = Message(
+                        id=request_id,
+                        type="req",
+                        channel_id=route.channel_id,
+                        session_id=session_id,
+                        params={
+                            **dict(params),
+                            "content": text,
+                            "query": text,
+                            "session_id": session_id,
+                        },
+                        timestamp=time.time(),
+                        ok=True,
+                        req_method=ReqMethod.CHAT_SEND,
+                        mode=Mode.AGENT,
+                        metadata={"acp": {"jsonrpc_id": rpc_id, "method": method}},
+                    )
+                    if self._on_message_cb is not None:
+                        result = self._on_message_cb(msg)
+                        if asyncio.iscoroutine(result):
+                            await result
+                    return
+                if method == "session/cancel":
+                    session_id = str(params.get("sessionId") or "").strip()
+                    if session_id:
+                        request_id = self._acp_active_prompt_request_by_session.pop(session_id, None)
+                        if request_id is not None:
+                            ctx = self._acp_request_ctx_by_request_id.pop(request_id, None)
+                            if ctx is not None:
+                                await self._send_raw_jsonrpc_result(ws, ctx.jsonrpc_id, {"stopReason": "cancelled"})
+                    await self._send_raw_jsonrpc_result(ws, rpc_id, None)
+                    return
+                if method == "session/list":
+                    await self._send_raw_jsonrpc_result(ws, rpc_id, {"sessions": []})
+                    return
+                if method == "session/load":
+                    await self._send_raw_jsonrpc_result(ws, rpc_id, None)
+                    return
+                await self._send_raw_jsonrpc_error(ws, rpc_id, -32601, f"Method not found: {method}")
+            except ValueError as exc:
+                await self._send_raw_jsonrpc_error(ws, rpc_id, -32602, str(exc))
+            except Exception as exc:  # noqa: BLE001
+                logger.exception("GatewayServer ACP JSON-RPC handler failed: method=%s", method)
+                await self._send_raw_jsonrpc_error(ws, rpc_id, -32603, str(exc))
             return
 
         # route 级别的原始帧拦截（如 ACP JSON-RPC response）
@@ -589,6 +912,12 @@ class GatewayServer:
                 result = self._on_message_cb(msg)
                 if asyncio.iscoroutine(result):
                     await result
+
+            # ACP route may receive legacy ``type=req`` frames from some clients.
+            # They should be forwarded upstream without falling through to the
+            # generic "unknown method" error path.
+            if route.channel_id == "acp":
+                return
 
             # 如果在 forward_no_local_handler_methods 中，不需要本地 ack
             if method in route.forward_no_local_handler_methods:
@@ -1460,7 +1789,12 @@ async def _run(
 
     await channel_manager.start_dispatch()
     await cron_scheduler.start()
-    gateway_server_task = asyncio.create_task(gateway_server.start(), name="acp-gateway-server")
+    # 先同步完成监听绑定，避免 IDE/ACP 子进程在端口尚未就绪时连接导致多次重试。
+    await gateway_server.start()
+    gateway_server_task = asyncio.create_task(
+        gateway_server.wait_until_closed(),
+        name="acp-gateway-server",
+    )
     web_task = (
         asyncio.create_task(web_channel.start(), name="web-channel")
         if web_channel is not None

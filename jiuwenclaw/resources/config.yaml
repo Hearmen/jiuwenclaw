@@ -342,6 +342,7 @@ permissions:
   tools:
     bash: ask
     mcp_exec_command: ask
+    create_terminal: ask
     write: ask
     write_file: ask
     edit_file: ask

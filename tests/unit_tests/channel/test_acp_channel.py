@@ -268,6 +268,63 @@ async def test_jsonrpc_session_prompt_emits_updates_and_final_result(monkeypatch
 
 
 @pytest.mark.asyncio
+async def test_jsonrpc_session_prompt_accepts_text_param(monkeypatch):
+    fake_stdin = FakeStdin(
+        [
+            json_line(
+                {
+                    "jsonrpc": "2.0",
+                    "id": 301,
+                    "method": "session/prompt",
+                    "params": {
+                        "sessionId": "sess-text",
+                        "text": "hello from text",
+                    },
+                }
+            )
+        ]
+    )
+    fake_stdout = FakeStdout()
+    channel = AcpChannel(AcpChannelConfig(enabled=True), DummyBus())
+    seen = []
+
+    monkeypatch.setattr("sys.stdin", fake_stdin)
+    monkeypatch.setattr("sys.stdout", fake_stdout)
+    monkeypatch.setattr("jiuwenclaw.channel.acp_channel._ACP_STDOUT", fake_stdout)
+
+    async def _on_message(msg):
+        seen.append(msg)
+        await channel.send(
+            Message(
+                id=msg.id,
+                type="event",
+                channel_id="acp",
+                session_id=msg.session_id,
+                params={},
+                timestamp=time.time(),
+                ok=True,
+                payload={"content": "final answer"},
+                event_type=EventType.CHAT_FINAL,
+            )
+        )
+
+    channel.on_message(_on_message)
+    await channel.start()
+
+    assert len(seen) == 1
+    assert seen[0].req_method == ReqMethod.CHAT_SEND
+    assert seen[0].session_id == "sess-text"
+    assert seen[0].params.get("query") == "hello from text"
+
+    responses = fake_stdout.buffer.json_lines()
+    assert responses[-1] == {
+        "jsonrpc": "2.0",
+        "id": 301,
+        "result": {"stopReason": "end_turn"},
+    }
+
+
+@pytest.mark.asyncio
 async def test_jsonrpc_session_prompt_merges_session_context(monkeypatch):
     fake_stdin = FakeStdin(
         [

@@ -18,6 +18,7 @@ from jiuwenclaw.agentserver.permissions.patterns import persist_permission_allow
 from jiuwenclaw.agentserver.permissions.tiered_policy import (
     collect_builtin_permission_rail_tool_names,
     evaluate_tiered_policy,
+    maybe_escalate_shell_operators,
     permissions_schema_is_tiered_policy,
     severity_to_decision,
     strictest,
@@ -132,6 +133,14 @@ def test_defaults_when_tool_not_in_tools():
 
 def test_strictest_helper():
     assert strictest(PermissionLevel.ALLOW, PermissionLevel.DENY) == PermissionLevel.DENY
+
+
+def test_create_terminal_operator_chain_escalates_allow_to_ask():
+    assert maybe_escalate_shell_operators(
+        "create_terminal",
+        {"command": "echo ok && whoami"},
+        PermissionLevel.ALLOW,
+    ) == PermissionLevel.ASK
 
 
 def test_whole_tool_allow_ignores_default_ask():
