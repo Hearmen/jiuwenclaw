@@ -76,6 +76,10 @@ try:
         Emoji,
         P2ImMessageReceiveV1,
     )
+    from lark_oapi.event.callback.model.p2_card_action_trigger import (
+        P2CardActionTrigger,
+        P2CardActionTriggerResponse,
+    )
 
     FEISHU_AVAILABLE = True
 except ImportError:
@@ -356,6 +360,7 @@ class FeishuChannel(BaseChannel):
                 )
                 .register_p2_im_message_receive_v1(self._on_message_sync)
                 .register_p2_im_message_message_read_v1(self._on_message_read_event)
+                .register_p2_card_action_trigger(self._on_card_action_trigger_sync)
                 .build()
             )
 
@@ -1286,6 +1291,11 @@ class FeishuChannel(BaseChannel):
                     await self._send_media_message(msg)
                 return
 
+            # 处理用户询问消息（发送确认卡片）
+            if msg.event_type == EventType.CHAT_ASK_USER_QUESTION:
+                await self._send_ask_user_question_card(msg)
+                return
+
             # 流式增量：先缓存；若开启流式则实时发送，否则仅缓存不发送。
             if event_name == "chat.delta":
                 delta = self._extract_message_content(msg)
@@ -1821,6 +1831,103 @@ class FeishuChannel(BaseChannel):
         }
         return json.dumps(card, ensure_ascii=False)
 
+    async def _send_ask_user_question_card(self, msg: Message) -> None:
+        """
+        发送用户询问卡片（带选项按钮的确认卡片）。
+
+        Args:
+            msg: 包含 ask_user_question payload 的消息对象
+        """
+        try:
+            payload = msg.payload if isinstance(msg.payload, dict) else {}
+            questions = payload.get("questions", [])
+            request_id = payload.get("request_id", "")
+
+            if not questions:
+                logger.warning("发送用户询问卡片：没有问题数据")
+                return
+
+            # 构建 card 元素，每次只显示一个问题
+            elements = []
+
+            # 添加问题文本
+            question = questions[0]
+            question_text = question.get("question", "")
+            if question_text:
+                elements.append({
+                    "tag": "div",
+                    "text": {
+                        "tag": "lark_md",
+                        "content": question_text
+                    }
+                })
+
+            # 添加分隔线
+            elements.append({"tag": "hr"})
+
+            # 添加按钮
+            options = question.get("options", [])
+            if options:
+                actions = []
+                for option in options:
+                    label = option.get("label", "")
+                    # value = json.dumps({"label": label}, ensure_ascii=False)
+                    button_element = {
+                        "tag": "button",
+                        "text": {
+                            "tag": "plain_text",
+                            "content": label
+                        },
+                        "type": "primary",
+                        "value": {"label": label, "request_id": request_id}
+                    }
+                    actions.append(button_element)
+
+                elements.append({
+                    "tag": "action",
+                    "actions": actions
+                })
+
+            # 构建卡片
+            card = {
+                "config": {"wide_screen_mode": True},
+                "elements": elements,
+            }
+
+            # 添加 header 用于存储 request_id
+            header_text = question.get("header", "")
+            if header_text:
+                card["header"] = {
+                    "title": {
+                        "tag": "plain_text",
+                        "content": header_text
+                    },
+                    "template": request_id  # 使用 template 字段存储 request_id
+                }
+
+            # 发送卡片
+            receive_id, id_type = self._extract_receive_info(msg)
+            card_json = json.dumps(card, ensure_ascii=False)
+
+            await self._create_and_send_message(
+                FeishuMessageSendRequest(
+                    receive_id=receive_id,
+                    id_type=id_type,
+                    msg_type="interactive",
+                    content=card_json,
+                    log_label=f"ask_user_question:{request_id}",
+                )
+            )
+
+            logger.info(
+                "[FeishuChannel] 发送用户询问卡片: request_id=%s, chat_id=%s",
+                request_id,
+                receive_id,
+            )
+
+        except Exception as e:
+            logger.error(f"发送用户询问卡片时发生异常: {e}", exc_info=True)
+
     async def _send_feishu_message(
         self, receive_id: str, id_type: str, content: str, msg_id: str,
     ) -> Any:
@@ -1993,6 +2100,125 @@ class FeishuChannel(BaseChannel):
             data: 飞书消息已读事件数据（忽略）
         """
         pass  # 不处理，仅用于消除日志警告
+
+    def _on_card_action_trigger_sync(self, data: P2CardActionTrigger) -> P2CardActionTriggerResponse:
+        """
+        处理飞书卡片按钮点击事件的同步处理器（从WebSocket线程调用）。
+
+        根据飞书SDK规范，需要返回 P2CardActionTriggerResponse 对象。
+
+        Args:
+            data: 飞书卡片回调事件数据 (P2CardActionTrigger)
+
+        Returns:
+            Any: P2CardActionTriggerResponse 响应对象
+        """
+        try:
+            event = data.event
+            action = event.action
+
+            # 提取回调信息
+            token = event.token or ""
+            action_value = action.value or ""
+
+            # 获取用户和上下文信息
+            operator_id = event.operator.open_id if event.operator and event.operator.open_id else ""
+
+            logger.info(
+                "[FeishuChannel] 收到卡片回调: token=%s, action=%s, user=%s",
+                token,
+                action_value,
+                operator_id,
+            )
+
+            # 在主事件循环中调度异步处理
+            if self._main_loop and self._main_loop.is_running():
+                asyncio.run_coroutine_threadsafe(
+                    self._handle_card_callback_async(token, action_value, operator_id),
+                    self._main_loop
+                )
+
+            # 返回成功的响应：更新卡片去除按钮，提示已接受
+            response = {
+                "toast": {
+                    "type": "info",
+                    "content": "已收到您的选择"
+                }
+            }
+
+            if P2CardActionTriggerResponse:
+                return P2CardActionTriggerResponse(response)
+
+            return response
+
+        except Exception as e:
+            logger.error(f"处理飞书卡片回调时发生异常: {e}", exc_info=True)
+            # 返回错误响应
+            error_response = {
+                "toast": {
+                    "type": "error",
+                    "content": "处理失败"
+                }
+            }
+            if P2CardActionTriggerResponse:
+                return P2CardActionTriggerResponse(error_response)
+            return error_response
+
+    async def _handle_card_callback_async(
+        self,
+        token: str,
+        action_value: str,
+        operator_id: str,
+    ) -> None:
+        """
+        异步处理卡片回调，将回调转换为 chat.user_answer 事件。
+
+        Args:
+            token: 卡片 token
+            action_value: 用户选择的值
+            operator_id: 操作者 ID
+        """
+        try:
+            request_id = action_value.pop("request_id", "")
+            if not request_id:
+                raise ValueError("missing request_id")
+            # 构建用户响应（符合 evolution service 期望的格式）
+            answers = [{"selected_options": list(action_value.values())}] if action_value else []
+
+            logger.info(
+                "[FeishuChannel] 发送用户答案: token=%s, answer=%s",
+                token,
+                action_value,
+            )
+            msg = Message(
+                    id=token,
+                    type="event",
+                    channel_id=self.channel_id,
+                    session_id=operator_id,
+                    params={"answers": answers, "request_id": request_id},
+                    timestamp=time.time(),
+                    ok=True,
+                    req_method=ReqMethod.CHAT_ANSWER,
+                    provider=self.name,
+                    chat_id="",  # 卡片回调不直接关联特定chat_id
+                    user_id=operator_id,
+                    bot_id=self.config.app_id,
+                    event_type=None,  # 不使用特定事件类型，通过 params 传递答案
+                    metadata={
+                        "request_id": token,
+                        "answers": answers,
+                    },
+                )
+            # 发送 chat.user_answer 事件到 gateway
+            if self._message_callback:
+                # 构建 Message 对象
+                self._message_callback(msg)
+            else:
+                # 通过 bus 路由
+                await self.bus.publish_user_message(msg)
+
+        except Exception as e:
+            logger.error(f"异步处理卡片回调时发生异常: {e}", exc_info=True)
 
     def _is_duplicate_message(self, message_id: str) -> bool:
         """
