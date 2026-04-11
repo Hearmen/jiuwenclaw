@@ -408,6 +408,7 @@ class JiuWenClaw:
             role="user",
             content=query,
             timestamp=time.time(),
+            channel_metadata=request.metadata,
         )
 
         logger.info(
@@ -498,6 +499,7 @@ class JiuWenClaw:
             role="user",
             content=query,
             timestamp=time.time(),
+            channel_metadata=request.metadata,
         )
 
         logger.info(
