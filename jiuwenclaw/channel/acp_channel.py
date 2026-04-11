@@ -16,6 +16,7 @@ from jiuwenclaw.e2a.adapters import envelope_from_acp_jsonrpc
 from jiuwenclaw.e2a.constants import (
     E2A_RESPONSE_KIND_ACP_JSONRPC_ERROR,
     E2A_RESPONSE_KIND_ACP_PROMPT_RESULT,
+    E2A_RESPONSE_KIND_ACP_SESSION_UPDATE,
     E2A_RESPONSE_KIND_E2A_CHUNK,
     E2A_RESPONSE_STATUS_FAILED,
     E2A_RESPONSE_STATUS_IN_PROGRESS,
@@ -323,6 +324,29 @@ class AcpChannel(BaseChannel):
                 session_id=msg.session_id,
                 body=result_body,
             )
+
+        if msg.type == "event":
+            update = self._build_acp_session_update(msg, payload, ctx)
+            if update is not None:
+                ctx.sequence += 1
+                return E2AResponse(
+                    response_id=f"{msg.id}:{sequence}",
+                    request_id=msg.id,
+                    jsonrpc_id=ctx.jsonrpc_id,
+                    sequence=sequence,
+                    is_final=False,
+                    status=E2A_RESPONSE_STATUS_IN_PROGRESS,
+                    response_kind=E2A_RESPONSE_KIND_ACP_SESSION_UPDATE,
+                    timestamp=ts,
+                    provenance=self._provenance(str(msg.event_type.value if msg.event_type else "session.update")),
+                    channel=self.channel_id,
+                    session_id=msg.session_id,
+                    is_stream=True,
+                    body={
+                        "sessionId": str(msg.session_id or ctx.session_id or ""),
+                        "update": update,
+                    },
+                )
 
         if msg.type == "res" and msg.ok:
             if payload.get("accepted") is True:
@@ -645,35 +669,25 @@ class AcpChannel(BaseChannel):
             if not text:
                 return False
             self._schedule_idle_finalize(str(msg.id), ctx)
-            source_chunk_type = str(payload.get("source_chunk_type") or "")
-            if source_chunk_type == "llm_reasoning":
-                if not ctx.thought_message_id:
-                    ctx.thought_message_id = f"thought_{uuid.uuid4().hex[:12]}"
-                await self._write_jsonrpc_notification(
-                    "session/update",
-                    {
-                        "sessionId": session_id,
-                        "update": {
-                            "sessionUpdate": "agent_thought_chunk",
-                            "messageId": ctx.thought_message_id,
-                            "content": {"type": "text", "text": text},
-                        },
-                    },
-                )
-            else:
-                if not ctx.assistant_message_id:
-                    ctx.assistant_message_id = f"msg_{uuid.uuid4().hex[:12]}"
-                await self._write_jsonrpc_notification(
-                    "session/update",
-                    {
-                        "sessionId": session_id,
-                        "update": {
-                            "sessionUpdate": "agent_message_chunk",
-                            "messageId": ctx.assistant_message_id,
-                            "content": {"type": "text", "text": text},
-                        },
-                    },
-                )
+            update = self._build_acp_session_update(msg, payload, ctx)
+            if update is None:
+                return False
+            await self._write_acp_session_update(session_id, update)
+            return False
+
+        if msg.type == "event" and msg.event_type in (
+            EventType.CHAT_TOOL_CALL,
+            EventType.CHAT_TOOL_RESULT,
+            EventType.CHAT_SUBTASK_UPDATE,
+        ):
+            update = self._build_acp_session_update(msg, payload, ctx)
+            if update is None:
+                return False
+            task = ctx.idle_finalize_task
+            if task is not None:
+                task.cancel()
+                ctx.idle_finalize_task = None
+            await self._write_acp_session_update(session_id, update)
             return False
 
         if msg.type == "event" and msg.event_type == EventType.CHAT_FINAL:
@@ -684,15 +698,21 @@ class AcpChannel(BaseChannel):
             content = str(payload.get("content", "") or "")
             if content and not ctx.assistant_message_id:
                 ctx.assistant_message_id = f"msg_{uuid.uuid4().hex[:12]}"
-                await self._write_jsonrpc_notification(
-                    "session/update",
+                await self._write_acp_session_update(
+                    session_id,
                     {
-                        "sessionId": session_id,
-                        "update": {
-                            "sessionUpdate": "agent_message_chunk",
-                            "messageId": ctx.assistant_message_id,
-                            "content": {"type": "text", "text": content},
-                        },
+                        "sessionUpdate": "agent_message_chunk",
+                        "messageId": ctx.assistant_message_id,
+                        "content": {"type": "text", "text": content},
+                    },
+                )
+            usage = payload.get("usage")
+            if isinstance(usage, dict) and usage:
+                await self._write_acp_session_update(
+                    session_id,
+                    {
+                        "sessionUpdate": "usage_update",
+                        "usage": dict(usage),
                     },
                 )
             await self._write_jsonrpc_result(
@@ -729,18 +749,23 @@ class AcpChannel(BaseChannel):
             return True
 
         if msg.type == "event":
-            if msg.event_type == EventType.CHAT_PROCESSING_STATUS and payload.get("is_processing") is False:
-                task = ctx.idle_finalize_task
-                if task is not None:
-                    task.cancel()
-                    ctx.idle_finalize_task = None
-                await self._write_jsonrpc_result(
-                    ctx.jsonrpc_id,
-                    {
-                        "stopReason": "end_turn",
-                    },
-                )
-                return True
+            if msg.event_type == EventType.CHAT_PROCESSING_STATUS:
+                update = self._build_acp_session_update(msg, payload, ctx)
+                if update is not None:
+                    await self._write_acp_session_update(session_id, update)
+                if payload.get("is_processing") is False:
+                    task = ctx.idle_finalize_task
+                    if task is not None:
+                        task.cancel()
+                        ctx.idle_finalize_task = None
+                    await self._write_jsonrpc_result(
+                        ctx.jsonrpc_id,
+                        {
+                            "stopReason": "end_turn",
+                        },
+                    )
+                    return True
+                return False
             return False
 
         if msg.type == "res" and msg.ok:
@@ -764,6 +789,92 @@ class AcpChannel(BaseChannel):
             str(payload.get("error") or payload.get("content") or "request failed"),
         )
         return True
+
+    async def _write_acp_session_update(self, session_id: str, update: dict[str, Any]) -> None:
+        await self._write_jsonrpc_notification(
+            "session/update",
+            {
+                "sessionId": session_id,
+                "update": update,
+            },
+        )
+
+    def _build_acp_session_update(
+        self,
+        msg: Message,
+        payload: dict[str, Any],
+        ctx: _AcpRequestContext,
+    ) -> dict[str, Any] | None:
+        event_type = msg.event_type
+        if event_type == EventType.CHAT_DELTA:
+            text = str(payload.get("content", "") or "")
+            if not text:
+                return None
+            source_chunk_type = str(payload.get("source_chunk_type") or "")
+            if source_chunk_type == "llm_reasoning":
+                if not ctx.thought_message_id:
+                    ctx.thought_message_id = f"thought_{uuid.uuid4().hex[:12]}"
+                return {
+                    "sessionUpdate": "agent_thought_chunk",
+                    "messageId": ctx.thought_message_id,
+                    "content": {"type": "text", "text": text},
+                }
+
+            if not ctx.assistant_message_id:
+                ctx.assistant_message_id = f"msg_{uuid.uuid4().hex[:12]}"
+            return {
+                "sessionUpdate": "agent_message_chunk",
+                "messageId": ctx.assistant_message_id,
+                "content": {"type": "text", "text": text},
+            }
+
+        if event_type == EventType.CHAT_TOOL_CALL:
+            tool_call = payload.get("tool_call")
+            if not isinstance(tool_call, dict):
+                return None
+            tool_call_id = str(
+                tool_call.get("tool_call_id")
+                or tool_call.get("toolCallId")
+                or tool_call.get("id")
+                or ""
+            )
+            return {
+                "sessionUpdate": "tool_call",
+                "toolCall": {
+                    "id": tool_call_id,
+                    "name": str(tool_call.get("name") or ""),
+                    "arguments": tool_call.get("arguments", {}),
+                },
+            }
+
+        if event_type == EventType.CHAT_TOOL_RESULT:
+            tool_call_id = str(payload.get("tool_call_id") or payload.get("toolCallId") or "")
+            tool_name = str(payload.get("tool_name") or payload.get("name") or "")
+            result: Any = payload.get("result")
+            if result is None:
+                result = payload.get("content", "")
+            update = {
+                "sessionUpdate": "tool_call_update",
+                "toolCallId": tool_call_id,
+                "result": result,
+            }
+            if tool_name:
+                update["toolName"] = tool_name
+            return update
+
+        if event_type == EventType.CHAT_SUBTASK_UPDATE:
+            return {
+                "sessionUpdate": "plan",
+                "plan": dict(payload),
+            }
+
+        if event_type == EventType.CHAT_PROCESSING_STATUS:
+            return {
+                "sessionUpdate": "session_info_update",
+                "status": "processing" if bool(payload.get("is_processing", True)) else "idle",
+            }
+
+        return None
 
     @staticmethod
     def _is_jsonrpc_request(data: Any) -> bool:
