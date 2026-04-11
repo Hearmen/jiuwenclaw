@@ -1,6 +1,8 @@
 import {
   CombinedAutocompleteProvider,
   Editor,
+  SelectList,
+  type SelectItem,
   type AutocompleteItem,
   type Component,
   type Focusable,
@@ -12,7 +14,7 @@ import { CommandService, parseSlashCommand } from "../core/commands/CommandServi
 import { handleAppScreenKeyInput } from "./keymap.js";
 import { buildAppScreenLines } from "./screen-layout.js";
 import { padToWidth } from "./rendering/text.js";
-import { editorTheme, palette } from "./theme.js";
+import { editorTheme, palette, selectListTheme } from "./theme.js";
 
 const END_CURSOR = "\x1b[7m \x1b[0m";
 
@@ -21,7 +23,10 @@ export class AppScreen implements Component, Focusable {
   private readonly unsubscribe: () => void;
   private _focused = false;
   private activeQuestionId: string | null = null;
+  private activeQuestionIndex = 0;
   private draftBeforeQuestion = "";
+  private pendingQuestionAnswers = new Map<number, string>();
+  private questionList: SelectList | null = null;
   private showFullThinking = false;
   private showToolDetails = false;
   private showShortcutHelp = false;
@@ -110,6 +115,13 @@ export class AppScreen implements Component, Focusable {
       return;
     }
 
+    const snapshot = this.state.getSnapshot();
+    if (snapshot.pendingQuestion && this.questionList !== null) {
+      this.questionList.handleInput(data);
+      this.tui.requestRender();
+      return;
+    }
+
     this.editor.handleInput(data);
   }
 
@@ -119,9 +131,11 @@ export class AppScreen implements Component, Focusable {
       ? palette.border.question
       : palette.border.active;
     const editorLines = this.applySlashCommandHint(this.editor.render(width), width);
+    const questionLines = this.buildPendingQuestionLines(snapshot, width);
     return buildAppScreenLines(snapshot, {
       width,
       terminalRows: this.tui.terminal.rows,
+      questionLines,
       editorLines,
       showFullThinking: this.showFullThinking,
       showToolDetails: this.showToolDetails,
@@ -136,7 +150,9 @@ export class AppScreen implements Component, Focusable {
 
     const snapshot = this.state.getSnapshot();
     if (snapshot.pendingQuestion) {
-      this.state.answerQuestion(text);
+      if (this.questionList === null) {
+        this.state.answerQuestion(text);
+      }
       this.editor.addToHistory(text);
       this.editor.setText("");
       return;
@@ -184,10 +200,18 @@ export class AppScreen implements Component, Focusable {
     const questionId = snapshot.pendingQuestion?.requestId ?? null;
     if (questionId && questionId !== this.activeQuestionId) {
       this.activeQuestionId = questionId;
+      this.activeQuestionIndex = 0;
+      this.pendingQuestionAnswers.clear();
       this.draftBeforeQuestion = this.editor.getText();
       this.editor.setText("");
+      this.syncQuestionList(snapshot);
+    } else if (questionId && this.activeQuestionId) {
+      this.syncQuestionList(snapshot);
     } else if (!questionId && this.activeQuestionId) {
       this.activeQuestionId = null;
+      this.activeQuestionIndex = 0;
+      this.pendingQuestionAnswers.clear();
+      this.questionList = null;
       if (!this.editor.getText() && this.draftBeforeQuestion) {
         this.editor.setText(this.draftBeforeQuestion);
       }
@@ -261,5 +285,127 @@ export class AppScreen implements Component, Focusable {
           }
         : undefined,
     }));
+  }
+
+  private buildPendingQuestionLines(snapshot: ReturnType<CliPiAppState["getSnapshot"]>, width: number): string[] {
+    const pendingQuestion = snapshot.pendingQuestion;
+    if (!pendingQuestion) {
+      return [];
+    }
+
+    const question = pendingQuestion.questions[this.activeQuestionIndex] ?? pendingQuestion.questions[0];
+    if (!question) {
+      return [];
+    }
+
+    const total = pendingQuestion.questions.length;
+    const progress = total > 1 ? ` (${this.activeQuestionIndex + 1}/${total})` : "";
+    const lines = this.wrapQuestionText(`[${question.header || "Question"}${progress}] ${question.question}`, width).map(
+      (line) => padToWidth(palette.status.warning(line), width),
+    );
+
+    if (this.questionList !== null) {
+      lines.push(" ".repeat(width));
+      lines.push(...this.questionList.render(width));
+      lines.push(
+        padToWidth(
+          palette.text.dim("Use ↑/↓ to choose, Enter to confirm, Esc to reject"),
+          width,
+        ),
+      );
+    }
+
+    lines.push(" ".repeat(width));
+    return lines;
+  }
+
+  private wrapQuestionText(text: string, width: number): string[] {
+    const maxWidth = Math.max(12, width - 1);
+    const source = text.replace(/\r/g, "").split("\n");
+    const lines: string[] = [];
+    for (const rawLine of source) {
+      const words = rawLine.split(/\s+/).filter((word) => word.length > 0);
+      if (words.length === 0) {
+        lines.push("");
+        continue;
+      }
+      let current = "";
+      for (const word of words) {
+        const next = current ? `${current} ${word}` : word;
+        if (next.length <= maxWidth) {
+          current = next;
+          continue;
+        }
+        if (current) {
+          lines.push(current);
+        }
+        current = word.length <= maxWidth ? word : word.slice(0, maxWidth);
+      }
+      if (current) {
+        lines.push(current);
+      }
+    }
+    return lines.length > 0 ? lines : [text.slice(0, maxWidth)];
+  }
+
+  private syncQuestionList(snapshot: ReturnType<CliPiAppState["getSnapshot"]>): void {
+    const pendingQuestion = snapshot.pendingQuestion;
+    if (!pendingQuestion) {
+      this.questionList = null;
+      return;
+    }
+
+    const question = pendingQuestion.questions[this.activeQuestionIndex];
+    if (!question || question.options.length === 0) {
+      this.questionList = null;
+      return;
+    }
+
+    const items: SelectItem[] = question.options.map((option) => ({
+      value: option.label,
+      label: option.label,
+      description: option.description,
+    }));
+    const list = new SelectList(items, Math.min(Math.max(items.length, 1), 6), selectListTheme);
+    list.onSelect = (item) => {
+      this.handleQuestionSelection(item.value);
+    };
+    list.onCancel = () => {
+      const reject = question.options.find((option) => option.label === "拒绝");
+      if (reject) {
+        this.handleQuestionSelection(reject.label);
+      }
+    };
+    const selectedValue = this.pendingQuestionAnswers.get(this.activeQuestionIndex);
+    const selectedIndex = selectedValue
+      ? items.findIndex((item) => item.value === selectedValue)
+      : 0;
+    if (selectedIndex >= 0) {
+      list.setSelectedIndex(selectedIndex);
+    }
+    this.questionList = list;
+  }
+
+  private handleQuestionSelection(label: string): void {
+    const snapshot = this.state.getSnapshot();
+    const pendingQuestion = snapshot.pendingQuestion;
+    if (!pendingQuestion) {
+      return;
+    }
+
+    this.pendingQuestionAnswers.set(this.activeQuestionIndex, label);
+    if (this.activeQuestionIndex < pendingQuestion.questions.length - 1) {
+      this.activeQuestionIndex += 1;
+      this.syncQuestionList(this.state.getSnapshot());
+      this.tui.requestRender();
+      return;
+    }
+
+    const answers = pendingQuestion.questions.map((question, index) => ({
+      selected_options: [
+        this.pendingQuestionAnswers.get(index) ?? question.options[0]?.label ?? "",
+      ].filter((value) => value.length > 0),
+    }));
+    this.state.submitQuestionAnswers(answers);
   }
 }

@@ -18,7 +18,25 @@ import {
 
 export interface PendingQuestion {
   requestId: string;
-  text: string;
+  source?: string;
+  questions: PendingQuestionItem[];
+}
+
+export interface PendingQuestionItem {
+  header: string;
+  question: string;
+  options: PendingQuestionOption[];
+  multiSelect?: boolean;
+}
+
+export interface PendingQuestionOption {
+  label: string;
+  description?: string;
+}
+
+export interface UserAnswer {
+  selected_options: string[];
+  custom_input?: string;
 }
 
 export interface AppEventDelegate {
@@ -72,6 +90,50 @@ function handleConnectionAck(delegate: AppEventDelegate, frame: EventFrame): boo
     delegate.safeRestoreHistory(sessionId);
   }
   return true;
+}
+
+function normalizePendingQuestion(payload: Record<string, unknown>): PendingQuestionItem[] {
+  const rawQuestions = Array.isArray(payload.questions) ? payload.questions : [];
+  const normalized = rawQuestions
+    .filter((item): item is Record<string, unknown> => Boolean(item && typeof item === "object"))
+    .map((item) => ({
+      header: typeof item.header === "string" ? item.header : "Question",
+      question: typeof item.question === "string" ? item.question : "",
+      options: Array.isArray(item.options)
+        ? item.options
+            .filter((option): option is Record<string, unknown> => Boolean(option && typeof option === "object"))
+            .map((option) => ({
+              label: typeof option.label === "string" ? option.label : "",
+              description: typeof option.description === "string" ? option.description : undefined,
+            }))
+            .filter((option) => option.label.length > 0)
+        : [],
+      multiSelect: item.multi_select === true,
+    }))
+    .filter((item) => item.question.length > 0);
+
+  if (normalized.length > 0) {
+    return normalized;
+  }
+
+  const fallbackText =
+    typeof payload.text === "string"
+      ? payload.text
+      : typeof payload.content === "string"
+        ? payload.content
+        : "";
+  if (!fallbackText) {
+    return [];
+  }
+
+  return [
+    {
+      header: "Question",
+      question: fallbackText,
+      options: [],
+      multiSelect: false,
+    },
+  ];
 }
 
 function handleDelta(
@@ -370,17 +432,16 @@ export function handleIncomingFrame(delegate: AppEventDelegate, frame: EventFram
     }
 
     case "chat.ask_user_question": {
-      const text =
-        typeof payload.text === "string"
-          ? payload.text
-          : typeof payload.content === "string"
-            ? payload.content
-            : "";
       const requestId = typeof payload.request_id === "string" ? payload.request_id : "";
-      if (!text || !requestId) {
+      const questions = normalizePendingQuestion(payload);
+      if (!requestId || questions.length === 0) {
         return connectionChanged;
       }
-      delegate.setPendingQuestion({ requestId, text });
+      delegate.setPendingQuestion({
+        requestId,
+        source: typeof payload.source === "string" ? payload.source : undefined,
+        questions,
+      });
       delegate.setStreamingState(StreamingState.WaitingForConfirmation);
       return true;
     }

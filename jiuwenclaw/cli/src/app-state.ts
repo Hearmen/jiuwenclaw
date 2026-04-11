@@ -5,6 +5,7 @@ import {
   handleIncomingFrame,
   type AppEventDelegate,
   type PendingQuestion,
+  type UserAnswer,
 } from "./core/event-handlers.js";
 import { isEventFrame, type EventFrame } from "./core/protocol.js";
 import {
@@ -165,7 +166,15 @@ export class CliPiAppState {
       collapsedToolGroupIds: new Set(this.collapsedToolGroupIds),
       entries: [...this.entries],
       streamingState: this.streamingState,
-      pendingQuestion: this.pendingQuestion ? { ...this.pendingQuestion } : null,
+      pendingQuestion: this.pendingQuestion
+        ? {
+            ...this.pendingQuestion,
+            questions: this.pendingQuestion.questions.map((question) => ({
+              ...question,
+              options: [...question.options],
+            })),
+          }
+        : null,
       lastError: this.lastError,
       isProcessing,
       isPaused: this.streamingState === StreamingState.Paused,
@@ -369,15 +378,27 @@ export class CliPiAppState {
     this.sendEventOnly("chat.resume", {});
   }
 
-  answerQuestion(answer: string): void {
+  submitQuestionAnswers(answers: UserAnswer[]): void {
     if (!this.pendingQuestion) return;
-    this.sendEventOnly("chat.user_answer", {
-      request_id: this.pendingQuestion.requestId,
-      content: answer,
-    });
+    if (this.pendingQuestion.source === "permission_interrupt") {
+      this.sendEventOnly("chat.send", {
+        query: "",
+        request_id: this.pendingQuestion.requestId,
+        answers,
+      });
+    } else {
+      this.sendEventOnly("chat.user_answer", {
+        request_id: this.pendingQuestion.requestId,
+        answers,
+      });
+    }
     this.pendingQuestion = null;
     this.streamingState = StreamingState.Idle;
     this.emitChange();
+  }
+
+  answerQuestion(answer: string): void {
+    this.submitQuestionAnswers([{ selected_options: [answer], custom_input: answer }]);
   }
 
   async restoreHistory(targetSessionId: string): Promise<void> {

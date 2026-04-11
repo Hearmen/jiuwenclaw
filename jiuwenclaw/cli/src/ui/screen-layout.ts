@@ -9,6 +9,7 @@ import { buildWelcomeLines } from "./welcome.js";
 export interface ScreenLayoutOptions {
   width: number;
   terminalRows: number;
+  questionLines: string[];
   editorLines: string[];
   showFullThinking: boolean;
   showToolDetails: boolean;
@@ -31,12 +32,6 @@ function formatSubtaskStatus(status: string): string {
     default:
       return status;
   }
-}
-
-function buildQuestionLines(text: string, width: number): string[] {
-  const question = `[question] ${text}`;
-  const clipped = question.length > width ? question.slice(0, width) : question;
-  return [padToWidth(palette.status.warning(clipped), width), " ".repeat(width)];
 }
 
 function buildStatusLines(
@@ -154,9 +149,6 @@ function buildTranscriptLines(
 }
 
 export function buildAppScreenLines(snapshot: AppSnapshot, options: ScreenLayoutOptions): string[] {
-  const questionLines = snapshot.pendingQuestion
-    ? buildQuestionLines(snapshot.pendingQuestion.text, options.width)
-    : [];
   const statusLines = buildStatusLines(snapshot, options.width, options.transientNotice);
   const shortcutLines = options.showShortcutHelp ? buildShortcutLines(options.width) : [];
 
@@ -171,7 +163,7 @@ export function buildAppScreenLines(snapshot: AppSnapshot, options: ScreenLayout
   return [
     ...transcriptLines,
     ...todoLines,
-    ...questionLines,
+    ...options.questionLines,
     ...options.editorLines,
     ...statusLines,
     ...shortcutLines,
