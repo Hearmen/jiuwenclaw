@@ -25,8 +25,13 @@ from jiuwenclaw.utils import get_user_workspace_dir, get_env_file, prepare_works
 apply_openai_model_client_patch()
 
 # Ensure workspace initialized
-_config_file = get_user_workspace_dir() / "config" / "config.yaml"
-if not _config_file.exists():
+_workspace_dir = get_user_workspace_dir()
+_config_file = _workspace_dir / "config" / "config.yaml"
+_new_workspace = _workspace_dir / "agent" / "jiuwenclaw_workspace"
+_old_workspace = _workspace_dir / "agent" / "workspace"
+
+# Initialize if config doesn't exist, or if legacy workspace exists but new doesn't (migration)
+if not _config_file.exists() or (_old_workspace.exists() and not _new_workspace.exists()):
     prepare_workspace(overwrite=False)
 
 for _lg in LogManager.get_all_loggers().values():

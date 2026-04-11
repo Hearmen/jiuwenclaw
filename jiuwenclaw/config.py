@@ -317,3 +317,69 @@ def update_memory_forbidden_in_config(updates: dict[str, Any]) -> None:
         else:
             section[k] = v
     _dump_yaml_round_trip(_CONFIG_YAML_PATH, data)
+
+
+def migrate_config_from_template(
+    template_path: Path,
+    user_config_path: Path,
+) -> bool:
+    """Simplified config migration: merge template and user config.
+
+    Merge rules (for first two levels):
+    1. First level: keep user value if exists, otherwise use template value
+    2. Second level: keep user value if exists, otherwise add from template
+    3. Exceptions (overwrite directly):
+       - react.context_engine_config
+       - permissions.tools
+
+    Args:
+        template_path: Path to template config.yaml
+        user_config_path: Path to user config.yaml
+
+    Returns:
+        True if migration was performed, False otherwise.
+    """
+    if not user_config_path.exists():
+        return False
+
+    if not template_path.exists():
+        return False
+
+    template_data = _load_yaml_round_trip(template_path)
+    user_data = _load_yaml_round_trip(user_config_path)
+
+    if template_data is None:
+        return False
+
+    if user_data is None:
+        user_data = {}
+
+    modified = False
+
+    # First level traversal
+    for key, value in template_data.items():
+        if key not in user_data:
+            # User doesn't have this key, use template value
+            user_data[key] = value
+            modified = True
+        elif isinstance(value, dict) and isinstance(user_data[key], dict):
+            # Traverse second level of template
+            for sub_key, sub_value in value.items():
+                # Check for overwrite exceptions
+                is_overwrite = (
+                    key == "react" and sub_key == "context_engine_config"
+                ) or (key == "permissions" and sub_key == "tools")
+
+                if is_overwrite:
+                    # Overwrite directly from template
+                    user_data[key][sub_key] = sub_value
+                    modified = True
+                elif sub_key not in user_data[key]:
+                    # User doesn't have this sub-key, add it
+                    user_data[key][sub_key] = sub_value
+                    modified = True
+
+    if modified:
+        _dump_yaml_round_trip(user_config_path, user_data)
+
+    return modified

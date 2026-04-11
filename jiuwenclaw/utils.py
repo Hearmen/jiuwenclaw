@@ -356,6 +356,156 @@ def prompt_preferred_language() -> Optional[Literal["zh", "en"]]:
     return None
 
 
+def _get_builtin_skill_names() -> set[str]:
+    """Get the set of built-in skill names from package resources."""
+    builtin_skills_dir = get_builtin_skills_dir()
+    if not builtin_skills_dir.exists():
+        return set()
+    return {item.name for item in builtin_skills_dir.iterdir() if item.is_dir()}
+
+
+def _migrate_legacy_workspace(
+    workspace_dir: Path,
+    preferred_language: Optional[str] = None,
+) -> None:
+    """Migrate from legacy layout to new DeepAgent workspace layout.
+
+    Migration:
+    - Old: ~/.jiuwenclaw/agent/workspace/ (agent-data.json here)
+    - Old: ~/.jiuwenclaw/agent/home/ (PRINCIPLE.md, TONE.md, HEARTBEAT.md)
+    - Old: ~/.jiuwenclaw/agent/skills/
+    - Old: ~/.jiuwenclaw/agent/memory/
+
+    - New: ~/.jiuwenclaw/agent/jiuwenclaw_workspace/ (DeepAgent standard)
+
+    Mapping:
+    - agent/workspace/ -> agent/jiuwenclaw_workspace/ (main workspace)
+    - agent/home/HEARTBEAT.md -> agent/jiuwenclaw_workspace/HEARTBEAT.md
+    - agent/skills/ -> agent/jiuwenclaw_workspace/skills/
+    - agent/memory/ -> agent/jiuwenclaw_workspace/memory/
+
+    Args:
+        workspace_dir: Path to workspace root (~/.jiuwenclaw).
+        preferred_language: Preferred language for config (zh/en).
+    """
+    logger.info(f"Migrating from legacy layout: {workspace_dir}")
+
+    old_workspace = workspace_dir / "agent" / "workspace"
+    old_home = workspace_dir / "agent" / "home"
+    old_skills = workspace_dir / "agent" / "skills"
+    old_memory = workspace_dir / "agent" / "memory"
+
+    new_workspace = workspace_dir / "agent" / "jiuwenclaw_workspace"
+    new_workspace.mkdir(parents=True, exist_ok=True)
+
+    # 1. Migrate old workspace contents
+    if old_workspace.exists():
+        for item in old_workspace.iterdir():
+            dest = new_workspace / item.name
+            if item.is_dir():
+                if dest.exists():
+                    shutil.rmtree(dest)
+                shutil.copytree(item, dest)
+            else:
+                shutil.copy2(item, dest)
+        logger.info(f"Migrated workspace: {old_workspace} -> {new_workspace}")
+
+    # 2. Migrate old home files
+    if old_home.exists():
+        # HEARTBEAT.md -> HEARTBEAT.md (if not exists in new location)
+        old_heartbeat = old_home / "HEARTBEAT.md"
+        new_heartbeat = new_workspace / "HEARTBEAT.md"
+        if old_heartbeat.exists() and not new_heartbeat.exists():
+            shutil.copy2(old_heartbeat, new_heartbeat)
+            logger.info("Migrated HEARTBEAT.md from home")
+        
+        # Merge PRINCIPLE.md and TONE.md into SOUL.md
+        old_principle = old_home / "PRINCIPLE.md"
+        old_tone = old_home / "TONE.md"
+        new_soul = new_workspace / "SOUL.md"
+        if not new_soul.exists() and (old_principle.exists() or old_tone.exists()):
+            soul_content = ["# Agent Soul\n\n"]
+            if old_principle.exists():
+                principle_text = old_principle.read_text(encoding="utf-8")
+                soul_content.append("## Principles\n\n")
+                soul_content.append(principle_text)
+                soul_content.append("\n\n")
+            if old_tone.exists():
+                tone_text = old_tone.read_text(encoding="utf-8")
+                soul_content.append("## Tone\n\n")
+                soul_content.append(tone_text)
+                soul_content.append("\n\n")
+            new_soul.write_text("".join(soul_content), encoding="utf-8")
+            logger.info("Merged PRINCIPLE.md and TONE.md into SOUL.md")
+
+    new_skills = new_workspace / "skills"
+    if old_skills.exists():
+        if new_skills.exists():
+            shutil.rmtree(new_skills)
+        shutil.copytree(old_skills, new_skills)
+        logger.info(f"Migrated skills: {old_skills} -> {new_skills}")
+
+        builtin_skill_names = _get_builtin_skill_names()
+        for skill_dir in new_skills.iterdir():
+            if skill_dir.is_dir() and (skill_dir.name in builtin_skill_names \
+                 or skill_dir.name in ["daily-report", "skill-creation"]):
+                shutil.rmtree(skill_dir)
+
+    # 4. Migrate memory
+    new_memory = new_workspace / "memory"
+    if old_memory.exists():
+        new_memory.mkdir(parents=True, exist_ok=True)
+        
+        # 4.1 Migrate USER.md to workspace root (not in memory/)
+        old_user = old_memory / "USER.md"
+        new_user = new_workspace / "USER.md"
+        if old_user.exists() and not new_user.exists():
+            shutil.copy2(old_user, new_user)
+            logger.info("Migrated USER.md from memory/ to workspace root")
+        
+        # 4.2 Create daily_memory directory and migrate date-based .md files
+        daily_memory = new_memory / "daily_memory"
+        daily_memory.mkdir(parents=True, exist_ok=True)
+        
+        for item in old_memory.iterdir():
+            if item.name == "USER.md":
+                continue  # Already handled above
+            if item.name == "MEMORY.md":
+                # Copy MEMORY.md to new location
+                shutil.copy2(item, new_memory / "MEMORY.md")
+            elif item.is_file() and item.suffix == ".md":
+                # Date-based memory files (e.g., 2025-01-01.md) go to daily_memory/
+                shutil.copy2(item, daily_memory / item.name)
+                logger.info(f"Migrated daily memory: {item.name}")
+            elif item.is_dir():
+                # Copy other directories as-is
+                dest = new_memory / item.name
+                if dest.exists():
+                    shutil.rmtree(dest)
+                shutil.copytree(item, dest)
+        
+        logger.info(f"Migrated memory: {old_memory} -> {new_memory}")
+
+    # 5. Clean up old directories after successful migration
+    try:
+        if old_workspace.exists():
+            shutil.rmtree(old_workspace)
+            logger.info(f"Removed old workspace: {old_workspace}")
+        if old_home.exists():
+            shutil.rmtree(old_home)
+            logger.info(f"Removed old home: {old_home}")
+        if old_skills.exists():
+            shutil.rmtree(old_skills)
+            logger.info(f"Removed old skills: {old_skills}")
+        if old_memory.exists():
+            shutil.rmtree(old_memory)
+            logger.info(f"Removed old memory: {old_memory}")
+    except OSError as e:
+        logger.warning(f"Failed to remove some old directories: {e}")
+
+    logger.info(f"Migration completed: {new_workspace}")
+
+
 def prepare_workspace(overwrite: bool = True, preferred_language: Optional[str] = None):
     package_root = _find_package_root()
     if not package_root:
@@ -363,6 +513,34 @@ def prepare_workspace(overwrite: bool = True, preferred_language: Optional[str] 
 
     workspace_dir = get_user_workspace_dir()
     workspace_dir.mkdir(parents=True, exist_ok=True)
+
+    # Check for legacy workspace migration or cleanup
+    old_workspace = workspace_dir / "agent" / "workspace"
+    old_home = workspace_dir / "agent" / "home"
+    old_skills = workspace_dir / "agent" / "skills"
+    old_memory = workspace_dir / "agent" / "memory"
+    new_workspace = workspace_dir / "agent" / "jiuwenclaw_workspace"
+
+    # If old workspace exists and new workspace does not exist, migrate (for start command)
+    if old_workspace.exists() and not new_workspace.exists() and not overwrite:
+        _migrate_legacy_workspace(workspace_dir, preferred_language)
+    # If overwrite (init command), clean up old legacy directories first
+    elif overwrite:
+        try:
+            if old_workspace.exists():
+                shutil.rmtree(old_workspace)
+                logger.info(f"Removed old workspace: {old_workspace}")
+            if old_home.exists():
+                shutil.rmtree(old_home)
+                logger.info(f"Removed old home: {old_home}")
+            if old_skills.exists():
+                shutil.rmtree(old_skills)
+                logger.info(f"Removed old skills: {old_skills}")
+            if old_memory.exists():
+                shutil.rmtree(old_memory)
+                logger.info(f"Removed old memory: {old_memory}")
+        except OSError as e:
+            logger.warning(f"Failed to remove some old directories: {e}")
 
     # ----- config: copy config.yaml -----
     resources_dir = package_root / "resources"
@@ -427,7 +605,6 @@ def prepare_workspace(overwrite: bool = True, preferred_language: Optional[str] 
 
     template_agent_workspace = template_agent_dir / "jiuwenclaw_workspace"
     template_agent_memory = template_agent_dir / "jiuwenclaw_workspace" / "memory"
-    template_agent_skills = template_agent_dir / "jiuwenclaw_workspace" / "skills"
 
     def _copy_dir(
         src_dir: Path,
@@ -474,21 +651,24 @@ def prepare_workspace(overwrite: bool = True, preferred_language: Optional[str] 
     ]
     for src_name, dst_name in multilang_files:
         src_path = template_agent_workspace / src_name
-        if src_path.exists():
-            shutil.copy2(src_path, deepagent_workspace / dst_name)
+        dst_path = deepagent_workspace / dst_name
+        if src_path.exists() and not dst_path.exists():
+            shutil.copy2(src_path, dst_path)
 
     # skills state: shipped under resources/
     skills_state_src = template_root / "skills_state.json"
     if skills_state_src.exists():
         agent_skills.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(skills_state_src, agent_skills / "skills_state.json")
+        dest_skill_state = agent_skills / "skills_state.json"
+        if not dest_skill_state.exists():
+            shutil.copy2(skills_state_src, agent_skills / "skills_state.json")
 
     # sessions is runtime-only (template may not include it)
     agent_sessions.mkdir(parents=True, exist_ok=True)
 
-    # 与 home 模板语言一致，写回顶层 preferred_language
-    from jiuwenclaw.config import set_preferred_language_in_config_file
+    from jiuwenclaw.config import migrate_config_from_template, set_preferred_language_in_config_file
 
+    migrate_config_from_template(config_yaml_src, config_yaml_dest)
     set_preferred_language_in_config_file(config_yaml_dest, resolved_lang)
 
 
