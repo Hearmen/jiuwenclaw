@@ -630,6 +630,7 @@ class JiuWenClawDeepAdapter:
 
     def _sync_multimodal_tools_for_runtime(self) -> None:
         """Sync multimodal tool registration after config reload."""
+        agent_id = self._instance.card.id if self._instance else None
         self._vision_tools, self._vision_tools_registered = self._sync_tool_group(
             current_tools=self._vision_tools,
             registered=self._vision_tools_registered,
@@ -637,6 +638,7 @@ class JiuWenClawDeepAdapter:
             create_fn=lambda: create_vision_tools(
                 language=self._resolve_runtime_language(),
                 vision_model_config=self._vision_model_config,
+                agent_id=agent_id,
             ),
             warn_label="vision tools",
         )
@@ -648,6 +650,7 @@ class JiuWenClawDeepAdapter:
             create_fn=lambda: create_audio_tools(
                 language=self._resolve_runtime_language(),
                 audio_model_config=self._audio_model_config,
+                agent_id=agent_id,
             ),
             warn_label="audio tools",
         )
@@ -662,6 +665,7 @@ class JiuWenClawDeepAdapter:
 
     def _sync_paid_search_tool_for_runtime(self) -> None:
         """Sync paid-search tool registration after config reload."""
+        agent_id = self._instance.card.id if self._instance else None
         tools, self._paid_search_registered = self._sync_tool_group(
             current_tools=[self._paid_search_tool] if self._paid_search_tool else [],
             registered=self._paid_search_registered,
@@ -669,7 +673,7 @@ class JiuWenClawDeepAdapter:
                 os.environ.get(key)
                 for key in ("BOCHA_API_KEY", "PERPLEXITY_API_KEY", "SERPER_API_KEY", "JINA_API_KEY")
             ),
-            create_fn=lambda: [WebPaidSearchTool(language=self._resolve_runtime_language())],
+            create_fn=lambda: [WebPaidSearchTool(language=self._resolve_runtime_language(), agent_id=agent_id)],
             warn_label="paid search tool",
         )
         self._paid_search_tool = tools[0] if tools else None
@@ -1111,12 +1115,12 @@ class JiuWenClawDeepAdapter:
             rails_list.append(self._permission_rail)
         return rails_list
 
-    async def _get_tool_cards(self):
+    async def _get_tool_cards(self, agent_id: str):
         """Get tool cards."""
         tool_cards = []
 
         for tool_cls in [WebFreeSearchTool, WebFetchWebpageTool]:
-            tool_instance = tool_cls()
+            tool_instance = tool_cls(agent_id=agent_id)
             Runner.resource_mgr.add_tool(tool_instance)
             tool_cards.append(tool_instance.card)
 
@@ -1125,7 +1129,7 @@ class JiuWenClawDeepAdapter:
             os.environ.get(key)
             for key in ("BOCHA_API_KEY", "PERPLEXITY_API_KEY", "SERPER_API_KEY", "JINA_API_KEY")
         ):
-            self._paid_search_tool = WebPaidSearchTool(language=self._resolve_runtime_language())
+            self._paid_search_tool = WebPaidSearchTool(language=self._resolve_runtime_language(), agent_id=agent_id)
             Runner.resource_mgr.add_tool(self._paid_search_tool)
             tool_cards.append(self._paid_search_tool.card)
             self._paid_search_registered = True
@@ -1137,6 +1141,7 @@ class JiuWenClawDeepAdapter:
                 for tool in create_vision_tools(
                         language=self._resolve_runtime_language(),
                         vision_model_config=self._vision_model_config,
+                        agent_id=agent_id
                 ):
                     Runner.resource_mgr.add_tool(tool)
                     tool_cards.append(tool.card)
@@ -1156,6 +1161,7 @@ class JiuWenClawDeepAdapter:
                 for tool in create_audio_tools(
                         language=self._resolve_runtime_language(),
                         audio_model_config=self._audio_model_config,
+                        agent_id=agent_id
                 ):
                     Runner.resource_mgr.add_tool(tool)
                     tool_cards.append(tool.card)
@@ -1217,7 +1223,8 @@ class JiuWenClawDeepAdapter:
 
     def _build_cron_tools(self) -> list[Any]:
         """Build cron tools from the shared runtime bridge."""
-        return self._cron_runtime.build_tools(context=self._runtime_cron_tool_context)
+        agent_id = self._instance.card.id if self._instance else None
+        return self._cron_runtime.build_tools(context=self._runtime_cron_tool_context, agent_id=agent_id)
 
     async def _proc_context_compaction(self) -> None:
         """Backward-compatible no-op hook for tests and legacy call sites."""
@@ -1244,7 +1251,7 @@ class JiuWenClawDeepAdapter:
         model = self._create_model(config_base)
         agent_card = AgentCard(name=self._agent_name, id='jiuwenclaw')
 
-        tool_cards = await self._get_tool_cards()
+        tool_cards = await self._get_tool_cards(agent_card.id)
         self._tool_cards = tool_cards
 
         permissions_cfg = config_base.get("permissions", {})

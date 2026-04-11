@@ -359,7 +359,6 @@ class CronTools:
     def get_tools(self) -> list[Tool]:
         def make_tool(name: str, description: str, input_params: dict, func) -> Tool:
             card = ToolCard(
-                id=f"cron_{name}",
                 name=name,
                 description=description,
                 input_params=input_params,

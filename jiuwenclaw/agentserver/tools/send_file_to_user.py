@@ -156,7 +156,6 @@ class SendFileToolkit:
             func,
         ) -> Tool:
             card = ToolCard(
-                id=f"{name}_{session_id}_{self.request_id}",
                 name=name,
                 description=description,
                 input_params=input_params,

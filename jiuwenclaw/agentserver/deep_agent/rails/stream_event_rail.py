@@ -248,10 +248,12 @@ class JiuClawStreamEventRail(DeepAgentRail):
                 getattr(self._deep_agent, "system_prompt_builder", None),
                 "language", "cn",
             ) or "cn"
+            agent_id = self._deep_agent.card.id if self._deep_agent else None 
             return TodoListTool(
                 operation=self.sys_operation,
                 workspace=str(self.workspace.get_node_path(WorkspaceNode.TODO)),
                 language=language,
+                agent_id=agent_id
             )
         except Exception as exc:
             logger.debug(

@@ -279,7 +279,6 @@ class CronController:
             func,
         ) -> Tool:
             card = ToolCard(
-                id=f"cron_{name}_{self._target_channel}",
                 name=name,
                 description=description,
                 input_params=input_params,

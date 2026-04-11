@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 import time
 from copy import deepcopy
-from typing import Any
+from typing import Any, Optional
 
 from openjiuwen.harness.tools.cron import CronToolBackend, CronToolContext, create_cron_tools
 
@@ -353,7 +353,7 @@ class CronRuntimeBridge:
         except Exception as exc:
             logger.warning("[CronRuntimeBridge] Failed to start scheduler: %s", exc)
 
-    def build_tools(self, *, context: Any) -> list[Any]:
+    def build_tools(self, *, context: Any, agent_id: Optional[str]) -> list[Any]:
         """Build cron tools."""
         backend = self.get_backend()
         if backend is None:
@@ -367,6 +367,7 @@ class CronRuntimeBridge:
             context=context,
             target_channels=[channel.value for channel in CronTargetChannel],
             default_target_channel=None,
+            agent_id=agent_id
         )
         logger.info("[CronRuntimeBridge] Built %d cron tools: %s", 
                     len(tools), 
