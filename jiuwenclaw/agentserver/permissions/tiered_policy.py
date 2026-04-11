@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import logging
+import os
 import re
 import sys
 from pathlib import Path
@@ -42,6 +43,7 @@ _PATH_ARG_KEYS = frozenset({
 _BUILTIN_RULES_CACHE: tuple[str, float, list[dict[str, Any]]] | None = None
 
 _MR = "tiered_policy"
+_APPROVAL_OVERRIDES_PREFIX = f"{_MR}:approval_overrides"
 
 
 def _package_builtin_rules_path() -> Path:
@@ -50,17 +52,20 @@ def _package_builtin_rules_path() -> Path:
 
 def _resolve_builtin_rules_yaml_path() -> Path | None:
     """优先用户配置目录（与 ``config.yaml`` 同目录）下的 ``builtin_rules.yaml``，否则包内 resources。"""
-    from jiuwenclaw.utils import get_config_dir
-
-    user_path = get_config_dir() / "builtin_rules.yaml"
-    if user_path.is_file():
-        return user_path
+    user_dir = os.getenv("JIUWENCLAW_CONFIG_DIR")
+    if user_dir:
+        user_path = Path(user_dir) / "builtin_rules.yaml"
+        if user_path.is_file():
+            return user_path
+    fallback_user_path = Path.home() / ".jiuwenclaw" / "config" / "builtin_rules.yaml"
+    if fallback_user_path.is_file():
+        return fallback_user_path
     pkg_path = _package_builtin_rules_path()
     if pkg_path.is_file():
         return pkg_path
     logger.warning(
         "builtin_rules.yaml not found under %s or %s",
-        user_path,
+        fallback_user_path,
         pkg_path,
     )
     return None
@@ -250,13 +255,54 @@ def _collect_param_rule_hits(
             continue
         if not tiered_policy_rule_matches(tool_name, pattern, tool_args, r_tools_s):
             continue
-        sev = rule.get("severity", "HIGH")
-        if not isinstance(sev, str):
-            sev = "HIGH"
-        dec = severity_to_decision(sev, mode)
+        action = rule.get("action")
+        if isinstance(action, str) and action.strip():
+            dec = _parse_level(action)
+        else:
+            sev = rule.get("severity", "HIGH")
+            if not isinstance(sev, str):
+                sev = "HIGH"
+            dec = severity_to_decision(sev, mode)
         rid = rule.get("id", "")
         label = f"{label_ns}[{rid}]" if rid else f"{label_ns}[?]"
         hits.append((dec, label))
+    return hits
+
+
+def _collect_approval_override_hits(
+        rules: list[dict[str, Any]],
+        tool_name: str,
+        tool_args: dict[str, Any],
+) -> list[str]:
+    """用户审批后持久化的 allow override 命中列表。"""
+    hits: list[str] = []
+    for rule in rules:
+        if not isinstance(rule, dict):
+            continue
+        action = str(rule.get("action") or "").strip().lower()
+        if action != "allow":
+            continue
+        r_tools = rule.get("tools") or []
+        if isinstance(r_tools, str):
+            r_tools = [r_tools]
+        if not isinstance(r_tools, list) or tool_name not in r_tools:
+            continue
+        r_tools_s = [str(x).strip() for x in r_tools if isinstance(x, str) and str(x).strip()]
+        if not rule_tools_category_consistent(r_tools_s):
+            logger.warning(
+                "skip approval override %r: tools must be same category %s",
+                rule.get("id"),
+                r_tools_s,
+            )
+            continue
+        pattern = rule.get("pattern")
+        if not isinstance(pattern, str) or not pattern.strip():
+            continue
+        if not tiered_policy_rule_matches(tool_name, pattern, tool_args, r_tools_s):
+            continue
+        rid = rule.get("id", "")
+        label = f"approval_overrides[{rid}]" if rid else "approval_overrides[?]"
+        hits.append(label)
     return hits
 
 
@@ -343,6 +389,9 @@ def evaluate_tiered_policy(
     rules = permission_config.get("rules") or []
     if not isinstance(rules, list):
         rules = []
+    approval_overrides = permission_config.get("approval_overrides") or []
+    if not isinstance(approval_overrides, list):
+        approval_overrides = []
 
     bl, bl_rule = _baseline_level(tools_cfg, tool_name)
     if bl == PermissionLevel.DENY:
@@ -351,10 +400,23 @@ def evaluate_tiered_policy(
     builtin_hits = _collect_param_rule_hits(
         get_builtin_security_rules(), tool_name, tool_args, mode, "builtin",
     )
-    if builtin_hits:
+    if any(lev == PermissionLevel.DENY for lev, _ in builtin_hits):
         return _finalize_hits(builtin_hits, "builtin")
 
     user_hits = _collect_param_rule_hits(rules, tool_name, tool_args, mode, "rules")
+    if any(lev == PermissionLevel.DENY for lev, _ in user_hits):
+        return _finalize_hits(user_hits, "rules")
+
+    override_hits = _collect_approval_override_hits(
+        approval_overrides, tool_name, tool_args,
+    )
+    if override_hits:
+        contributing = sorted(set(override_hits))
+        return PermissionLevel.ALLOW, _APPROVAL_OVERRIDES_PREFIX + ":" + "+".join(contributing)
+
+    if builtin_hits:
+        return _finalize_hits(builtin_hits, "builtin")
+
     if user_hits:
         return _finalize_hits(user_hits, "rules")
 
@@ -387,3 +449,10 @@ def maybe_escalate_shell_operators(
     if cmd and _SHELL_OPERATORS_RE.search(cmd):
         return PermissionLevel.ASK
     return permission
+
+
+def matched_rule_uses_approval_override(matched_rule: str | None) -> bool:
+    """当前结果是否来自 approval_overrides。"""
+    if not isinstance(matched_rule, str):
+        return False
+    return matched_rule.startswith(_APPROVAL_OVERRIDES_PREFIX)

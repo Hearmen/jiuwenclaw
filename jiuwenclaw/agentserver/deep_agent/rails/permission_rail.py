@@ -9,8 +9,6 @@ from __future__ import annotations
 
 import json
 from typing import Any, Iterable, Optional
-
-from openjiuwen.core.foundation.llm import ToolMessage
 from openjiuwen.core.foundation.llm.schema.tool_call import ToolCall
 from openjiuwen.core.single_agent.interrupt.response import InterruptRequest
 from openjiuwen.core.single_agent.interrupt.state import INTERRUPT_AUTO_CONFIRM_KEY
@@ -124,27 +122,25 @@ class PermissionInterruptRail(ConfirmInterruptRail):
             "[PermissionRail] before_tool_call: tool_name=%s normalized=%s _tool_names=%s",
             tool_name, normalized_name, list(self._tool_names)
         )
+        if normalized_name not in self._tool_names:
+            return
+
+        tool_call_id = self._resolve_tool_call_id(tool_call)
+        user_input = self._get_user_input(ctx, tool_call_id)
+        auto_confirm_config = None
+        if ctx.session:
+            auto_confirm_config = ctx.session.get_state(INTERRUPT_AUTO_CONFIRM_KEY)
+            if not isinstance(auto_confirm_config, dict):
+                auto_confirm_config = {}
+
         decision = await self.resolve_interrupt(
             ctx=ctx,
             tool_call=tool_call,
-            user_input=None,
-            auto_confirm_config=ctx.session.get_state(INTERRUPT_AUTO_CONFIRM_KEY) if ctx.session else None,
+            user_input=user_input,
+            auto_confirm_config=auto_confirm_config,
         )
-        if decision is not None:
-            ctx.extra["_interrupt_decision"] = decision
-            
-            if hasattr(decision, 'tool_result') and decision.tool_result is not None:
-                tool_call_id = tool_call.id if tool_call else ""
-                ctx.extra["_skip_tool"] = True
-                ctx.inputs.tool_result = decision.tool_result
-                ctx.inputs.tool_msg = ToolMessage(
-                    content=ctx.inputs.tool_result,
-                    tool_call_id=tool_call_id,
-                )
-                logger.info(
-                    "[PermissionRail] Rejecting tool=%s with result=%s",
-                    tool_name, ctx.inputs.tool_result
-                )
+        ctx.extra["_interrupt_decision"] = decision
+        self._apply_decision(ctx, tool_call, tool_name, decision)
 
     def update_config(self, config: dict, tool_names: Optional[Iterable[str]] = None) -> None:
         """Hot-update static permission config and tool_names."""

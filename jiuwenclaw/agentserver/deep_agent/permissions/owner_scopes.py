@@ -140,17 +140,29 @@ async def check_avatar_permission(
     level = _resolve_owner_scope_level(scope_cfg, tool_name, tool_args)
     logger.info("[check_avatar_permission] resolved level=%s", level)
 
-    if level is None:
-        result = await engine.check_permission(
-            tool_name=tool_name,
-            tool_args=tool_args,
-            channel_id=channel_id,
-            session_id=session_id,
+    try:
+        global_level, _rule = engine.evaluate_global_policy_directly(
+            tool_name,
+            tool_args,
+            channel_id,
+            include_external_directory=True,
         )
-        if result.is_allowed:
+        global_level_value = global_level.value if global_level is not None else None
+    except Exception as exc:
+        logger.warning("[check_avatar_permission] evaluate_global_policy_directly failed: %s", exc)
+        global_level_value = None
+
+    if level is None:
+        if global_level_value == "allow":
             return "allow"
         return "deny"
-    if level == "allow":
+
+    _severity = {"allow": 0, "ask": 1, "deny": 2}
+    final_level = level
+    if global_level_value is not None and _severity.get(global_level_value, 2) > _severity.get(level, 2):
+        final_level = global_level_value
+
+    if final_level == "allow":
         return "allow"
     return "deny"
 

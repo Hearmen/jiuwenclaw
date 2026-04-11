@@ -248,8 +248,11 @@ async def _get_global_tool_level(
     主开关关闭且无任何工具规则时返回 None（视为无约束）。
     """
     try:
-        permission, _rule = engine.check_tool_permission_directly(
-            tool_name, tool_args, channel_id,
+        permission, _rule = engine.evaluate_global_policy_directly(
+            tool_name,
+            tool_args,
+            channel_id,
+            include_external_directory=True,
         )
         if permission is None:
             # 全局无匹配规则 → 无约束（不影响 owner_scope 的判定）

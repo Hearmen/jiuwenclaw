@@ -16,10 +16,35 @@ import json
 import logging
 import re
 import sys
+from dataclasses import dataclass
 from pathlib import Path
 from urllib.parse import urlparse
 
 logger = logging.getLogger(__name__)
+
+_SHELL_APPROVAL_TOOLS = frozenset({"bash", "mcp_exec_command"})
+_PATH_APPROVAL_TOOLS = frozenset({
+    "read_file", "write_file", "edit_file",
+    "read_text_file", "write_text_file",
+    "write", "read",
+    "glob_file_search", "glob", "list_dir", "list_files",
+    "grep", "search_replace",
+})
+_PATH_APPROVAL_KEYS = (
+    "path", "file_path", "target_file", "file", "old_path", "new_path",
+    "source_path", "dest_path", "directory", "dir",
+)
+
+
+@dataclass(frozen=True)
+class _ApprovalOverrideSignature:
+    tool_name: str
+    tools: list[str]
+    match_type: str
+    existing_match_type: str | None
+    pattern: str
+    existing_pattern: str | None
+    existing_action: str
 
 
 # 限制性字符类：仅允许命令参数和路径常见字符，排除 ; | & ` < > $ 等 shell 元字符防注入
@@ -225,6 +250,11 @@ def persist_permission_allow_rule(tool_name: str, tool_args: dict | str) -> None
 
     try:
         from jiuwenclaw.agentserver.permissions.core import get_permission_engine
+        from jiuwenclaw.agentserver.permissions.tiered_policy import (
+            evaluate_tiered_policy,
+            permissions_schema_is_tiered_policy,
+        )
+        from jiuwenclaw.agentserver.permissions.models import PermissionLevel
         from jiuwenclaw.config import (
             _CONFIG_YAML_PATH,
             _load_yaml_round_trip,
@@ -237,46 +267,25 @@ def persist_permission_allow_rule(tool_name: str, tool_args: dict | str) -> None
         if permissions is None:
             logger.warning("[Persist] ABORT: No 'permissions' section in config")
             return
-        tools_section = permissions.get("tools")
-        if tools_section is None:
-            permissions["tools"] = {}
-            tools_section = permissions["tools"]
-
-        if tool_name == "mcp_exec_command":
-            cmd = str(tool_args.get("command", tool_args.get("cmd", "")))
-            logger.info("[Persist] Extracted command: '%s'", cmd)
-            if cmd:
-                new_pattern = build_command_allow_pattern(cmd)
-                logger.info("[Persist] Built pattern: %s", new_pattern)
-
-                tool_entry = tools_section.get("mcp_exec_command")
-                if not isinstance(tool_entry, dict):
-                    tools_section["mcp_exec_command"] = {"*": "ask", "patterns": {}}
-                    tool_entry = tools_section["mcp_exec_command"]
-
-                patterns = tool_entry.get("patterns")
-                if patterns is None:
-                    tool_entry["patterns"] = {}
-                    patterns = tool_entry["patterns"]
-
-                if isinstance(patterns, dict):
-                    if new_pattern in patterns:
-                        logger.info("[Persist] Pattern already exists, skip")
-                        return
-                    patterns[new_pattern] = "allow"
-                else:
-                    for p in patterns:
-                        if isinstance(p, dict) and p.get("pattern") == new_pattern:
-                            logger.info("[Persist] Pattern already exists, skip")
-                            return
-                    patterns.append({"pattern": new_pattern, "permission": "allow"})
-                logger.info("[Persist] Appended pattern: %s", new_pattern)
+        if permissions_schema_is_tiered_policy(permissions):
+            current_permission, _matched_rule = evaluate_tiered_policy(
+                permissions, tool_name, tool_args,
+            )
+            if current_permission != PermissionLevel.ASK:
+                logger.warning(
+                    "[Persist] Skip tiered approval override for %s because current permission is %s",
+                    tool_name,
+                    current_permission.value,
+                )
+            elif _persist_tiered_approval_override(permissions, tool_name, tool_args):
+                logger.info("[Persist] Tiered approval override written for %s", tool_name)
             else:
-                tools_section["mcp_exec_command"] = "allow"
-                logger.info("[Persist] Set mcp_exec_command = allow (no command)")
+                logger.warning(
+                    "[Persist] Skip tiered approval override for %s because exact override could not be derived",
+                    tool_name,
+                )
         else:
-            tools_section[tool_name] = "allow"
-            logger.info("[Persist] Set %s = allow", tool_name)
+            _persist_legacy_allow_rule(permissions, tool_name, tool_args)
 
         _dump_yaml_round_trip(_CONFIG_YAML_PATH, data)
         logger.info("[Persist] YAML written to disk")
@@ -288,6 +297,145 @@ def persist_permission_allow_rule(tool_name: str, tool_args: dict | str) -> None
 
     except Exception:
         logger.error("[Persist] FAILED to persist permission allow rule", exc_info=True)
+
+
+def _persist_legacy_allow_rule(permissions: dict, tool_name: str, tool_args: dict) -> None:
+    tools_section = permissions.get("tools")
+    if tools_section is None:
+        permissions["tools"] = {}
+        tools_section = permissions["tools"]
+
+    if tool_name == "mcp_exec_command":
+        cmd = str(tool_args.get("command", tool_args.get("cmd", "")))
+        logger.info("[Persist] Extracted command: '%s'", cmd)
+        if cmd:
+            new_pattern = build_command_allow_pattern(cmd)
+            logger.info("[Persist] Built legacy pattern: %s", new_pattern)
+
+            tool_entry = tools_section.get("mcp_exec_command")
+            if not isinstance(tool_entry, dict):
+                tools_section["mcp_exec_command"] = {"*": "ask", "patterns": {}}
+                tool_entry = tools_section["mcp_exec_command"]
+
+            patterns = tool_entry.get("patterns")
+            if patterns is None:
+                tool_entry["patterns"] = {}
+                patterns = tool_entry["patterns"]
+
+            if isinstance(patterns, dict):
+                if new_pattern in patterns:
+                    logger.info("[Persist] Legacy pattern already exists, skip")
+                    return
+                patterns[new_pattern] = "allow"
+            else:
+                for p in patterns:
+                    if isinstance(p, dict) and p.get("pattern") == new_pattern:
+                        logger.info("[Persist] Legacy pattern already exists, skip")
+                        return
+                patterns.append({"pattern": new_pattern, "permission": "allow"})
+            logger.info("[Persist] Appended legacy pattern: %s", new_pattern)
+            return
+
+    tools_section[tool_name] = "allow"
+    logger.info("[Persist] Set %s = allow", tool_name)
+
+
+def _persist_tiered_approval_override(
+    permissions: dict,
+    tool_name: str,
+    tool_args: dict,
+) -> bool:
+    override_match = _build_tiered_approval_override_match(tool_name, tool_args)
+    if override_match is None:
+        return False
+    match_type, pattern = override_match
+    overrides = permissions.get("approval_overrides")
+    if not isinstance(overrides, list):
+        overrides = []
+        permissions["approval_overrides"] = overrides
+
+    for existing in overrides:
+        if not isinstance(existing, dict):
+            continue
+        tools = existing.get("tools") or []
+        if isinstance(tools, str):
+            tools = [tools]
+        existing_match_type = existing.get("match_type")
+        existing_pattern = existing.get("pattern")
+        existing_action = str(existing.get("action") or "").strip().lower()
+        signature = _ApprovalOverrideSignature(
+            tool_name=tool_name,
+            tools=tools,
+            match_type=match_type,
+            existing_match_type=existing_match_type,
+            pattern=pattern,
+            existing_pattern=existing_pattern,
+            existing_action=existing_action,
+        )
+        if _is_same_allow_override(signature):
+            logger.info("[Persist] approval_override already exists, skip")
+            return True
+
+    overrides.append({
+        "id": _build_approval_override_id(tool_name, match_type, pattern),
+        "tools": [tool_name],
+        "match_type": match_type,
+        "pattern": pattern,
+        "action": "allow",
+        "source": "user_approval",
+    })
+    return True
+
+
+def _build_tiered_approval_override_match(
+    tool_name: str,
+    tool_args: dict,
+) -> tuple[str, str] | None:
+    if tool_name in _SHELL_APPROVAL_TOOLS:
+        command = str(tool_args.get("command", "") or tool_args.get("cmd", "") or "").strip()
+        if command:
+            return "command", command
+        return None
+    if tool_name in _PATH_APPROVAL_TOOLS:
+        for key in _PATH_APPROVAL_KEYS:
+            value = tool_args.get(key)
+            if isinstance(value, str) and value.strip():
+                return "path", value.strip()
+        for key, value in tool_args.items():
+            if not isinstance(value, str):
+                continue
+            text = value.strip()
+            if not text:
+                continue
+            if _value_looks_like_path(key, text):
+                return "path", text
+    return None
+
+
+def _value_looks_like_path(key: str, text: str) -> bool:
+    if key in _PATH_APPROVAL_KEYS:
+        return True
+    if "/" in text or "\\" in text:
+        return True
+    return len(text) > 1 and text[1] == ":"
+
+
+def _is_same_allow_override(signature: _ApprovalOverrideSignature) -> bool:
+    if signature.tool_name not in signature.tools:
+        return False
+    if signature.existing_match_type != signature.match_type:
+        return False
+    if signature.existing_pattern != signature.pattern:
+        return False
+    return signature.existing_action == "allow"
+
+
+def _build_approval_override_id(tool_name: str, match_type: str, pattern: str) -> str:
+    raw = f"user_allow_{tool_name}_{match_type}_{pattern}"
+    collapsed = re.sub(r"[^a-zA-Z0-9]+", "_", raw).strip("_").lower()
+    if not collapsed:
+        return "user_allow_override"
+    return collapsed[:120]
 
 
 def persist_external_directory_allow(paths: list[str]) -> None:
@@ -326,4 +474,3 @@ def persist_external_directory_allow(paths: list[str]) -> None:
         logger.info("[Persist] external_directory written, engine hot-reloaded")
     except Exception:
         logger.error("[Persist] FAILED to persist external_directory allow", exc_info=True)
-

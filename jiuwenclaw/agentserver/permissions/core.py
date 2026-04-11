@@ -23,6 +23,7 @@ from jiuwenclaw.agentserver.permissions.models import (
 )
 from jiuwenclaw.agentserver.permissions.tiered_policy import (
     evaluate_tiered_policy,
+    matched_rule_uses_approval_override,
     maybe_escalate_shell_operators,
     permissions_schema_is_tiered_policy,
     strictest as tiered_policy_strictest,
@@ -78,7 +79,46 @@ class PermissionEngine:
         Returns:
             (permission_level, matched_rule) - 权限级别可能为 None（无匹配规则）.
         """
-        return self._tool_checker.check_tool(tool_name, tool_args, channel_id)
+        return self.evaluate_global_policy_directly(tool_name, tool_args, channel_id)
+
+    def evaluate_global_policy_directly(
+        self,
+        tool_name: str,
+        tool_args: dict[str, Any],
+        channel_id: str = "web",
+        *,
+        include_external_directory: bool = True,
+    ) -> tuple[PermissionLevel | None, str | None]:
+        """直接评估全局权限，不受 enabled/channel 短路影响。"""
+        if not isinstance(tool_args, dict):
+            logger.warning(
+                "[PermissionEngine] direct tool_args is not a dict (type=%s), using {}",
+                type(tool_args).__name__,
+            )
+            tool_args = {}
+
+        matched_rule: str | None = None
+        if permissions_schema_is_tiered_policy(self.config):
+            permission, matched_rule = evaluate_tiered_policy(self.config, tool_name, tool_args)
+            if matched_rule == "tiered_policy:fallback(no_config)":
+                permission = None
+                matched_rule = None
+            elif not matched_rule_uses_approval_override(matched_rule):
+                permission = maybe_escalate_shell_operators(tool_name, tool_args, permission)
+        else:
+            permission, matched_rule = self._tool_checker.check_tool(tool_name, tool_args, channel_id)
+
+        if include_external_directory:
+            ext_result = self._external_checker.check_external_paths(tool_name, tool_args)
+            if ext_result is not None:
+                if permission is None:
+                    permission = ext_result.permission
+                    matched_rule = ext_result.matched_rule or "external_directory"
+                else:
+                    permission = tiered_policy_strictest(permission, ext_result.permission)
+                    matched_rule = f"{matched_rule}|{ext_result.matched_rule or 'external_directory'}"
+
+        return permission, matched_rule
 
     # ---------- 权限检查 ----------
 
@@ -123,27 +163,19 @@ class PermissionEngine:
 
         # 1. 工具级 + 参数规则 + 默认（legacy 或 tiered_policy）
         external_paths: list[str] | None = None
-        if permissions_schema_is_tiered_policy(self.config):
-            permission, matched_rule = evaluate_tiered_policy(self.config, tool_name, tool_args)
-            permission = maybe_escalate_shell_operators(tool_name, tool_args, permission)
-            logger.info(
-                "[PermissionEngine] tiered_policy result: permission=%s matched_rule=%s",
-                permission.value, matched_rule,
-            )
-        else:
-            perm_t, rule_t = self._tool_checker.check_tool(
-                tool_name, tool_args, channel_id
-            )
-            if perm_t is None:
-                permission = PermissionLevel.ASK
-                matched_rule = "default"
-            else:
-                permission = perm_t
-                matched_rule = rule_t or "default"
-            logger.info(
-                "[PermissionEngine] Legacy checker: permission=%s matched_rule=%s",
-                permission.value, matched_rule,
-            )
+        permission, matched_rule = self.evaluate_global_policy_directly(
+            tool_name,
+            tool_args,
+            channel_id,
+            include_external_directory=False,
+        )
+        if permission is None:
+            permission = PermissionLevel.ASK
+            matched_rule = "default"
+        logger.info(
+            "[PermissionEngine] direct result: permission=%s matched_rule=%s",
+            permission.value, matched_rule,
+        )
 
         # 2. 外部路径：与当前决策取更严（不放宽）
         ext_result = self._external_checker.check_external_paths(tool_name, tool_args)
