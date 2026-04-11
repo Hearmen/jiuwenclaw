@@ -96,10 +96,10 @@ export function ToolPanel() {
   const beforeK = ((contextCompressionBefore ?? 0) / 1000).toFixed(1);
   const afterK = ((contextCompressionAfter ?? 0) / 1000).toFixed(1);
   let compressionRateDisplay;
-  if (contextCompressionBefore === 0) {
-    compressionRateDisplay = '0.0';
+  if (contextCompressionBefore === 0 || contextCompressionBefore === null) {
+    compressionRateDisplay = '--';
   } else if (contextCompressionAfter === contextCompressionBefore) {
-    compressionRateDisplay = '100.0';
+    compressionRateDisplay = '0.0';
   } else {
     compressionRateDisplay = Number.isFinite(contextCompressionRate)
       ? contextCompressionRate.toFixed(1)
