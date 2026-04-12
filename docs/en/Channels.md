@@ -133,7 +133,9 @@ Option 2: On a Harmony phone, open the published agent in the Xiaoyi app.
 2. **Add events**:
    - `im.message.receive_v1`
    - `im.message.message_read_v1` (optional)
-3. If encryption is on, save **Encrypt Key**.
+3. **Add trigger**：
+   - `card.action.trigger`
+4. If encryption is on, save **Encrypt Key**.
 
 ![Feishu events](../assets/images/feishu_app_events.png)
 

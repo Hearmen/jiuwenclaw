@@ -323,9 +323,6 @@ class JiuClawStreamEventRail(DeepAgentRail):
             else:
                 uncompressed.append(message)
 
-        if not compression_to_show:
-            return
-
         try:
             try:
                 encoding = tiktoken.get_encoding("cl100k_base")

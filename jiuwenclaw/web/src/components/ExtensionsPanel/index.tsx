@@ -275,12 +275,6 @@ export function ExtensionsPanel({ isConnected }: ExtensionsPanelProps) {
           <li>
             {t(
               'extensions.help2',
-              '修改扩展状态后需要重新加载 Agent 配置才能生效'
-            )}
-          </li>
-          <li>
-            {t(
-              'extensions.help3',
               '扩展文件夹会被保存到 ~/.jiuwenclaw/agent/jiuwenclaw_workspace/extensions/ 目录'
             )}
           </li>

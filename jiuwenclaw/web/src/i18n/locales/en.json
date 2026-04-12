@@ -900,8 +900,7 @@
     "helpTitle": "Usage Guide",
     "help0": "Extension folder must contain rail.py as the entry file",
     "help1": "Rail extension files must inherit from DeepAgentRail or AgentRail base class",
-    "help2": "Changes to extension status require reloading Agent configuration to take effect",
-    "help3": "Extension files are saved to ~/.jiuwenclaw/agent/jiuwenclaw_workspace/extensions/ directory"
+    "help2": "Extension files are saved to ~/.jiuwenclaw/agent/jiuwenclaw_workspace/extensions/ directory"
   },
   "ownerScopes": {
     "title": "Avatar Permission",

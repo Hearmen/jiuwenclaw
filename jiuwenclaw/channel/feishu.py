@@ -198,6 +198,8 @@ class FeishuChannel(BaseChannel):
         # 按 request_id 记录已通过 chat.file 发送的文件路径，用于兜底去重
         # key=request_id, value=set of absolute file paths
         self._sent_file_paths_by_req: dict[str, set[str]] = {}
+        # 自演进用户确认卡片, key=request_id, value=query card
+        self._user_question_card: dict[str, dict] = {}
 
     @property
     def channel_id(self) -> str:
@@ -1905,6 +1907,7 @@ class FeishuChannel(BaseChannel):
                     "template": request_id  # 使用 template 字段存储 request_id
                 }
 
+            self._user_question_card[request_id] = card
             # 发送卡片
             receive_id, id_type = self._extract_receive_info(msg)
             card_json = json.dumps(card, ensure_ascii=False)
@@ -2121,6 +2124,37 @@ class FeishuChannel(BaseChannel):
             token = event.token or ""
             action_value = action.value or ""
 
+            # 返回成功的响应：更新卡片去除按钮，显示已选择的内容
+            selected_label = action_value.get("label", "已选择")
+            request_id = action_value.get("request_id", "")
+            if not request_id or request_id not in self._user_question_card:
+                card_data = {
+                        "elements": [
+                            {
+                                "tag": "div",
+                                "text": {
+                                    "tag": "lark_md",
+                                    "content": f"您已选择：**{selected_label}**"
+                                }
+                            }
+                        ]
+                    }
+                header = {}
+            else:
+                card_data = self._user_question_card[request_id]
+                content = card_data["elements"][0].get("text", {}).get("content", "") \
+                    if "elements" in card_data and len(card_data["elements"]) > 0 else ""
+                header = card_data.get("header", {})
+                card_data = {
+                    "elements": [{
+                        "tag": "div",
+                        "text": {
+                            "tag": "lark_md",
+                            "content": f"{content} <br> <br> 您已选择：**{selected_label}**"
+                            }
+                        }]
+                }
+                self._user_question_card.pop(request_id)
             # 获取用户和上下文信息
             operator_id = event.operator.open_id if event.operator and event.operator.open_id else ""
 
@@ -2138,40 +2172,23 @@ class FeishuChannel(BaseChannel):
                     self._main_loop
                 )
 
-            # 返回成功的响应：更新卡片去除按钮，显示已选择的内容
-            selected_label = action_value.get("label", "已选择")
-
-            # 构建更新后的卡片数据，移除按钮，显示已选择
-            card_data = {
-                "type": "raw",
-                "data": {
-                    "schema": "2.0",
-                    "config": {
-                        "update_multi": True,
-                        "wide_screen_mode": True
-                    },
-                    "body": {
-                        "elements": [
-                            {
-                                "tag": "div",
-                                "text": {
-                                    "tag": "lark_md",
-                                    "content": f"您已选择：**{selected_label}**"
-                                }
-                            }
-                        ]
-                    }
-                }
-            }
-
-            # 构建响应对象
             # 返回成功的响应：更新卡片去除按钮，提示已接受
             response = {
                 "toast": {
                     "type": "info",
                     "content": "已收到您的选择"
                 },
-                "card": card_data
+                "card": {
+                    "type": "raw",
+                    "data": {
+                         "schema": "2.0",
+                         "config": {
+                             "update_multi": True,
+                         },
+                         "body": card_data,
+                         "header": header
+                    }
+                }
             }
             return P2CardActionTriggerResponse(response)
         except Exception as e:
