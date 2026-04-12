@@ -2138,19 +2138,42 @@ class FeishuChannel(BaseChannel):
                     self._main_loop
                 )
 
+            # 返回成功的响应：更新卡片去除按钮，显示已选择的内容
+            selected_label = action_value.get("label", "已选择")
+
+            # 构建更新后的卡片数据，移除按钮，显示已选择
+            card_data = {
+                "type": "raw",
+                "data": {
+                    "schema": "2.0",
+                    "config": {
+                        "update_multi": True,
+                        "wide_screen_mode": True
+                    },
+                    "body": {
+                        "elements": [
+                            {
+                                "tag": "div",
+                                "text": {
+                                    "tag": "lark_md",
+                                    "content": f"您已选择：**{selected_label}**"
+                                }
+                            }
+                        ]
+                    }
+                }
+            }
+
+            # 构建响应对象
             # 返回成功的响应：更新卡片去除按钮，提示已接受
             response = {
                 "toast": {
                     "type": "info",
                     "content": "已收到您的选择"
-                }
+                },
+                "card": card_data
             }
-
-            if P2CardActionTriggerResponse:
-                return P2CardActionTriggerResponse(response)
-
-            return response
-
+            return P2CardActionTriggerResponse(response)
         except Exception as e:
             logger.error(f"处理飞书卡片回调时发生异常: {e}", exc_info=True)
             # 返回错误响应
