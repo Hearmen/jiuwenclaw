@@ -29,6 +29,7 @@ from jiuwenclaw.e2a.wire_codec import (
 from jiuwenclaw.schema.agent import AgentRequest, AgentResponse, AgentResponseChunk
 from jiuwenclaw.schema.hook_event import AgentServerHookEvents
 from jiuwenclaw.agentserver.extensions import get_rail_manager
+from jiuwenclaw.agentserver.permissions.patterns import persist_cli_trusted_directory
 from jiuwenclaw.schema.hooks_context import AgentServerChatHookContext
 from jiuwenclaw.agentserver.agent_manager import AgentManager, ACP_DEFAULT_CAPABILITIES
 
@@ -584,11 +585,22 @@ class AgentWebSocketServer:
             params = request.params or {}
             directory_path = params.get("path")
             remember = params.get("remember", False)
+            persist: dict[str, Any]
+            if directory_path is None or (
+                isinstance(directory_path, str) and not directory_path.strip()
+            ):
+                persist = {"ok": False, "error": "path is required"}
+            else:
+                persist = persist_cli_trusted_directory(str(directory_path))
             resp = AgentResponse(
                 request_id=request.request_id,
                 channel_id=request.channel_id,
-                ok=True,
-                payload={"path": directory_path, "remember": remember},
+                ok=bool(persist.get("ok", False)),
+                payload={
+                    "path": directory_path,
+                    "remember": remember,
+                    "persist": persist,
+                },
             )
         except Exception as e:  # noqa: BLE001
             logger.exception("[AgentWebSocketServer] command.add_dir failed: %s", e)

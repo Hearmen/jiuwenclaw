@@ -14,6 +14,7 @@ import logging
 from typing import Any
 
 from jiuwenclaw.agentserver.permissions.checker import (
+    PERMISSION_ENABLED_CHANNELS,
     ExternalDirectoryChecker,
     ToolPermissionChecker,
 )
@@ -30,8 +31,6 @@ from jiuwenclaw.agentserver.permissions.tiered_policy import (
 )
 
 logger = logging.getLogger(__name__)
-
-_PERMISSION_ENABLED_CHANNELS = frozenset({"web", "acp"})
 
 
 class PermissionEngine:
@@ -149,7 +148,7 @@ class PermissionEngine:
             )
 
         normalized_channel = (channel_id or "").strip() or "web"
-        if normalized_channel not in _PERMISSION_ENABLED_CHANNELS:
+        if normalized_channel not in PERMISSION_ENABLED_CHANNELS:
             logger.info("[PermissionEngine] Skipping permission check for channel: %s", normalized_channel)
             return PermissionResult(
                 permission=PermissionLevel.ALLOW,

@@ -2270,7 +2270,7 @@ wheels = [
 [[package]]
 name = "openjiuwen"
 version = "0.1.10"
-source = { git = "https://gitcode.com/openJiuwen/agent-core.git?rev=develop#b11016e63cac8be46bde7da687d76df0a99e90a4" }
+source = { git = "https://gitcode.com/openJiuwen/agent-core.git?rev=develop#2dc99a6005299c55e5d748ba394d298f9aa92b0f" }
 dependencies = [
     { name = "a2a-sdk" },
     { name = "aiofiles" },

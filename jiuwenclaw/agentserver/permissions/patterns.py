@@ -12,12 +12,14 @@ wildcard 模式：
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import re
 import sys
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 from urllib.parse import urlparse
 
 logger = logging.getLogger(__name__)
@@ -474,3 +476,116 @@ def persist_external_directory_allow(paths: list[str]) -> None:
         logger.info("[Persist] external_directory written, engine hot-reloaded")
     except Exception:
         logger.error("[Persist] FAILED to persist external_directory allow", exc_info=True)
+
+
+def persist_cli_trusted_directory(raw_path: str) -> dict[str, Any]:
+    """CLI ``command.add_dir``：全局信任目录子树。
+
+    写入 ``permissions.external_directory``（以目录路径为前缀键），并在 ``tiered_policy`` 下追加
+    ``approval_overrides``（路径类工具一条、shell 类工具一条），以便同时消除外部路径维度的 ASK
+    与参数级 ASK。
+
+    ``remember`` 由调用方忽略；本函数始终落盘。
+    """
+    if not isinstance(raw_path, str) or not raw_path.strip():
+        return {"ok": False, "error": "path is empty"}
+
+    try:
+        resolved = Path(raw_path.strip()).expanduser().resolve(strict=False)
+    except (OSError, RuntimeError) as e:
+        return {"ok": False, "error": f"invalid path: {e}"}
+
+    dir_norm = resolved.as_posix().rstrip("/")
+    if not dir_norm:
+        return {"ok": False, "error": "path resolves to empty"}
+
+    try:
+        from jiuwenclaw.agentserver.permissions.core import get_permission_engine
+        from jiuwenclaw.agentserver.permissions.tiered_policy import (
+            _PATH_TOOLS,
+            _SHELL_TOOLS,
+            permissions_schema_is_tiered_policy,
+        )
+        from jiuwenclaw.config import (
+            _CONFIG_YAML_PATH,
+            _load_yaml_round_trip,
+            _dump_yaml_round_trip,
+        )
+        from ruamel.yaml.scalarstring import DoubleQuotedScalarString
+
+        data = _load_yaml_round_trip(_CONFIG_YAML_PATH)
+        permissions = data.get("permissions")
+        if permissions is None:
+            permissions = {}
+            data["permissions"] = permissions
+
+        ext_cfg = permissions.get("external_directory")
+        if not isinstance(ext_cfg, dict):
+            ext_cfg = {"*": "ask"}
+            permissions["external_directory"] = ext_cfg
+        ext_cfg[DoubleQuotedScalarString(dir_norm)] = DoubleQuotedScalarString("allow")
+        logger.info("[Persist] cli add_dir external_directory[%s] = allow", dir_norm)
+
+        path_pattern = "re:^" + re.escape(dir_norm) + r"(?:$|/)"
+        posix = dir_norm
+        win = posix.replace("/", "\\")
+        shell_pattern = "re:" + rf".*{re.escape(posix)}.*|.*{re.escape(win)}.*"
+
+        tiered = permissions_schema_is_tiered_policy(permissions)
+        suffix = hashlib.sha256(dir_norm.encode("utf-8")).hexdigest()[:16]
+        path_override_id = f"cli_trusted_path_{suffix}"
+        shell_override_id = f"cli_trusted_shell_{suffix}"
+
+        if tiered:
+            overrides = permissions.get("approval_overrides")
+            if not isinstance(overrides, list):
+                overrides = []
+                permissions["approval_overrides"] = overrides
+
+            def _has_id(oid: str) -> bool:
+                for r in overrides:
+                    if isinstance(r, dict) and r.get("id") == oid:
+                        return True
+                return False
+
+            path_tools = sorted(_PATH_TOOLS)
+            if not _has_id(path_override_id):
+                overrides.append({
+                    "id": path_override_id,
+                    "tools": path_tools,
+                    "match_type": "path",
+                    "pattern": path_pattern,
+                    "action": "allow",
+                    "source": "cli_add_dir",
+                })
+                logger.info("[Persist] cli add_dir approval_overrides path id=%s", path_override_id)
+
+            shell_tools = sorted(_SHELL_TOOLS)
+            if not _has_id(shell_override_id):
+                overrides.append({
+                    "id": shell_override_id,
+                    "tools": shell_tools,
+                    "match_type": "command",
+                    "pattern": shell_pattern,
+                    "action": "allow",
+                    "source": "cli_add_dir",
+                })
+                logger.info("[Persist] cli add_dir approval_overrides shell id=%s", shell_override_id)
+        else:
+            logger.warning(
+                "[Persist] cli add_dir: permissions not tiered_policy; only external_directory updated",
+            )
+
+        _dump_yaml_round_trip(_CONFIG_YAML_PATH, data)
+        engine = get_permission_engine()
+        engine.update_config(data.get("permissions", {}))
+        return {
+            "ok": True,
+            "normalized": dir_norm,
+            "path_pattern": path_pattern,
+            "shell_pattern": shell_pattern,
+            "tiered_overrides": tiered,
+        }
+    except Exception as e:  # noqa: BLE001
+        logger.exception("[Persist] cli add_dir failed: %s", e)
+        return {"ok": False, "error": str(e)}

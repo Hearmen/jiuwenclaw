@@ -312,6 +312,12 @@ def test_owner_scope_global_level_sees_approval_overrides():
         "permission_mode": "normal",
         "defaults": {"*": "ask"},
         "tools": {"read_file": "ask"},
+        # read_file 会走 ExternalDirectoryChecker；/tmp 在 Windows 上常解析为 C:/tmp/...
+        "external_directory": {
+            "*": "ask",
+            "/tmp": "allow",
+            "C:/tmp": "allow",
+        },
         "approval_overrides": [
             {
                 "id": "user_allow_read_file_a",

@@ -64,7 +64,19 @@ def patch_wire_encoder(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_handle_command_add_dir_returns_path_and_remember(server, fake_ws):
+async def test_handle_command_add_dir_returns_path_and_remember(server, fake_ws, monkeypatch):
+    persist_stub = {
+        "ok": True,
+        "normalized": "/tmp/demo",
+        "path_pattern": "re:^/tmp/demo(?:$|/)",
+        "shell_pattern": "re:.*/tmp/demo.*",
+        "tiered_overrides": True,
+    }
+    monkeypatch.setattr(
+        agent_ws_server_module,
+        "persist_cli_trusted_directory",
+        lambda _raw: persist_stub,
+    )
     request = AgentRequest(
         request_id="req-add-dir",
         channel_id="cli",
@@ -77,7 +89,11 @@ async def test_handle_command_add_dir_returns_path_and_remember(server, fake_ws)
     assert fake_ws.sent == [
         {
             "response_id": "req-add-dir",
-            "payload": {"path": "/tmp/demo", "remember": True},
+            "payload": {
+                "path": "/tmp/demo",
+                "remember": True,
+                "persist": persist_stub,
+            },
             "ok": True,
         }
     ]

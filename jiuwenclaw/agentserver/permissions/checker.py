@@ -28,7 +28,11 @@ from jiuwenclaw.agentserver.permissions.models import (
     PermissionLevel,
     PermissionResult,
 )
-from jiuwenclaw.agentserver.permissions.tiered_policy import collect_builtin_permission_rail_tool_names
+from jiuwenclaw.agentserver.permissions.tiered_policy import (
+    _PATH_TOOLS,
+    _iter_path_strings,
+    collect_builtin_permission_rail_tool_names,
+)
 from jiuwenclaw.agentserver.permissions.patterns import (
     contains_path,
     match_command,
@@ -47,7 +51,8 @@ TOOL_PERMISSION_CHANNEL_ID: contextvars.ContextVar[str] = contextvars.ContextVar
 )
 
 # 启用工具权限检查的通道集合。仅当通道 ID 在此集合内时才执行权限校验，其它通道跳过。
-_PERMISSION_ENABLED_CHANNELS = frozenset({"web", "acp"})
+# web：浏览器；acp：Agent 协议（如 Cursor）；cli：本地 CLI。
+PERMISSION_ENABLED_CHANNELS = frozenset({"web", "acp", "cli"})
 
 
 def collect_permission_rail_tool_names(permission_config: dict[str, Any]) -> list[str]:
@@ -96,7 +101,7 @@ async def check_tool_permissions(
 
     Args:
         tool_calls: 待执行的工具调用列表
-        channel_id: 频道 ID；仅通道在 _PERMISSION_ENABLED_CHANNELS 内时执行校验，否则全量放行
+        channel_id: 频道 ID；仅通道在 PERMISSION_ENABLED_CHANNELS 内时执行校验，否则全量放行
         session_id: 会话 ID
         session: 会话对象，用于发起审批弹窗
         request_approval_callback: 当 needs_approval 时的回调 -> "allow_always"|"allow_once"|"deny"
@@ -112,7 +117,7 @@ async def check_tool_permissions(
         return list(tool_calls), []
 
     normalized_channel_id = (channel_id or "").strip()
-    if normalized_channel_id not in _PERMISSION_ENABLED_CHANNELS:
+    if normalized_channel_id not in PERMISSION_ENABLED_CHANNELS:
         logger.info(
             "Tool permissions check skipped for channel=%s",
             normalized_channel_id or "(empty)",
@@ -365,8 +370,6 @@ class ExternalDirectoryChecker:
             tool_args: dict[str, Any],
     ) -> PermissionResult | None:
         """若访问了 workspace 外路径，根据 external_directory 配置返回 DENY/ASK；否则返回 None."""
-        if tool_name not in ("mcp_exec_command", "bash"):
-            return None
         workspace = self._workspace_root
         if workspace is None:
             try:
@@ -378,14 +381,38 @@ class ExternalDirectoryChecker:
                 return None
         else:
             logger.info("[ExternalDirectoryChecker] workspace from _workspace_root: %s", workspace)
-        workdir = tool_args.get("workdir", "")
-        try:
-            workdir_resolved = (workspace / workdir).resolve()
-        except (OSError, RuntimeError):
-            workdir_resolved = workspace
-        cmd = str(tool_args.get("command", "") or tool_args.get("cmd", ""))
-        logger.info("[ExternalDirectoryChecker] tool_name=%s cmd=%s workdir=%s", tool_name, cmd, workdir_resolved)
-        paths = _extract_paths_from_command(cmd, workdir_resolved)
+
+        paths: list[Path] = []
+        if tool_name in ("mcp_exec_command", "bash", "create_terminal"):
+            workdir = tool_args.get("workdir", "")
+            try:
+                workdir_resolved = (workspace / workdir).resolve()
+            except (OSError, RuntimeError):
+                workdir_resolved = workspace
+            cmd = str(tool_args.get("command", "") or tool_args.get("cmd", ""))
+            logger.info(
+                "[ExternalDirectoryChecker] tool_name=%s cmd=%s workdir=%s",
+                tool_name, cmd, workdir_resolved,
+            )
+            paths = _extract_paths_from_command(cmd, workdir_resolved)
+        elif tool_name in _PATH_TOOLS:
+            for s in _iter_path_strings(tool_name, tool_args):
+                raw = s.strip().strip('"').strip("'")
+                if not raw:
+                    continue
+                try:
+                    p = Path(raw)
+                    if not p.is_absolute():
+                        p = (workspace / p).resolve()
+                    else:
+                        p = p.resolve()
+                    paths.append(p)
+                except (OSError, RuntimeError):
+                    continue
+            logger.info("[ExternalDirectoryChecker] tool_name=%s path-tool paths=%s", tool_name, paths)
+        else:
+            return None
+
         logger.info("[ExternalDirectoryChecker] extracted paths: %s", paths)
         external = [p for p in paths if not contains_path(workspace, p)]
         logger.info("[ExternalDirectoryChecker] external paths: %s", external)

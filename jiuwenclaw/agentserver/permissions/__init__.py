@@ -49,6 +49,7 @@ from jiuwenclaw.agentserver.permissions.checker import (
 )
 from jiuwenclaw.agentserver.permissions.patterns import (
     build_command_allow_pattern,
+    persist_cli_trusted_directory,
     persist_external_directory_allow,
     persist_permission_allow_rule,
 )
@@ -76,6 +77,7 @@ __all__ = [
     "build_command_allow_pattern",
     "persist_permission_allow_rule",
     "persist_external_directory_allow",
+    "persist_cli_trusted_directory",
     # Risk
     "assess_command_risk_static",
     "assess_command_risk_with_llm",
