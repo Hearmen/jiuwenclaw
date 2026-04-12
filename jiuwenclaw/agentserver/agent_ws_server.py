@@ -460,6 +460,8 @@ class AgentWebSocketServer:
 
     async def _handle_session_list(self, ws: Any, request: AgentRequest, send_lock: asyncio.Lock) -> None:
         """处理 session.list 请求：扫描 sessions 目录，返回历史会话基础信息列表."""
+        from jiuwenclaw.agentserver.session_metadata import get_session_metadata
+
         sessions_dir = get_agent_sessions_dir()
         sessions = []
 
@@ -468,13 +470,16 @@ class AgentWebSocketServer:
                 for entry in sorted(sessions_dir.iterdir(), key=lambda e: e.stat().st_mtime, reverse=True):
                     if not entry.is_dir():
                         continue
-                    history_path = entry / "history.json"
-                    if not history_path.exists():
-                        continue
-                    sessions.append({
-                        "session_id": entry.name,
-                        "last_modified": history_path.stat().st_mtime,
-                    })
+                    meta = get_session_metadata(entry.name)
+                    if not meta:
+                        meta = {
+                            "session_id": entry.name,
+                            "channel_id": "",
+                            "title": "",
+                            "message_count": 0,
+                            "last_message_at": entry.stat().st_mtime,
+                        }
+                    sessions.append(meta)
         except Exception as exc:
             logger.warning("[AgentWebSocketServer] 扫描 sessions 目录失败: %s", exc)
 

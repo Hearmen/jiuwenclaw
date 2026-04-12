@@ -332,7 +332,9 @@ def register_cli_handlers(bind: CliHandlersBindParams) -> None:
         )
 
     async def _session_list(ws, req_id, params, session_id):
-        from jiuwenclaw.utils import get_agent_sessions_dir
+        import time
+        from jiuwenclaw.e2a.gateway_normalize import e2a_from_agent_fields
+        from jiuwenclaw.schema.message import ReqMethod
 
         limit = 20
         if isinstance(params, dict):
@@ -343,15 +345,26 @@ def register_cli_handlers(bind: CliHandlersBindParams) -> None:
                 limit = int(raw_limit.strip())
         limit = max(1, min(limit, 200))
 
-        workspace_session_dir = get_agent_sessions_dir()
-        if not workspace_session_dir.exists() or not workspace_session_dir.is_dir():
-            sessions = []
-        else:
-            sessions = sorted(
-                [d.name for d in workspace_session_dir.iterdir() if d.is_dir()],
-                reverse=True,
-            )[:limit]
-        await channel.send_response(ws, req_id, ok=True, payload={"sessions": sessions})
+        real_client = agent_client.get("value") if isinstance(agent_client, dict) else agent_client
+        if real_client is None:
+            await channel.send_response(ws, req_id, ok=True, payload={"sessions": []})
+            return
+        env = e2a_from_agent_fields(
+            request_id=req_id,
+            channel_id="cli",
+            session_id=session_id,
+            req_method=ReqMethod.SESSION_LIST,
+            params=params or {},
+            is_stream=False,
+            timestamp=time.time(),
+        )
+        resp = await real_client.send_request(env)
+        if not resp.ok:
+            await channel.send_response(ws, req_id, ok=False, error="session.list failed")
+            return
+        all_sessions = resp.payload.get("sessions", []) if isinstance(resp.payload, dict) else []
+        cli_sessions = [s for s in all_sessions if s.get("channel_id", "") == "cli"][:limit]
+        await channel.send_response(ws, req_id, ok=True, payload={"sessions": cli_sessions})
 
     async def _session_create(ws, req_id, params, session_id):
         from jiuwenclaw.utils import get_agent_sessions_dir
