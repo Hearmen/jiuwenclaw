@@ -77,9 +77,9 @@ rules:
     pattern: 're:(?i)(:\s*\(\s*\)\s*\{\s*:\s*\|\s*:\s*&\s*\}\s*;\s*:|(^|[\s;&|()])kill\s+-9\s+(-1|1)\b|(^|[\s;&|()])ulimit\s+-u\s+unlimited\b)'
     severity: CRITICAL
 
-  - id: shell_system_control_or_forced_process_termination
-    description: "关机、重启、停止关键服务或强制终止进程，可能直接破坏系统可用性"
+  - id: shell_system_shutdown_or_reboot
+    description: "关机、重启或切换到关机/重启运行级别，属于明显破坏系统可用性的行为"
     tools: [bash, mcp_exec_command, create_terminal]
     match_type: command
-    pattern: 're:(?i)(^|[\s;&|()])((shutdown|reboot|halt|poweroff)\b|(init|telinit)\s+(0|6)\b|(systemctl\s+(stop|restart|disable|mask|kill)\b)|(service\s+\S+\s+(stop|restart|reload)\b)|(launchctl\s+(stop|kickstart|kill|bootout)\b)|((pkill|killall)\b)|(kill\s+-(9|KILL)\b)|(taskkill\b[^;&|]*/F\b)|(Stop-Process\b[^;&|]*-Force\b)|(Stop-Service|Restart-Service)\b)'
+    pattern: 're:(?i)(^|[\s;&|()])((shutdown|reboot|halt|poweroff)\b|(init|telinit)\s+(0|6)\b)'
     action: deny

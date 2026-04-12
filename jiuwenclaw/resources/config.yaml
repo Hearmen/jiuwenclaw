@@ -370,97 +370,97 @@ permissions:
 
   rules:
     - id: shell_allow_dir
-      tools: [bash, mcp_exec_command]
+      tools: [bash, mcp_exec_command, create_terminal]
       pattern: "dir *"
       severity: LOW
     - id: shell_allow_ls
-      tools: [bash, mcp_exec_command]
+      tools: [bash, mcp_exec_command, create_terminal]
       pattern: "ls *"
       severity: LOW
     - id: shell_allow_pwd
-      tools: [bash, mcp_exec_command]
+      tools: [bash, mcp_exec_command, create_terminal]
       pattern: "pwd *"
       severity: LOW
     - id: shell_allow_cd
-      tools: [bash, mcp_exec_command]
+      tools: [bash, mcp_exec_command, create_terminal]
       pattern: "cd *"
       severity: LOW
     - id: shell_allow_echo
-      tools: [bash, mcp_exec_command]
+      tools: [bash, mcp_exec_command, create_terminal]
       pattern: "echo *"
       severity: LOW
     - id: shell_allow_cat
-      tools: [bash, mcp_exec_command]
+      tools: [bash, mcp_exec_command, create_terminal]
       pattern: "cat *"
       severity: LOW
     - id: shell_allow_type
-      tools: [bash, mcp_exec_command]
+      tools: [bash, mcp_exec_command, create_terminal]
       pattern: "type *"
       severity: LOW
     - id: shell_allow_head
-      tools: [bash, mcp_exec_command]
+      tools: [bash, mcp_exec_command, create_terminal]
       pattern: "head *"
       severity: LOW
     - id: shell_allow_tail
-      tools: [bash, mcp_exec_command]
+      tools: [bash, mcp_exec_command, create_terminal]
       pattern: "tail *"
       severity: LOW
     - id: shell_allow_git_status
-      tools: [bash, mcp_exec_command]
+      tools: [bash, mcp_exec_command, create_terminal]
       pattern: "git status *"
       severity: LOW
     - id: shell_allow_git_log
-      tools: [bash, mcp_exec_command]
+      tools: [bash, mcp_exec_command, create_terminal]
       pattern: "git log *"
       severity: LOW
     - id: shell_allow_git_diff
-      tools: [bash, mcp_exec_command]
+      tools: [bash, mcp_exec_command, create_terminal]
       pattern: "git diff *"
       severity: LOW
     - id: shell_allow_git_branch
-      tools: [bash, mcp_exec_command]
+      tools: [bash, mcp_exec_command, create_terminal]
       pattern: "git branch *"
       severity: LOW
     - id: shell_ask_rm
-      tools: [bash, mcp_exec_command]
+      tools: [bash, mcp_exec_command, create_terminal]
       pattern: "rm *"
       severity: HIGH
     - id: shell_ask_del
-      tools: [bash, mcp_exec_command]
+      tools: [bash, mcp_exec_command, create_terminal]
       pattern: "del *"
       severity: HIGH
     - id: shell_ask_rd
-      tools: [bash, mcp_exec_command]
+      tools: [bash, mcp_exec_command, create_terminal]
       pattern: "rd *"
       severity: HIGH
     - id: shell_ask_mv
-      tools: [bash, mcp_exec_command]
+      tools: [bash, mcp_exec_command, create_terminal]
       pattern: "mv *"
       severity: HIGH
     - id: shell_ask_cp
-      tools: [bash, mcp_exec_command]
+      tools: [bash, mcp_exec_command, create_terminal]
       pattern: "cp *"
       severity: HIGH
     - id: shell_ask_chmod
-      tools: [bash, mcp_exec_command]
+      tools: [bash, mcp_exec_command, create_terminal]
       pattern: "chmod *"
       severity: HIGH
     - id: shell_ask_chown
-      tools: [bash, mcp_exec_command]
+      tools: [bash, mcp_exec_command, create_terminal]
       pattern: "chown *"
       severity: HIGH
-    - id: shell_deny_sensitive_file_reads
-      tools: [bash, mcp_exec_command]
+    - id: shell_ask_sensitive_file_reads
+      tools: [bash, mcp_exec_command, create_terminal]
       pattern: 're:(?i)(^|[\s;&|()])((cat|type|less|more|head|tail|grep|find|Get-Content|Select-String)\b[^;&|]*(id_rsa|id_ed25519|\.pem\b|\.pfx\b|\.key\b|\.kube/config|\.aws/(credentials|config)|\.npmrc\b|\.env(\.[A-Za-z0-9_-]+)?\b|authorized_keys|\.ssh/))'
-      action: deny
-    - id: path_deny_ssh
+      severity: HIGH
+    - id: path_ask_ssh
       tools: [read_file, write_file, edit_file, read_text_file, write_text_file, write, read, glob_file_search, glob, list_dir, list_files, grep, search_replace]
       pattern: "**/.ssh/**"
-      action: deny
-    - id: path_deny_env
+      severity: HIGH
+    - id: path_ask_env
       tools: [read_file, write_file, edit_file, read_text_file, write_text_file, write, read, glob_file_search, glob, list_dir, list_files, grep, search_replace]
       pattern: "**/.env*"
-      action: deny
+      severity: HIGH
 
   # 数字分身 owner-scoped 权限（默认空，不生效）
   owner_scopes: {}

@@ -414,28 +414,51 @@ def test_default_config_shell_rules_are_consistent():
             severities[(pattern, tools)] = severity
 
     for pattern in {"rm *", "del *", "rd *", "mv *", "cp *", "chmod *", "chown *"}:
-        key = (pattern, ("bash", "mcp_exec_command"))
+        key = (pattern, ("bash", "mcp_exec_command", "create_terminal"))
         assert severities.get(key) == "HIGH"
 
 
-def test_default_config_denies_sensitive_shell_file_reads():
+def test_default_config_create_terminal_matches_shell_rule_sets():
+    resources_dir = Path(__file__).resolve().parents[3] / "jiuwenclaw" / "resources"
+    config = yaml.safe_load((resources_dir / "config.yaml").read_text(encoding="utf-8"))
+    rules = config["permissions"]["rules"]
+
+    tracked_patterns = {
+        "dir *", "ls *", "pwd *", "cd *", "echo *", "cat *", "type *", "head *", "tail *",
+        "git status *", "git log *", "git diff *", "git branch *",
+        "rm *", "del *", "rd *", "mv *", "cp *", "chmod *", "chown *",
+    }
+
+    for rule in rules:
+        pattern = rule.get("pattern")
+        if pattern not in tracked_patterns:
+            continue
+        tools = set(rule.get("tools") or [])
+        assert {"bash", "mcp_exec_command", "create_terminal"}.issubset(tools)
+
+
+def test_default_config_asks_sensitive_shell_file_reads():
     resources_dir = Path(__file__).resolve().parents[3] / "jiuwenclaw" / "resources"
     permissions = yaml.safe_load((resources_dir / "config.yaml").read_text(encoding="utf-8"))["permissions"]
 
     perm, _ = evaluate_tiered_policy(permissions, "bash", {"command": "cat ~/.ssh/id_rsa"})
-    assert perm == PermissionLevel.DENY
+    assert perm == PermissionLevel.ASK
 
 
-def test_default_config_denies_sensitive_file_tools():
+def test_default_config_asks_sensitive_file_tools():
     resources_dir = Path(__file__).resolve().parents[3] / "jiuwenclaw" / "resources"
     permissions = yaml.safe_load((resources_dir / "config.yaml").read_text(encoding="utf-8"))["permissions"]
 
     perm, _ = evaluate_tiered_policy(permissions, "read_file", {"path": "/workspace/.env"})
-    assert perm == PermissionLevel.DENY
+    assert perm == PermissionLevel.ASK
 
 
-def test_builtin_rules_block_system_control_commands():
-    resources_dir = Path(__file__).resolve().parents[3] / "jiuwenclaw" / "resources"
+def test_builtin_rules_block_system_control_commands(tmp_path, monkeypatch):
+    tiered_policy_module = importlib.import_module("jiuwenclaw.agentserver.permissions.tiered_policy")
+    monkeypatch.delenv("JIUWENCLAW_CONFIG_DIR", raising=False)
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setattr(tiered_policy_module, "_BUILTIN_RULES_CACHE", None)
+
     permissions = {
         "schema": "tiered_policy",
         "permission_mode": "normal",
@@ -444,9 +467,23 @@ def test_builtin_rules_block_system_control_commands():
         "rules": [],
     }
 
-    for command in ("shutdown now", "reboot", "systemctl stop sshd", "kill -9 1234"):
+    for command in ("shutdown now", "reboot", "halt", "poweroff", "init 0", "telinit 6"):
         perm, _ = evaluate_tiered_policy(permissions, "bash", {"command": command})
         assert perm == PermissionLevel.DENY
+
+
+def test_default_config_asks_service_restart_and_process_kill_commands(tmp_path, monkeypatch):
+    tiered_policy_module = importlib.import_module("jiuwenclaw.agentserver.permissions.tiered_policy")
+    monkeypatch.delenv("JIUWENCLAW_CONFIG_DIR", raising=False)
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setattr(tiered_policy_module, "_BUILTIN_RULES_CACHE", None)
+
+    resources_dir = Path(__file__).resolve().parents[3] / "jiuwenclaw" / "resources"
+    permissions = yaml.safe_load((resources_dir / "config.yaml").read_text(encoding="utf-8"))["permissions"]
+
+    for command in ("systemctl restart nginx", "service nginx restart", "pkill uvicorn", "kill -9 1234"):
+        perm, _ = evaluate_tiered_policy(permissions, "bash", {"command": command})
+        assert perm == PermissionLevel.ASK
 
 
 def test_deny_shell_rule_does_not_persist_always_allow(tmp_path, monkeypatch):
@@ -483,7 +520,7 @@ def test_deny_shell_rule_does_not_persist_always_allow(tmp_path, monkeypatch):
     assert "approval_overrides" not in saved["permissions"]
 
 
-def test_default_action_deny_rule_does_not_persist_always_allow(tmp_path, monkeypatch):
+def test_default_sensitive_rule_can_persist_always_allow(tmp_path, monkeypatch):
     resources_dir = Path(__file__).resolve().parents[3] / "jiuwenclaw" / "resources"
     default_permissions = yaml.safe_load(
         (resources_dir / "config.yaml").read_text(encoding="utf-8")
@@ -502,7 +539,12 @@ def test_default_action_deny_rule_does_not_persist_always_allow(tmp_path, monkey
     persist_permission_allow_rule("bash", {"command": "cat ~/.ssh/id_rsa"})
 
     saved = yaml.safe_load(cfg_path.read_text(encoding="utf-8"))
-    assert "approval_overrides" not in saved["permissions"]
+    overrides = saved["permissions"].get("approval_overrides") or []
+    assert len(overrides) == 1
+    assert overrides[0]["tools"] == ["bash"]
+    assert overrides[0]["match_type"] == "command"
+    assert overrides[0]["pattern"] == "cat ~/.ssh/id_rsa"
+    assert overrides[0]["action"] == "allow"
 
 
 def test_permission_rail_before_tool_call_applies_interrupt_decision():
