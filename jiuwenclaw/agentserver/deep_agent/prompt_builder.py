@@ -1,6 +1,7 @@
 # Copyright (c) Huawei Technologies Co., Ltd. 2025. All rights reserved.
 from enum import IntEnum
 from typing import Optional
+import sys
 
 from openjiuwen.harness.prompts import SystemPromptBuilder, PromptSection, resolve_language
 from jiuwenclaw.utils import logger
@@ -109,6 +110,7 @@ def _identity_prompt(language: str) -> PromptSection:
     memory_dir = get_agent_memory_dir()
     skills_dir = get_agent_skills_dir()
     todo_dir = get_deepagent_todo_dir()
+    os_type = sys.platform
 
     if language == "cn":
         content = f"""你是一个私人智能体，由 JiuwenClaw 创建。像一个有温度的人类助手一样与用户互动。
@@ -135,6 +137,15 @@ def _identity_prompt(language: str) -> PromptSection:
 |------|------|
 | `{config_dir}/config.yaml` | 配置信息 |
 | `{config_dir}/.env` | 环境变量 |
+
+## 运行环境
+
+当前运行平台：`{os_type}`
+
+执行命令或文件操作时，请根据平台类型选择正确的语法和路径格式：
+- **Windows** (`win32`/`win64`)：使用反斜杠路径 `\`，PowerShell或CMD命令
+- **Linux** (`linux`)：使用正斜杠路径 `/`，bash命令
+- **macOS** (`darwin`)：使用正斜杠路径 `/`，bash命令
 """
     else:
         content = (
@@ -156,7 +167,13 @@ def _identity_prompt(language: str) -> PromptSection:
             "| Path | Purpose |\n"
             "|------|---------|\n"
             f"| `{config_dir}/config.yaml` | Config |\n"
-            f"| `{config_dir}/.env` | Environment Variables |\n"
+            f"| `{config_dir}/.env` | Environment Variables |\n\n"
+            f"## Runtime Environment\n\n"
+            f"Current platform: `{os_type}`\n\n"
+            "Choose correct command syntax and path format based on the platform when executing commands or file operations:\n"
+            "- **Windows** (`win32`/`win64`): Use backslash paths `\\`, PowerShell or CMD commands\n"
+            "- **Linux** (`linux`): Use forward slash paths `/`, bash commands\n"
+            "- **macOS** (`darwin`): Use forward slash paths `/`, bash commands\n"
         )
     return PromptSection(
         name="identity",
