@@ -46,6 +46,7 @@ from openjiuwen.agent_evolving.online.schema import (
 )
 from openjiuwen.agent_evolving.online.signal_detector import SignalDetector
 from openjiuwen.harness.rails.memory_rail import MemoryRail
+from openjiuwen.harness.rails.coding_memory_rail import CodingMemoryRail
 from openjiuwen.harness.subagents.browser_agent import build_browser_agent_config
 from openjiuwen.harness.subagents.code_agent import build_code_agent_config
 from openjiuwen.harness.subagents.research_agent import build_research_agent_config
@@ -78,7 +79,7 @@ from jiuwenclaw.agentserver.deep_agent.permissions.owner_scopes import (
 )
 from jiuwenclaw.agentserver.permissions.core import init_permission_engine
 from jiuwenclaw.agentserver.memory import clear_memory_manager_cache
-from jiuwenclaw.agentserver.memory.config import clear_config_cache, get_memory_mode
+from jiuwenclaw.agentserver.memory.config import clear_config_cache, get_memory_mode, get_memory_scenario
 from jiuwenclaw.agentserver.permissions.checker import TOOL_PERMISSION_CHANNEL_ID
 from jiuwenclaw.agentserver.tools.multimodal_config import (
     apply_audio_model_config_from_yaml,
@@ -241,6 +242,7 @@ class JiuWenClawDeepAdapter:
         self._response_prompt_rail: ResponsePromptRail | None = None
         self._security_rail: SecurityRail | None = None
         self._memory_rail: MemoryRail | None = None
+        self._coding_memory_rail: CodingMemoryRail | None = None
         self._heartbeat_rail: HeartbeatRail | None = None
         self._skill_evolution_rail: SkillEvolutionRail | None = None
         self._pending_evolution_data: dict[str, dict] = {}
@@ -895,8 +897,10 @@ class JiuWenClawDeepAdapter:
         try:
             config = get_config()
             embed_config = config.get("embed") if isinstance(config, dict) else None
-            if (not isinstance(embed_config, dict) or not embed_config.get("embed_api_key")
-                    or not embed_config.get("embed_base_url") or not embed_config.get("embed_model")):
+            has_api_key = embed_config.get("embed_api_key") if isinstance(embed_config, dict) else None
+            has_base_url = embed_config.get("embed_base_url") if isinstance(embed_config, dict) else None
+            has_model = embed_config.get("embed_model") if isinstance(embed_config, dict) else None
+            if not all([has_api_key, has_base_url, has_model]):
                 logger.warning("[JiuWenClawDeepAdapter] MemoryRail create failed: No available embedding config")
             memory_rail = MemoryRail(
                 embedding_config=EmbeddingConfig(
@@ -911,6 +915,47 @@ class JiuWenClawDeepAdapter:
             memory_rail = None
         return memory_rail
 
+    def _build_coding_memory_rail(self) -> CodingMemoryRail | None:
+        """构建 CodingMemoryRail.
+
+        Returns:
+            CodingMemoryRail 实例，失败返回 None
+        """
+        try:
+            config = get_config()
+            embed_config = config.get("embed") if isinstance(config, dict) else None
+
+            # 检查 embedding 配置
+            has_api_key = embed_config.get("embed_api_key") if isinstance(embed_config, dict) else None
+            has_base_url = embed_config.get("embed_base_url") if isinstance(embed_config, dict) else None
+            has_model = embed_config.get("embed_model") if isinstance(embed_config, dict) else None
+            if not all([has_api_key, has_base_url, has_model]):
+                logger.warning("[JiuWenClawDeepAdapter] CodingMemoryRail: no embedding config, skipping")
+                return None
+
+            # 获取语言和 workspace 目录
+            language = config.get("preferred_language", "zh")
+            coding_memory_dir = os.path.join(self._workspace_dir, "coding_memory")
+
+            # 确保目录存在
+            os.makedirs(coding_memory_dir, exist_ok=True)
+
+            # 创建 CodingMemoryRail
+            coding_memory_rail = CodingMemoryRail(
+                coding_memory_dir=coding_memory_dir,
+                embedding_config=EmbeddingConfig(
+                    model_name=embed_config.get("embed_model"),
+                    base_url=embed_config.get("embed_base_url"),
+                    api_key=embed_config.get("embed_api_key"),
+                ),
+                language="cn" if language == "zh" else "en",
+            )
+            logger.info("[JiuWenClawDeepAdapter] CodingMemoryRail create success")
+            return coding_memory_rail
+
+        except Exception as exc:
+            logger.warning("[JiuWenClawDeepAdapter] CodingMemoryRail create failed: %s", exc)
+            return None
 
     def _build_heartbeat_rail(self) -> HeartbeatRail | None:
         """Build HeartbeatRail."""
@@ -1439,11 +1484,30 @@ class JiuWenClawDeepAdapter:
                 if getattr(existing, "name", "").startswith(("session_new", "session_cancel", "session_list")):
                     self._instance.ability_manager.remove(existing.name)
             # plan 模式：恢复记忆 rail（仅 local memory 模式下）
-            if self._memory_rail is None and get_memory_mode(get_config()) == "local":
-                self._memory_rail = self._build_memory_rail()
-                if self._memory_rail is not None:
-                    await self._instance.register_rail(self._memory_rail)
-                    logger.info("[JiuWenClawDeepAdapter] MemoryRail registered for plan mode")
+            if get_memory_mode(get_config()) == "local":
+                scenario = get_memory_scenario(get_config())
+                if scenario == "coding":
+                    # Coding 模式：使用 CodingMemoryRail
+                    if self._coding_memory_rail is None:
+                        self._coding_memory_rail = self._build_coding_memory_rail()
+                    if self._coding_memory_rail is not None:
+                        await self._instance.register_rail(self._coding_memory_rail)
+                        logger.info("[JiuWenClawDeepAdapter] CodingMemoryRail registered for plan mode")
+                    # 确保 personal rail 被清理
+                    if self._memory_rail is not None:
+                        await self._instance.unregister_rail(self._memory_rail)
+                        self._memory_rail = None
+                else:
+                    # Personal 模式：使用 MemoryRail
+                    if self._memory_rail is None:
+                        self._memory_rail = self._build_memory_rail()
+                    if self._memory_rail is not None:
+                        await self._instance.register_rail(self._memory_rail)
+                        logger.info("[JiuWenClawDeepAdapter] MemoryRail registered for plan mode")
+                    # 确保 coding rail 被清理
+                    if self._coding_memory_rail is not None:
+                        await self._instance.unregister_rail(self._coding_memory_rail)
+                        self._coding_memory_rail = None
             # plan 模式：恢复上下文 rail（仅配置启用时）
             if (self._context_engineering_rail is None and
                     self._config_cache.get("context_engine_config", {}).get("enabled", False)):
@@ -1462,11 +1526,15 @@ class JiuWenClawDeepAdapter:
                 await self._instance.unregister_rail(self._task_planning_rail)
                 self._task_planning_rail = None
                 logger.info("[JiuWenClawDeepAdapter] TaskPlanningRail unregistered for agent mode")
-            # 智能模式：关闭记忆 rail
+            # 智能模式：关闭记忆 rail（包括 personal 和 coding）
             if self._memory_rail is not None:
                 await self._instance.unregister_rail(self._memory_rail)
                 self._memory_rail = None
                 logger.info("[JiuWenClawDeepAdapter] MemoryRail unregistered for agent mode")
+            if self._coding_memory_rail is not None:
+                await self._instance.unregister_rail(self._coding_memory_rail)
+                self._coding_memory_rail = None
+                logger.info("[JiuWenClawDeepAdapter] CodingMemoryRail unregistered for agent mode")
             # 智能模式：关闭上下文 rail
             if self._context_engineering_rail is not None:
                 await self._instance.unregister_rail(self._context_engineering_rail)

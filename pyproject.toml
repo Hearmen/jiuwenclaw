@@ -42,6 +42,16 @@ dependencies = [
 [project.optional-dependencies]
 desktop = ["pywebview>=5.4"]
 dev = ["pyinstaller>=6.0.0", "pywebview>=5.4"]
+# Same packages as [dependency-groups] test (pip install -e ".[test]")
+test = [
+    "pytest>=8.3.5",
+    "pytest-asyncio>=1.0.0",
+    "pytest-html>=4.1.1",
+    "pytest-mock>=3.14.0",
+    "pytest-cov>=7.0.0",
+    "coverage>=7.7.1",
+    "pyyaml>=6.0",
+]
 
 [project.scripts]
 jiuwenclaw-app = "jiuwenclaw.app:main"
@@ -77,7 +87,7 @@ jiuwenclaw = [
 jiuwenclaw = ["web/node_modules/**", "web/node_modules/*"]
 
 [dependency-groups]
-# Testing
+# Testing (keep in sync with optional-dependencies.test)
 test = [
     "pytest>=8.3.5",
     "pytest-asyncio>=1.0.0",
@@ -85,4 +95,5 @@ test = [
     "pytest-mock>=3.14.0",
     "pytest-cov>=7.0.0",
     "coverage>=7.7.1",
+    "pyyaml>=6.0",
 ]
