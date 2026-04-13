@@ -2,8 +2,8 @@
 
 """Memory system type definitions."""
 
-from typing import List, Dict, Any, Optional, Literal, TypedDict
-from dataclasses import dataclass, field
+from typing import List, Dict, Any, Optional, Literal
+from dataclasses import dataclass
 
 
 MemorySource = Literal["memory", "sessions"]

@@ -11,7 +11,6 @@ import asyncio
 import datetime
 from typing import List, Optional, Dict, Any, Set
 from dataclasses import dataclass
-from pathlib import Path
 
 from .types import (
     MemorySearchResult, MemoryFileEntry, MemoryChunk, MemorySource
@@ -100,7 +99,6 @@ class MemoryIndexManager:
         self._event_loop: Optional[asyncio.AbstractEventLoop] = None
         self._watcher_initialized: bool = False
         self._file_stability_tracker: Dict[str, float] = {}
-        self._summary_tasks: List[asyncio.Task] = []
 
     @classmethod
     async def get(
@@ -1180,120 +1178,6 @@ class MemoryIndexManager:
         except:
             return 0
 
-    async def compact_memory(
-            self,
-            messages: List[Dict[str, Any]],
-            prior_summary: str = ""
-    ) -> str:
-        """Compact messages into a summary.
-
-        Args:
-            messages: List of messages to compact
-            prior_summary: Prior summary to build upon
-
-        Returns:
-            Compacted summary
-        """
-        from .summarizer import ConversationCompactor
-
-        compactor = ConversationCompactor()
-        return await compactor.compact(messages, prior_summary)
-
-    async def summary_memory(
-            self,
-            messages: List[Dict[str, Any]],
-            date: Optional[str] = None
-    ) -> str:
-        """Generate a session summary.
-
-        Args:
-            messages: List of messages to summarize
-            date: Date string (YYYY-MM-DD)
-
-        Returns:
-            Session summary
-        """
-        from .summarizer import SessionSummarizer
-
-        summarizer = SessionSummarizer()
-        summary = await summarizer.summarize(messages, date)
-
-        if summary:
-            today = date or datetime.datetime.now().strftime("%Y-%m-%d")
-            summary_file = os.path.join(self.workspace_dir, "memory", f"{today}-summary.md")
-
-            os.makedirs(os.path.dirname(summary_file), exist_ok=True)
-            with open(summary_file, "w", encoding="utf-8") as f:
-                f.write(f"# Session Summary - {today}\n\n{summary}")
-
-            logger.info(f"Session summary saved to: {summary_file}")
-
-        return summary
-
-    def add_async_summary_task(
-            self,
-            messages: List[Dict[str, Any]],
-            date: Optional[str] = None
-    ):
-        """Add an async task to generate session summary.
-
-        Cleans up completed tasks before adding new one.
-        Tracks all tasks for proper lifecycle management.
-
-        Args:
-            messages: List of messages to summarize
-            date: Date string (YYYY-MM-DD)
-        """
-        self._cleanup_summary_tasks()
-
-        async def _run_summary():
-            try:
-                result = await self.summary_memory(messages, date)
-                logger.info(f"Summary task completed: {date or 'today'}")
-                return result
-            except Exception as e:
-                logger.error(f"Async summary task failed: {e}")
-                raise
-
-        task = asyncio.create_task(_run_summary())
-        self._summary_tasks.append(task)
-        logger.debug(f"Added summary task for {date or 'today'}, total tasks: {len(self._summary_tasks)}")
-
-    def _cleanup_summary_tasks(self) -> None:
-        """Clean up completed summary tasks.
-
-        Removes completed tasks from the list and logs any exceptions.
-        """
-        remaining_tasks = []
-        for task in self._summary_tasks:
-            if task.done():
-                exc = task.exception()
-                if exc is not None:
-                    logger.error(f"Summary task failed with exception: {exc}")
-                else:
-                    try:
-                        result = task.result()
-                        logger.debug(f"Summary task completed successfully")
-                    except Exception as e:
-                        logger.error(f"Summary task result retrieval failed: {e}")
-            else:
-                remaining_tasks.append(task)
-
-        if len(remaining_tasks) != len(self._summary_tasks):
-            cleaned = len(self._summary_tasks) - len(remaining_tasks)
-            logger.debug(f"Cleaned up {cleaned} completed summary tasks")
-
-        self._summary_tasks = remaining_tasks
-
-    def get_pending_summary_tasks(self) -> int:
-        """Get count of pending summary tasks.
-
-        Returns:
-            Number of pending (not completed) summary tasks
-        """
-        self._cleanup_summary_tasks()
-        return len(self._summary_tasks)
-
     async def close(self) -> None:
         """Close the memory manager."""
         if self.closed:
@@ -1307,21 +1191,6 @@ class MemoryIndexManager:
             self._watch_timer.cancel()
         if self._session_timer:
             self._session_timer.cancel()
-
-        self._cleanup_summary_tasks()
-        if self._summary_tasks:
-            logger.info(f"Waiting for {len(self._summary_tasks)} pending summary tasks...")
-            try:
-                done, pending = await asyncio.wait(
-                    self._summary_tasks,
-                    timeout=30.0
-                )
-                if pending:
-                    logger.warning(f"Cancelling {len(pending)} pending summary tasks")
-                    for task in pending:
-                        task.cancel()
-            except Exception as e:
-                logger.warning(f"Error waiting for summary tasks: {e}")
 
         if self._file_observer:
             try:

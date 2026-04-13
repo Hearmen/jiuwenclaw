@@ -4,15 +4,10 @@
 
 from .types import (
     MemorySearchResult,
-    MemoryProviderStatus,
-    MemorySyncProgressUpdate,
     MemoryFileEntry,
     MemoryChunk,
-    SessionFileEntry,
     MemorySource,
     FileEntry,
-    FtsStatus,
-    VectorStatus,
 )
 from .manager import MemoryIndexManager, get_memory_manager, clear_memory_manager_cache
 from .config import (
@@ -24,23 +19,6 @@ from .config import (
     DEFAULT_WORKSPACE_DIR,
 )
 from .embeddings import EmbeddingProvider, create_embedding_provider
-from .summarizer import (
-    LLMClient,
-    ConversationCompactor,
-    SessionSummarizer,
-    compact_memory,
-    summarize_session,
-    format_messages_for_summary,
-)
-from .compaction import (
-    MessageStatus,
-    MessageRecord,
-    TokenEstimator,
-    MessageRepository,
-    ContextCompactionManager,
-    CONTEXT_COMPACT_THRESHOLD,
-    CONTEXT_COMPACT_KEEP_RECENT,
-)
 from .internal import (
     estimate_tokens,
     ensure_dir,
@@ -48,7 +26,6 @@ from .internal import (
     build_file_entry,
     chunk_markdown,
     hash_text,
-    parse_embedding,
     build_fts_query,
     bm25_rank_to_score,
     is_memory_path,
@@ -63,21 +40,15 @@ __all__ = [
     "EmbeddingProvider",
     "create_embedding_provider",
     "MemorySearchResult",
-    "MemoryProviderStatus",
-    "MemorySyncProgressUpdate",
     "MemoryFileEntry",
     "MemoryChunk",
-    "SessionFileEntry",
     "MemorySource",
     "FileEntry",
-    "FtsStatus",
-    "VectorStatus",
     "ensure_dir",
     "list_memory_files",
     "build_file_entry",
     "chunk_markdown",
     "hash_text",
-    "parse_embedding",
     "build_fts_query",
     "bm25_rank_to_score",
     "is_memory_path",
@@ -87,18 +58,5 @@ __all__ = [
     "get_memory_mode",
     "get_embed_config",
     "DEFAULT_WORKSPACE_DIR",
-    "LLMClient",
-    "ConversationCompactor",
-    "SessionSummarizer",
-    "compact_memory",
-    "summarize_session",
-    "format_messages_for_summary",
-    "MessageStatus",
-    "MessageRecord",
-    "TokenEstimator",
-    "MessageRepository",
-    "ContextCompactionManager",
-    "CONTEXT_COMPACT_THRESHOLD",
-    "CONTEXT_COMPACT_KEEP_RECENT",
     "estimate_tokens",
 ]
