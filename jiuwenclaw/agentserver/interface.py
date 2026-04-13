@@ -152,6 +152,8 @@ class JiuWenClaw:
         if self._adapter is None:
             self._sdk_name = resolve_sdk_choice()
             self._adapter = create_adapter(self._sdk_name)
+            if hasattr(self._adapter, "set_skill_manager"):
+                self._adapter.set_skill_manager(self._skill_manager)
             self._skill_manager.set_skillnet_install_complete_hook(
                 self.create_instance
             )

@@ -2154,6 +2154,46 @@ class SkillManager:
     def _get_installed_plugins(self) -> list[dict]:
         return self._state.get("installed_plugins", [])
 
+    # -----------------------------------------------------------------------
+    # 供 AgentServer 内部其它组件复用的轻量公开查询接口
+    # -----------------------------------------------------------------------
+
+    def get_installed_plugins(self) -> list[dict]:
+        """返回已安装插件记录的拷贝。"""
+        return list(self._get_installed_plugins())
+
+    def get_local_skills(self) -> list[dict]:
+        """返回本地技能安装记录的拷贝。"""
+        return list(self._state.get("local_skills", []))
+
+    def get_skill_meta(self, skill_name: str) -> dict[str, Any] | None:
+        """返回本地 skill 的解析元数据，附带目录与 skill 文件路径。"""
+        skill_dir = self._resolve_local_skill_dir(skill_name)
+        if skill_dir is None:
+            return None
+        skill_file = self._try_find_skill_file(skill_dir)
+        if skill_file is None:
+            return None
+        meta = self._parse_skill_md(skill_file)
+        if meta is None:
+            return None
+        meta["skill_dir"] = str(skill_dir)
+        meta["skill_file"] = str(skill_file)
+        return meta
+
+    def is_builtin_skill(self, skill_name: str) -> bool:
+        """判断当前运行目录中的 skill 是否为真正的内置技能。"""
+        if not skill_name:
+            return False
+        dest = self._skills_dir / skill_name
+        builtin_dir = get_builtin_skills_dir()
+        if not builtin_dir.exists():
+            return False
+        builtin_skill_path = builtin_dir / skill_name
+        if not builtin_skill_path.exists() or not builtin_skill_path.is_dir():
+            return False
+        return dest.exists() and dest.is_dir() and dest.resolve() == builtin_skill_path.resolve()
+
     def _add_installed_plugin(self, plugin: dict) -> None:
         plugins = self._state.setdefault("installed_plugins", [])
         # 更新已有记录

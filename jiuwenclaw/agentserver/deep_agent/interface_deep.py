@@ -81,6 +81,7 @@ from jiuwenclaw.agentserver.permissions.core import init_permission_engine
 from jiuwenclaw.agentserver.memory import clear_memory_manager_cache
 from jiuwenclaw.agentserver.memory.config import clear_config_cache, get_memory_mode, get_memory_scenario
 from jiuwenclaw.agentserver.permissions.checker import TOOL_PERMISSION_CHANNEL_ID
+from jiuwenclaw.agentserver.skill_manager import SkillManager
 from jiuwenclaw.agentserver.tools.multimodal_config import (
     apply_audio_model_config_from_yaml,
     apply_video_model_config_from_yaml,
@@ -88,7 +89,7 @@ from jiuwenclaw.agentserver.tools.multimodal_config import (
 )
 from jiuwenclaw.agentserver.tools.video_tools import video_understanding
 
-from jiuwenclaw.agentserver.tools import SendFileToolkit
+from jiuwenclaw.agentserver.tools import SendFileToolkit, SkillToolkit
 from jiuwenclaw.agentserver.tools.acp_output_tools import get_tools as get_acp_output_tools
 from jiuwenclaw.agentserver.tools.multi_session_toolkits import MultiSessionToolkit
 from jiuwenclaw.agentserver.tools.xiaoyi_phone_tools import (
@@ -259,10 +260,15 @@ class JiuWenClawDeepAdapter:
         self._xiaoyi_phone_tools_registered: bool = False
         self._paid_search_registered: bool = False
         self._paid_search_tool: WebPaidSearchTool | None = None
+        self._skill_manager: SkillManager | None = None
         self._cron_runtime = CronRuntimeBridge()
         self._runtime_cron_tool_context = _RuntimeCronToolContext(
             tool_scope=f"runtime_{id(self):x}",
         )
+
+    def set_skill_manager(self, skill_manager: SkillManager) -> None:
+        """Inject shared SkillManager from facade for tool reuse."""
+        self._skill_manager = skill_manager
 
     @staticmethod
     def _is_acp_tool_profile(config: dict[str, Any] | None = None) -> bool:
@@ -1263,6 +1269,21 @@ class JiuWenClawDeepAdapter:
                 logger.warning(
                     "[JiuWenClawDeepAdapter] xiaoyi phone tools registration failed: %s", exc
                 )
+
+        try:
+            skill_toolkit = SkillToolkit(manager=self._skill_manager)
+            skill_tool_names: list[str] = []
+            for tool in skill_toolkit.get_tools():
+                if not Runner.resource_mgr.get_tool(tool.card.id):
+                    Runner.resource_mgr.add_tool(tool)
+                tool_cards.append(tool.card)
+                skill_tool_names.append(tool.card.name)
+            logger.info(
+                "[JiuWenClawDeepAdapter] SkillToolkit registered: tools=%s",
+                skill_tool_names,
+            )
+        except Exception as exc:
+            logger.warning("[JiuWenClawDeepAdapter] skill tools registration failed: %s", exc)
 
         return tool_cards
 
