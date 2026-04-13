@@ -105,6 +105,7 @@ def test_build_configured_subagents_includes_optional_browser_and_configured_cod
         model,
         workspace="/tmp/jiuwenclaw-workspace",
         language="cn",
+        rails=None,
         max_iterations=5,
     )
     mock_research.assert_called_once_with(

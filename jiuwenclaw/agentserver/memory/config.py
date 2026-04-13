@@ -204,20 +204,3 @@ def get_memory_mode(config: Optional[Dict[str, Any]] = None) -> str:
     memory_cfg = (config or {}).get("memory", {})
     mode = str(memory_cfg.get("mode") or "local").strip().lower()
     return "cloud" if mode == "cloud" else "local"
-
-
-def get_memory_scenario(config: Optional[Dict[str, Any]] = None) -> str:
-    """获取记忆场景配置.
-    
-    Args:
-        config: 配置字典，如果为None则从全局配置获取
-        
-    Returns:
-        记忆场景: "personal" | "coding"
-    """
-    if config is None:
-        config = _load_config()
-    memory_cfg = config.get("memory", {})
-    scenario = str(memory_cfg.get("scenario") or "personal").strip().lower()
-    
-    return "coding" if scenario == "coding" else "personal"

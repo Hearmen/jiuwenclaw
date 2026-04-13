@@ -596,17 +596,17 @@ class TestCodingMemoryRailIntegration:
         assert mock_agent.system_prompt_builder.has_section("memory")
 
     @pytest.mark.asyncio
-    async def test_scenario_switching(self, temp_memory_dir: str, embedding_config: MockEmbeddingConfig) -> None:
-        """Test switching between personal and coding scenarios."""
+    async def test_rail_lifecycle(self, temp_memory_dir: str, embedding_config: MockEmbeddingConfig) -> None:
+        """Test CodingMemoryRail init and before_invoke lifecycle."""
         coding_rail = CodingMemoryRail(
             coding_memory_dir=temp_memory_dir,
             embedding_config=embedding_config,
             language="cn",
         )
-        
+
         agent = MockAgent()
         coding_rail.init(agent)
-        
+
         ctx = MockContext()
         await coding_rail.before_invoke(ctx)
 

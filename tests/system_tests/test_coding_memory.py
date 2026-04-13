@@ -3,7 +3,6 @@
 """System tests for Coding Memory feature.
 
 Tests the integration of Coding Memory Rail with the agent system.
-Based on the Coding Memory Rail design document.
 """
 
 import os
@@ -17,29 +16,6 @@ import yaml
 pytestmark = [pytest.mark.integration, pytest.mark.system]
 
 
-# Local copy of functions from jiuwenclaw.agentserver.memory.config
-# to avoid importing modules that trigger logger initialization
-
-def get_memory_scenario(config: Optional[Dict[str, Any]] = None) -> str:
-    """获取记忆场景配置.
-    
-    Args:
-        config: 配置字典，如果为None则从全局配置获取
-        
-    Returns:
-        记忆场景: "personal" | "coding"
-    """
-    memory_cfg = (config or {}).get("memory", {})
-    scenario = str(memory_cfg.get("scenario") or "personal").strip().lower()
-    
-    return "coding" if scenario == "coding" else "personal"
-
-
-def clear_config_cache() -> None:
-    """清除配置缓存（本地测试版本，无需实际操作）."""
-    pass
-
-
 @pytest.fixture
 def temp_workspace() -> Generator[Path, None, None]:
     """Create a temporary workspace with coding_memory directory."""
@@ -48,112 +24,6 @@ def temp_workspace() -> Generator[Path, None, None]:
         # Create coding_memory directory
         (workspace / "coding_memory").mkdir(parents=True, exist_ok=True)
         yield workspace
-
-
-@pytest.fixture
-def temp_config_with_coding_scenario(temp_workspace: Path) -> Generator[Path, None, None]:
-    """Create a temporary config.yaml with coding scenario."""
-    config_content = {
-        "preferred_language": "zh",
-        "memory": {
-            "mode": "local",
-            "scenario": "coding",  # Set to coding scenario
-            "enabled": True,
-        },
-        "embed": {
-            "embed_api_key": "test_key",
-            "embed_base_url": "https://test.embed.com",
-            "embed_model": "test-model",
-        },
-    }
-    
-    config_dir = temp_workspace / ".jiuwenclaw" / "config"
-    config_dir.mkdir(parents=True, exist_ok=True)
-    config_file = config_dir / "config.yaml"
-    
-    with open(config_file, "w", encoding="utf-8") as f:
-        yaml.dump(config_content, f)
-    
-    yield config_file
-
-
-@pytest.fixture
-def temp_config_with_personal_scenario(temp_workspace: Path) -> Generator[Path, None, None]:
-    """Create a temporary config.yaml with personal scenario."""
-    config_content = {
-        "preferred_language": "zh",
-        "memory": {
-            "mode": "local",
-            "scenario": "personal",  # Set to personal scenario
-            "enabled": True,
-        },
-        "embed": {
-            "embed_api_key": "test_key",
-            "embed_base_url": "https://test.embed.com",
-            "embed_model": "test-model",
-        },
-    }
-    
-    config_dir = temp_workspace / ".jiuwenclaw" / "config"
-    config_dir.mkdir(parents=True, exist_ok=True)
-    config_file = config_dir / "config.yaml"
-    
-    with open(config_file, "w", encoding="utf-8") as f:
-        yaml.dump(config_content, f)
-    
-    yield config_file
-
-
-class TestMemoryScenarioConfiguration:
-    """Tests for memory scenario configuration."""
-
-    @staticmethod
-    def test_coding_scenario_from_config(temp_config_with_coding_scenario: Path) -> None:
-        """Test that coding scenario is correctly loaded from config."""
-        # Read the config file directly
-        with open(temp_config_with_coding_scenario, "r", encoding="utf-8") as f:
-            config = yaml.safe_load(f)
-        
-        scenario = get_memory_scenario(config)
-        
-        assert scenario == "coding"
-
-    @staticmethod
-    def test_personal_scenario_from_config(temp_config_with_personal_scenario: Path) -> None:
-        """Test that personal scenario is correctly loaded from config."""
-        # Read the config file directly
-        with open(temp_config_with_personal_scenario, "r", encoding="utf-8") as f:
-            config = yaml.safe_load(f)
-        
-        scenario = get_memory_scenario(config)
-        
-        assert scenario == "personal"
-
-    @staticmethod
-    def test_scenario_switching(temp_workspace: Path) -> None:
-        """Test switching between scenarios."""
-        # Create config with personal scenario
-        config_content = {
-            "memory": {"scenario": "personal"},
-        }
-        config_file = temp_workspace / "config.yaml"
-        with open(config_file, "w", encoding="utf-8") as f:
-            yaml.dump(config_content, f)
-        
-        # Read and verify personal scenario
-        with open(config_file, "r", encoding="utf-8") as f:
-            config = yaml.safe_load(f)
-        assert get_memory_scenario(config) == "personal"
-        
-        # Switch to coding
-        config_content["memory"]["scenario"] = "coding"
-        with open(config_file, "w", encoding="utf-8") as f:
-            yaml.dump(config_content, f)
-        
-        # Read and verify coding scenario
-        with open(config_file, "r", encoding="utf-8") as f:
-            config = yaml.safe_load(f)
-        assert get_memory_scenario(config) == "coding"
 
 
 class TestCodingMemoryDirectoryStructure:
@@ -342,34 +212,8 @@ class TestCodingMemoryRailLifecycle:
         """Test CodingMemoryRail initialization."""
         coding_memory_dir = str(temp_workspace / "coding_memory")
         os.makedirs(coding_memory_dir, exist_ok=True)
-        
-        # Mock the rail initialization
-        # In real implementation, this would use actual CodingMemoryRail class
+
         assert os.path.exists(coding_memory_dir)
-
-    @staticmethod
-    def test_rail_with_coding_scenario_config(temp_config_with_coding_scenario: Path) -> None:
-        """Test that rail is configured correctly for coding scenario."""
-        # Read the config file directly
-        with open(temp_config_with_coding_scenario, "r", encoding="utf-8") as f:
-            config = yaml.safe_load(f)
-        
-        scenario = get_memory_scenario(config)
-        
-        # Coding scenario should use CodingMemoryRail
-        assert scenario == "coding"
-
-    @staticmethod
-    def test_rail_with_personal_scenario_config(temp_config_with_personal_scenario: Path) -> None:
-        """Test that rail is configured correctly for personal scenario."""
-        # Read the config file directly
-        with open(temp_config_with_personal_scenario, "r", encoding="utf-8") as f:
-            config = yaml.safe_load(f)
-        
-        scenario = get_memory_scenario(config)
-        
-        # Personal scenario should use MemoryRail
-        assert scenario == "personal"
 
 
 class TestMemoryIndexManagement:
@@ -510,8 +354,8 @@ Use 4 spaces for indentation in Python."""),
         assert (coding_memory_dir / "MEMORY.md").exists()
 
     @staticmethod
-    def test_memory_scenario_isolation(temp_workspace: Path) -> None:
-        """Test that personal and coding memory are isolated."""
+    def test_memory_directory_isolation(temp_workspace: Path) -> None:
+        """Test that personal and coding memory directories are isolated."""
         # Create both directories
         personal_memory_dir = temp_workspace / "memory"
         coding_memory_dir = temp_workspace / "coding_memory"

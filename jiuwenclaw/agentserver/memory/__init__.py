@@ -20,7 +20,6 @@ from .config import (
     create_memory_settings,
     is_memory_enabled,
     get_memory_mode,
-    get_memory_scenario,
     get_embed_config,
     DEFAULT_WORKSPACE_DIR,
 )
@@ -86,7 +85,6 @@ __all__ = [
     "create_memory_settings",
     "is_memory_enabled",
     "get_memory_mode",
-    "get_memory_scenario",
     "get_embed_config",
     "DEFAULT_WORKSPACE_DIR",
     "LLMClient",

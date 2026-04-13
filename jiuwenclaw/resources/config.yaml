@@ -15,7 +15,6 @@ logging:
 
 memory:
   mode: ${MEMORY_MODE:-local}
-  scenario: ${MEMORY_SCENARIO:-personal}  # "personal" | "coding"
   forbidden_memory_definition:
     enabled: false
     patterns: []

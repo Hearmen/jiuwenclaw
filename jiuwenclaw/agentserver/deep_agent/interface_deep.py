@@ -79,7 +79,7 @@ from jiuwenclaw.agentserver.deep_agent.permissions.owner_scopes import (
 )
 from jiuwenclaw.agentserver.permissions.core import init_permission_engine
 from jiuwenclaw.agentserver.memory import clear_memory_manager_cache
-from jiuwenclaw.agentserver.memory.config import clear_config_cache, get_memory_mode, get_memory_scenario
+from jiuwenclaw.agentserver.memory.config import clear_config_cache, get_memory_mode
 from jiuwenclaw.agentserver.permissions.checker import TOOL_PERMISSION_CHANNEL_ID
 from jiuwenclaw.agentserver.skill_manager import SkillManager
 from jiuwenclaw.agentserver.tools.multimodal_config import (
@@ -301,7 +301,6 @@ class JiuWenClawDeepAdapter:
         self._response_prompt_rail: ResponsePromptRail | None = None
         self._security_rail: SecurityRail | None = None
         self._memory_rail: MemoryRail | None = None
-        self._coding_memory_rail: CodingMemoryRail | None = None
         self._heartbeat_rail: HeartbeatRail | None = None
         self._skill_evolution_rail: SkillEvolutionRail | None = None
         self._pending_evolution_data: dict[str, dict] = {}
@@ -439,11 +438,18 @@ class JiuWenClawDeepAdapter:
         if isinstance(subagents_cfg, dict):
             code_agent_cfg = subagents_cfg.get("code_agent")
             if self._is_subagent_enabled(code_agent_cfg):
+                code_agent_rails = None
+                if get_memory_mode(get_config()) == "local":
+                    coding_memory_rail = self._build_coding_memory_rail()
+                    if coding_memory_rail is not None:
+                        # FileSystemRail 是 create_code_agent 的默认 rail，传 rails 会覆盖默认值，需显式带上
+                        code_agent_rails = [FileSystemRail(), coding_memory_rail]
                 subagents.append(
                     build_code_agent_config(
                         model,
                         workspace=workspace,
                         language=resolved_language,
+                        rails=code_agent_rails,
                         max_iterations=_parse_int(
                             code_agent_cfg.get("max_iterations"),
                             react_cfg.get("max_iterations", 15),
@@ -1523,29 +1529,11 @@ class JiuWenClawDeepAdapter:
                     self._instance.ability_manager.remove(existing.name)
             # plan 模式：恢复记忆 rail（仅 local memory 模式下）
             if get_memory_mode(get_config()) == "local":
-                scenario = get_memory_scenario(get_config())
-                if scenario == "coding":
-                    # Coding 模式：使用 CodingMemoryRail
-                    if self._coding_memory_rail is None:
-                        self._coding_memory_rail = self._build_coding_memory_rail()
-                    if self._coding_memory_rail is not None:
-                        await self._instance.register_rail(self._coding_memory_rail)
-                        logger.info("[JiuWenClawDeepAdapter] CodingMemoryRail registered for plan mode")
-                    # 确保 personal rail 被清理
-                    if self._memory_rail is not None:
-                        await self._instance.unregister_rail(self._memory_rail)
-                        self._memory_rail = None
-                else:
-                    # Personal 模式：使用 MemoryRail
-                    if self._memory_rail is None:
-                        self._memory_rail = self._build_memory_rail()
-                    if self._memory_rail is not None:
-                        await self._instance.register_rail(self._memory_rail)
-                        logger.info("[JiuWenClawDeepAdapter] MemoryRail registered for plan mode")
-                    # 确保 coding rail 被清理
-                    if self._coding_memory_rail is not None:
-                        await self._instance.unregister_rail(self._coding_memory_rail)
-                        self._coding_memory_rail = None
+                if self._memory_rail is None:
+                    self._memory_rail = self._build_memory_rail()
+                if self._memory_rail is not None:
+                    await self._instance.register_rail(self._memory_rail)
+                    logger.info("[JiuWenClawDeepAdapter] MemoryRail registered for plan mode")
             # plan 模式：恢复上下文 rail（仅配置启用时）
             if self._config_cache.get("context_engine_config", {}).get("enabled", False):
                 if self._context_engineering_rail is not None and self._context_engineering_rail_mode != "plan":
@@ -1569,15 +1557,11 @@ class JiuWenClawDeepAdapter:
                 await self._instance.unregister_rail(self._task_planning_rail)
                 self._task_planning_rail = None
                 logger.info("[JiuWenClawDeepAdapter] TaskPlanningRail unregistered for agent mode")
-            # 智能模式：关闭记忆 rail（包括 personal 和 coding）
+            # 智能模式：关闭记忆 rail
             if self._memory_rail is not None:
                 await self._instance.unregister_rail(self._memory_rail)
                 self._memory_rail = None
                 logger.info("[JiuWenClawDeepAdapter] MemoryRail unregistered for agent mode")
-            if self._coding_memory_rail is not None:
-                await self._instance.unregister_rail(self._coding_memory_rail)
-                self._coding_memory_rail = None
-                logger.info("[JiuWenClawDeepAdapter] CodingMemoryRail unregistered for agent mode")
             # agent/智能模式：恢复上下文 rail（仅配置启用时）
             if self._config_cache.get("context_engine_config", {}).get("enabled", False):
                 if self._context_engineering_rail is not None and self._context_engineering_rail_mode == "plan":

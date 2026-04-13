@@ -2,8 +2,7 @@
 
 """Unit tests for memory configuration module.
 
-Tests the memory scenario configuration and related functions.
-Based on the Coding Memory Rail design document.
+Tests memory mode, embed config, and related functions.
 """
 
 import os
@@ -33,21 +32,6 @@ def _resolve_env_vars(value: Any) -> Any:
         return [_resolve_env_vars(item) for item in value]
     else:
         return value
-
-
-def get_memory_scenario(config: Optional[Dict[str, Any]] = None) -> str:
-    """获取记忆场景配置.
-    
-    Args:
-        config: 配置字典，如果为None则从全局配置获取
-        
-    Returns:
-        记忆场景: "personal" | "coding"
-    """
-    memory_cfg = (config or {}).get("memory", {})
-    scenario = str(memory_cfg.get("scenario") or "personal").strip().lower()
-    
-    return "coding" if scenario == "coding" else "personal"
 
 
 def get_memory_mode(config: Optional[Dict[str, Any]] = None) -> str:
@@ -84,52 +68,6 @@ def get_embed_config(config: Optional[Dict[str, Any]] = None) -> Dict[str, Optio
         "base_url": embed_config.get("embed_base_url"),
         "model": embed_config.get("embed_model"),
     }
-
-
-class TestGetMemoryScenario:
-    """Tests for get_memory_scenario function."""
-
-    @staticmethod
-    def test_scenario_with_explicit_config() -> None:
-        """Test get_memory_scenario with explicit config dict."""
-        config = {"memory": {"scenario": "coding"}}
-        scenario = get_memory_scenario(config)
-        assert scenario == "coding"
-
-    @staticmethod
-    def test_scenario_defaults_to_personal() -> None:
-        """Test that scenario defaults to 'personal'."""
-        config = {}
-        scenario = get_memory_scenario(config)
-        assert scenario == "personal"
-
-    @staticmethod
-    def test_coding_scenario() -> None:
-        """Test that scenario can be set to 'coding'."""
-        config = {"memory": {"scenario": "coding"}}
-        scenario = get_memory_scenario(config)
-        assert scenario == "coding"
-
-    @staticmethod
-    def test_scenario_case_insensitive() -> None:
-        """Test that scenario is case insensitive."""
-        config = {"memory": {"scenario": "CODING"}}
-        scenario = get_memory_scenario(config)
-        assert scenario == "coding"
-
-    @staticmethod
-    def test_scenario_with_whitespace() -> None:
-        """Test that scenario handles whitespace."""
-        config = {"memory": {"scenario": "  coding  "}}
-        scenario = get_memory_scenario(config)
-        assert scenario == "coding"
-
-    @staticmethod
-    def test_invalid_scenario_defaults_to_personal() -> None:
-        """Test that invalid scenario defaults to 'personal'."""
-        config = {"memory": {"scenario": "invalid_scenario"}}
-        scenario = get_memory_scenario(config)
-        assert scenario == "personal"
 
 
 class TestGetMemoryMode:
