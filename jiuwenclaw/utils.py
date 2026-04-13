@@ -25,10 +25,12 @@ Runtime layout:
 内置模板位于包内 ``jiuwenclaw/resources/``（含 ``agent/`` 下各技能模板以及 ``skills_state.json``）。
 """
 
+import json
 import os
 import sys
 import datetime
 import shutil
+import time
 from pathlib import Path
 from dataclasses import dataclass
 from typing import Any, Literal, Optional
@@ -486,7 +488,40 @@ def _migrate_legacy_workspace(
         
         logger.info(f"Migrated memory: {old_memory} -> {new_memory}")
 
-    # 5. Clean up old directories after successful migration
+    # 5. Migrate cron_jobs.json from old_home to gateway
+    # This ensures cron jobs are not lost during migration
+    old_cron_jobs = old_home / "cron_jobs.json"
+    gateway_dir = workspace_dir / "gateway"
+    new_cron_jobs = gateway_dir / "cron_jobs.json"
+    if old_cron_jobs.exists():
+        gateway_dir.mkdir(parents=True, exist_ok=True)
+        try:
+            # Read old cron jobs data
+            old_data = json.loads(old_cron_jobs.read_text(encoding="utf-8"))
+            # Add 'expired': false to each job if not present (schema migration)
+            if "jobs" in old_data and isinstance(old_data["jobs"], list):
+                for job in old_data["jobs"]:
+                    if isinstance(job, dict) and "expired" not in job:
+                        job["expired"] = False
+            if not new_cron_jobs.exists():
+                # Write migrated data to new location
+                new_cron_jobs.write_text(
+                    json.dumps(old_data, ensure_ascii=False, indent=2),
+                    encoding="utf-8"
+                )
+                logger.info(f"Migrated cron_jobs.json: {old_cron_jobs} -> {new_cron_jobs}")
+            else:
+                # Both exist - backup old, log warning
+                backup_cron = gateway_dir / f"cron_jobs.json.backup.{int(time.time())}"
+                shutil.copy2(old_cron_jobs, backup_cron)
+                logger.warning(
+                    f"Both old and new cron_jobs.json exist. "
+                    f"Kept new version, backed up old to {backup_cron}"
+                )
+        except (json.JSONDecodeError, IOError) as e:
+            logger.error(f"Failed to migrate cron_jobs.json: {e}")
+
+    # 6. Clean up old directories after successful migration
     try:
         if old_workspace.exists():
             shutil.rmtree(old_workspace)
