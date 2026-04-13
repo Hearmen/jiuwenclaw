@@ -34,8 +34,10 @@ from openjiuwen.harness import (
     VisionModelConfig,
 )
 from openjiuwen.harness.factory import create_deep_agent
+from openjiuwen.harness.subagents.code_agent import create_code_agent
 from openjiuwen.harness.prompts import resolve_language
 from openjiuwen.harness.rails import SkillUseRail, TaskPlanningRail, SecurityRail, SkillEvolutionRail
+from openjiuwen.harness.rails.lsp_rail import LspRail
 from openjiuwen.harness.rails.context_engineering_rail import ContextEngineeringRail
 from openjiuwen.harness.rails.filesystem_rail import FileSystemRail
 from openjiuwen.harness.rails.heartbeat_rail import HeartbeatRail
@@ -301,6 +303,7 @@ class JiuWenClawDeepAdapter:
         self._response_prompt_rail: ResponsePromptRail | None = None
         self._security_rail: SecurityRail | None = None
         self._memory_rail: MemoryRail | None = None
+        self._lsp_rail: LspRail | None = None
         self._heartbeat_rail: HeartbeatRail | None = None
         self._skill_evolution_rail: SkillEvolutionRail | None = None
         self._pending_evolution_data: dict[str, dict] = {}
@@ -986,6 +989,17 @@ class JiuWenClawDeepAdapter:
             logger.warning("[JiuWenClawDeepAdapter] CodingMemoryRail create failed: %s", exc)
             return None
 
+    @staticmethod
+    def _build_lsp_rail() -> LspRail | None:
+        """Build LspRail."""
+        try:
+            lsp_rail = LspRail()
+            logger.info("[JiuWenClawDeepAdapter] LspRail create success")
+        except Exception as exc:
+            logger.warning("[JiuWenClawDeepAdapter] LspRail create failed: %s", exc)
+            lsp_rail = None
+        return lsp_rail
+
     def _build_heartbeat_rail(self) -> HeartbeatRail | None:
         """Build HeartbeatRail."""
         try:
@@ -1027,7 +1041,8 @@ class JiuWenClawDeepAdapter:
             rail = None
         return rail
 
-    def _build_agent_rails(self, config: dict[str, Any], config_base: dict[str, Any]) -> list[Any]:
+    def _build_agent_rails(self, config: dict[str, Any], config_base: dict[str, Any], *, 
+                           mode: str = "claw") -> list[Any]:
         """Build DeepAgent rails consistently for cold start and hot reload."""
 
         @dataclass
@@ -1059,6 +1074,10 @@ class JiuWenClawDeepAdapter:
         # 智能模式下关闭自演进，plan 模式下按配置启用
 
         # MemoryRail 不在冷启动时挂载，由 _update_rails_for_mode 按 mode 按需注册/注销
+
+        # LspRail 仅在 code 模式下挂载
+        if mode == "code":
+            rail_infos.append(_RailBuildInfo("_lsp_rail", self._build_lsp_rail))
 
         if self._filesystem_rail_enabled_for_profile():
             rail_infos.insert(1, _RailBuildInfo("_filesystem_rail", self._build_filesystem_rail))
@@ -1183,6 +1202,8 @@ class JiuWenClawDeepAdapter:
             rails_list.append(self._context_engineering_rail)
         if self._memory_rail is not None:
             rails_list.append(self._memory_rail)
+        if self._lsp_rail is not None:
+            rails_list.append(self._lsp_rail)
         if self._avatar_rail is not None:
             rails_list.append(self._avatar_rail)
         if self._permission_rail is not None:
@@ -1319,7 +1340,7 @@ class JiuWenClawDeepAdapter:
         """Backward-compatible no-op hook for tests and legacy call sites."""
         return None
 
-    async def create_instance(self, config: dict[str, Any] | None = None) -> None:
+    async def create_instance(self, config: dict[str, Any] | None = None, *, mode: str = "claw") -> None:
         """初始化 DeepAgent 实例.
 
         Args:
@@ -1327,6 +1348,7 @@ class JiuWenClawDeepAdapter:
                 - agent_name: Agent 名称，默认 "main_agent"。
                 - workspace_dir: 工作区目录，默认 "workspace/agent"。
                 - 其余字段透传给 DeepAgentConfig。
+            mode: 实例化模式，支持 "claw"（默认，使用 create_deep_agent）和 "code"（使用 create_code_agent）。
         """
         await self.set_checkpoint()
 
@@ -1350,7 +1372,7 @@ class JiuWenClawDeepAdapter:
             permissions_cfg.get("enabled", True),
         )
 
-        rails_list = self._build_agent_rails(config, config_base)
+        rails_list = self._build_agent_rails(config, config_base, mode=mode)
 
         sys_operation = self._create_sys_operation()
         if sys_operation is None:
@@ -1358,7 +1380,7 @@ class JiuWenClawDeepAdapter:
 
         self._sys_operation = sys_operation
         configured_subagents = self._build_configured_subagents(model, config, config_base)
-        self._instance = create_deep_agent(
+        common_kwargs = dict(
             model=model,
             card=agent_card,
             system_prompt=build_identity_prompt(
@@ -1372,7 +1394,6 @@ class JiuWenClawDeepAdapter:
             tools=tool_cards if tool_cards else [],
             subagents=configured_subagents,
             rails=rails_list if rails_list else [],
-            context_engine_config=_deep_agent_context_engine_config(config),
             enable_task_loop=config.get("enable_task_loop", True),
             max_iterations=config.get("max_iterations", 15),
             workspace=Workspace(
@@ -1381,10 +1402,18 @@ class JiuWenClawDeepAdapter:
             ),
             sys_operation=sys_operation,
             language=self._resolve_runtime_language(),
-            vision_model_config=self._vision_model_config,
-            audio_model_config=self._audio_model_config,
-            completion_timeout=config.get("completion_timeout", 3600.0),
         )
+
+        if mode == "code":
+            self._instance = create_code_agent(**common_kwargs)
+        else:
+            self._instance = create_deep_agent(
+                **common_kwargs,
+                context_engine_config=_deep_agent_context_engine_config(config),
+                vision_model_config=self._vision_model_config,
+                audio_model_config=self._audio_model_config,
+                completion_timeout=config.get("completion_timeout", 3600.0),
+            )
         logger.info("[JiuWenClawDeepAdapter] 初始化完成: agent_name=%s", self._agent_name)
 
         # 动态加载用户自定义的 Rail 扩展

@@ -1487,7 +1487,7 @@ wheels = [
 
 [[package]]
 name = "jiuwenclaw"
-version = "0.1.8"
+version = "0.1.9"
 source = { editable = "." }
 dependencies = [
     { name = "aiosqlite" },
@@ -2288,7 +2288,7 @@ wheels = [
 [[package]]
 name = "openjiuwen"
 version = "0.1.10"
-source = { git = "https://gitcode.com/openJiuwen/agent-core.git?rev=develop#fffccd87129f267a38854be8ebd965aa8de391a4" }
+source = { git = "https://gitcode.com/openJiuwen/agent-core.git?rev=develop#83dafacfc45ac986cbe8c00d9eb95dfa4dd6b1bc" }
 dependencies = [
     { name = "a2a-sdk" },
     { name = "aiofiles" },

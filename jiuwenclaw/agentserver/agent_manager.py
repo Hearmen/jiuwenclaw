@@ -74,9 +74,10 @@ class AgentManager:
         """
         from jiuwenclaw.agentserver.interface import JiuWenClaw
 
-        logger.info("[AgentManager] Creating %s agent", agent_key)
+        mode = "code" if agent_key in ("acp",) else "claw"
+        logger.info("[AgentManager] Creating %s agent (mode=%s)", agent_key, mode)
         agent = JiuWenClaw()
-        await agent.create_instance(config)
+        await agent.create_instance(config, mode=mode)
         self.agents[agent_key] = agent
         logger.info("[AgentManager] %s agent created", agent_key)
         return agent

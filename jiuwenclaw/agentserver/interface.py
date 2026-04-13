@@ -160,14 +160,15 @@ class JiuWenClaw:
             logger.info("[JiuWenClaw] Initialized adapter: sdk=%s", self._sdk_name)
         return self._adapter
 
-    async def create_instance(self, config: dict[str, Any] | None = None) -> None:
+    async def create_instance(self, config: dict[str, Any] | None = None, *, mode: str = "claw") -> None:
         """初始化 Agent 实例.
 
         Args:
             config: 可选配置，透传给底层 adapter.
+            mode: 实例化模式，"claw"（默认）或 "code"，透传给底层 adapter.
         """
         adapter = self._ensure_adapter()
-        await adapter.create_instance(config)
+        await adapter.create_instance(config, mode=mode)
         logger.info("[JiuWenClaw] Agent instance created: sdk=%s", self._sdk_name)
 
     async def reload_agent_config(
