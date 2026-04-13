@@ -10,6 +10,7 @@ from __future__ import annotations
 from typing import Any
 
 from jiuwenclaw.agentserver.permissions.checker import collect_permission_rail_tool_names
+from jiuwenclaw.agentserver.permissions.core import get_permission_engine
 from jiuwenclaw.utils import logger
 
 
@@ -54,6 +55,7 @@ def build_permission_rail(
     try:
         permission_rail = PermissionInterruptRail(
             config=permission_config,
+            engine=get_permission_engine(),
             tool_names=tool_names,
             llm=llm,
             model_name=model_name,

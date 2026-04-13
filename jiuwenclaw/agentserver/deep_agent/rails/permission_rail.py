@@ -18,7 +18,8 @@ from openjiuwen.harness.rails.interrupt.confirm_rail import (
     ConfirmPayload,
 )
 
-from jiuwenclaw.agentserver.permissions.core import PermissionEngine
+from jiuwenclaw.agentserver.permissions.core import PermissionEngine, get_permission_engine
+from jiuwenclaw.config import get_config
 from jiuwenclaw.agentserver.permissions.checker import (
     TOOL_PERMISSION_CHANNEL_ID,
     collect_permission_rail_tool_names,
@@ -221,7 +222,16 @@ class PermissionInterruptRail(ConfirmInterruptRail):
                 "[PermissionRail] First call - checking permission for tool=%s normalized=%s",
                 tool_name, normalized_name
             )
-            self._engine.update_config(self._static_config)
+            # 与磁盘上的 permissions 对齐：persist_cli_trusted_directory 等只更新了全局
+            # PermissionEngine；若此处仍用旧的 _static_config 覆盖引擎，会抹掉刚写入的
+            # approval_overrides / external_directory。
+            perm = get_config().get("permissions")
+            if isinstance(perm, dict):
+                self.update_config(perm)
+            elif self._engine is get_permission_engine():
+                self._static_config = dict(self._engine.config)
+            else:
+                self._engine.update_config(self._static_config)
             result = await self._engine.check_permission(
                 tool_name=normalized_name,
                 tool_args=tool_args,

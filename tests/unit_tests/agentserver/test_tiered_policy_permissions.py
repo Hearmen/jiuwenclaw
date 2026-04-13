@@ -483,6 +483,12 @@ def test_default_config_asks_service_restart_and_process_kill_commands(tmp_path,
     monkeypatch.delenv("JIUWENCLAW_CONFIG_DIR", raising=False)
     monkeypatch.setenv("HOME", str(tmp_path))
     monkeypatch.setattr(tiered_policy_module, "_BUILTIN_RULES_CACHE", None)
+    # Windows 上 Path.home() 常来自 USERPROFILE，与 HOME 无关；避免读到本机 ~/.jiuwenclaw 的扩展 builtin
+    monkeypatch.setattr(
+        tiered_policy_module,
+        "_resolve_builtin_rules_yaml_path",
+        tiered_policy_module.get_package_builtin_rules_path,
+    )
 
     resources_dir = Path(__file__).resolve().parents[3] / "jiuwenclaw" / "resources"
     permissions = yaml.safe_load((resources_dir / "config.yaml").read_text(encoding="utf-8"))["permissions"]

@@ -528,8 +528,8 @@ def persist_cli_trusted_directory(raw_path: str) -> dict[str, Any]:
 
         path_pattern = "re:^" + re.escape(dir_norm) + r"(?:$|/)"
         posix = dir_norm
-        win = posix.replace("/", "\\")
-        shell_pattern = "re:" + rf".*{re.escape(posix)}.*|.*{re.escape(win)}.*"
+        # 仅用正斜杠路径；反斜杠写入 YAML 双引号后易被解析成 \U 等非法正则转义，匹配改由 tiered 对 command 做 \→/ 归一化
+        shell_pattern = "re:" + rf".*{re.escape(posix)}.*"
 
         tiered = permissions_schema_is_tiered_policy(permissions)
         suffix = hashlib.sha256(dir_norm.encode("utf-8")).hexdigest()[:16]

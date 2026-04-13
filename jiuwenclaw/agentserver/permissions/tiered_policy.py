@@ -50,6 +50,14 @@ def _package_builtin_rules_path() -> Path:
     return Path(__file__).resolve().parent.parent.parent / "resources" / "builtin_rules.yaml"
 
 
+def get_package_builtin_rules_path() -> Path:
+    """包内 ``resources/builtin_rules.yaml`` 的绝对路径。
+
+    不经过用户配置目录；供测试或需固定使用发行版内置规则文件的场景调用。
+    """
+    return _package_builtin_rules_path()
+
+
 def _resolve_builtin_rules_yaml_path() -> Path | None:
     """优先用户配置目录（与 ``config.yaml`` 同目录）下的 ``builtin_rules.yaml``，否则包内 resources。"""
     user_dir = os.getenv("JIUWENCLAW_CONFIG_DIR")
@@ -180,11 +188,34 @@ def _shell_pattern_matches(pattern: str, command: str) -> bool:
     if p.lower().startswith("re:"):
         expr = p[3:].strip()
         flags = re.IGNORECASE if sys.platform == "win32" else 0
+        norm = command.replace("\\", "/")
+
+        def _try_subexpr(sub: str) -> bool:
+            if not sub:
+                return False
+            try:
+                if re.search(sub, command, flags):
+                    return True
+                if norm != command and re.search(sub, norm, flags):
+                    return True
+            except re.error:
+                return False
+            return False
+
         try:
-            return bool(re.search(expr, command, flags))
+            if re.search(expr, command, flags):
+                return True
+            if norm != command and re.search(expr, norm, flags):
+                return True
         except re.error:
+            # 例如 YAML 双引号落盘后 `C:\Users` 变成非法 \U；add_dir 旧版 `posix|win` 第二支整段编译失败
+            if "|" in expr:
+                for part in expr.split("|"):
+                    if _try_subexpr(part.strip()):
+                        return True
             logger.warning("invalid shell regex %r", expr)
             return False
+        return False
     glob_chars = frozenset("*?[")
     if any(ch in p for ch in glob_chars):
         return match_wildcard(command, p)
