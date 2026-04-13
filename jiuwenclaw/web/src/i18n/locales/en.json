@@ -392,6 +392,7 @@
       "model": { "label": "Model Configuration", "hint": "Model service and authentication settings" },
       "embed": { "label": "Embed Configuration", "hint": "Embed service and authentication settings" },
       "thirdParty": { "label": "Third-Party Services", "hint": "API key settings" },
+      "freeSearch": { "label": "Free Search Engines", "hint": "Enable or disable free search engines" },
       "evolution": { "label": "Evolution Settings", "hint": "Online skill evolution settings" },
       "contextEngine": { "label": "Context Compression", "hint": "Enable or disable dialogue context compression" },
       "permissions": { "label": "Tool Safety Guardrail", "hint": "Enable or disable permission checks for tool calls" },
@@ -401,6 +402,8 @@
     },
     "booleanLabels": {
       "evolutionAutoScan": "Auto-detect evolution signals",
+      "freeSearchDdg": "Enable DuckDuckGo (including DDG via Jina)",
+      "freeSearchBing": "Enable Bing",
       "enabled": "Enable",
       "kvCacheAffinity": "Compute affinity (KV cache release)"
     },

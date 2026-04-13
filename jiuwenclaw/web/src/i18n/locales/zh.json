@@ -391,6 +391,7 @@
       "model": { "label": "模型配置", "hint": "模型服务与鉴权参数" },
       "embed": { "label": "Embed配置", "hint": "Embed 服务与鉴权参数" },
       "thirdParty": { "label": "第三方服务配置", "hint": "API Key 配置" },
+      "freeSearch": { "label": "免费搜索引擎配置", "hint": "控制免费搜索工具启用的搜索引擎" },
       "evolution": { "label": "自演进配置", "hint": "Skills 在线自演进参数" },
       "contextEngine": { "label": "上下文压缩", "hint": "控制对话上下文是否启用压缩" },
       "permissions": { "label": "工具安全护栏", "hint": "控制工具调用时的权限检查" },
@@ -400,6 +401,8 @@
     },
     "booleanLabels": {
       "evolutionAutoScan": "自动检测可演进信号",
+      "freeSearchDdg": "启用 DuckDuckGo（含 DDG via Jina）",
+      "freeSearchBing": "启用 Bing",
       "enabled": "启用",
       "kvCacheAffinity": "算力亲和（KV 释放）"
     },

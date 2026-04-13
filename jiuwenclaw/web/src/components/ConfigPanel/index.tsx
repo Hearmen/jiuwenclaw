@@ -33,6 +33,7 @@ const THIRD_PARTY_API_KEYS = new Set([
 const REQUIRED_MODEL_FIELDS = ["api_base", "api_key", "model", "model_provider"] as const;
 const REQUIRED_MODEL_FIELD_SET = new Set<string>(REQUIRED_MODEL_FIELDS);
 const EVOLUTION_KEYS = new Set(["evolution_auto_scan"]);
+const FREE_SEARCH_KEYS = new Set(["free_search_ddg_enabled", "free_search_bing_enabled"]);
 const MEMORY_KEYS = new Set(["memory_forbidden_enabled", "memory_forbidden_description"]);
 
 function classifyKey(key: string): string {
@@ -44,6 +45,7 @@ function classifyKey(key: string): string {
   if (THIRD_PARTY_API_KEYS.has(key)) return "third_party_api";
   if (EMAIL_KEYS.has(key)) return "email";
   if (EVOLUTION_KEYS.has(key)) return "evolution";
+  if (FREE_SEARCH_KEYS.has(key)) return "free_search";
   if (MEMORY_KEYS.has(key)) return "memory";
   if (key === "context_engine_enabled" || key === "kv_cache_affinity_enabled") return "context_engine";
   if (key === "permissions_enabled") return "permissions";
@@ -128,6 +130,7 @@ function getGroupToneClass(tag: string): string {
   if (tag === "model_vision") return "text-teal-500 bg-teal-500/10 border-teal-500/20";
   if (tag === "embed") return "text-cyan-500 bg-cyan-500/10 border-cyan-500/20";
   if (tag === "third_party_api") return "text-indigo-500 bg-indigo-500/10 border-indigo-500/20";
+  if (tag === "free_search") return "text-lime-500 bg-lime-500/10 border-lime-500/20";
   if (tag === "evolution") return "text-amber-500 bg-amber-500/10 border-amber-500/20";
   if (tag === "memory") return "text-purple-500 bg-purple-500/10 border-purple-500/20";
   if (tag === "context_engine") return "text-sky-500 bg-sky-500/10 border-sky-500/20";
@@ -150,6 +153,7 @@ function getNestedModelStyle(tag: string): string {
 function isBooleanKey(key: string): boolean {
   return (
     EVOLUTION_KEYS.has(key) ||
+    FREE_SEARCH_KEYS.has(key) ||
     key === "context_engine_enabled" ||
     key === "kv_cache_affinity_enabled" ||
     key === "permissions_enabled" ||
@@ -164,6 +168,8 @@ function parseBoolValue(value: string): boolean {
 function getBooleanKeyLabel(key: string, t: (key: string) => string): string {
   const labels: Record<string, string> = {
     evolution_auto_scan: t('config.booleanLabels.evolutionAutoScan'),
+    free_search_ddg_enabled: t('config.booleanLabels.freeSearchDdg'),
+    free_search_bing_enabled: t('config.booleanLabels.freeSearchBing'),
     context_engine_enabled: t('config.booleanLabels.enabled'),
     kv_cache_affinity_enabled: t('config.booleanLabels.kvCacheAffinity'),
     permissions_enabled: t('config.booleanLabels.enabled'),
@@ -202,12 +208,13 @@ function getGroupMeta(t: (key: string) => string): Record<string, { label: strin
     model_vision: { label: t('config.groups.modelVision.label'), order: 3, hint: t('config.groups.modelVision.hint') },
     embed: { label: t('config.groups.embed.label'), order: 4, hint: t('config.groups.embed.hint') },
     third_party_api: { label: t('config.groups.thirdParty.label'), order: 5, hint: t('config.groups.thirdParty.hint') },
-    evolution: { label: t('config.groups.evolution.label'), order: 6, hint: t('config.groups.evolution.hint') },
-    context_engine: { label: t('config.groups.contextEngine.label'), order: 7, hint: t('config.groups.contextEngine.hint') },
-    permissions: { label: t('config.groups.permissions.label'), order: 8, hint: t('config.groups.permissions.hint') },
-    memory: { label: t('config.groups.memory.label'), order: 9, hint: t('config.groups.memory.hint') },
-    email: { label: t('config.groups.email.label'), order: 10, hint: t('config.groups.email.hint') },
-    other: { label: t('config.groups.other.label'), order: 11, hint: t('config.groups.other.hint') },
+    free_search: { label: t('config.groups.freeSearch.label'), order: 6, hint: t('config.groups.freeSearch.hint') },
+    evolution: { label: t('config.groups.evolution.label'), order: 7, hint: t('config.groups.evolution.hint') },
+    context_engine: { label: t('config.groups.contextEngine.label'), order: 8, hint: t('config.groups.contextEngine.hint') },
+    permissions: { label: t('config.groups.permissions.label'), order: 9, hint: t('config.groups.permissions.hint') },
+    memory: { label: t('config.groups.memory.label'), order: 10, hint: t('config.groups.memory.hint') },
+    email: { label: t('config.groups.email.label'), order: 11, hint: t('config.groups.email.hint') },
+    other: { label: t('config.groups.other.label'), order: 12, hint: t('config.groups.other.hint') },
   };
 }
 
