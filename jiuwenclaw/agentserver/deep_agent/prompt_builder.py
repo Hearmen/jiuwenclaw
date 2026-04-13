@@ -142,10 +142,18 @@ def _identity_prompt(language: str) -> PromptSection:
 
 当前运行平台：`{os_type}`
 
-执行命令或文件操作时，请根据平台类型选择正确的语法和路径格式：
-- **Windows** (`win32`/`win64`)：使用反斜杠路径 `\`，PowerShell或CMD命令
-- **Linux** (`linux`)：使用正斜杠路径 `/`，bash命令
-- **macOS** (`darwin`)：使用正斜杠路径 `/`，bash命令
+**重要提示**：必须严格使用与当前平台匹配的命令语法，切勿使用其他平台的命令格式。
+
+常见命令差异对照：
+
+| 操作 | Windows (`win32`/`win64`) | Linux/macOS (`linux`/`darwin`) |
+|------|---------------------------|-------------------------------|
+| 创建目录 | `mkdir folder` 或 PowerShell `New-Item -ItemType Directory -Path folder` | `mkdir -p folder` |
+| 查看文件 | `type file.txt` 或 PowerShell `Get-Content file.txt` | `cat file.txt` |
+| 列出文件 | `dir` 或 PowerShell `Get-ChildItem` | `ls -la` |
+| 删除文件 | `del file.txt` 或 PowerShell `Remove-Item file.txt` | `rm file.txt` |
+| 删除目录 | `rmdir folder` 或 PowerShell `Remove-Item -Recurse folder` | `rm -rf folder` |
+| 查找文件 | `dir /s pattern` 或 PowerShell `Get-ChildItem -Recurse -Filter pattern` | `find . -name pattern` |
 """
     else:
         content = (
@@ -168,12 +176,21 @@ def _identity_prompt(language: str) -> PromptSection:
             "|------|---------|\n"
             f"| `{config_dir}/config.yaml` | Config |\n"
             f"| `{config_dir}/.env` | Environment Variables |\n\n"
-            f"## Runtime Environment\n\n"
+            "## Runtime Environment\n\n"
             f"Current platform: `{os_type}`\n\n"
-            "Choose correct command syntax and path format based on the platform when executing commands or file operations:\n"
-            "- **Windows** (`win32`/`win64`): Use backslash paths `\\`, PowerShell or CMD commands\n"
-            "- **Linux** (`linux`): Use forward slash paths `/`, bash commands\n"
-            "- **macOS** (`darwin`): Use forward slash paths `/`, bash commands\n"
+            "**Important**: You MUST strictly use command syntax matching the current platform. "
+            "Never use command formats from other platforms.\n\n"
+            "Common command differences:\n\n"
+            "| Operation | Windows (`win32`/`win64`) | Linux/macOS (`linux`/`darwin`) |\n"
+            "|-----------|---------------------------|-------------------------------|\n"
+            "| Create directory | `mkdir folder` or PowerShell `New-Item -ItemType Directory -Path folder` "
+            "| `mkdir -p folder` |\n"
+            "| View file | `type file.txt` or PowerShell `Get-Content file.txt` | `cat file.txt` |\n"
+            "| List files | `dir` or PowerShell `Get-ChildItem` | `ls -la` |\n"
+            "| Delete file | `del file.txt` or PowerShell `Remove-Item file.txt` | `rm file.txt` |\n"
+            "| Delete directory | `rmdir folder` or PowerShell `Remove-Item -Recurse folder` | `rm -rf folder` |\n"
+            "| Find file | `dir /s pattern` or PowerShell `Get-ChildItem -Recurse -Filter pattern` "
+            "| `find . -name pattern` |\n"
         )
     return PromptSection(
         name="identity",
