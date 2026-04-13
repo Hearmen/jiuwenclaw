@@ -121,6 +121,7 @@ class EventType(Enum):
     CHAT_SESSION_RESULT = "chat.session_result"
     HEARTBEAT_RELAY = "heartbeat.relay"
     HISTORY_GET = "history.message"
+    TEAM_MESSAGE = "team.message"
 
 
 class Mode(Enum):

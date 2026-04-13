@@ -926,7 +926,7 @@ class FeishuChannel(BaseChannel):
     @staticmethod
     def _is_control_message(content: str) -> bool:
         text = content.strip()
-        return text in {"/new_session", "/mode plan", "/mode agent"}
+        return text in {"/new_session", "/mode plan", "/mode agent", "/mode team"}
 
     async def _enqueue_message_batch(
         self,
@@ -939,6 +939,14 @@ class FeishuChannel(BaseChannel):
     ) -> None:
         """将同一用户的连续消息做短暂聚合，再统一交给 gateway 入站链路。"""
         if self._is_control_message(content):
+            if content == "/mode team":
+                await self._process_batched_message(
+                chat_id=chat_id,
+                open_id=open_id,
+                merged_content="/new_session",
+                timestamp_ms=timestamp_ms,
+                metadata=metadata,
+                )
             await self._process_batched_message(
                 chat_id=chat_id,
                 open_id=open_id,
@@ -1291,6 +1299,11 @@ class FeishuChannel(BaseChannel):
             if msg.event_type == EventType.CHAT_MEDIA:
                 if self.config.enable_file_upload and self._file_service:
                     await self._send_media_message(msg)
+                return
+
+            # 处理team message
+            if msg.event_type == EventType.TEAM_MESSAGE:
+                await self._send_team_message(msg)
                 return
 
             # 处理用户询问消息（发送确认卡片）
@@ -2761,6 +2774,93 @@ class FeishuChannel(BaseChannel):
 
         except Exception as e:
             logger.error(f"发送飞书文件消息异常: {e}")
+
+    async def _send_team_message(self, msg: Message) -> None:
+        """
+        发送Agent Team消息卡片。
+
+        Args:
+            msg: 包含 team.message payload 的消息对象
+        """
+        try:
+            payload = msg.payload if isinstance(msg.payload, dict) else {}
+            event = payload.get("event", {})
+            message_type = event.get("type", "")
+            from_member = event.get("from_member", "")
+            to_member = event.get("to_member", "")
+            content = event.get("content", "")
+
+            if not from_member or not content:
+                logger.warning("发送Team消息卡片：缺少必要字段 from_member 或 content")
+                return
+
+            # 构建 card 元素
+            elements = []
+
+            # 接收者信息
+            if message_type == "team.message.broadcast":
+                receiver_text = "📢 **广播消息**"
+            elif message_type == "team.message.p2p":
+                receiver_text = f"👤 **发给: {to_member}**"
+            else:
+                receiver_text = f"📋 **类型: {message_type}**"
+
+            elements.append({
+                "tag": "div",
+                "text": {
+                    "tag": "lark_md",
+                    "content": receiver_text
+                }
+            })
+
+            # 添加分隔线
+            elements.append({"tag": "hr"})
+
+            # 消息内容
+            elements.append({
+                "tag": "div",
+                "text": {
+                    "tag": "lark_md",
+                    "content": content
+                }
+            })
+
+            # 构建卡片
+            card = {
+                "config": {"wide_screen_mode": True},
+                "header": {
+                    "title": {
+                        "tag": "plain_text",
+                        "content": f"🤖 {from_member}"
+                    },
+                    "template": "teal"
+                },
+                "elements": elements,
+            }
+
+            # 发送卡片
+            receive_id, id_type = self._extract_receive_info(msg)
+            card_json = json.dumps(card, ensure_ascii=False)
+
+            await self._create_and_send_message(
+                FeishuMessageSendRequest(
+                    receive_id=receive_id,
+                    id_type=id_type,
+                    msg_type="interactive",
+                    content=card_json,
+                    log_label=f"team_message:{message_type}",
+                )
+            )
+
+            logger.info(
+                "[FeishuChannel] 发送Team消息卡片: type=%s, from=%s, to=%s",
+                message_type,
+                from_member,
+                to_member if message_type == "team.message.p2p" else "broadcast",
+            )
+
+        except Exception as e:
+            logger.error(f"发送Team消息卡片时发生异常: {e}", exc_info=True)
 
     async def _send_media_message(self, msg: Message) -> None:
         """

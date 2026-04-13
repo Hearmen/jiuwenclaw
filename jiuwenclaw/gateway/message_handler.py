@@ -41,6 +41,7 @@ _KNOWN_JIUWENCLAW_SESSION_PREFIXES = (
 class ChannelMode(str, Enum):
     PLAN = "plan"
     AGENT = "agent"
+    TEAM = "team"
 
 
 @dataclass
@@ -331,10 +332,16 @@ class MessageHandler(ABC):
             return True
 
         # \mode plan / \mode agent
-        if text == "/mode plan" or text == "/mode agent":
+        if text == "/mode plan" or text == "/mode agent" or text == "/mode team":
             parts = text.split()
-            if len(parts) >= 2 and parts[1] in ("plan", "agent"):
-                state.mode = ChannelMode.AGENT if parts[1] == "agent" else ChannelMode.PLAN
+            if len(parts) >= 2 and parts[1] in ("plan", "agent", "team"):
+                mode_str = parts[1]
+                if mode_str == "agent":
+                    state.mode = ChannelMode.AGENT
+                elif mode_str == "team":
+                    state.mode = ChannelMode.TEAM
+                else:
+                    state.mode = ChannelMode.PLAN
                 asyncio.create_task(
                     self._send_channel_notice(
                         user_infos, 
