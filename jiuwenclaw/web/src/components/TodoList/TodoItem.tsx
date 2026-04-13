@@ -42,22 +42,36 @@ export function TodoItem({ todo }: TodoItemProps) {
       data-testid={`todo-item-${todo.id}`}
       data-todo-status={todo.status}
       className={clsx(
-        'flex items-start gap-2 py-1.5 px-2 rounded-md text-sm transition-colors',
+        'flex flex-col gap-1 py-1.5 px-2 rounded-md text-sm transition-colors',
         todo.status === 'in_progress' && 'bg-accent-subtle',
         todo.status === 'completed' && 'opacity-60'
       )}
     >
-      {getStatusIcon()}
-      <span
-        className={clsx(
-          'flex-1 leading-tight',
-          todo.status === 'completed' && 'line-through text-text-muted',
-          todo.status === 'in_progress' && 'text-text-strong',
-          todo.status === 'pending' && 'text-text'
-        )}
-      >
-        {todo.status === 'in_progress' && todo.activeForm ? todo.activeForm : todo.content}
-      </span>
+      <div className="flex items-start gap-2">
+        {getStatusIcon()}
+        <span
+          className={clsx(
+            'flex-1 leading-tight',
+            todo.status === 'completed' && 'line-through text-text-muted',
+            todo.status === 'in_progress' && 'text-text-strong',
+            todo.status === 'pending' && 'text-text'
+          )}
+        >
+          {todo.status === 'in_progress' && todo.activeForm ? todo.activeForm : todo.content}
+        </span>
+      </div>
+      {/* 任务依赖 */}
+      {todo.depends && todo.depends.length > 0 && (
+        <div className="text-xs text-text-muted ml-6">
+          依赖: {todo.depends.join(', ')}
+        </div>
+      )}
+      {/* 被认领信息 */}
+      {todo.claimedBy && (
+        <div className="text-xs text-info ml-6">
+          被认领: {todo.claimedBy}
+        </div>
+      )}
     </div>
   );
 }

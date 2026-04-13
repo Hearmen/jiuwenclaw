@@ -11,4 +11,6 @@ export interface TodoItem {
   status: TodoStatus;
   createdAt: string;
   updatedAt: string;
+  depends?: string[];
+  claimedBy?: string;
 }

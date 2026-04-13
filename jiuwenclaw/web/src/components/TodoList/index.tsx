@@ -29,56 +29,58 @@ export function TodoList() {
   const completed = todos.filter((t) => t.status === 'completed');
 
   return (
-    <div data-testid="todo-list" className="p-4 space-y-4">
+    <div data-testid="todo-list" className="h-full flex flex-col p-4 space-y-4">
       <h3 className="text-[11px] font-medium text-text-muted uppercase tracking-wider flex items-center justify-between">
         <span>{t('todoList.title')}</span>
         <span className="px-1.5 py-0.5 bg-secondary rounded text-[10px]">{todos.length}</span>
       </h3>
 
-      {/* 进行中 */}
-      {inProgress.length > 0 && (
-        <div className="space-y-2">
-          <div className="flex items-center gap-2 text-xs font-medium text-info">
-            <span className="w-1.5 h-1.5 rounded-full bg-info animate-pulse" />
-            {t('todoList.inProgress')}
+      <div className="flex-1 overflow-y-auto space-y-4">
+        {/* 进行中 */}
+        {inProgress.length > 0 && (
+          <div className="space-y-2">
+            <div className="flex items-center gap-2 text-xs font-medium text-info">
+              <span className="w-1.5 h-1.5 rounded-full bg-info animate-pulse" />
+              {t('todoList.inProgress')}
+            </div>
+            <div className="space-y-1">
+              {inProgress.map((todo) => (
+                <TodoItem key={todo.id} todo={todo} />
+              ))}
+            </div>
           </div>
-          <div className="space-y-1">
-            {inProgress.map((todo) => (
-              <TodoItem key={todo.id} todo={todo} />
-            ))}
-          </div>
-        </div>
-      )}
+        )}
 
-      {/* 待处理 */}
-      {pending.length > 0 && (
-        <div className="space-y-2">
-          <div className="flex items-center gap-2 text-xs font-medium text-text-muted">
-            <span className="w-1.5 h-1.5 rounded-full bg-text-muted" />
-            {t('todoList.pending')}
+        {/* 待处理 */}
+        {pending.length > 0 && (
+          <div className="space-y-2">
+            <div className="flex items-center gap-2 text-xs font-medium text-text-muted">
+              <span className="w-1.5 h-1.5 rounded-full bg-text-muted" />
+              {t('todoList.pending')}
+            </div>
+            <div className="space-y-1">
+              {pending.map((todo) => (
+                <TodoItem key={todo.id} todo={todo} />
+              ))}
+            </div>
           </div>
-          <div className="space-y-1">
-            {pending.map((todo) => (
-              <TodoItem key={todo.id} todo={todo} />
-            ))}
-          </div>
-        </div>
-      )}
+        )}
 
-      {/* 已完成 */}
-      {completed.length > 0 && (
-        <div className="space-y-2">
-          <div className="flex items-center gap-2 text-xs font-medium text-ok">
-            <span className="w-1.5 h-1.5 rounded-full bg-ok" />
-            {t('todoList.completed')}
+        {/* 已完成 */}
+        {completed.length > 0 && (
+          <div className="space-y-2">
+            <div className="flex items-center gap-2 text-xs font-medium text-ok">
+              <span className="w-1.5 h-1.5 rounded-full bg-ok" />
+              {t('todoList.completed')}
+            </div>
+            <div className="space-y-1">
+              {completed.map((todo) => (
+                <TodoItem key={todo.id} todo={todo} />
+              ))}
+            </div>
           </div>
-          <div className="space-y-1">
-            {completed.map((todo) => (
-              <TodoItem key={todo.id} todo={todo} />
-            ))}
-          </div>
-        </div>
-      )}
+        )}
+      </div>
     </div>
   );
 }

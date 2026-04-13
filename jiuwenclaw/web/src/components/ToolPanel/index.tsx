@@ -10,6 +10,8 @@ import { useEffect, useState } from 'react';
 import { webRequest } from '../../services/webClient';
 import { HeartbeatMessageModal } from '../../features/HeartbeatMessageModal';
 import { TodoList } from '../TodoList';
+import { TeamArea } from '../TeamArea';
+import { TeamTaskEvents } from '../TeamTaskEvents';
 import './ToolPanel.css';
 
 export function ToolPanel() {
@@ -24,6 +26,9 @@ export function ToolPanel() {
     heartbeatState,
     heartbeatMessage,
     heartbeatUpdatedAt,
+    mode,
+    teamTaskEvents,
+    teamMembers,
   } = useSessionStore();
   const [heartbeatModalOpen, setHeartbeatModalOpen] = useState(false);
 
@@ -114,10 +119,33 @@ export function ToolPanel() {
       style={{ width: 'var(--tool-panel-width)' }}
     >
       <div className="h-full bg-panel flex flex-col overflow-hidden">
-        {/* Todo 列表 */}
-        <div className="flex-1 overflow-y-auto">
-          <TodoList />
-        </div>
+        {/* 任务事件日志 */}
+        {mode === 'agentteam' ? (
+          <div className="flex-1 overflow-y-auto mb-4">
+            <div className="bg-card rounded-lg border border-border overflow-hidden h-full">
+              <TeamTaskEvents events={teamTaskEvents} />
+            </div>
+          </div>
+        ) : (
+          /* Todo 列表 */
+          <div className="flex-1 overflow-y-auto mb-4">
+            <div className="bg-card rounded-lg border border-border overflow-hidden h-full">
+              <TodoList />
+            </div>
+          </div>
+        )}
+
+        {/* 团队区域 */}
+        {mode === 'agentteam' && (
+          <div className="flex-1 overflow-y-auto">
+            <div className="bg-card rounded-lg border border-border overflow-hidden h-full">
+              <TeamArea 
+                teamName="团队成员"
+                members={teamMembers}
+              />
+            </div>
+          </div>
+        )}
 
         {/* 状态显示 */}
         <div className="toolpanel-status-card">

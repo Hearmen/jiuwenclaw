@@ -275,9 +275,11 @@ export function useWebSocket(options: UseWebSocketOptions): UseWebSocketReturn {
 
       setProcessing(true);
       setThinking(true);
+      
+      // 正常调用接口
+      const currentMode = useSessionStore.getState().mode;
+      const sendMode = currentMode === 'agentteam' ? 'team' : currentMode;
       try {
-        const currentMode = useSessionStore.getState().mode;
-        const sendMode = currentMode === 'agentteam' ? 'team' : currentMode;
         await request('chat.send', {
           session_id: sessionId,
           content,
@@ -400,12 +402,14 @@ export function useWebSocket(options: UseWebSocketOptions): UseWebSocketReturn {
   // 切换模式
   const switchMode = useCallback(
     async (sessionId: string, mode: AgentMode) => {
+      setProcessing(false);
+      setThinking(false);
       setMode(mode);
       if (sessionId && sessionId !== 'new') {
         updateSession(sessionId, { mode });
       }
     },
-    [setMode, updateSession]
+    [setMode, updateSession, setProcessing, setThinking]
   );
 
   // 发送用户回答
@@ -496,7 +500,41 @@ export function useWebSocket(options: UseWebSocketOptions): UseWebSocketReturn {
       }),
       webClient.on('chat.delta', ({ payload }) => {
         if (!shouldHandleSessionEvent(payload)) return;
+        
+        const currentMode = useSessionStore.getState().mode;
         const content = typeof payload.content === 'string' ? payload.content : '';
+        
+        // team 模式下，累积 chat.delta 内容
+        if (currentMode === 'agentteam' && content) {
+          setThinking(false);
+          
+          const { messages } = useChatStore.getState();
+          const existingMsg = messages.find(m => 
+            m.id.startsWith('team-leader-') && 
+            (m as { isStreaming?: boolean }).isStreaming === true
+          );
+          
+          if (existingMsg) {
+            const existingContent = existingMsg.content || '';
+            const newContent = existingContent + content;
+            const updatePayload: { content: string; isStreaming?: boolean } = { content: newContent };
+            if (content.includes('MEDIA:')) {
+              updatePayload.isStreaming = false;
+            }
+            updateMessage(existingMsg.id, updatePayload);
+          } else {
+            const msgId = `team-leader-${Date.now()}`;
+            addMessage({
+              id: msgId,
+              role: 'system',
+              content: content,
+              timestamp: new Date().toISOString(),
+              isStreaming: true,
+            });
+          }
+          return;
+        }
+        
         const { currentStreamId } = useChatStore.getState();
         setThinking(false);
         if (!currentStreamId && content) {
@@ -514,7 +552,34 @@ export function useWebSocket(options: UseWebSocketOptions): UseWebSocketReturn {
       }),
       webClient.on('chat.final', ({ payload }) => {
         if (!shouldHandleSessionEvent(payload)) return;
+        
+        const currentMode = useSessionStore.getState().mode;
         const content = normalizeFinalContent(payload);
+        
+        // team 模式下，将 chat.final 作为 team_leader 消息处理
+        if (currentMode === 'agentteam' && content) {
+          setThinking(false);
+          
+          const { messages } = useChatStore.getState();
+          const existingMsg = messages.find(m => 
+            m.id.startsWith('team-leader-') && 
+            (m as { isStreaming?: boolean }).isStreaming === true
+          );
+          
+          if (existingMsg) {
+            updateMessage(existingMsg.id, { content, isStreaming: false });
+          } else {
+            const timestamp = payload.timestamp || Date.now();
+            addMessage({
+              id: `team-leader-${Date.now()}`,
+              role: 'system',
+              content: `team.leader:${JSON.stringify({ content, timestamp })}`,
+              timestamp: new Date().toISOString(),
+            });
+          }
+          return;
+        }
+        
         const { currentStreamId, messages } = useChatStore.getState();
         const payloadSessionId =
           typeof payload.session_id === 'string' ? payload.session_id.trim() : '';
@@ -827,6 +892,74 @@ export function useWebSocket(options: UseWebSocketOptions): UseWebSocketReturn {
           summary: '完成',
         };
         addToolResult(sessionResult);
+      }),
+      webClient.on('team.event', ({ payload }) => {
+        if (shouldDropDuplicatedEvent('team.event', payload)) {
+          return;
+        }
+        setThinking(false);
+        addMessage({
+          id: `team-event-${Date.now()}`,
+          role: 'system',
+          content: `team.event:${JSON.stringify(payload)}`,
+          timestamp: new Date().toISOString(),
+        });
+      }),
+      webClient.on('team.message', ({ payload }) => {
+        if (shouldDropDuplicatedEvent('team.message', payload)) {
+          return;
+        }
+        setThinking(false);
+        addMessage({
+          id: `team-message-${Date.now()}`,
+          role: 'system',
+          content: `team.event:${JSON.stringify(payload)}`,
+          timestamp: new Date().toISOString(),
+        });
+      }),
+      webClient.on('team.task', ({ payload }) => {
+        if (shouldDropDuplicatedEvent('team.task', payload)) {
+          return;
+        }
+        setThinking(false);
+        const p = payload as { payload?: { event?: unknown }; event?: unknown };
+        const event = p.payload?.event || p.event;
+        if (event) {
+          const e = event as { type?: string; team_id?: string; task_id?: string; status?: string; timestamp?: number };
+          useSessionStore.getState().addTeamTaskEvent({
+            id: `task-${Date.now()}`,
+            type: e.type || '',
+            team_id: e.team_id || '',
+            task_id: e.task_id || '',
+            status: e.status || '',
+            timestamp: e.timestamp || Date.now(),
+          });
+        }
+      }),
+      webClient.on('team.member', ({ payload }) => {
+        if (shouldDropDuplicatedEvent('team.member', payload)) {
+          return;
+        }
+        setThinking(false);
+        const p = payload as { payload?: { event?: unknown }; event?: unknown };
+        const event = p.payload?.event || p.event;
+        if (event) {
+          const e = event as { type?: string; member_id?: string; status?: string; new_status?: string; timestamp?: number };
+          if (e.type === 'team.member.status_changed' && e.member_id && e.new_status) {
+            useSessionStore.getState().updateTeamMemberStatus(
+              e.member_id,
+              e.new_status,
+              e.timestamp
+            );
+          } else {
+            useSessionStore.getState().addTeamMember({
+              id: `member-${Date.now()}`,
+              member_id: e.member_id || '',
+              status: e.status || '',
+              timestamp: e.timestamp || Date.now(),
+            });
+          }
+        }
       }),
     ];
 

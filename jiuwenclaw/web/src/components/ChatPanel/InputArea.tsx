@@ -22,16 +22,20 @@ export function InputArea({
   onNewSession,
 }: InputAreaProps) {
   const [pendingVoiceText, setPendingVoiceText] = useState('');
+  const [showModeSwitchModal, setShowModeSwitchModal] = useState(false);
+  const [pendingMode, setPendingMode] = useState<AgentMode | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const autoSendTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const isComposingRef = useRef(false);
   const activePointerIdRef = useRef<number | null>(null);
   const isVoicePressingRef = useRef(false);
   const { t } = useTranslation();
-  const { isPaused, taskQueue, addToTaskQueue, removeFromTaskQueue, inputValue, setInputValue } = useChatStore();
+  const { isPaused, taskQueue, addToTaskQueue, removeFromTaskQueue, inputValue, setInputValue, messages } = useChatStore();
   const { mode } = useSessionStore();
   const isInterruptible = isProcessing || isPaused;
   const isAgentMode = mode === 'agent';
+  const isTeamMode = mode === 'agentteam';
+  const hasHistoryMessages = messages.length > 0;
   const modes: Array<{ value: AgentMode; label: string; icon: JSX.Element }> = [
     { value: 'plan', label: t('chat.modePlan'), icon: (
       <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}>
@@ -41,11 +45,6 @@ export function InputArea({
     { value: 'agent', label: t('chat.modeAgent'), icon: (
       <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}>
         <path strokeLinecap="round" strokeLinejoin="round" d="M11.42 15.17L17.25 21A2.652 2.652 0 0021 17.25l-5.877-5.877M11.42 15.17l2.496-3.03c.317-.384.74-.626 1.208-.766M11.42 15.17l-4.655 5.653a2.548 2.548 0 11-3.586-3.586l6.837-5.63m5.108-.233c.55-.164 1.163-.188 1.743-.14a4.5 4.5 0 004.486-6.336l-3.276 3.277a3.004 3.004 0 01-2.25-2.25l3.276-3.276a4.5 4.5 0 00-6.336 4.486c.091 1.076-.071 2.264-.904 2.95l-.102.085m-1.745 1.437L5.909 7.5H4.5L2.25 3.75l1.5-1.5L7.5 4.5v1.409l4.26 4.26m-1.745 1.437l1.745-1.437m6.615 8.206L15.75 15.75M4.867 19.125h.008v.008h-.008v-.008z" />
-      </svg>
-    )},
-    { value: 'agentteam', label: 'Agent Team', icon: (
-      <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}>
-        <path strokeLinecap="round" strokeLinejoin="round" d="M17.982 18.725A7.488 7.488 0 0012 15.75a7.488 7.488 0 00-5.982 2.975m11.963 0a9 9 0 10-11.963 0m11.963 0A8.966 8.966 0 0112 21a8.966 8.966 0 01-5.982-2.275M15 9.75a3 3 0 11-6 0 3 3 0 016 0zm6 3a2.25 2.25 0 11-4.5 0 2.25 2.25 0 014.5 0zm-13.5 0a2.25 2.25 0 11-4.5 0 2.25 2.25 0 014.5 0z" />
       </svg>
     )},
   ];
@@ -83,7 +82,9 @@ export function InputArea({
         setPendingVoiceText('');
 
         setTimeout(() => {
-          if (isInterruptible) {
+          if (isTeamMode) {
+            onSubmit(finalText);
+          } else if (isInterruptible) {
             onInterrupt(finalText);
           } else {
             onSubmit(finalText);
@@ -95,7 +96,7 @@ export function InputArea({
         }, 150);
       }
     }
-  }, [isListening, pendingVoiceText, inputValue, isInterruptible, onSubmit, onInterrupt, setInputValue]);
+  }, [isListening, pendingVoiceText, inputValue, isInterruptible, isTeamMode, onSubmit, onInterrupt, setInputValue]);
 
   useEffect(() => {
     return () => {
@@ -113,12 +114,12 @@ export function InputArea({
       stopListening();
     }
 
-    if (isInterruptible) {
+    if (isTeamMode) {
+      onSubmit(trimmed);
+    } else if (isInterruptible) {
       if (isAgentMode) {
-        // 智能执行模式下，将任务添加到队列
         addToTaskQueue(trimmed);
       } else {
-        // 其他模式下，中断当前任务
         onInterrupt(trimmed);
       }
     } else {
@@ -130,7 +131,7 @@ export function InputArea({
     if (textareaRef.current) {
       textareaRef.current.style.height = 'auto';
     }
-  }, [inputValue, pendingVoiceText, isInterruptible, isListening, onSubmit, onInterrupt, stopListening, isAgentMode, addToTaskQueue, setInputValue]);
+  }, [inputValue, pendingVoiceText, isInterruptible, isListening, onSubmit, onInterrupt, stopListening, isAgentMode, isTeamMode, addToTaskQueue, setInputValue]);
 
   const handleKeyDown = useCallback(
     (e: KeyboardEvent<HTMLTextAreaElement>) => {
@@ -210,6 +211,38 @@ export function InputArea({
     }
     await onNewSession();
   }, [isListening, isInterruptible, onNewSession, setInputValue]);
+
+  const handleModeSwitch = useCallback(async (targetMode: AgentMode) => {
+    if (mode === targetMode) return;
+    
+    // 只有切换到 agentteam 模式时才需要 newSession
+    if (targetMode === 'agentteam') {
+      if (hasHistoryMessages) {
+        setPendingMode(targetMode);
+        setShowModeSwitchModal(true);
+      } else {
+        await onNewSession();
+        onSwitchMode(targetMode);
+      }
+    } else {
+      // plan 和 agent 模式切换不 newSession
+      onSwitchMode(targetMode);
+    }
+  }, [mode, hasHistoryMessages, onNewSession, onSwitchMode]);
+
+  const confirmModeSwitch = useCallback(async () => {
+    if (pendingMode) {
+      setShowModeSwitchModal(false);
+      await onNewSession();
+      onSwitchMode(pendingMode);
+      setPendingMode(null);
+    }
+  }, [pendingMode, onNewSession, onSwitchMode]);
+
+  const cancelModeSwitch = useCallback(() => {
+    setShowModeSwitchModal(false);
+    setPendingMode(null);
+  }, []);
 
   const displayValue = isListening
     ? inputValue + pendingVoiceText + interimTranscript
@@ -294,15 +327,7 @@ export function InputArea({
               <button
                 type="button"
                 key={m.value}
-                onClick={async () => {
-                  if (mode !== m.value) {
-                    // 切换到 AgentTeam 模式时新建 session
-                    if (m.value === 'agentteam') {
-                      await onNewSession();
-                    }
-                    onSwitchMode(m.value);
-                  }
-                }}
+                onClick={() => handleModeSwitch(m.value)}
                 className={clsx(
                   'chat-mode-btn',
                   mode === m.value ? 'chat-mode-btn--active' : 'chat-mode-btn--inactive'
@@ -374,6 +399,31 @@ export function InputArea({
           </button>
         </div>
       </div>
+
+      {showModeSwitchModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
+          <div className="bg-bg border border-border rounded-xl p-4 shadow-lg max-w-sm w-full mx-4">
+            <h3 className="text-base font-medium text-text mb-2">{t('chat.modeSwitchTitle')}</h3>
+            <p className="text-sm text-text-muted mb-4">{t('chat.modeSwitchConfirm')}</p>
+            <div className="flex justify-end gap-2">
+              <button
+                type="button"
+                onClick={cancelModeSwitch}
+                className="px-3 py-1.5 text-sm rounded-lg bg-secondary text-text-muted hover:bg-secondary/80"
+              >
+                {t('common.cancel')}
+              </button>
+              <button
+                type="button"
+                onClick={confirmModeSwitch}
+                className="px-3 py-1.5 text-sm rounded-lg bg-accent text-white hover:bg-accent/80"
+              >
+                {t('common.confirm')}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

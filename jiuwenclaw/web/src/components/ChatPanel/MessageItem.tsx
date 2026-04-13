@@ -209,7 +209,153 @@ export function MessageItem({ message, autoSpeak = false }: MessageItemProps) {
  	         );
  	       }
  	     }
- 	     
+	     
+	     // 检查是否为团队消息
+	     if (content && content.startsWith('team.event:')) {
+	       const [, jsonStr] = content.split('team.event:');
+	       try {
+	         const payload = JSON.parse(jsonStr);
+	         
+	         const event = payload.event || payload.payload?.event;
+	         
+	         if (event) {
+	           const { type, from_member, to_member, content: messageContent, timestamp: eventTimestamp } = event;
+	           
+	           const isP2P = type?.endsWith('.p2p');
+	           const isBroadcast = type?.endsWith('.broadcast');
+	           const isTeamLeaderMessage = from_member === 'team_leader' && !isP2P && !isBroadcast;
+	           
+	           const formatEventTime = (ts: number) => {
+	             if (!ts) return '';
+	             const date = new Date(ts);
+	             return date.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' });
+	           };
+	           
+	           // team_leader 发给用户的消息（不是 p2p 也不是 broadcast）
+	           if (isTeamLeaderMessage) {
+	             return (
+	               <div className="flex justify-center my-2 animate-fade-in">
+	                 <div className="max-w-[85%] w-full rounded-xl border border-border bg-secondary/50 p-3 shadow-sm">
+	                   <div className="flex items-center gap-2 mb-1.5">
+	                     <div className="w-2 h-2 rounded-full bg-accent" />
+	                     <span className="font-medium text-sm text-text">
+	                       {from_member || 'Unknown'}
+	                     </span>
+	                     <span className="text-xs text-text-muted">
+	                       {formatEventTime(eventTimestamp)}
+	                     </span>
+	                   </div>
+	                   <div className="text-sm text-text leading-relaxed">
+	                     <span>{messageContent}</span>
+	                   </div>
+	                 </div>
+	               </div>
+	             );
+	           }
+	           
+	           // p2p 和 broadcast 消息展示
+	           return (
+	             <div className="flex justify-center my-2 animate-fade-in">
+	               <div className="max-w-[85%] w-full rounded-xl border border-border bg-secondary/50 p-3 shadow-sm">
+	                 <div className="flex items-center gap-2 mb-1.5">
+	                   <div className="w-2 h-2 rounded-full bg-accent" />
+	                   <span className="font-medium text-sm text-text">
+	                     {from_member || 'Unknown'}
+	                   </span>
+	                   <span className="text-xs text-text-muted">
+	                     {formatEventTime(eventTimestamp)}
+	                   </span>
+	                 </div>
+	                 <div className="text-sm text-text leading-relaxed">
+	                   {isP2P && to_member && (
+	                     <span className="inline-flex items-center px-1.5 py-0.5 rounded bg-info/20 text-info text-xs mr-1.5">
+	                       @{to_member}
+	                     </span>
+	                   )}
+	                   {isBroadcast && (
+	                     <span className="inline-flex items-center px-1.5 py-0.5 rounded bg-warning/20 text-warning text-xs mr-1.5">
+	                       @所有人
+	                     </span>
+	                   )}
+	                   <span>{messageContent}</span>
+	                 </div>
+	               </div>
+	             </div>
+	           );
+	         }
+	       } catch (e) {
+	         return (
+	           <div className="flex justify-center my-4 animate-fade-in">
+	             <div className="px-4 py-2 rounded-full bg-secondary border border-border text-text-muted text-sm">
+	               {content}
+	             </div>
+	           </div>
+	         );
+	       }
+	     }
+	     
+	     // 检查是否为 team_leader 消息（chat.delta/chat.final 累积的消息）
+	     // 支持两种格式：1. team.leader: 2. 直接的 content（但需要 isStreaming 标记）
+	     if (content && (content.startsWith('team.leader:') || (role === 'system' && isStreaming === true && !content.startsWith('team.event:') && !content.startsWith('chat.')))) {
+	       let messageContent = content;
+	       let eventTimestamp: number | undefined;
+	       
+	       if (content.startsWith('team.leader:')) {
+	         const [, jsonStr] = content.split('team.leader:');
+	         try {
+	           const data = JSON.parse(jsonStr);
+	           messageContent = data.content;
+	           eventTimestamp = data.timestamp;
+	         } catch (e) {
+	         }
+	       }
+	       
+	       const formatEventTime = (ts: number | undefined) => {
+	         if (!ts) return '';
+	         const date = new Date(ts);
+	         return date.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' });
+	       };
+	       
+	       return (
+	         <div className="flex justify-start my-3">
+	           <div className="max-w-[82%] min-w-0">
+	             <div className="flex items-start gap-3">
+	               <div className="w-8 h-8 rounded-full bg-accent/20 flex items-center justify-center flex-shrink-0 mt-1">
+	                 <svg className="w-4 h-4 text-accent" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}>
+	                   <path strokeLinecap="round" strokeLinejoin="round" d="M17.982 18.725A7.488 7.488 0 0012 15.75a7.488 7.488 0 00-5.982 2.975m11.963 0a9 9 0 10-11.963 0m11.963 0A8.966 8.966 0 0112 21a8.966 8.966 0 01-5.982-2.275M15 9.75a3 3 0 11-6 0 3 3 0 016 0z" />
+	                 </svg>
+	               </div>
+	               <div className="flex-1 min-w-0">
+	                 <div className="flex items-center gap-2 mb-1">
+	                   <span className="font-medium text-sm text-text">team_leader</span>
+	                   <span className="text-xs text-text-muted">{formatEventTime(eventTimestamp)}</span>
+	                 </div>
+	                 <div className="chat-text">
+	                   <ReactMarkdown 
+	                     remarkPlugins={[remarkGfm]}
+	                     components={{
+	                       a: ({ node, href, children, ...props }) => (
+	                         <a 
+	                           href={href} 
+	                           target="_blank" 
+	                           rel="noopener noreferrer"
+	                           {...props}
+	                         >
+	                           {children}
+	                         </a>
+	                       )
+	                     }}
+	                   >
+	                     {messageContent}
+	                   </ReactMarkdown>
+	                 </div>
+	               </div>
+	             </div>
+	           </div>
+	         </div>
+	       );
+	     }
+	     
     return (
       <div className="flex justify-center my-4 animate-fade-in">
         <div className="px-4 py-2 rounded-full bg-secondary border border-border text-text-muted text-sm">

@@ -67,6 +67,22 @@ interface ContextCompressionStats {
   afterCompressed: number | null;
 }
 
+interface TeamTaskEvent {
+  id: string;
+  type: string;
+  team_id: string;
+  task_id: string;
+  status: string;
+  timestamp: number;
+}
+
+interface TeamMember {
+  id: string;
+  member_id: string;
+  status: string;
+  timestamp: number;
+}
+
 interface SessionState {
   currentSession: Session | null;
   sessions: Session[];
@@ -82,6 +98,8 @@ interface SessionState {
   heartbeatMessage: string | null;
   heartbeatUpdatedAt: string | null;
   heartbeatHistory: HeartbeatHistoryItem[];
+  teamTaskEvents: TeamTaskEvent[];
+  teamMembers: TeamMember[];
 
   // Actions
   setCurrentSession: (session: Session | null) => void;
@@ -101,6 +119,11 @@ interface SessionState {
     message?: string | null,
     updatedAt?: string | null
   ) => void;
+  setTeamTaskEvents: (events: TeamTaskEvent[]) => void;
+  addTeamTaskEvent: (event: TeamTaskEvent) => void;
+  setTeamMembers: (members: TeamMember[]) => void;
+  addTeamMember: (member: TeamMember) => void;
+  updateTeamMemberStatus: (memberId: string, newStatus: string, timestamp?: number) => void;
 }
 
 export const useSessionStore = create<SessionState>((set) => ({
@@ -125,6 +148,8 @@ export const useSessionStore = create<SessionState>((set) => ({
   heartbeatMessage: null,
   heartbeatUpdatedAt: null,
   heartbeatHistory: [],
+  teamTaskEvents: [],
+  teamMembers: [],
 
   setCurrentSession: (session) => {
     const normalizedSession = session ? normalizeSession(session) : null;
@@ -280,6 +305,61 @@ export const useSessionStore = create<SessionState>((set) => ({
         heartbeatUpdatedAt: resolvedUpdatedAt,
         heartbeatHistory: nextHistory,
       };
+    });
+  },
+  setTeamTaskEvents: (events) => {
+    set({ teamTaskEvents: events });
+  },
+  addTeamTaskEvent: (event) => {
+    set((state) => {
+      const existingIndex = state.teamTaskEvents.findIndex(
+        (e) => e.task_id === event.task_id
+      );
+      if (existingIndex >= 0) {
+        const updatedEvents = [...state.teamTaskEvents];
+        updatedEvents[existingIndex] = {
+          ...updatedEvents[existingIndex],
+          ...event,
+        };
+        return { teamTaskEvents: updatedEvents };
+      }
+      return { teamTaskEvents: [event, ...state.teamTaskEvents] };
+    });
+  },
+  setTeamMembers: (members) => {
+    set({ teamMembers: members });
+  },
+  addTeamMember: (member) => {
+    set((state) => {
+      const existingIndex = state.teamMembers.findIndex(
+        (m) => m.member_id === member.member_id
+      );
+      if (existingIndex >= 0) {
+        const updatedMembers = [...state.teamMembers];
+        updatedMembers[existingIndex] = {
+          ...updatedMembers[existingIndex],
+          ...member,
+        };
+        return { teamMembers: updatedMembers };
+      }
+      return { teamMembers: [member, ...state.teamMembers] };
+    });
+  },
+  updateTeamMemberStatus: (memberId, newStatus, timestamp) => {
+    set((state) => {
+      const existingIndex = state.teamMembers.findIndex(
+        (m) => m.member_id === memberId
+      );
+      if (existingIndex >= 0) {
+        const updatedMembers = [...state.teamMembers];
+        updatedMembers[existingIndex] = {
+          ...updatedMembers[existingIndex],
+          status: newStatus,
+          timestamp: timestamp || Date.now(),
+        };
+        return { teamMembers: updatedMembers };
+      }
+      return state;
     });
   },
 }));
