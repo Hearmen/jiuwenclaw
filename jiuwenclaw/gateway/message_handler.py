@@ -90,6 +90,7 @@ class MessageHandler(ABC):
         self._stream_tasks: dict[str, asyncio.Task] = {}  # request_id -> task
         self._stream_sessions: dict[str, str | None] = {}  # request_id -> session_id
         self._stream_metadata: dict[str, dict[str, Any] | None] = {}  # request_id -> request metadata
+        self._stream_modes: dict[str, str] = {}  # request_id -> mode (plan/agent)
         self._pending_evolution_approval: dict[str, str] = {}  # session_id -> approval_request_id
         self._queued_supplement_input: dict[str, str] = {}  # session_id -> queued_new_input
         self._session_evolution_in_progress: set[str] = set()
@@ -719,6 +720,10 @@ class MessageHandler(ABC):
             elif action == "get":
                 data = await cc.get_job(str(params.get("job_id") or ""))
             elif action == "create":
+                # 从原始请求中获取 mode，覆盖 LLM 工具调用的默认值
+                request_mode = self._stream_modes.get(request_id)
+                if request_mode:
+                    params["mode"] = request_mode
                 data = await cc.create_job(params)
             elif action == "update":
                 data = await cc.update_job(str(params.get("job_id") or ""), dict(params.get("patch") or {}))
@@ -1160,6 +1165,9 @@ class MessageHandler(ABC):
                         self._stream_tasks[stream_rid] = task
                         self._stream_sessions[stream_rid] = msg.session_id
                         self._stream_metadata[stream_rid] = msg.metadata
+                        self._stream_modes[stream_rid] = (
+                            msg.params.get("mode", "plan") if isinstance(msg.params, dict) else "plan"
+                        )
                         logger.info(
                             "[MessageHandler] Stream 任务已启动（后台运行）: request_id=%s channel_id=%s 当前并发=%d",
                             stream_rid, msg.channel_id, len(self._stream_tasks),
@@ -1277,6 +1285,7 @@ class MessageHandler(ABC):
             self._stream_tasks.pop(rid, None)
             self._stream_sessions.pop(rid, None)
             self._stream_metadata.pop(rid, None)
+            self._stream_modes.pop(rid, None)
             if session_id is not None and session_id not in self._stream_sessions.values():
                 # Fallback cleanup when stream exits unexpectedly without evolution end signal.
                 self._clear_session_evolution_in_progress(session_id)
@@ -1441,6 +1450,7 @@ class MessageHandler(ABC):
         self._stream_tasks.clear()
         self._stream_sessions.clear()
         self._stream_metadata.clear()
+        self._stream_modes.clear()
         self._session_evolution_in_progress.clear()
         self._pending_evolution_approval.clear()
         self._queued_supplement_input.clear()

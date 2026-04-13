@@ -62,10 +62,12 @@ class CronJobStore:
         wake_offset_seconds: int | None = None,
         session_id: str | None = None,
         chat_type: str | None = None,
+        mode: str | None = None,
     ) -> CronJob:
         now = time.time()
         sid = str(session_id).strip() if isinstance(session_id, str) and session_id.strip() else None
         ct = str(chat_type).strip() if isinstance(chat_type, str) and chat_type.strip() else None
+        m = str(mode).strip().lower() if isinstance(mode, str) and mode.strip() else "agent"
         job = CronJob(
             id=str(job_id or "").strip() or uuid.uuid4().hex,
             name=str(name or "").strip(),
@@ -79,6 +81,7 @@ class CronJobStore:
             created_at=now,
             updated_at=now,
             chat_type=ct,
+            mode=m,
         )
         # validate via round-trip
         CronJob.from_dict(job.to_dict())
@@ -131,6 +134,10 @@ class CronJobStore:
             updated = replace(updated, chat_type=new_ct)
         if "expired" in patch:
             updated = replace(updated, expired=bool(patch.get("expired")))
+        if "mode" in patch:
+            raw_mode = patch.get("mode")
+            new_mode = str(raw_mode).strip().lower() if isinstance(raw_mode, str) and str(raw_mode).strip() else "agent"
+            updated = replace(updated, mode=new_mode)
 
         updated.updated_at = time.time()
         CronJob.from_dict(updated.to_dict())

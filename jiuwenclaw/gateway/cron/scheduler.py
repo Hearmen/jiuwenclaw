@@ -344,6 +344,7 @@ class CronSchedulerService:
                     params={
                         "content": job.description,
                         "query": job.description,
+                        "mode": job.mode or "agent",
                         "cron": {
                             "job_id": job.id,
                             "job_name": job.name,

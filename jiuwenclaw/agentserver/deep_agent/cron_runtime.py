@@ -302,6 +302,18 @@ def _extract_legacy_params(
             out["enabled"] = bool(data.get("enabled"))
         if "wake_offset_seconds" in data:
             out["wake_offset_seconds"] = data.get("wake_offset_seconds")
+
+        context_mode = getattr(context, "mode", None)
+        mode_resolved = (
+            context_mode
+            or data.get("mode")
+            or "agent"
+        )
+        out["mode"] = (
+            str(mode_resolved).strip().lower()
+            if isinstance(mode_resolved, str) and str(mode_resolved).strip()
+            else "agent"
+        )
         return out
 
     return data

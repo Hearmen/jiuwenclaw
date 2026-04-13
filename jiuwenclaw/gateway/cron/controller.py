@@ -127,6 +127,7 @@ class CronController:
         description = str(params.get("description") or "")
         wake_offset_seconds = params.get("wake_offset_seconds", None)
         raw_targets = params.get("targets")
+        mode = params.get("mode")
         targets = self._normalize_targets(raw_targets)
 
         self._validate_schedule(cron_expr=cron_expr, timezone=timezone)
@@ -145,6 +146,7 @@ class CronController:
             targets=targets,
             session_id=routing_sid,
             chat_type=chat_type,
+            mode=mode,
         )
         await self._scheduler.reload()
         return job.to_dict()
