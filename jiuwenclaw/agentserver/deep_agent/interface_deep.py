@@ -185,6 +185,63 @@ def _deep_agent_context_engine_config(react_cfg: dict[str, Any] | None) -> Conte
     )
 
 
+def _build_context_engineering_rail(config: dict[str, Any],
+                                    mode: str = "agent") -> ContextEngineeringRail | None:
+    """Build ContextEngineeringRail with user config merged into presets.
+
+    用户提供的 processor 配置（dict 格式）会与预置配置做字段级别合并，
+    只覆盖用户指定的字段，其他使用预置默认值。
+
+    Args:
+        config: 配置字典
+        mode: 模式，plan 模式使用 preset=True 和 processors，其他模式使用 preset=False 和 processors=None
+    """
+    try:
+        if mode == "plan":
+            user_processors: List[Tuple[str, dict]] = []
+            context_engine_cfg = config.get("context_engine_config", {})
+
+            offloader_cfg = context_engine_cfg.get("message_summary_offloader_config", {})
+            if isinstance(offloader_cfg, dict) and offloader_cfg:
+                user_processors.append(("MessageSummaryOffloader", offloader_cfg))
+
+            compressor_cfg = context_engine_cfg.get("dialogue_compressor_config", {})
+            if isinstance(compressor_cfg, dict) and compressor_cfg:
+                user_processors.append(("DialogueCompressor", compressor_cfg))
+
+            current_round_cfg = context_engine_cfg.get("current_round_compressor_config", {})
+            if isinstance(current_round_cfg, dict) and current_round_cfg:
+                user_processors.append(("CurrentRoundCompressor", current_round_cfg))
+
+            round_level_cfg = context_engine_cfg.get("round_level_compressor_config", {})
+            if isinstance(round_level_cfg, dict) and round_level_cfg:
+                user_processors.append(("RoundLevelCompressor", round_level_cfg))
+
+            context_rail = JiuClawContextEngineeringRail(
+                processors=user_processors if user_processors else None,
+                preset=True,
+            )
+            logger.info(
+                "[JiuWenClawDeepAdapter] JiuClawContextEngineeringRail create success for plan mode, "
+                "user_processors=%s",
+                [p[0] for p in user_processors] if user_processors else "none"
+            )
+        else:
+            context_rail = JiuClawContextEngineeringRail(
+                processors=None,
+                preset=False,
+            )
+            logger.info(
+                "[JiuWenClawDeepAdapter] JiuClawContextEngineeringRail create success for %s mode, "
+                "preset=False",
+                mode
+            )
+        return context_rail
+    except Exception as exc:
+        logger.warning("[JiuWenClawDeepAdapter] ContextEngineeringRail create failed: %s", exc)
+        return None
+
+
 class _RuntimeCronToolContext:
     """Stable cron tool context proxy backed by per-task contextvars."""
 
@@ -239,6 +296,7 @@ class JiuWenClawDeepAdapter:
         self._stream_event_rail: JiuClawStreamEventRail | None = None
         self._task_planning_rail: TaskPlanningRail | None = None
         self._context_engineering_rail: ContextEngineeringRail | None = None
+        self._context_engineering_rail_mode: str | None = None
         self._runtime_prompt_rail: RuntimePromptRail | None = None
         self._response_prompt_rail: ResponsePromptRail | None = None
         self._security_rail: SecurityRail | None = None
@@ -805,47 +863,6 @@ class JiuWenClawDeepAdapter:
             logger.warning("[JiuWenClawDeepAdapter] SkillUseRail create failed: %s", exc)
             skill_rail = None
         return skill_rail
-
-    def _build_context_engineering_rail(self, config: dict[str, Any]) -> ContextEngineeringRail | None:
-        """Build ContextEngineeringRail with user config merged into presets.
-
-        用户提供的 processor 配置（dict 格式）会与预置配置做字段级别合并，
-        只覆盖用户指定的字段，其他使用预置默认值。
-        """
-        try:
-            user_processors: List[Tuple[str, dict]] = []
-            context_engine_cfg = config.get("context_engine_config", {})
-
-            offloader_cfg = context_engine_cfg.get("message_summary_offloader_config", {})
-            if isinstance(offloader_cfg, dict) and offloader_cfg:
-                user_processors.append(("MessageSummaryOffloader", offloader_cfg))
-
-            compressor_cfg = context_engine_cfg.get("dialogue_compressor_config", {})
-            if isinstance(compressor_cfg, dict) and compressor_cfg:
-                user_processors.append(("DialogueCompressor", compressor_cfg))
-
-            current_round_cfg = context_engine_cfg.get("current_round_compressor_config", {})
-            if isinstance(current_round_cfg, dict) and current_round_cfg:
-                user_processors.append(("CurrentRoundCompressor", current_round_cfg))
-
-            round_level_cfg = context_engine_cfg.get("round_level_compressor_config", {})
-            if isinstance(round_level_cfg, dict) and round_level_cfg:
-                user_processors.append(("RoundLevelCompressor", round_level_cfg))
-
-            # 构建 JiuClawContextEngineeringRail（含 offload 说明）
-            context_rail = JiuClawContextEngineeringRail(
-                processors=user_processors if user_processors else None,
-                preset=True,
-            )
-            logger.info(
-                "[JiuWenClawDeepAdapter] JiuClawContextEngineeringRail create success, "
-                "user_processors=%s",
-                [p[0] for p in user_processors] if user_processors else "none"
-            )
-            return context_rail
-        except Exception as exc:
-            logger.warning("[JiuWenClawDeepAdapter] ContextEngineeringRail create failed: %s", exc)
-            return None
 
     def _build_skill_evolution_rail(self, config: dict[str, Any]) -> SkillEvolutionRail | None:
         """Build SkillEvolutionRail."""
@@ -1530,12 +1547,17 @@ class JiuWenClawDeepAdapter:
                         await self._instance.unregister_rail(self._coding_memory_rail)
                         self._coding_memory_rail = None
             # plan 模式：恢复上下文 rail（仅配置启用时）
-            if (self._context_engineering_rail is None and
-                    self._config_cache.get("context_engine_config", {}).get("enabled", False)):
-                self._context_engineering_rail = self._build_context_engineering_rail(self._config_cache)
-                if self._context_engineering_rail is not None:
-                    await self._instance.register_rail(self._context_engineering_rail)
-                    logger.info("[JiuWenClawDeepAdapter] ContextEngineeringRail registered for plan mode")
+            if self._config_cache.get("context_engine_config", {}).get("enabled", False):
+                if self._context_engineering_rail is not None and self._context_engineering_rail_mode != "plan":
+                    await self._instance.unregister_rail(self._context_engineering_rail)
+                    self._context_engineering_rail = None
+                    self._context_engineering_rail_mode = None
+                if self._context_engineering_rail is None:
+                    self._context_engineering_rail = _build_context_engineering_rail(
+                        self._config_cache, mode="plan")
+                    if self._context_engineering_rail is not None:
+                        self._context_engineering_rail_mode = "plan"
+                        await self._instance.register_rail(self._context_engineering_rail)
             # plan 模式：恢复自演进 rail（仅配置启用时）
             if self._skill_evolution_rail is None and self._config_cache.get("evolution", {}).get("enabled", False):
                 self._skill_evolution_rail = self._build_skill_evolution_rail(self._config_cache)
@@ -1556,11 +1578,18 @@ class JiuWenClawDeepAdapter:
                 await self._instance.unregister_rail(self._coding_memory_rail)
                 self._coding_memory_rail = None
                 logger.info("[JiuWenClawDeepAdapter] CodingMemoryRail unregistered for agent mode")
-            # 智能模式：关闭上下文 rail
-            if self._context_engineering_rail is not None:
-                await self._instance.unregister_rail(self._context_engineering_rail)
-                self._context_engineering_rail = None
-                logger.info("[JiuWenClawDeepAdapter] ContextEngineeringRail unregistered for agent mode")
+            # agent/智能模式：恢复上下文 rail（仅配置启用时）
+            if self._config_cache.get("context_engine_config", {}).get("enabled", False):
+                if self._context_engineering_rail is not None and self._context_engineering_rail_mode == "plan":
+                    await self._instance.unregister_rail(self._context_engineering_rail)
+                    self._context_engineering_rail = None
+                    self._context_engineering_rail_mode = None
+                if self._context_engineering_rail is None:
+                    self._context_engineering_rail = _build_context_engineering_rail(
+                        self._config_cache, mode="agent")
+                    if self._context_engineering_rail is not None:
+                        self._context_engineering_rail_mode = "agent"
+                        await self._instance.register_rail(self._context_engineering_rail)
             # 智能模式：关闭自演进 rail
             if self._skill_evolution_rail is not None:
                 await self._instance.unregister_rail(self._skill_evolution_rail)

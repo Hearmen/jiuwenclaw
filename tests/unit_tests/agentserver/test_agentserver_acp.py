@@ -7,6 +7,7 @@ from jiuwenclaw.agentserver import agent_ws_server as agent_ws_server_module
 from jiuwenclaw.agentserver.agent_manager import ACP_DEFAULT_CAPABILITIES
 from jiuwenclaw.agentserver.tools.acp_output_tools import AcpOutputRequest, get_acp_output_manager
 from jiuwenclaw.agentserver.deep_agent import interface_deep as interface_deep_module
+from jiuwenclaw.agentserver.deep_agent.interface_deep import _build_context_engineering_rail
 from jiuwenclaw.e2a.gateway_normalize import e2a_from_agent_fields
 from jiuwenclaw.schema.agent import AgentRequest
 from jiuwenclaw.schema.message import ReqMethod
@@ -64,7 +65,7 @@ class AgentWebSocketServerHarness(agent_ws_server_module.AgentWebSocketServer):
 
 class DeepAdapterHarness(interface_deep_module.JiuWenClawDeepAdapter):
     def build_context_engineering_rail_for_test(self, config):
-        return self._build_context_engineering_rail(config)
+        return _build_context_engineering_rail(config, "plan")
 
 
 def fake_encode_agent_response_for_wire(resp, response_id):
