@@ -299,5 +299,95 @@
       "path": "agent/jiuwenclaw_workspace/skills/skill-creator/scripts/utils.py",
       "isMarkdown": false
     }
+  ],
+  "jiuwenclaw_workspace/skills/skill-gen-4-enterprise-doc": [
+    {
+      "name": "SKILL.md",
+      "path": "agent/jiuwenclaw_workspace/skills/skill-gen-4-enterprise-doc/SKILL.md",
+      "isMarkdown": true
+    }
+  ],
+  "jiuwenclaw_workspace/skills/skill-gen-4-enterprise-doc/reference": [
+    {
+      "name": "generator-worker-spec.md",
+      "path": "agent/jiuwenclaw_workspace/skills/skill-gen-4-enterprise-doc/reference/generator-worker-spec.md",
+      "isMarkdown": true
+    },
+    {
+      "name": "operator-playbook.md",
+      "path": "agent/jiuwenclaw_workspace/skills/skill-gen-4-enterprise-doc/reference/operator-playbook.md",
+      "isMarkdown": true
+    },
+    {
+      "name": "sop-structure-pipeline.md",
+      "path": "agent/jiuwenclaw_workspace/skills/skill-gen-4-enterprise-doc/reference/sop-structure-pipeline.md",
+      "isMarkdown": true
+    }
+  ],
+  "jiuwenclaw_workspace/skills/skill-gen-4-enterprise-doc/scripts": [
+    {
+      "name": "skill_generator_cli.py",
+      "path": "agent/jiuwenclaw_workspace/skills/skill-gen-4-enterprise-doc/scripts/skill_generator_cli.py",
+      "isMarkdown": false
+    }
+  ],
+  "jiuwenclaw_workspace/skills/skill-gen-4-enterprise-doc/scripts/skill_gen": [
+    {
+      "name": "__init__.py",
+      "path": "agent/jiuwenclaw_workspace/skills/skill-gen-4-enterprise-doc/scripts/skill_gen/__init__.py",
+      "isMarkdown": false
+    },
+    {
+      "name": "models.py",
+      "path": "agent/jiuwenclaw_workspace/skills/skill-gen-4-enterprise-doc/scripts/skill_gen/models.py",
+      "isMarkdown": false
+    },
+    {
+      "name": "sop_chunk_merge.py",
+      "path": "agent/jiuwenclaw_workspace/skills/skill-gen-4-enterprise-doc/scripts/skill_gen/sop_chunk_merge.py",
+      "isMarkdown": false
+    },
+    {
+      "name": "sop_parser.py",
+      "path": "agent/jiuwenclaw_workspace/skills/skill-gen-4-enterprise-doc/scripts/skill_gen/sop_parser.py",
+      "isMarkdown": false
+    },
+    {
+      "name": "validator.py",
+      "path": "agent/jiuwenclaw_workspace/skills/skill-gen-4-enterprise-doc/scripts/skill_gen/validator.py",
+      "isMarkdown": false
+    }
+  ],
+  "jiuwenclaw_workspace/skills/skill-gen-4-enterprise-doc/scripts/skill_gen/url_ingest": [
+    {
+      "name": "__init__.py",
+      "path": "agent/jiuwenclaw_workspace/skills/skill-gen-4-enterprise-doc/scripts/skill_gen/url_ingest/__init__.py",
+      "isMarkdown": false
+    },
+    {
+      "name": "models.py",
+      "path": "agent/jiuwenclaw_workspace/skills/skill-gen-4-enterprise-doc/scripts/skill_gen/url_ingest/models.py",
+      "isMarkdown": false
+    },
+    {
+      "name": "router.py",
+      "path": "agent/jiuwenclaw_workspace/skills/skill-gen-4-enterprise-doc/scripts/skill_gen/url_ingest/router.py",
+      "isMarkdown": false
+    },
+    {
+      "name": "url_safety.py",
+      "path": "agent/jiuwenclaw_workspace/skills/skill-gen-4-enterprise-doc/scripts/skill_gen/url_ingest/url_safety.py",
+      "isMarkdown": false
+    },
+    {
+      "name": "web_page.py",
+      "path": "agent/jiuwenclaw_workspace/skills/skill-gen-4-enterprise-doc/scripts/skill_gen/url_ingest/web_page.py",
+      "isMarkdown": false
+    },
+    {
+      "name": "wechat_article.py",
+      "path": "agent/jiuwenclaw_workspace/skills/skill-gen-4-enterprise-doc/scripts/skill_gen/url_ingest/wechat_article.py",
+      "isMarkdown": false
+    }
   ]
 }
