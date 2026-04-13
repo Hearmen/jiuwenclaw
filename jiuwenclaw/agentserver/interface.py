@@ -23,17 +23,17 @@ from jiuwenclaw.agentserver.agent_adapters import (
     create_adapter,
     resolve_sdk_choice,
 )
+from jiuwenclaw.agentserver.memory.config import get_memory_mode
+from jiuwenclaw.agentserver.session_history import append_history_record
 from jiuwenclaw.agentserver.session_manager import SessionManager
 from jiuwenclaw.agentserver.skill_manager import SkillManager
 from jiuwenclaw.config import get_config
-from jiuwenclaw.schema.agent import AgentRequest, AgentResponse, AgentResponseChunk
-from jiuwenclaw.agentserver.session_history import append_history_record
-from jiuwenclaw.schema.message import ReqMethod
-from jiuwenclaw.utils import get_agent_home_dir, get_agent_workspace_dir, get_env_file
-from jiuwenclaw.agentserver.memory.config import get_memory_mode
-from jiuwenclaw.schema.hook_event import AgentServerHookEvents
 from jiuwenclaw.extensions.registry import ExtensionRegistry
+from jiuwenclaw.schema.agent import AgentRequest, AgentResponse, AgentResponseChunk
+from jiuwenclaw.schema.hook_event import AgentServerHookEvents
 from jiuwenclaw.schema.hooks_context import MemoryHookContext
+from jiuwenclaw.schema.message import EventType, ReqMethod
+from jiuwenclaw.utils import get_agent_home_dir, get_agent_workspace_dir, get_env_file
 
 load_dotenv(dotenv_path=get_env_file())
 
@@ -232,7 +232,9 @@ class JiuWenClaw:
         if run:
             inputs["run"] = run
 
-        return inputs, memory_mode
+        # 返回原始 query（未经 build_user_prompt 包装）
+        # Team 模式需要使用原始 query，而不是 JSON 包装后的 prompt
+        return inputs, memory_mode, query
 
     def _build_interactive_input_from_answers(
             self, request_id: str, answers: list[dict]
@@ -419,7 +421,7 @@ class JiuWenClaw:
             request.request_id, request.channel_id, session_id, self._sdk_name,
         )
 
-        inputs, memory_mode = self._build_inputs(request)
+        inputs, memory_mode, raw_query = self._build_inputs(request)
 
         # cloud memory: before chat hook
         if memory_mode == "cloud":
@@ -495,6 +497,11 @@ class JiuWenClaw:
 
         session_id = self._session_manager.get_session_id(request.session_id)
         query = request.params.get("query", "")
+
+        mode = request.params.get("mode", "") if isinstance(request.params, dict) else ""
+        team_flag = request.params.get("team", False) if isinstance(request.params, dict) else False
+        is_team_mode = team_flag or (isinstance(mode, str) and mode.strip().lower() == "team")
+
         append_history_record(
             session_id=session_id,
             request_id=request.request_id,
@@ -510,9 +517,17 @@ class JiuWenClaw:
             request.request_id, request.channel_id, session_id, self._sdk_name,
         )
 
-        inputs, memory_mode = self._build_inputs(request)
+        inputs, memory_mode, raw_query = self._build_inputs(request)
         rid = request.request_id
         cid = request.channel_id
+
+        # Team 模式：使用原始 query，而不是 build_user_prompt 包装后的内容
+        if is_team_mode:
+            inputs["query"] = raw_query
+            logger.info(
+                "[JiuWenClaw] Team模式使用原始query: %s",
+                raw_query[:100] if raw_query else "",
+            )
 
         # cloud memory: before chat hook
         if memory_mode == "cloud":
@@ -527,6 +542,17 @@ class JiuWenClaw:
             await ExtensionRegistry.get_instance().trigger(AgentServerHookEvents.MEMORY_BEFORE_CHAT, mem_ctx)
             memory_block = "\n\n".join(b for b in mem_ctx.memory_blocks if b)
             inputs["memory_block"] = memory_block
+
+        # Team 模式: 检查是否是后续请求（需要绕过 Session Manager）
+        is_team_first_request = True
+        if is_team_mode:
+            from jiuwenclaw.agentserver.team import get_team_manager
+            team_manager = get_team_manager()
+            is_team_first_request = not team_manager.has_stream_task(session_id)
+            logger.info(
+                "[JiuWenClaw] Team模式: session_id=%s is_first=%s",
+                session_id, is_team_first_request
+            )
 
         stream_queue = asyncio.Queue()
         stream_done = asyncio.Event()
@@ -546,7 +572,17 @@ class JiuWenClaw:
             finally:
                 stream_done.set()
 
-        await self._session_manager.submit_task(session_id, run_stream_task)
+        # Team 模式: 后续请求直接执行，绕过 Session Manager 队列
+        # 因为 Team 是长期运行的(persistent)，interact 调用不需要等待前一个任务完成
+        # 且 team_helpers 内部已有请求锁保证同一 session 的请求串行执行
+        if is_team_mode and not is_team_first_request:
+            logger.info(
+                "[JiuWenClaw] Team模式后续请求，直接执行: request_id=%s session_id=%s",
+                rid, session_id,
+            )
+            asyncio.create_task(run_stream_task())
+        else:
+            await self._session_manager.submit_task(session_id, run_stream_task)
 
         try:
             while not stream_done.is_set() or not stream_queue.empty():
@@ -580,16 +616,30 @@ class JiuWenClaw:
                     if isinstance(data, AgentResponseChunk):
                         if isinstance(data.payload, dict) and isinstance(data.payload.get("event_type"), str):
                             et = str(data.payload.get("event_type"))
-                            append_history_record(
-                                session_id=session_id,
-                                request_id=rid,
-                                channel_id=cid,
-                                role="assistant",
-                                event_type=et,
-                                content=data.payload.get("content") or data.payload.get("error") or "",
-                                timestamp=time.time(),
-                                extra={"event_payload": dict(data.payload)},
-                            )
+                            should_record = et.startswith("chat.")
+                            if not should_record and et == EventType.TEAM_MESSAGE.value:
+                                should_record = True
+
+                            if should_record:
+                                payload_dict = dict(data.payload)
+                                extra_fields = {k: v for k, v in payload_dict.items() if
+                                                k not in ("event_type", "content")}
+                                if et == EventType.TEAM_MESSAGE.value and "event" in payload_dict:
+                                    event_data = payload_dict.get("event", {})
+                                    if isinstance(event_data, dict):
+                                        for k, v in event_data.items():
+                                            if k not in ("type", "timestamp", "content"):
+                                                extra_fields[k] = v
+                                append_history_record(
+                                    session_id=session_id,
+                                    request_id=rid,
+                                    channel_id=cid,
+                                    role="assistant",
+                                    event_type=et,
+                                    content=data.payload.get("content") or data.payload.get("error") or "",
+                                    timestamp=time.time(),
+                                    extra=extra_fields if extra_fields else None,
+                                )
                             if et == "chat.final":
                                 final_answer_content = str(data.payload.get("content", ""))
                             elif et == "chat.delta":
@@ -597,16 +647,28 @@ class JiuWenClaw:
                         yield data
                     elif isinstance(data, dict) and isinstance(data.get("event_type"), str):
                         et = str(data.get("event_type"))
-                        append_history_record(
-                            session_id=session_id,
-                            request_id=rid,
-                            channel_id=cid,
-                            role="assistant",
-                            event_type=et,
-                            content=data.get("content") or data.get("error") or "",
-                            timestamp=time.time(),
-                            extra={"event_payload": dict(data)},
-                        )
+                        should_record = et.startswith("chat.")
+                        if not should_record and et == EventType.TEAM_MESSAGE.value:
+                            should_record = True
+
+                        if should_record:
+                            extra_fields = {k: v for k, v in data.items() if k not in ("event_type", "content")}
+                            if et == EventType.TEAM_MESSAGE.value and "event" in data:
+                                event_data = data.get("event", {})
+                                if isinstance(event_data, dict):
+                                    for k, v in event_data.items():
+                                        if k not in ("type", "timestamp", "content"):
+                                            extra_fields[k] = v
+                            append_history_record(
+                                session_id=session_id,
+                                request_id=rid,
+                                channel_id=cid,
+                                role="assistant",
+                                event_type=et,
+                                content=data.get("content") or data.get("error") or "",
+                                timestamp=time.time(),
+                                extra=extra_fields if extra_fields else None,
+                            )
                         if et == "chat.final":
                             final_answer_content = str(data.get("content", ""))
                         elif et == "chat.delta":

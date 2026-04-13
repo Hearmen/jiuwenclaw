@@ -932,6 +932,15 @@ def get_agent_sessions_dir() -> Path:
     return get_agent_root_dir() / "sessions"
 
 
+def get_agent_team_data_dir() -> Path:
+    """Get the agent team data directory path.
+
+    Returns:
+        Path to team data directory: ~/.jiuwenclaw/agent/team_data
+    """
+    return get_agent_root_dir() / "team_data"
+
+
 def get_checkpoint_dir() -> Path:
     return get_user_workspace_dir() / ".checkpoint"
 

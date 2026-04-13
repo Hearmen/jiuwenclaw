@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import datetime
 import logging
 import json
 import queue
@@ -15,6 +16,19 @@ _FILE_LOCK = threading.Lock()
 _WRITE_QUEUE: queue.Queue[tuple[str, dict[str, Any]]] = queue.Queue(maxsize=20000)
 _WORKER_STARTED = False
 _WORKER_LOCK = threading.Lock()
+
+
+def _serialize_value(obj: Any) -> Any:
+    """将对象转换为 JSON 可序列化的格式."""
+    if isinstance(obj, datetime.datetime):
+        return obj.isoformat()
+    if isinstance(obj, datetime.date):
+        return obj.isoformat()
+    if isinstance(obj, dict):
+        return {k: _serialize_value(v) for k, v in obj.items()}
+    if isinstance(obj, (list, tuple)):
+        return [_serialize_value(item) for item in obj]
+    return obj
 
 
 def _history_file(session_id: str) -> Path:
@@ -100,7 +114,9 @@ def append_history_record(
     if role_norm == "assistant" and event_type:
         item["event_type"] = event_type
     if isinstance(extra, dict) and extra:
-        item.update(extra)
+        serialized_extra = _serialize_value(extra)
+        if isinstance(serialized_extra, dict):
+            item.update(serialized_extra)
 
     _ensure_worker_started()
     try:

@@ -119,14 +119,17 @@ class EventType(Enum):
     CHAT_SUBTASK_UPDATE = "chat.subtask_update"
     CHAT_ASK_USER_QUESTION = "chat.ask_user_question"
     CHAT_SESSION_RESULT = "chat.session_result"
+    TEAM_MEMBER = "team.member"
+    TEAM_TASK = "team.task"
+    TEAM_MESSAGE = "team.message"
     HEARTBEAT_RELAY = "heartbeat.relay"
     HISTORY_GET = "history.message"
-    TEAM_MESSAGE = "team.message"
 
 
 class Mode(Enum):
     AGENT = "agent"
     PLAN = "plan"
+    TEAM = "team"
 
 
 @dataclass

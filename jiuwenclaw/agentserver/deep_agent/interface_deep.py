@@ -84,6 +84,7 @@ from jiuwenclaw.agentserver.memory import clear_memory_manager_cache
 from jiuwenclaw.agentserver.memory.config import clear_config_cache, get_memory_mode
 from jiuwenclaw.agentserver.permissions.checker import TOOL_PERMISSION_CHANNEL_ID
 from jiuwenclaw.agentserver.skill_manager import SkillManager
+from jiuwenclaw.agentserver.stream_utils import parse_stream_chunk
 from jiuwenclaw.agentserver.tools.multimodal_config import (
     apply_audio_model_config_from_yaml,
     apply_video_model_config_from_yaml,
@@ -2491,6 +2492,14 @@ class JiuWenClawDeepAdapter:
         cid = request.channel_id
         query = request.params.get("query", "")
         mode = request.params.get("mode", "plan")
+
+        # Team 模式处理
+        if mode == "team":
+            from jiuwenclaw.agentserver.deep_agent.team_helpers import process_team_message_stream
+            
+            async for chunk in process_team_message_stream(request, inputs, self._instance):
+                yield chunk
+            return
 
         # 拦截斜杠命令
         slash_result = await self._handle_slash_command(query, session_id, mode)

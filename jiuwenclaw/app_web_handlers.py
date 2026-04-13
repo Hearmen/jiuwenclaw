@@ -279,6 +279,7 @@ def _register_web_handlers(bind: WebHandlersBindParams) -> None:
             logger.debug("[_on_connect] Agent 未就绪，跳过 connection.ack")
             return
         sid = _make_session_id()
+        
         ack_msg = Message(
             id=f"ack-{sid}",
             type="event",

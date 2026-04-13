@@ -500,3 +500,28 @@ extensions:
   # 扩展包搜索目录（字符串），用 ';' 分割多个目录：
   # EXTENSION_DIRS="E:/a;D:/b"
   extension_dirs: ${EXTENSION_DIRS:-}
+
+
+team:
+  team_name: jiuwen_team
+  lifecycle: persistent
+  teammate_mode: build_mode
+  spawn_mode: inprocess
+
+  leader:
+    member_name: team_leader
+    name: TeamLeader
+    persona: "天才项目管理专家，擅长任务分解和团队协调"
+    domain: project_management
+
+  transport:
+    type: inprocess
+
+  storage:
+    type: sqlite
+    params:
+      connection_string: "team.db"
+      pool_size: 20
+      max_overflow: 40
+      pool_timeout: 120
+      connect_timeout: 300

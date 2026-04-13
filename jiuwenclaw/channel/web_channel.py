@@ -300,6 +300,10 @@ class WebChannel(BaseChannel):
         event_name = "chat.final"
         if msg.event_type is not None:
             event_name = msg.event_type.value
+        elif isinstance(msg.payload, dict):
+            payload_event_type = msg.payload.get("event_type")
+            if isinstance(payload_event_type, str) and payload_event_type.strip():
+                event_name = payload_event_type.strip()
 
         # 根据事件类型构造 payload
         payload = {}
@@ -311,7 +315,7 @@ class WebChannel(BaseChannel):
                              "chat.error", "heartbeat.relay",
                              "context.compressed", "chat.ask_user_question", "chat.subtask_update",
                              "history.message",
-                             "chat.session_result"):
+                             "chat.session_result") or event_name.startswith("team."):
                 # 传递完整 payload，保留所有字段
                 payload = {**msg.payload}
                 # 确保包含 session_id
