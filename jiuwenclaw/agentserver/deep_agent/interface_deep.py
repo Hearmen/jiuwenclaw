@@ -132,7 +132,6 @@ from jiuwenclaw.utils import (
 load_dotenv(dotenv_path=get_env_file())
 
 _react_config = get_config().get("react", {})
-_STREAM_CHAR_THRESHOLD = _react_config.get("stream_character_threshold", 2000)
 
 _CRON_TOOL_CHANNEL_ID: ContextVar[str] = ContextVar(
     "cron_tool_channel_id",
@@ -2612,16 +2611,12 @@ class JiuWenClawDeepAdapter:
                         if isinstance(chunk.payload, dict)
                         else str(chunk.payload)
                     )
-                    if content:
-                        accumulated_text += content
-                        if len(accumulated_text) >= _STREAM_CHAR_THRESHOLD:
-                            yield AgentResponseChunk(
-                                request_id=rid,
-                                channel_id=cid,
-                                payload={"event_type": "chat.delta", "content": accumulated_text},
-                                is_complete=False,
-                            )
-                            accumulated_text = ""
+                    yield AgentResponseChunk(
+                        request_id=rid,
+                        channel_id=cid,
+                        payload={"event_type": "chat.delta", "content": content},
+                        is_complete=False,
+                    )
                     continue
 
                 if chunk_type == "answer":
