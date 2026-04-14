@@ -61,6 +61,17 @@ class NewSessionCancelParams:
     old_sid: str | None
 
 
+@dataclass
+class ModeChangeCancelParams:
+    """\\mode 切换时取消旧会话并发通知所需的具名参数。"""
+
+    user_infos: dict[str, Any]
+    channel_id: str
+    reply_session_id: str | None
+    old_sid: str | None
+    new_mode_label: str
+
+
 if TYPE_CHECKING:
     from jiuwenclaw.e2a.models import E2AEnvelope
     from jiuwenclaw.gateway.agent_client import AgentServerClient
@@ -358,6 +369,20 @@ class MessageHandler(ABC):
             f"[收到 CLI 指令], session_id 已变更为 {params.new_sid}",
         )
 
+    async def _mode_change_cancel_and_notice(
+        self,
+        params: ModeChangeCancelParams,
+        msg: "Message",
+    ) -> None:
+        """与 /new_session 一致：先取消当前会话在网关与 Agent 侧的任务，再下发 mode 已变更提示。"""
+        await self._cancel_agent_work_for_session(msg, params.old_sid)
+        await self._send_channel_notice(
+            params.user_infos,
+            params.channel_id,
+            params.reply_session_id,
+            f"[收到 CLI 指令], mode 已变更为 {params.new_mode_label}",
+        )
+
     def _handle_channel_control(self, msg: "Message") -> bool:
         r"""处理 \new_session / \mode 指令.
 
@@ -423,24 +448,42 @@ class MessageHandler(ABC):
             )
             return True
 
-        # \mode plan / \mode agent
+        # \mode plan / \mode agent / \mode team（切换模式时与 /new_session 一样先中断当前会话任务）
         if text == "/mode plan" or text == "/mode agent" or text == "/mode team":
             parts = text.split()
             if len(parts) >= 2 and parts[1] in ("plan", "agent", "team"):
                 mode_str = parts[1]
+                old_mode = state.mode
+                old_sid = state.session_id
                 if mode_str == "agent":
                     state.mode = ChannelMode.AGENT
                 elif mode_str == "team":
                     state.mode = ChannelMode.TEAM
                 else:
                     state.mode = ChannelMode.PLAN
-                asyncio.create_task(
-                    self._send_channel_notice(
-                        user_infos, 
-                        ch, 
-                        msg.session_id, 
-                        f"[收到 CLI 指令], mode 已变更为 {state.mode.value}")
-                )
+                new_label = state.mode.value
+                if old_mode != state.mode:
+                    asyncio.create_task(
+                        self._mode_change_cancel_and_notice(
+                            ModeChangeCancelParams(
+                                user_infos=user_infos,
+                                channel_id=ch,
+                                reply_session_id=msg.session_id,
+                                old_sid=old_sid,
+                                new_mode_label=new_label,
+                            ),
+                            msg,
+                        )
+                    )
+                else:
+                    asyncio.create_task(
+                        self._send_channel_notice(
+                            user_infos,
+                            ch,
+                            msg.session_id,
+                            f"[收到 CLI 指令], mode 已变更为 {new_label}",
+                        )
+                    )
                 return True
         elif "/mode" in text:
             asyncio.create_task(
