@@ -279,6 +279,14 @@ class RailManager:
 
         return 50  # 默认优先级
 
+    def get_registered_rail_names(self) -> set[str]:
+        """获取所有已注册的 rail 扩展名称集合.
+
+        Returns:
+            已注册的 rail 名称集合的副本
+        """
+        return self._registered_rails.copy()
+
     def delete_extension(self, name: str) -> bool:
         """删除一个扩展（整个文件夹）.
 

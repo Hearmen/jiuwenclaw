@@ -49,12 +49,21 @@ class TeamManager:
     def _build_agent_customizer(
         deep_agent: DeepAgent,
     ) -> Callable[[DeepAgent], None]:
+        from jiuwenclaw.agentserver.extensions.rail_manager import get_rail_manager
+        
         def customizer(agent: DeepAgent) -> None:
-            for rail in deep_agent._registered_rails:
+            """Customizer 回调：注入 Claw 能力."""
+            rail_manager = get_rail_manager()
+            
+            # 遍历已注册的 rail 扩展名称，重新加载实例
+            for rail_name in rail_manager.get_registered_rail_names():
                 try:
-                    agent.add_rail(rail)
+                    # 重新加载 rail 实例，确保每个 agent 有独立的实例
+                    rail_instance = rail_manager.load_rail_instance_without_enabled_check(rail_name)
+                    agent.add_rail(rail_instance)
+                    logger.debug("[TeamManager] Added rail instance for %s: %s", rail_name, rail_instance)
                 except Exception as exc:
-                    logger.warning("[TeamManager] add rail failed: %s", exc)
+                    logger.warning("[TeamManager] add rail %s failed: %s", rail_name, exc)
 
             for ability in deep_agent.ability_manager.list():
                 try:
