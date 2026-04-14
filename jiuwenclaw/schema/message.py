@@ -105,6 +105,7 @@ class EventType(Enum):
     CONNECTION_ACK = "connection.ack"
     HELLO = "hello"
     CHAT_DELTA = "chat.delta"
+    CHAT_REASONING = "chat.reasoning"
     CHAT_FINAL = "chat.final"
     CHAT_MEDIA = "chat.media"
     CHAT_FILE = "chat.file"

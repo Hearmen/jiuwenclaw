@@ -1290,7 +1290,7 @@ class FeishuChannel(BaseChannel):
             meta = dict(getattr(msg, "metadata", None) or {})
 
             # 处理文件消息
-            if msg.event_type == EventType.CHAT_FILE:
+            if msg.event_type == EventType.CHAT_FILE or msg.event_type == EventType.CHAT_REASONING:
                 if self.config.enable_file_upload and self._file_service:
                     await self._send_file_message(msg)
                 return
