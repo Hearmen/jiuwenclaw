@@ -380,8 +380,17 @@ class MessageHandler(ABC):
             params.user_infos,
             params.channel_id,
             params.reply_session_id,
-            f"[收到 CLI 指令], mode 已变更为 {params.new_mode_label}",
+            self._build_mode_change_notice_text(params.new_mode_label),
         )
+
+    @staticmethod
+    def _build_mode_change_notice_text(mode_label: str) -> str:
+        base = f"[收到 CLI 指令], mode 已变更为 {mode_label}"
+        if mode_label == ChannelMode.AGENT.value:
+            return (
+                f"{base}。为统一命名体系，后续将逐步以 fast 作为该执行模式的标准名称。"
+            )
+        return base
 
     def _handle_channel_control(self, msg: "Message") -> bool:
         r"""处理 \new_session / \mode 指令.
@@ -448,14 +457,15 @@ class MessageHandler(ABC):
             )
             return True
 
-        # \mode plan / \mode agent / \mode team（切换模式时与 /new_session 一样先中断当前会话任务）
-        if text == "/mode plan" or text == "/mode agent" or text == "/mode team":
+        # \mode plan / \mode agent(/mode fast) / \mode team（切换模式时与 /new_session 一样先中断当前会话任务）
+        valid_mode_cmds = {"/mode plan", "/mode agent", "/mode fast", "/mode team"}
+        if text in valid_mode_cmds:
             parts = text.split()
-            if len(parts) >= 2 and parts[1] in ("plan", "agent", "team"):
-                mode_str = parts[1]
+            mode_str = parts[1] if len(parts) >= 2 else ""
+            if mode_str in ("plan", "agent", "fast", "team"):
                 old_mode = state.mode
                 old_sid = state.session_id
-                if mode_str == "agent":
+                if mode_str in ("agent", "fast"):
                     state.mode = ChannelMode.AGENT
                 elif mode_str == "team":
                     state.mode = ChannelMode.TEAM
@@ -481,7 +491,7 @@ class MessageHandler(ABC):
                             user_infos,
                             ch,
                             msg.session_id,
-                            f"[收到 CLI 指令], mode 已变更为 {new_label}",
+                            self._build_mode_change_notice_text(new_label),
                         )
                     )
                 return True
