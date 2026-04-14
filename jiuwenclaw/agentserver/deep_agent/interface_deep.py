@@ -2585,30 +2585,17 @@ class JiuWenClawDeepAdapter:
                 chunk_type = chunk.type
 
                 if chunk_type == "llm_reasoning":
-                    if accumulated_text:
-                        yield AgentResponseChunk(
-                            request_id=rid,
-                            channel_id=cid,
-                            payload={"event_type": "chat.delta", "content": accumulated_text},
-                            is_complete=False,
-                        )
-                        accumulated_text = ""
                     content = (
                         (chunk.payload.get("content", "") or chunk.payload.get("output", ""))
                         if isinstance(chunk.payload, dict)
                         else str(chunk.payload)
                     )
-                    if content:
-                        accumulated_reasoning += content
-                        if len(accumulated_reasoning) >= _STREAM_CHAR_THRESHOLD:
-                            yield AgentResponseChunk(
-                                request_id=rid,
-                                channel_id=cid,
-                                payload={"event_type": "chat.reasoning", "content": accumulated_reasoning},
-                                is_complete=False,
-                            )
-                            accumulated_reasoning = ""
-                    continue
+                    yield AgentResponseChunk(
+                        request_id=rid,
+                        channel_id=cid,
+                        payload={"event_type": "chat.delta", "content": content},
+                        is_complete=False,
+                    )
 
                 if chunk_type == "llm_output":
                     has_streamed_content = True
