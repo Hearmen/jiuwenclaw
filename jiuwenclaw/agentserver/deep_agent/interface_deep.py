@@ -1547,67 +1547,76 @@ class JiuWenClawDeepAdapter:
     async def _update_rails_for_mode(self, mode: str) -> None:
         """按 mode 注册或卸载 rails。"""
         if mode == "plan":
-            if self._task_planning_rail is None:
-                self._task_planning_rail = self._build_task_planning_rail()
-                if self._task_planning_rail is not None:
-                    await self._instance.register_rail(self._task_planning_rail)
-                    logger.info("[JiuWenClawDeepAdapter] TaskPlanningRail registered for plan mode")
-            # plan 模式：卸载 multi-session 工具
-            for existing in list(self._instance.ability_manager.list() or []):
-                if getattr(existing, "name", "").startswith(("session_new", "session_cancel", "session_list")):
-                    self._instance.ability_manager.remove(existing.name)
-            # plan 模式：恢复记忆 rail（仅 local memory 模式下）
-            if get_memory_mode(get_config()) == "local":
-                if self._memory_rail is None:
-                    self._memory_rail = self._build_memory_rail()
-                if self._memory_rail is not None:
-                    await self._instance.register_rail(self._memory_rail)
-                    logger.info("[JiuWenClawDeepAdapter] MemoryRail registered for plan mode")
-            # plan 模式：恢复上下文 rail（仅配置启用时）
-            if self._config_cache.get("context_engine_config", {}).get("enabled", False):
-                if self._context_engineering_rail is not None and self._context_engineering_rail_mode != "plan":
-                    await self._instance.unregister_rail(self._context_engineering_rail)
-                    self._context_engineering_rail = None
-                    self._context_engineering_rail_mode = None
-                if self._context_engineering_rail is None:
-                    self._context_engineering_rail = _build_context_engineering_rail(
-                        self._config_cache, mode="plan")
-                    if self._context_engineering_rail is not None:
-                        self._context_engineering_rail_mode = "plan"
-                        await self._instance.register_rail(self._context_engineering_rail)
-            # plan 模式：恢复自演进 rail（仅配置启用时）
-            if self._skill_evolution_rail is None and self._config_cache.get("evolution", {}).get("enabled", False):
-                self._skill_evolution_rail = self._build_skill_evolution_rail(self._config_cache)
-                if self._skill_evolution_rail is not None:
-                    await self._instance.register_rail(self._skill_evolution_rail)
-                    logger.info("[JiuWenClawDeepAdapter] SkillEvolutionRail registered for plan mode")
+            await self._update_plan_mode_rails()
         else:
+            await self._update_agent_mode_rails()
+
+    async def _update_plan_mode_rails(self) -> None:
+        """plan 模式：注册 plan 专属 rails，卸载 agent 专属资源。"""
+        if self._task_planning_rail is None:
+            self._task_planning_rail = self._build_task_planning_rail()
             if self._task_planning_rail is not None:
-                await self._instance.unregister_rail(self._task_planning_rail)
-                self._task_planning_rail = None
-                logger.info("[JiuWenClawDeepAdapter] TaskPlanningRail unregistered for agent mode")
-            # 智能模式：关闭记忆 rail
+                await self._instance.register_rail(self._task_planning_rail)
+                logger.info("[JiuWenClawDeepAdapter] TaskPlanningRail registered for plan mode")
+        # 卸载 multi-session 工具
+        for existing in list(self._instance.ability_manager.list() or []):
+            if getattr(existing, "name", "").startswith(("session_new", "session_cancel", "session_list")):
+                self._instance.ability_manager.remove(existing.name)
+        # 恢复记忆 rail（仅 local memory 模式下）
+        if get_memory_mode(get_config()) == "local":
+            if self._memory_rail is None:
+                self._memory_rail = self._build_memory_rail()
             if self._memory_rail is not None:
-                await self._instance.unregister_rail(self._memory_rail)
-                self._memory_rail = None
-                logger.info("[JiuWenClawDeepAdapter] MemoryRail unregistered for agent mode")
-            # agent/智能模式：恢复上下文 rail（仅配置启用时）
-            if self._config_cache.get("context_engine_config", {}).get("enabled", False):
-                if self._context_engineering_rail is not None and self._context_engineering_rail_mode == "plan":
-                    await self._instance.unregister_rail(self._context_engineering_rail)
-                    self._context_engineering_rail = None
-                    self._context_engineering_rail_mode = None
-                if self._context_engineering_rail is None:
-                    self._context_engineering_rail = _build_context_engineering_rail(
-                        self._config_cache, mode="agent")
-                    if self._context_engineering_rail is not None:
-                        self._context_engineering_rail_mode = "agent"
-                        await self._instance.register_rail(self._context_engineering_rail)
-            # 智能模式：关闭自演进 rail
+                await self._instance.register_rail(self._memory_rail)
+                logger.info("[JiuWenClawDeepAdapter] MemoryRail registered for plan mode")
+        # 恢复上下文 rail（仅配置启用时）
+        if self._config_cache.get("context_engine_config", {}).get("enabled", False):
+            if self._context_engineering_rail is not None and self._context_engineering_rail_mode != "plan":
+                await self._instance.unregister_rail(self._context_engineering_rail)
+                self._context_engineering_rail = None
+                self._context_engineering_rail_mode = None
+            if self._context_engineering_rail is None:
+                self._context_engineering_rail = _build_context_engineering_rail(
+                    self._config_cache, mode="plan")
+                if self._context_engineering_rail is not None:
+                    self._context_engineering_rail_mode = "plan"
+                    await self._instance.register_rail(self._context_engineering_rail)
+        elif self._context_engineering_rail is not None:
+            await self._instance.unregister_rail(self._context_engineering_rail)
+            self._context_engineering_rail = None
+            self._context_engineering_rail_mode = None
+            logger.info("[JiuWenClawDeepAdapter] ContextEngineeringRail unregistered for plan mode (disabled)")
+        # 恢复自演进 rail（仅配置启用时）
+        if self._skill_evolution_rail is None and self._config_cache.get("evolution", {}).get("enabled", False):
+            self._skill_evolution_rail = self._build_skill_evolution_rail(self._config_cache)
             if self._skill_evolution_rail is not None:
-                await self._instance.unregister_rail(self._skill_evolution_rail)
-                self._skill_evolution_rail = None
-                logger.info("[JiuWenClawDeepAdapter] SkillEvolutionRail unregistered for agent mode")
+                await self._instance.register_rail(self._skill_evolution_rail)
+                logger.info("[JiuWenClawDeepAdapter] SkillEvolutionRail registered for plan mode")
+
+    async def _update_agent_mode_rails(self) -> None:
+        """agent 模式：卸载 plan 专属 rails，按需注册 agent 专属 rails。"""
+        for attr, label in (
+            ("_task_planning_rail", "TaskPlanningRail"),
+            ("_memory_rail", "MemoryRail"),
+            ("_skill_evolution_rail", "SkillEvolutionRail"),
+        ):
+            rail = getattr(self, attr)
+            if rail is not None:
+                await self._instance.unregister_rail(rail)
+                setattr(self, attr, None)
+                logger.info("[JiuWenClawDeepAdapter] %s unregistered for agent mode", label)
+        # agent/智能模式：恢复上下文 rail（仅配置启用时）
+        if self._config_cache.get("context_engine_config", {}).get("enabled", False):
+            if self._context_engineering_rail is not None and self._context_engineering_rail_mode == "plan":
+                await self._instance.unregister_rail(self._context_engineering_rail)
+                self._context_engineering_rail = None
+                self._context_engineering_rail_mode = None
+            if self._context_engineering_rail is None:
+                self._context_engineering_rail = _build_context_engineering_rail(
+                    self._config_cache, mode="agent")
+                if self._context_engineering_rail is not None:
+                    self._context_engineering_rail_mode = "agent"
+                    await self._instance.register_rail(self._context_engineering_rail)
 
     @staticmethod
     def _acp_runtime_tools_enabled(
