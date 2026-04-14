@@ -147,10 +147,24 @@ function recordTimestampIso(record: Record<string, unknown>): string {
   return new Date().toISOString();
 }
 
+const _HISTORY_RECORD_META_KEYS = new Set([
+  'id', 'role', 'request_id', 'channel_id', 'timestamp', 'event_type', 'event_payload',
+]);
+
 /** 合并 event_payload 与顶层 content，供 final / tool 解析 */
 function buildEventPayloadForRecord(record: Record<string, unknown>): Record<string, unknown> {
   const ep = record.event_payload;
   const base = isRecord(ep) ? { ...ep } : {};
+
+  // 无 event_payload 时：将顶层工具字段（extra 展平写入的字段）提升到 base
+  if (!isRecord(ep)) {
+    for (const [key, value] of Object.entries(record)) {
+      if (!_HISTORY_RECORD_META_KEYS.has(key)) {
+        base[key] = value;
+      }
+    }
+  }
+
   if (typeof record.content === 'string' && typeof base.content !== 'string') {
     base.content = record.content;
   }
