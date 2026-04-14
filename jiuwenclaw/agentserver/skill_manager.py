@@ -1126,20 +1126,41 @@ class SkillManager:
         if not name:
             return {"success": False, "detail": "缺少参数: name"}
 
+        # 使用 _resolve_local_skill_dir 正确解析技能目录（处理 name 与文件夹名称不一致的情况）
+        dest = self._resolve_local_skill_dir(name)
+        if dest is None:
+            return {"success": False, "detail": f"未找到 skill: {name}"}
+
         # 检查是否为真正的内置技能（源码目录中的，不允许删除）
-        # 只有当当前运行的技能目录就是内置目录时，才不允许删除
-        dest = self._skills_dir / name
         builtin_dir = get_builtin_skills_dir()
         if builtin_dir.exists():
-            builtin_skill_path = builtin_dir / name
-            if builtin_skill_path.exists() and builtin_skill_path.is_dir():
+            # 检查 builtin 技能目录中是否有该技能
+            builtin_skill_path = None
+            direct_builtin = builtin_dir / name
+            if direct_builtin.exists() and direct_builtin.is_dir():
+                builtin_skill_path = direct_builtin
+            else:
+                # 遍历 builtin 目录，通过解析 SKILL.md 查找匹配的技能
+                for child in builtin_dir.iterdir():
+                    if not child.is_dir() or child.name.startswith("_"):
+                        continue
+                    md = self._try_find_skill_file(child)
+                    if md is None:
+                        continue
+                    meta = self._parse_skill_md(md)
+                    if meta and meta.get("name") == name:
+                        builtin_skill_path = child
+                        break
+
+            if builtin_skill_path:
                 if dest.resolve() == builtin_skill_path.resolve():
                     return {"success": False, "detail": "内置技能不允许删除"}
 
-        if dest.exists() and dest.is_dir():
-            _safe_rmtree(dest)
+        _safe_rmtree(dest)
+
+        # 处理 mirror 根目录中的技能
         for mirror_root in self._get_mirror_skills_dirs():
-            mirror_dest = mirror_root / name
+            mirror_dest = mirror_root / dest.name
             if mirror_dest.exists() and mirror_dest.is_dir():
                 _safe_rmtree(mirror_dest)
 
