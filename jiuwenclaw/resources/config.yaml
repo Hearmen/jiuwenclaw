@@ -525,3 +525,22 @@ team:
       max_overflow: 40
       pool_timeout: 120
       connect_timeout: 300
+
+modes:
+  # 一级模式 claw / code
+  claw:
+    # claw 模式支持 性能/规划/集群
+    fast:
+      memory:
+      rails:
+      tools:
+    plan:
+      memory:
+      rails:
+      tools:
+    team:
+  code:
+    # code 模式
+    memory:
+    rails:
+    tools:
