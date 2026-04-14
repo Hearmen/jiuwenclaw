@@ -926,7 +926,13 @@ class FeishuChannel(BaseChannel):
     @staticmethod
     def _is_control_message(content: str) -> bool:
         text = content.strip()
-        return text in {"/new_session", "/mode plan", "/mode agent", "/mode team"}
+        if not text or "\n" in text:
+            return False
+        if text == "/new_session":
+            return True
+        if text.startswith("/mode "):
+            return True
+        return False
 
     async def _enqueue_message_batch(
         self,

@@ -333,6 +333,15 @@ class MessageHandler(ABC):
         if old_sid is None and not rids_cancelled:
             return
 
+        # 非流式场景不向 AgentServer 下发 cancel，避免无在途流式任务时触发不必要的中断逻辑。
+        if not bool(getattr(msg, "is_stream", False)):
+            logger.info(
+                "[MessageHandler] 跳过 AgentServer cancel（非流式）: channel_id=%s session_id=%s",
+                msg.channel_id,
+                old_sid,
+            )
+            return
+
         cancel_req = Message(
             id=f"interrupt_{int(time.time() * 1000):x}_{secrets.token_hex(3)}",
             type="req",
@@ -447,7 +456,7 @@ class MessageHandler(ABC):
                 )
             )
             return True
-        elif "/new_session" in text:
+        elif "\n" not in text and text.startswith("/new_session"):
             asyncio.create_task(
                 self._send_channel_notice(
                     user_infos, 
@@ -495,7 +504,7 @@ class MessageHandler(ABC):
                         )
                     )
                 return True
-        elif "/mode" in text:
+        elif "\n" not in text and text.startswith("/mode"):
             asyncio.create_task(
                 self._send_channel_notice(
                     user_infos, 
