@@ -291,6 +291,24 @@ export function SessionsPanel({
 
         const rootDir = `agent/sessions/${sessionId}`;
         const rows = await fetchDirEntries(rootDir, 0);
+
+        // Check for todo.json in DeepAgent workspace todo directory
+        const todoPath = `agent/jiuwenclaw_workspace/todo/${sessionId}/todo.json`;
+        try {
+          const todoResp = await fetch(`/file-api/file-content?path=${encodeURIComponent(todoPath)}`, { cache: 'no-store' });
+          if (todoResp.ok) {
+            rows.push({
+              name: 'todo.json',
+              path: todoPath,
+              isMarkdown: false,
+              isDirectory: false,
+              depth: 0,
+            });
+          }
+        } catch {
+          // todo.json not found or error, ignore
+        }
+
         setFiles(rows);
         if (preserve && preservePath) {
           const np = normalizeWorkspacePath(preservePath);

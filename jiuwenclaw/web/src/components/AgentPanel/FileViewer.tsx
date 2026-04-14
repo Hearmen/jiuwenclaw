@@ -8,8 +8,26 @@ import '../ChatPanel/ChatPanel.css';
 interface FileViewerProps {
   filePath: string;
   fileName: string;
-  /** 路径未变时递增，用于强制重新拉取磁盘内容（如会话页「刷新」） */
   reloadNonce?: number;
+}
+
+interface TodoPreviewItem {
+  id: string;
+  status: string;
+  content: string;
+}
+
+function parseTodoJsonFileToPreview(parsed: unknown): TodoPreviewItem[] {
+  if (!Array.isArray(parsed)) {
+    return [];
+  }
+  return parsed
+    .filter((item): item is Record<string, unknown> => Boolean(item) && typeof item === 'object')
+    .map((item) => ({
+      id: typeof item.id === 'string' ? item.id : String(item.id ?? ''),
+      status: typeof item.status === 'string' ? item.status.toLowerCase() : 'pending',
+      content: typeof item.content === 'string' ? item.content : '',
+    }));
 }
 
 function sessionIdFromAgentPath(filePath: string): string {
@@ -30,6 +48,7 @@ export function FileViewer({ filePath, fileName, reloadNonce = 0 }: FileViewerPr
   const isMarkdown = lowerFileName.endsWith('.md') || lowerFileName.endsWith('.mdx');
   const isJson = lowerFileName.endsWith('.json');
   const isHistoryJson = lowerFileName === 'history.json';
+  const isTodoJson = lowerFileName === 'todo.json';
   const isPreviewable = isMarkdown || isJson;
   const fileNotFound = Boolean(error && error.includes('HTTP 404'));
   const [historyChatPreview, setHistoryChatPreview] = useState(true);
@@ -40,27 +59,43 @@ export function FileViewer({ filePath, fileName, reloadNonce = 0 }: FileViewerPr
       return {
         historyMessages: [] as ReturnType<typeof parseHistoryJsonFileToPreviewMessages>,
         historyInvalid: false,
+        todoItems: [] as TodoPreviewItem[],
+        todoInvalid: false,
         formatted: content,
       };
     }
     try {
       const parsed: unknown = JSON.parse(content);
       const formatted = JSON.stringify(parsed, null, 2);
-      if (!isHistoryJson) {
-        return { historyMessages: [], historyInvalid: false, formatted };
+      if (!isHistoryJson && !isTodoJson) {
+        return { historyMessages: [], historyInvalid: false, todoItems: [], todoInvalid: false, formatted };
+      }
+      if (isTodoJson) {
+        if (!Array.isArray(parsed)) {
+          return { historyMessages: [], historyInvalid: false, todoItems: [], todoInvalid: true, formatted };
+        }
+        return {
+          historyMessages: [],
+          historyInvalid: false,
+          todoItems: parseTodoJsonFileToPreview(parsed),
+          todoInvalid: false,
+          formatted,
+        };
       }
       if (!Array.isArray(parsed)) {
-        return { historyMessages: [], historyInvalid: true, formatted };
+        return { historyMessages: [], historyInvalid: true, todoItems: [], todoInvalid: false, formatted };
       }
       return {
         historyMessages: parseHistoryJsonFileToPreviewMessages(parsed, sessionIdFromAgentPath(filePath)),
         historyInvalid: false,
+        todoItems: [],
+        todoInvalid: false,
         formatted,
       };
     } catch {
-      return { historyMessages: [], historyInvalid: true, formatted: content };
+      return { historyMessages: [], historyInvalid: true, todoItems: [], todoInvalid: true, formatted: content };
     }
-  }, [isJson, isHistoryJson, content, filePath]);
+  }, [isJson, isHistoryJson, isTodoJson, content, filePath]);
 
   useEffect(() => {
     if (!filePath) return;
@@ -81,17 +116,17 @@ export function FileViewer({ filePath, fileName, reloadNonce = 0 }: FileViewerPr
       setSaveError(null);
       setIsEditing(false);
       setSaving(false);
-      
+
       try {
         const encodedPath = encodeURIComponent(filePath);
         const url = `/file-api/file-content?path=${encodedPath}`;
         const response = await fetch(url, { cache: 'no-store' });
-        
+
         if (!response.ok) {
           const errorData = await response.text();
           throw new Error(`HTTP ${response.status}: ${errorData.substring(0, 100)}`);
         }
-        
+
         const text = await response.text();
         setContent(text);
         setDraftContent(text);
@@ -257,7 +292,45 @@ export function FileViewer({ filePath, fileName, reloadNonce = 0 }: FileViewerPr
             </article>
           )
         ) : isJson ? (
-          isHistoryJson && historyChatPreview ? (
+          isTodoJson && jsonDerived.todoItems.length > 0 ? (
+            <div className="w-full min-h-[280px] rounded-lg border border-border bg-card p-4 space-y-4">
+              {(() => {
+                const inProgress = jsonDerived.todoItems.filter((i) => i.status === 'in_progress');
+                const pending = jsonDerived.todoItems.filter((i) => i.status === 'pending');
+                const completed = jsonDerived.todoItems.filter((i) => i.status === 'completed');
+                const cancelled = jsonDerived.todoItems.filter((i) => i.status === 'cancelled');
+
+                const renderGroup = (title: string, items: TodoPreviewItem[], colorClass: string, icon: string) => (
+                  items.length > 0 ? (
+                    <div key={title}>
+                      <div className="flex items-center gap-2 mb-2">
+                        <span className={`text-xs font-medium ${colorClass}`}>{title}</span>
+                        <span className="text-xs px-1.5 py-0.5 rounded bg-secondary text-text-muted">{items.length}</span>
+                      </div>
+                      <div className="space-y-1.5">
+                        {items.map((item) => (
+                          <div key={item.id} className="flex items-center gap-2 text-sm py-1.5 px-2 rounded bg-secondary/30">
+                            <span className={`shrink-0 ${colorClass}`}>{icon}</span>
+                            <span className="flex-1 text-text truncate">{item.content}</span>
+                            <span className="mono text-xs text-text-muted shrink-0 bg-secondary px-1.5 py-0.5 rounded">{item.id}</span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  ) : null
+                );
+
+                return (
+                  <>
+                    {renderGroup('进行中', inProgress, 'text-accent', '▶')}
+                    {renderGroup('待处理', pending, 'text-text-muted', '○')}
+                    {renderGroup('已完成', completed, 'text-green-600', '✓')}
+                    {renderGroup('已取消', cancelled, 'text-danger', '×')}
+                  </>
+                );
+              })()}
+            </div>
+          ) : isHistoryJson && historyChatPreview ? (
             jsonDerived.historyInvalid ? (
               <pre className="w-full h-full min-h-[280px] overflow-auto rounded-lg border border-border bg-card p-3 text-sm text-text mono whitespace-pre-wrap break-all">
                 {jsonDerived.formatted || ' '}
