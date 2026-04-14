@@ -48,6 +48,19 @@ class ChannelMode(str, Enum):
 class ChannelControlState:
     session_id: str | None = None
     mode: ChannelMode = ChannelMode.PLAN
+
+
+@dataclass
+class NewSessionCancelParams:
+    """\\new_session 时取消旧会话并发通知所需的具名参数（避免过长形参列表）。"""
+
+    user_infos: dict[str, Any]
+    channel_id: str
+    reply_session_id: str | None
+    new_sid: str
+    old_sid: str | None
+
+
 if TYPE_CHECKING:
     from jiuwenclaw.e2a.models import E2AEnvelope
     from jiuwenclaw.gateway.agent_client import AgentServerClient
@@ -272,6 +285,79 @@ class MessageHandler(ABC):
         )
         await self.publish_robot_messages(msg)
 
+    async def _cancel_agent_work_for_session(self, msg: "Message", old_sid: str | None) -> None:
+        """取消指定 session 的网关流式任务，并向 AgentServer 发送 CHAT_CANCEL（与 Web chat.interrupt intent=cancel 对齐）。
+
+        网关侧仅取消 ``_stream_sessions[rid] == old_sid`` 的流式任务。AgentServer 对 ``intent=cancel`` 仍可能
+        ``cancel_all_session_tasks``（与现网 unary 中断一致）；若需仅撤销单 session 需在 interface 层扩展协议。
+        """
+        from jiuwenclaw.schema.message import Message, ReqMethod
+
+        self._clear_session_evolution_states(old_sid)
+
+        tasks_to_cancel: list[asyncio.Task] = []
+        rids_cancelled: list[str] = []
+
+        for rid, task in list(self._stream_tasks.items()):
+            if self._stream_sessions.get(rid) != old_sid:
+                continue
+            if not task.done():
+                logger.info(
+                    "[MessageHandler] 取消流式任务: request_id=%s session_id=%s",
+                    rid,
+                    old_sid,
+                )
+                task.cancel()
+                tasks_to_cancel.append(task)
+                rids_cancelled.append(rid)
+
+        if tasks_to_cancel:
+            await asyncio.gather(*tasks_to_cancel, return_exceptions=True)
+
+        for rid in rids_cancelled:
+            await self._send_interrupt_result_notification(
+                rid, msg.channel_id, old_sid, "cancel",
+            )
+
+        if old_sid is None and not rids_cancelled:
+            return
+
+        cancel_req = Message(
+            id=f"interrupt_{int(time.time() * 1000):x}_{secrets.token_hex(3)}",
+            type="req",
+            channel_id=msg.channel_id,
+            session_id=old_sid,
+            params={
+                "intent": "cancel",
+                "session_id": old_sid,
+            },
+            timestamp=time.time(),
+            ok=True,
+            req_method=ReqMethod.CHAT_CANCEL,
+            metadata=msg.metadata,
+            provider=getattr(msg, "provider", None),
+            chat_id=getattr(msg, "chat_id", None),
+            user_id=getattr(msg, "user_id", None),
+            bot_id=getattr(msg, "bot_id", None),
+        )
+        agent_msg = await self._prepare_agent_dispatch_message(cancel_req)
+        env_interrupt = self.message_to_e2a(agent_msg)
+        await self._send_interrupt_to_agent(env_interrupt)
+
+    async def _new_session_cancel_and_notice(
+        self,
+        params: NewSessionCancelParams,
+        msg: "Message",
+    ) -> None:
+        """先完成旧会话取消与 AgentServer 中断，再下发 session 已变更提示。"""
+        await self._cancel_agent_work_for_session(msg, params.old_sid)
+        await self._send_channel_notice(
+            params.user_infos,
+            params.channel_id,
+            params.reply_session_id,
+            f"[收到 CLI 指令], session_id 已变更为 {params.new_sid}",
+        )
+
     def _handle_channel_control(self, msg: "Message") -> bool:
         r"""处理 \new_session / \mode 指令.
 
@@ -306,6 +392,7 @@ class MessageHandler(ABC):
 
         # \new_session：重置当前会话的 session_id
         if "/new_session" == text:
+            old_sid = state.session_id
             cid = str(getattr(msg, "channel_id", "") or "")
             identity_key = self._extract_identity_tuple(msg)
             if identity_key and self._channel_id_matches_session_map_types(cid):
@@ -313,13 +400,17 @@ class MessageHandler(ABC):
             else:
                 new_sid = self._generate_channel_session_id(channel_type)
             state.session_id = new_sid
-            # 给当前会话回复提示（用原有 session_id）
             asyncio.create_task(
-                self._send_channel_notice(
-                    user_infos, 
-                    ch, 
-                    msg.session_id, 
-                    f"[收到 CLI 指令], session_id 已变更为 {new_sid}")
+                self._new_session_cancel_and_notice(
+                    NewSessionCancelParams(
+                        user_infos=user_infos,
+                        channel_id=ch,
+                        reply_session_id=msg.session_id,
+                        new_sid=new_sid,
+                        old_sid=old_sid,
+                    ),
+                    msg,
+                )
             )
             return True
         elif "/new_session" in text:
@@ -819,6 +910,44 @@ class MessageHandler(ABC):
             return False
         return payload.get("is_complete") is True and set(payload.keys()) <= {"is_complete"}
 
+    async def _publish_stream_cancelled_final(
+        self,
+        request_id: str,
+        channel_id: str,
+        session_id: str | None,
+        request_metadata: dict[str, Any] | None,
+    ) -> None:
+        """流式任务被网关取消时补发 chat.final，带 is_complete（供飞书等通道合并缓冲）。"""
+        from jiuwenclaw.schema.message import Message, EventType
+
+        group_digital_avatar = bool(request_metadata.get("group_digital_avatar", False)) if request_metadata else False
+        enable_memory = bool(request_metadata.get("enable_memory", True)) if request_metadata else True
+
+        out = Message(
+            id=request_id,
+            type="event",
+            channel_id=channel_id,
+            session_id=session_id,
+            params={},
+            timestamp=time.time(),
+            ok=True,
+            payload={
+                "event_type": EventType.CHAT_FINAL.value,
+                "content": "",
+                "is_complete": True,
+            },
+            event_type=EventType.CHAT_FINAL,
+            metadata=request_metadata,
+            group_digital_avatar=group_digital_avatar,
+            enable_memory=enable_memory,
+        )
+        await self.publish_robot_messages(out)
+        logger.info(
+            "[MessageHandler] 已发送流式取消结束帧: request_id=%s session_id=%s",
+            request_id,
+            session_id,
+        )
+
     @staticmethod
     def _non_stream_rpc_may_run_parallel(env: "E2AEnvelope") -> bool:
         """可与其它非流式 RPC 并发，不阻塞 _forward_loop。
@@ -1105,22 +1234,7 @@ class MessageHandler(ABC):
                         )
 
                     elif intent == "cancel":
-                        self._clear_session_evolution_states(msg.session_id)
-                        # 取消所有运行中的流式任务
-                        for rid, task in list(self._stream_tasks.items()):
-                            if not task.done():
-                                logger.info(
-                                    "[MessageHandler] 取消流式任务: request_id=%s", rid,
-                                )
-                                task.cancel()
-                                sid = self._stream_sessions.get(rid)
-                                await self._send_interrupt_result_notification(
-                                    rid, msg.channel_id, sid, "cancel",
-                                )
-                        # Fire-and-forget: 发送取消请求到 AgentServer
-                        agent_msg = await self._prepare_agent_dispatch_message(msg)
-                        env_interrupt = self.message_to_e2a(agent_msg)
-                        asyncio.create_task(self._send_interrupt_to_agent(env_interrupt))
+                        await self._cancel_agent_work_for_session(msg, msg.session_id)
 
                     elif intent in ("pause", "resume"):
                         # 暂停/恢复：不取消流式任务，转发给 AgentServer 处理 ReAct 循环
@@ -1278,6 +1392,9 @@ class MessageHandler(ABC):
             logger.info(
                 "[MessageHandler] Stream 被取消: request_id=%s",
                 rid,
+            )
+            await self._publish_stream_cancelled_final(
+                rid, channel_id, session_id, request_metadata,
             )
             raise  # 重新抛出，让调用者知道任务被取消
         finally:
