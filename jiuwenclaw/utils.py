@@ -715,18 +715,6 @@ def prepare_workspace(
         if not dest_skill_state.exists():
             shutil.copy2(skills_state_src, agent_skills / "skills_state.json")
 
-    # Explicitly copy template skills (was excluded by ignore_patterns above)
-    # Only copy skills that don't exist in user workspace (preserve user modifications)
-    template_skills = template_agent_workspace / "skills"
-    if template_skills.exists():
-        agent_skills.mkdir(parents=True, exist_ok=True)
-        for skill_dir in template_skills.iterdir():
-            if skill_dir.is_dir():
-                dest_skill = agent_skills / skill_dir.name
-                if not dest_skill.exists():
-                    shutil.copytree(skill_dir, dest_skill)
-                    logger.info(f"Copied template skill: {skill_dir.name}")
-
     # sessions is runtime-only (template may not include it)
     agent_sessions.mkdir(parents=True, exist_ok=True)
 
