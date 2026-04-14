@@ -377,6 +377,81 @@ async def test_jsonrpc_session_prompt_accepts_text_param(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_jsonrpc_session_prompt_emits_final_text_as_agent_message_chunk(monkeypatch):
+    fake_stdin = FakeStdin(
+        [
+            json_line(
+                {
+                    "jsonrpc": "2.0",
+                    "id": 302,
+                    "method": "session/prompt",
+                    "params": {
+                        "sessionId": "sess-final-only",
+                        "text": "hello from final only",
+                    },
+                }
+            ),
+        ]
+    )
+    fake_stdout = FakeStdout()
+    channel = AcpChannel(AcpChannelConfig(enabled=True), DummyBus())
+
+    monkeypatch.setattr("sys.stdin", fake_stdin)
+    monkeypatch.setattr("sys.stdout", fake_stdout)
+    monkeypatch.setattr("jiuwenclaw.channel.acp_channel._ACP_STDOUT", fake_stdout)
+
+    async def _on_message(msg):
+        await channel.send(
+            Message(
+                id=msg.id,
+                type="event",
+                channel_id="acp",
+                session_id=msg.session_id,
+                params={},
+                timestamp=time.time(),
+                ok=True,
+                payload={"content": "final answer from chat.final"},
+                event_type=EventType.CHAT_FINAL,
+            )
+        )
+        await channel.send(
+            Message(
+                id=msg.id,
+                type="event",
+                channel_id="acp",
+                session_id=msg.session_id,
+                params={},
+                timestamp=time.time(),
+                ok=True,
+                payload={"is_processing": False},
+                event_type=EventType.CHAT_PROCESSING_STATUS,
+            )
+        )
+
+    channel.on_message(_on_message)
+    await channel.start()
+
+    responses = fake_stdout.buffer.json_lines()
+    assert len(responses) == 3
+    assert responses[0]["method"] == "session/update"
+    assert responses[0]["params"]["sessionId"] == "sess-final-only"
+    assert responses[0]["params"]["update"]["sessionUpdate"] == "agent_message_chunk"
+    assert responses[0]["params"]["update"]["content"] == {
+        "type": "text",
+        "text": "final answer from chat.final",
+    }
+    assert responses[1]["params"]["update"] == {
+        "sessionUpdate": "session_info_update",
+        "status": "idle",
+    }
+    assert responses[2] == {
+        "jsonrpc": "2.0",
+        "id": 302,
+        "result": {"stopReason": "end_turn"},
+    }
+
+
+@pytest.mark.asyncio
 async def test_jsonrpc_session_prompt_merges_session_context(monkeypatch):
     fake_stdin = FakeStdin(
         [
@@ -455,7 +530,7 @@ async def test_jsonrpc_session_prompt_merges_session_context(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_jsonrpc_session_prompt_auto_finalizes_after_idle(monkeypatch):
+async def test_jsonrpc_session_prompt_auto_finalizes_after_idle_after_chat_final(monkeypatch):
     fake_stdin = FakeStdin(
         [
             json_line(
@@ -490,8 +565,8 @@ async def test_jsonrpc_session_prompt_auto_finalizes_after_idle(monkeypatch):
                 params={},
                 timestamp=time.time(),
                 ok=True,
-                payload={"content": "partial answer"},
-                event_type=EventType.CHAT_DELTA,
+                payload={"content": "final answer"},
+                event_type=EventType.CHAT_FINAL,
             )
         )
 
@@ -511,6 +586,60 @@ async def test_jsonrpc_session_prompt_auto_finalizes_after_idle(monkeypatch):
     assert isinstance(result, dict)
     assert responses[1].get("id") == 12
     assert result.get("stopReason") == "end_turn"
+
+
+@pytest.mark.asyncio
+async def test_jsonrpc_session_prompt_does_not_auto_finalize_from_delta_only(monkeypatch):
+    fake_stdin = FakeStdin(
+        [
+            json_line(
+                {
+                    "jsonrpc": "2.0",
+                    "id": 121,
+                    "method": "session/prompt",
+                    "params": {
+                        "sessionId": "sess-delta-only",
+                        "prompt": [{"type": "text", "text": "hello"}],
+                    },
+                }
+            )
+        ]
+    )
+    fake_stdout = FakeStdout()
+    channel = AcpChannel(AcpChannelConfig(enabled=True), DummyBus())
+
+    monkeypatch.setattr("sys.stdin", fake_stdin)
+    monkeypatch.setattr("sys.stdout", fake_stdout)
+    monkeypatch.setattr("jiuwenclaw.channel.acp_channel._ACP_STDOUT", fake_stdout)
+    monkeypatch.setattr("jiuwenclaw.channel.acp_channel._PROMPT_IDLE_FINALIZE_SECONDS", 0.01)
+    monkeypatch.setattr("jiuwenclaw.channel.acp_channel._STDIN_EOF_GRACE_SECONDS", 0.05)
+
+    async def _on_message(msg):
+        await channel.send(
+            Message(
+                id=msg.id,
+                type="event",
+                channel_id="acp",
+                session_id=msg.session_id,
+                params={},
+                timestamp=time.time(),
+                ok=True,
+                payload={"content": "partial answer"},
+                event_type=EventType.CHAT_DELTA,
+            )
+        )
+        # delta-only 场景不会自动 end_turn；显式停止通道，避免测试等待未完成请求而超时。
+        await channel.stop()
+
+    channel.on_message(_on_message)
+    await channel.start()
+
+    responses = fake_stdout.buffer.json_lines()
+    assert len(responses) == 1
+    update = responses[0]["params"]["update"]
+    assert update["sessionUpdate"] == "agent_message_chunk"
+    assert isinstance(update.get("messageId"), str)
+    assert update["content"] == {"type": "text", "text": "partial answer"}
 
 
 @pytest.mark.asyncio

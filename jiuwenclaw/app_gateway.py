@@ -27,6 +27,11 @@ from urllib.parse import urlparse
 from dotenv import load_dotenv
 from openjiuwen.core.common.logging import LogManager
 
+from jiuwenclaw.e2a.acp.session_updates import (
+    build_acp_final_text_update,
+    build_acp_session_update,
+    build_acp_usage_update,
+)
 from jiuwenclaw.gateway.route_binding import GatewayRouteBinding
 from jiuwenclaw.jiuwen_core_patch import apply_openai_model_client_patch
 from jiuwenclaw.utils import get_user_workspace_dir, get_env_file, prepare_workspace
@@ -129,6 +134,7 @@ class _InboundGatewayServer:
 
 
 _ACP_PENDING_RPC_TIMEOUT_SECONDS = 60.0
+_PROMPT_IDLE_FINALIZE_SECONDS = 3.0
 
 
 @dataclass
@@ -137,6 +143,7 @@ class _GatewayAcpRequestContext:
     session_id: str
     assistant_message_id: str | None = None
     thought_message_id: str | None = None
+    idle_finalize_task: asyncio.Task | None = None
 
 
 class AcpRouteHandler:
@@ -628,26 +635,35 @@ class GatewayServer:
             return False
 
         if msg.type == "event" and msg.event_type == EventType.CHAT_DELTA:
-            text = str(payload.get("content", "") or "")
-            if not text:
+            update = build_acp_session_update(msg, payload, ctx)
+            if update is None:
                 return True
-            source_chunk_type = str(payload.get("source_chunk_type") or "")
-            if source_chunk_type == "llm_reasoning":
-                if not ctx.thought_message_id:
-                    ctx.thought_message_id = f"thought_{uuid_module.uuid4().hex[:12]}"
-                update = {
-                    "sessionUpdate": "agent_thought_chunk",
-                    "messageId": ctx.thought_message_id,
-                    "content": {"type": "text", "text": text},
-                }
-            else:
-                if not ctx.assistant_message_id:
-                    ctx.assistant_message_id = f"msg_{uuid_module.uuid4().hex[:12]}"
-                update = {
-                    "sessionUpdate": "agent_message_chunk",
-                    "messageId": ctx.assistant_message_id,
-                    "content": {"type": "text", "text": text},
-                }
+            await self._send_raw_jsonrpc_notification(
+                ws,
+                "session/update",
+                {"sessionId": session_id or ctx.session_id, "update": update},
+            )
+            usage_update = build_acp_usage_update(payload)
+            if usage_update is not None:
+                await self._send_raw_jsonrpc_notification(
+                    ws,
+                    "session/update",
+                    {"sessionId": session_id or ctx.session_id, "update": usage_update},
+                )
+            return True
+
+        if msg.type == "event" and msg.event_type in (
+            EventType.CHAT_TOOL_CALL,
+            EventType.CHAT_TOOL_RESULT,
+            EventType.CHAT_SUBTASK_UPDATE,
+        ):
+            update = build_acp_session_update(msg, payload, ctx)
+            if update is None:
+                return True
+            task = ctx.idle_finalize_task
+            if task is not None:
+                task.cancel()
+                ctx.idle_finalize_task = None
             await self._send_raw_jsonrpc_notification(
                 ws,
                 "session/update",
@@ -656,40 +672,90 @@ class GatewayServer:
             return True
 
         if msg.type == "event" and msg.event_type == EventType.CHAT_FINAL:
-            content = str(payload.get("content", "") or "")
-            if content and not ctx.assistant_message_id:
-                ctx.assistant_message_id = f"msg_{uuid_module.uuid4().hex[:12]}"
+            update = build_acp_final_text_update(payload, ctx)
+            if update is not None:
                 await self._send_raw_jsonrpc_notification(
                     ws,
                     "session/update",
                     {
                         "sessionId": session_id or ctx.session_id,
-                        "update": {
-                            "sessionUpdate": "agent_message_chunk",
-                            "messageId": ctx.assistant_message_id,
-                            "content": {"type": "text", "text": content},
-                        },
+                        "update": update,
                     },
                 )
-            await self._send_raw_jsonrpc_result(ws, ctx.jsonrpc_id, {"stopReason": "end_turn"})
-            self._acp_request_ctx_by_request_id.pop(str(msg.id), None)
-            if self._acp_active_prompt_request_by_session.get(ctx.session_id) == str(msg.id):
-                self._acp_active_prompt_request_by_session.pop(ctx.session_id, None)
+            usage_update = build_acp_usage_update(payload)
+            if usage_update is not None:
+                await self._send_raw_jsonrpc_notification(
+                    ws,
+                    "session/update",
+                    {
+                        "sessionId": session_id or ctx.session_id,
+                        "update": usage_update,
+                    },
+                )
+            self._schedule_acp_idle_finalize(str(msg.id), ctx, ws)
             return True
 
         if msg.type == "event" and msg.event_type == EventType.CHAT_ERROR:
+            task = ctx.idle_finalize_task
+            if task is not None:
+                task.cancel()
+                ctx.idle_finalize_task = None
             await self._send_raw_jsonrpc_error(
                 ws,
                 ctx.jsonrpc_id,
                 -32603,
                 str(payload.get("error") or payload.get("content") or "Agent error"),
             )
-            self._acp_request_ctx_by_request_id.pop(str(msg.id), None)
-            if self._acp_active_prompt_request_by_session.get(ctx.session_id) == str(msg.id):
-                self._acp_active_prompt_request_by_session.pop(ctx.session_id, None)
+            self._clear_acp_request_context(str(msg.id), ctx.session_id)
+            return True
+
+        if msg.type == "event" and msg.event_type == EventType.CHAT_PROCESSING_STATUS:
+            update = build_acp_session_update(msg, payload, ctx)
+            if update is not None:
+                await self._send_raw_jsonrpc_notification(
+                    ws,
+                    "session/update",
+                    {"sessionId": session_id or ctx.session_id, "update": update},
+                )
+            if payload.get("is_processing") is False:
+                task = ctx.idle_finalize_task
+                if task is not None:
+                    task.cancel()
+                    ctx.idle_finalize_task = None
+                await self._send_raw_jsonrpc_result(ws, ctx.jsonrpc_id, {"stopReason": "end_turn"})
+                self._clear_acp_request_context(str(msg.id), ctx.session_id)
             return True
 
         return False
+
+    def _clear_acp_request_context(self, request_id: str, session_id: str) -> None:
+        ctx = self._acp_request_ctx_by_request_id.pop(request_id, None)
+        if ctx is not None and ctx.idle_finalize_task is not None:
+            ctx.idle_finalize_task.cancel()
+            ctx.idle_finalize_task = None
+        if self._acp_active_prompt_request_by_session.get(session_id) == request_id:
+            self._acp_active_prompt_request_by_session.pop(session_id, None)
+
+    def _schedule_acp_idle_finalize(self, request_id: str, ctx: _GatewayAcpRequestContext, ws: Any) -> None:
+        task = ctx.idle_finalize_task
+        if task is not None:
+            task.cancel()
+        ctx.idle_finalize_task = asyncio.create_task(
+            self._acp_idle_finalize_after_timeout(request_id, ws),
+            name=f"gateway-acp-idle-finalize-{request_id}",
+        )
+
+    async def _acp_idle_finalize_after_timeout(self, request_id: str, ws: Any) -> None:
+        current_task = asyncio.current_task()
+        try:
+            await asyncio.sleep(_PROMPT_IDLE_FINALIZE_SECONDS)
+            ctx = self._acp_request_ctx_by_request_id.get(request_id)
+            if ctx is None or ctx.idle_finalize_task is not current_task:
+                return
+            await self._send_raw_jsonrpc_result(ws, ctx.jsonrpc_id, {"stopReason": "end_turn"})
+            self._clear_acp_request_context(request_id, ctx.session_id)
+        except asyncio.CancelledError:
+            return
 
     async def _connection_handler(self, ws: Any, path: str | None = None) -> None:
         raw_path = path if path is not None else getattr(ws, "path", "")

@@ -22,6 +22,7 @@ from jiuwenclaw.schema.agent import AgentResponse, AgentResponseChunk
 
 
 logger = logging.getLogger(__name__)
+_STREAM_TRAILING_MESSAGE_GRACE_SECONDS = 0.35
 
 
 def _wire_request_id_key(request_id: Any) -> str:
@@ -317,8 +318,18 @@ class WebSocketAgentServerClient(AgentServerClient):
 
             # 从队列中接收流式响应
             chunk_count = 0
+            saw_complete = False
             while True:
-                data = await queue.get()
+                if saw_complete:
+                    try:
+                        data = await asyncio.wait_for(
+                            queue.get(),
+                            timeout=_STREAM_TRAILING_MESSAGE_GRACE_SECONDS,
+                        )
+                    except asyncio.TimeoutError:
+                        break
+                else:
+                    data = await queue.get()
                 logger.info("[WebSocketAgentServerClient] 收到流式事件 raw: %s", json.dumps(data, ensure_ascii=False))
                 chunk = parse_agent_server_wire_chunk(data)
                 chunk_count += 1
@@ -328,7 +339,7 @@ class WebSocketAgentServerClient(AgentServerClient):
                 )
                 yield chunk
                 if chunk.is_complete:
-                    break
+                    saw_complete = True
             logger.info("[WebSocketAgentServerClient] 流式响应结束: request_id=%s 共 %s 个 chunk", rid, chunk_count)
         except asyncio.CancelledError:
             logger.info("[WebSocketAgentServerClient] 流式接收被取消: request_id=%s", rid)

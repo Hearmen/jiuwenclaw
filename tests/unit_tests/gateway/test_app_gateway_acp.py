@@ -1,3 +1,4 @@
+import asyncio
 import json
 import time
 from typing import Any
@@ -320,6 +321,19 @@ async def test_gateway_server_handles_acp_jsonrpc_prompt_and_streams_back_jsonrp
                 event_type=EventType.CHAT_FINAL,
             )
         )
+        await server.send(
+            Message(
+                id=msg.id,
+                type="event",
+                channel_id="acp",
+                session_id=msg.session_id,
+                params={},
+                timestamp=time.time(),
+                ok=True,
+                payload={"is_processing": False},
+                event_type=EventType.CHAT_PROCESSING_STATUS,
+            )
+        )
 
     server.on_message(on_message)
 
@@ -345,12 +359,289 @@ async def test_gateway_server_handles_acp_jsonrpc_prompt_and_streams_back_jsonrp
     assert seen[0].params["query"] == "hello"
 
     assert ws.sent_frames[0]["method"] == "session/update"
+    assert ws.sent_frames[1]["method"] == "session/update"
     assert ws.sent_frames[0]["params"]["sessionId"] == "sess-jsonrpc"
     assert ws.sent_frames[-1] == {
         "jsonrpc": "2.0",
         "id": 99,
         "result": {"stopReason": "end_turn"},
     }
+
+
+@pytest.mark.asyncio
+async def test_gateway_server_emits_agent_message_chunk_from_chat_final_when_no_delta():
+    server = build_server()
+    ws = FakeWebSocket()
+
+    async def on_message(msg):
+        await server.send(
+            Message(
+                id=msg.id,
+                type="event",
+                channel_id="acp",
+                session_id=msg.session_id,
+                params={},
+                timestamp=time.time(),
+                ok=True,
+                payload={"content": "gateway final only"},
+                event_type=EventType.CHAT_FINAL,
+            )
+        )
+        await server.send(
+            Message(
+                id=msg.id,
+                type="event",
+                channel_id="acp",
+                session_id=msg.session_id,
+                params={},
+                timestamp=time.time(),
+                ok=True,
+                payload={"is_processing": False},
+                event_type=EventType.CHAT_PROCESSING_STATUS,
+            )
+        )
+
+    server.on_message(on_message)
+
+    await server.handle_raw_message_public(
+        ws,
+        json.dumps(
+            {
+                "jsonrpc": "2.0",
+                "id": 199,
+                "method": "session/prompt",
+                "params": {
+                    "sessionId": "sess-gateway-final",
+                    "text": "hello",
+                },
+            },
+            ensure_ascii=False,
+        ),
+    )
+
+    assert ws.sent_frames[0]["method"] == "session/update"
+    assert ws.sent_frames[0]["params"]["sessionId"] == "sess-gateway-final"
+    assert ws.sent_frames[0]["params"]["update"]["sessionUpdate"] == "agent_message_chunk"
+    assert ws.sent_frames[0]["params"]["update"]["content"] == {
+        "type": "text",
+        "text": "gateway final only",
+    }
+    assert ws.sent_frames[1]["method"] == "session/update"
+    assert ws.sent_frames[1]["params"]["update"] == {
+        "sessionUpdate": "session_info_update",
+        "status": "idle",
+    }
+    assert ws.sent_frames[2] == {
+        "jsonrpc": "2.0",
+        "id": 199,
+        "result": {"stopReason": "end_turn"},
+    }
+
+
+@pytest.mark.asyncio
+async def test_gateway_server_defers_end_turn_until_processing_idle_after_final_and_tool_updates():
+    server = build_server()
+    ws = FakeWebSocket()
+
+    async def on_message(msg):
+        await server.send(
+            Message(
+                id=msg.id,
+                type="event",
+                channel_id="acp",
+                session_id=msg.session_id,
+                params={},
+                timestamp=time.time(),
+                ok=True,
+                payload={"content": "partial"},
+                event_type=EventType.CHAT_DELTA,
+            )
+        )
+        await server.send(
+            Message(
+                id=msg.id,
+                type="event",
+                channel_id="acp",
+                session_id=msg.session_id,
+                params={},
+                timestamp=time.time(),
+                ok=True,
+                payload={"content": "final"},
+                event_type=EventType.CHAT_FINAL,
+            )
+        )
+        await server.send(
+            Message(
+                id=msg.id,
+                type="event",
+                channel_id="acp",
+                session_id=msg.session_id,
+                params={},
+                timestamp=time.time(),
+                ok=True,
+                payload={
+                    "tool_name": "read_file",
+                    "tool_call_id": "tool-call-9",
+                    "result": "still running",
+                },
+                event_type=EventType.CHAT_TOOL_RESULT,
+            )
+        )
+        await server.send(
+            Message(
+                id=msg.id,
+                type="event",
+                channel_id="acp",
+                session_id=msg.session_id,
+                params={},
+                timestamp=time.time(),
+                ok=True,
+                payload={"is_processing": False},
+                event_type=EventType.CHAT_PROCESSING_STATUS,
+            )
+        )
+
+    server.on_message(on_message)
+
+    await server.handle_raw_message_public(
+        ws,
+        json.dumps(
+            {
+                "jsonrpc": "2.0",
+                "id": 299,
+                "method": "session/prompt",
+                "params": {
+                    "sessionId": "sess-final-tool",
+                    "text": "hello",
+                },
+            },
+            ensure_ascii=False,
+        ),
+    )
+
+    assert ws.sent_frames[0]["method"] == "session/update"
+    assert ws.sent_frames[0]["params"]["update"]["sessionUpdate"] == "agent_message_chunk"
+    assert ws.sent_frames[1]["method"] == "session/update"
+    assert ws.sent_frames[1]["params"]["update"] == {
+        "sessionUpdate": "tool_call_update",
+        "toolCallId": "tool-call-9",
+        "toolName": "read_file",
+        "result": "still running",
+    }
+    assert ws.sent_frames[2]["method"] == "session/update"
+    assert ws.sent_frames[2]["params"]["update"] == {
+        "sessionUpdate": "session_info_update",
+        "status": "idle",
+    }
+    assert ws.sent_frames[3] == {
+        "jsonrpc": "2.0",
+        "id": 299,
+        "result": {"stopReason": "end_turn"},
+    }
+
+
+@pytest.mark.asyncio
+async def test_gateway_server_idle_finalize_falls_back_when_processing_status_missing_after_chat_final(monkeypatch):
+    import jiuwenclaw.app_gateway as gateway_module
+
+    monkeypatch.setattr(gateway_module, "_PROMPT_IDLE_FINALIZE_SECONDS", 0.01)
+    server = build_server()
+    ws = FakeWebSocket()
+
+    async def on_message(msg):
+        await server.send(
+            Message(
+                id=msg.id,
+                type="event",
+                channel_id="acp",
+                session_id=msg.session_id,
+                params={},
+                timestamp=time.time(),
+                ok=True,
+                payload={"content": "final answer"},
+                event_type=EventType.CHAT_FINAL,
+            )
+        )
+
+    server.on_message(on_message)
+
+    await server.handle_raw_message_public(
+        ws,
+        json.dumps(
+            {
+                "jsonrpc": "2.0",
+                "id": 399,
+                "method": "session/prompt",
+                "params": {
+                    "sessionId": "sess-idle-fallback",
+                    "text": "hello",
+                },
+            },
+            ensure_ascii=False,
+        ),
+    )
+    await asyncio.sleep(0.03)
+
+    assert ws.sent_frames[0]["method"] == "session/update"
+    assert ws.sent_frames[0]["params"]["update"]["sessionUpdate"] == "agent_message_chunk"
+    assert ws.sent_frames[1] == {
+        "jsonrpc": "2.0",
+        "id": 399,
+        "result": {"stopReason": "end_turn"},
+    }
+
+
+@pytest.mark.asyncio
+async def test_gateway_server_delta_only_does_not_trigger_idle_finalize(monkeypatch):
+    import jiuwenclaw.app_gateway as gateway_module
+
+    monkeypatch.setattr(gateway_module, "_PROMPT_IDLE_FINALIZE_SECONDS", 0.01)
+    server = build_server()
+    ws = FakeWebSocket()
+
+    async def on_message(msg):
+        await server.send(
+            Message(
+                id=msg.id,
+                type="event",
+                channel_id="acp",
+                session_id=msg.session_id,
+                params={},
+                timestamp=time.time(),
+                ok=True,
+                payload={"content": "partial answer"},
+                event_type=EventType.CHAT_DELTA,
+            )
+        )
+
+    server.on_message(on_message)
+
+    await server.handle_raw_message_public(
+        ws,
+        json.dumps(
+            {
+                "jsonrpc": "2.0",
+                "id": 400,
+                "method": "session/prompt",
+                "params": {
+                    "sessionId": "sess-delta-only",
+                    "text": "hello",
+                },
+            },
+            ensure_ascii=False,
+        ),
+    )
+    await asyncio.sleep(0.03)
+
+    assert len(ws.sent_frames) == 1
+    assert ws.sent_frames[0]["jsonrpc"] == "2.0"
+    assert ws.sent_frames[0]["method"] == "session/update"
+    params = ws.sent_frames[0]["params"]
+    assert params["sessionId"] == "sess-delta-only"
+    update = params["update"]
+    assert update["sessionUpdate"] == "agent_message_chunk"
+    assert isinstance(update.get("messageId"), str)
+    assert update["content"] == {"type": "text", "text": "partial answer"}
 
 
 @pytest.mark.asyncio

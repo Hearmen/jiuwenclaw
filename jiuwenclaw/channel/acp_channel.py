@@ -12,6 +12,11 @@ from dataclasses import dataclass, field
 from typing import Any, Callable
 
 from jiuwenclaw.channel.base import BaseChannel, RobotMessageRouter
+from jiuwenclaw.e2a.acp.session_updates import (
+    build_acp_final_text_update,
+    build_acp_session_update,
+    build_acp_usage_update,
+)
 from jiuwenclaw.e2a.adapters import envelope_from_acp_jsonrpc
 from jiuwenclaw.e2a.constants import (
     E2A_RESPONSE_KIND_ACP_JSONRPC_ERROR,
@@ -685,21 +690,14 @@ class AcpChannel(BaseChannel):
             text = str(payload.get("content", "") or "")
             if not text:
                 return False
-            self._schedule_idle_finalize(str(msg.id), ctx)
             update = self._build_acp_session_update(msg, payload, ctx)
             if update is None:
                 return False
             await self._write_acp_session_update(session_id, update)
             # 如果 CHAT_DELTA 携带 usage，也发送 usage_update
-            usage = payload.get("usage")
-            if isinstance(usage, dict) and usage:
-                await self._write_acp_session_update(
-                    session_id,
-                    {
-                        "sessionUpdate": "usage_update",
-                        "usage": dict(usage),
-                    },
-                )
+            usage_update = build_acp_usage_update(payload)
+            if usage_update is not None:
+                await self._write_acp_session_update(session_id, usage_update)
             return False
 
         if msg.type == "event" and msg.event_type in (
@@ -718,41 +716,14 @@ class AcpChannel(BaseChannel):
             return False
 
         if msg.type == "event" and msg.event_type == EventType.CHAT_FINAL:
-            # ACP 兜底：不要立即发送 end_turn，因为 AgentServer 可能还会发送更多事件
-            # 只记录内容，等待 is_processing=false 时再发送最终响应
-            content = str(payload.get("content", "") or "")
-            if not content:
-                return False
-            # 检查 payload.event_type 是否是 reasoning，决定使用哪种 sessionUpdate 类型
-            payload_event_type = str(payload.get("event_type") or "")
-            is_reasoning = payload_event_type == "chat.reasoning"
-            if is_reasoning:
-                # reasoning 内容作为 thought 发送
-                if not ctx.thought_message_id:
-                    ctx.thought_message_id = f"thought_{uuid.uuid4().hex[:12]}"
-                await self._write_acp_session_update(
-                    session_id,
-                    {
-                        "sessionUpdate": "agent_thought_chunk",
-                        "messageId": ctx.thought_message_id,
-                        "content": {"type": "text", "text": content},
-                    },
-                )
-            else:
-                # chat.final 内容不发送 agent_message_chunk，因为 chat.delta 已经发送过了
-                # 只记录 messageId 用于后续可能的引用
-                if not ctx.assistant_message_id:
-                    ctx.assistant_message_id = f"msg_{uuid.uuid4().hex[:12]}"
-            usage = payload.get("usage")
-            if isinstance(usage, dict) and usage:
-                await self._write_acp_session_update(
-                    session_id,
-                    {
-                        "sessionUpdate": "usage_update",
-                        "usage": dict(usage),
-                    },
-                )
-            # 不发送 end_turn，等待 is_processing=false 时再发送
+            # ACP fallback: defer end_turn until processing stops.
+            update = build_acp_final_text_update(payload, ctx)
+            if update is not None:
+                await self._write_acp_session_update(session_id, update)
+            usage_update = build_acp_usage_update(payload)
+            if usage_update is not None:
+                await self._write_acp_session_update(session_id, usage_update)
+            self._schedule_idle_finalize(str(msg.id), ctx)
             return False
 
         if msg.type == "event" and msg.event_type == EventType.CHAT_ERROR:
@@ -837,83 +808,8 @@ class AcpChannel(BaseChannel):
         payload: dict[str, Any],
         ctx: _AcpRequestContext,
     ) -> dict[str, Any] | None:
-        event_type = msg.event_type
-        if event_type == EventType.CHAT_DELTA:
-            text = str(payload.get("content", "") or "")
-            if not text:
-                return None
-            source_chunk_type = str(payload.get("source_chunk_type") or "")
-            # ACP 兜底：检查 payload 中的原始 event_type，如果是 chat.reasoning 则作为 thought 处理
-            payload_event_type = str(payload.get("event_type") or "")
-            is_reasoning = (
-                source_chunk_type == "llm_reasoning"
-                or payload_event_type == "chat.reasoning"
-            )
+        return build_acp_session_update(msg, payload, ctx)
 
-            if is_reasoning:
-                if not ctx.thought_message_id:
-                    ctx.thought_message_id = f"thought_{uuid.uuid4().hex[:12]}"
-                return {
-                    "sessionUpdate": "agent_thought_chunk",
-                    "messageId": ctx.thought_message_id,
-                    "content": {"type": "text", "text": text},
-                }
-
-            if not ctx.assistant_message_id:
-                ctx.assistant_message_id = f"msg_{uuid.uuid4().hex[:12]}"
-            return {
-                "sessionUpdate": "agent_message_chunk",
-                "messageId": ctx.assistant_message_id,
-                "content": {"type": "text", "text": text},
-            }
-
-        if event_type == EventType.CHAT_TOOL_CALL:
-            tool_call = payload.get("tool_call")
-            if not isinstance(tool_call, dict):
-                return None
-            tool_call_id = str(
-                tool_call.get("tool_call_id")
-                or tool_call.get("toolCallId")
-                or tool_call.get("id")
-                or ""
-            )
-            return {
-                "sessionUpdate": "tool_call",
-                "toolCall": {
-                    "id": tool_call_id,
-                    "name": str(tool_call.get("name") or ""),
-                    "arguments": tool_call.get("arguments", {}),
-                },
-            }
-
-        if event_type == EventType.CHAT_TOOL_RESULT:
-            tool_call_id = str(payload.get("tool_call_id") or payload.get("toolCallId") or "")
-            tool_name = str(payload.get("tool_name") or payload.get("name") or "")
-            result: Any = payload.get("result")
-            if result is None:
-                result = payload.get("content", "")
-            update = {
-                "sessionUpdate": "tool_call_update",
-                "toolCallId": tool_call_id,
-                "result": result,
-            }
-            if tool_name:
-                update["toolName"] = tool_name
-            return update
-
-        if event_type == EventType.CHAT_SUBTASK_UPDATE:
-            return {
-                "sessionUpdate": "plan",
-                "plan": dict(payload),
-            }
-
-        if event_type == EventType.CHAT_PROCESSING_STATUS:
-            return {
-                "sessionUpdate": "session_info_update",
-                "status": "processing" if bool(payload.get("is_processing", True)) else "idle",
-            }
-
-        return None
 
     @staticmethod
     def _is_jsonrpc_request(data: Any) -> bool:
