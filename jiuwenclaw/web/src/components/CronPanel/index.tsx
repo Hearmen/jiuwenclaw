@@ -7,6 +7,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import { useTranslation } from 'react-i18next';
 import { webRequest } from '../../services/webClient';
+import { useSessionStore } from '../../stores/sessionStore';
 
 const DEFAULT_CRON_TIMEZONE = 'Asia/Shanghai';
 const DEFAULT_CRON_TARGET = 'web';
@@ -144,8 +145,8 @@ function normalizeJobForEdit(job: CronJob): UpdateCronJob {
   };
 }
 
-function buildLegacyJobInput(job: CronJobInput | UpdateCronJob): Record<string, unknown> {
-  return {
+function buildLegacyJobInput(job: CronJobInput | UpdateCronJob, mode?: string): Record<string, unknown> {
+  const result: Record<string, unknown> = {
     name: job.name.trim(),
     enabled: job.enabled,
     cron_expr: job.cron_expr.trim(),
@@ -154,10 +155,15 @@ function buildLegacyJobInput(job: CronJobInput | UpdateCronJob): Record<string, 
     description: job.description.trim(),
     targets: job.targets.trim() || DEFAULT_CRON_TARGET,
   };
+  if (mode) {
+    result['mode'] = mode;
+  }
+  return result;
 }
 
 export default function CronPanel({ sessionId }: CronPanelProps) {
   const { t } = useTranslation();
+  const { mode } = useSessionStore();
   const [cronJobs, setCronJobs] = useState<CronJob[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -248,7 +254,7 @@ export default function CronPanel({ sessionId }: CronPanelProps) {
 
     try {
       await webRequest<{ job: CronJob }>('cron.job.create', {
-        ...buildLegacyJobInput(newJob),
+        ...buildLegacyJobInput(newJob, mode),
         session_id: sessionId,
       });
       setSuccess(t('cron.success.created'));
@@ -370,7 +376,7 @@ export default function CronPanel({ sessionId }: CronPanelProps) {
     try {
       const updateData: Record<string, unknown> = {
         id: editJob.id,
-        patch: buildLegacyJobInput(editJob),
+        patch: buildLegacyJobInput(editJob, mode),
       };
 
       await webRequest<{ job: CronJob }>('cron.job.update', {
