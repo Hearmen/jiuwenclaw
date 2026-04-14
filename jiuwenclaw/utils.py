@@ -27,6 +27,7 @@ Runtime layout:
 
 import json
 import os
+import re
 import sys
 import datetime
 import shutil
@@ -455,37 +456,46 @@ def _migrate_legacy_workspace(
 
     # 4. Migrate memory
     new_memory = new_workspace / "memory"
+    new_memory.mkdir(parents=True, exist_ok=True)
+
     if old_memory.exists():
-        new_memory.mkdir(parents=True, exist_ok=True)
-        
         # 4.1 Migrate USER.md to workspace root (not in memory/)
         old_user = old_memory / "USER.md"
         new_user = new_workspace / "USER.md"
         if old_user.exists() and not new_user.exists():
             shutil.copy2(old_user, new_user)
             logger.info("Migrated USER.md from memory/ to workspace root")
-        
-        # 4.2 Create daily_memory directory and migrate date-based .md files
+
+        # 4.2 Create daily_memory directory
         daily_memory = new_memory / "daily_memory"
         daily_memory.mkdir(parents=True, exist_ok=True)
-        
+
+        # 4.3 Merge memory files (skip if already exists)
+        # Date pattern: YYYY-MM-DD.md (e.g., 2026-04-14.md)
+        date_pattern = re.compile(r"^\d{4}-\d{2}-\d{2}\.md$")
+
         for item in old_memory.iterdir():
             if item.name == "USER.md":
                 continue  # Already handled above
             if item.name == "MEMORY.md":
-                # Copy MEMORY.md to new location
-                shutil.copy2(item, new_memory / "MEMORY.md")
-            elif item.is_file() and item.suffix == ".md":
-                # Date-based memory files (e.g., 2025-01-01.md) go to daily_memory/
-                shutil.copy2(item, daily_memory / item.name)
-                logger.info(f"Migrated daily memory: {item.name}")
+                dest = new_memory / "MEMORY.md"
+                if not dest.exists():
+                    shutil.copy2(item, dest)
+                    logger.info("Migrated MEMORY.md")
+            elif item.is_file():
+                # Date-based memory files (YYYY-MM-DD.md) -> daily_memory/
+                # Other files -> new_memory/ root
+                dest = daily_memory / item.name if date_pattern.match(item.name) else new_memory / item.name
+                if not dest.exists():
+                    shutil.copy2(item, dest)
+                    logger.info(f"Migrated memory file: {item.name}")
             elif item.is_dir():
-                # Copy other directories as-is
+                # Other directories (e.g., specific memory categories)
                 dest = new_memory / item.name
-                if dest.exists():
-                    shutil.rmtree(dest)
-                shutil.copytree(item, dest)
-        
+                if not dest.exists():
+                    shutil.copytree(item, dest)
+                    logger.info(f"Migrated memory directory: {item.name}")
+
         logger.info(f"Migrated memory: {old_memory} -> {new_memory}")
 
     # 5. Migrate cron_jobs.json from old_home to gateway
@@ -541,7 +551,10 @@ def _migrate_legacy_workspace(
     logger.info(f"Migration completed: {new_workspace}")
 
 
-def prepare_workspace(overwrite: bool = True, preferred_language: Optional[str] = None):
+def prepare_workspace(
+    overwrite: bool = True,
+    preferred_language: Optional[str] = None,
+) -> None:
     package_root = _find_package_root()
     if not package_root:
         raise RuntimeError("package root not found")
@@ -554,10 +567,14 @@ def prepare_workspace(overwrite: bool = True, preferred_language: Optional[str] 
     old_home = workspace_dir / "agent" / "home"
     old_skills = workspace_dir / "agent" / "skills"
     old_memory = workspace_dir / "agent" / "memory"
-    new_workspace = workspace_dir / "agent" / "jiuwenclaw_workspace"
 
-    # If old workspace exists and new workspace does not exist, migrate (for start command)
-    if old_workspace.exists() and not new_workspace.exists() and not overwrite:
+    # Check for legacy directory migration (for start command, overwrite=False)
+    # Migration triggers when ANY legacy directory exists, not just old_workspace
+    legacy_dirs_exist = (
+        old_workspace.exists() or old_skills.exists() or old_memory.exists()
+    )
+
+    if legacy_dirs_exist and not overwrite:
         _migrate_legacy_workspace(workspace_dir, preferred_language)
     # If overwrite (init command), clean up old legacy directories first
     elif overwrite:
@@ -697,6 +714,18 @@ def prepare_workspace(overwrite: bool = True, preferred_language: Optional[str] 
         dest_skill_state = agent_skills / "skills_state.json"
         if not dest_skill_state.exists():
             shutil.copy2(skills_state_src, agent_skills / "skills_state.json")
+
+    # Explicitly copy template skills (was excluded by ignore_patterns above)
+    # Only copy skills that don't exist in user workspace (preserve user modifications)
+    template_skills = template_agent_workspace / "skills"
+    if template_skills.exists():
+        agent_skills.mkdir(parents=True, exist_ok=True)
+        for skill_dir in template_skills.iterdir():
+            if skill_dir.is_dir():
+                dest_skill = agent_skills / skill_dir.name
+                if not dest_skill.exists():
+                    shutil.copytree(skill_dir, dest_skill)
+                    logger.info(f"Copied template skill: {skill_dir.name}")
 
     # sessions is runtime-only (template may not include it)
     agent_sessions.mkdir(parents=True, exist_ok=True)

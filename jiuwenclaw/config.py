@@ -319,18 +319,58 @@ def update_memory_forbidden_in_config(updates: dict[str, Any]) -> None:
     _dump_yaml_round_trip(_CONFIG_YAML_PATH, data)
 
 
+def _deep_merge(
+    template: dict[str, Any],
+    user: dict[str, Any],
+    depth: int = 0,
+) -> dict[str, Any]:
+    """Recursively merge template with user config, cleaning deprecated fields.
+
+    Rules:
+    - Add: fields only in template (new config options)
+    - Keep: user values for fields that exist in template (preserve user settings)
+    - Remove: fields only in user (deprecated config, cleanup)
+    - Max recursion depth: 4 (covers deep nested config like context_engine_config)
+
+    Args:
+        template: Template config dict with default values
+        user: User config dict
+        depth: Current recursion depth
+
+    Returns:
+        Merged dict synced with template structure, preserving user values.
+    """
+    if depth >= 4:
+        return user
+
+    result: dict[str, Any] = {}
+
+    for key, template_value in template.items():
+        if key not in user:
+            result[key] = template_value
+        elif isinstance(template_value, dict) and isinstance(user.get(key), dict):
+            result[key] = _deep_merge(template_value, user[key], depth + 1)
+        else:
+            result[key] = user[key]
+
+    return result
+
+
 def migrate_config_from_template(
     template_path: Path,
     user_config_path: Path,
 ) -> bool:
-    """Simplified config migration: merge template and user config.
+    """Sync user config with template structure, preserving user values.
 
-    Merge rules (for first two levels):
-    1. First level: keep user value if exists, otherwise use template value
-    2. Second level: keep user value if exists, otherwise add from template
-    3. Exceptions (overwrite directly):
-       - react.context_engine_config
-       - permissions.tools
+    Three-way merge:
+    - Add: new fields from template (new config options)
+    - Keep: user values for fields that exist in template
+    - Remove: deprecated fields not in template (cleanup)
+
+    This preserves user settings like:
+    - models.*.model_config_obj.temperature
+    - react.context_engine_config.enabled
+    - react.context_engine_config.message_summary_offloader_config.*
 
     Args:
         template_path: Path to template config.yaml
@@ -348,38 +388,22 @@ def migrate_config_from_template(
     template_data = _load_yaml_round_trip(template_path)
     user_data = _load_yaml_round_trip(user_config_path)
 
-    if template_data is None:
+    if not isinstance(template_data, dict):
         return False
 
     if user_data is None:
         user_data = {}
 
-    modified = False
+    # Deep merge: template provides defaults, user values preserved
+    merged_data = _deep_merge(template_data, user_data)
 
-    # First level traversal
-    for key, value in template_data.items():
-        if key not in user_data:
-            # User doesn't have this key, use template value
-            user_data[key] = value
-            modified = True
-        elif isinstance(value, dict) and isinstance(user_data[key], dict):
-            # Traverse second level of template
-            for sub_key, sub_value in value.items():
-                # Check for overwrite exceptions
-                is_overwrite = (
-                    key == "react" and sub_key == "context_engine_config"
-                ) or (key == "permissions" and sub_key == "tools")
+    # Guard against empty merged_data overwriting valid user config
+    if merged_data is None or not merged_data:
+        return False
 
-                if is_overwrite:
-                    # Overwrite directly from template
-                    user_data[key][sub_key] = sub_value
-                    modified = True
-                elif sub_key not in user_data[key]:
-                    # User doesn't have this sub-key, add it
-                    user_data[key][sub_key] = sub_value
-                    modified = True
+    # Only write if there are actual changes
+    if merged_data != user_data:
+        _dump_yaml_round_trip(user_config_path, merged_data)
+        return True
 
-    if modified:
-        _dump_yaml_round_trip(user_config_path, user_data)
-
-    return modified
+    return False
