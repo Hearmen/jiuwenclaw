@@ -17,6 +17,88 @@ import { padToWidth } from "./rendering/text.js";
 import { editorTheme, palette, selectListTheme } from "./theme.js";
 
 const END_CURSOR = "\x1b[7m \x1b[0m";
+const PERMISSION_TOOL_RE = /工具\s+`([^`]+)`\s+需要授权/;
+const PERMISSION_RISK_RE = /安全风险评估：\**\s*([^\s*]+)?\s*\**([^*\n]+?风险)\**/m;
+const PERMISSION_QUOTE_RE = /^>\s*(.+)$/gm;
+const PERMISSION_JSON_BLOCK_RE = /```json\s*([\s\S]*?)\s*```/i;
+
+type PermissionSummary = {
+  tool?: string;
+  risk?: string;
+  reason?: string;
+  command?: string;
+  description?: string;
+};
+
+function isPermissionRequest(source: string | undefined, questionText: string): boolean {
+  return source === "permission" || PERMISSION_TOOL_RE.test(questionText);
+}
+
+function parsePermissionSummary(questionText: string): PermissionSummary {
+  const tool = PERMISSION_TOOL_RE.exec(questionText)?.[1]?.trim();
+  const riskMatch = PERMISSION_RISK_RE.exec(questionText);
+  const risk = riskMatch
+    ? `${(riskMatch[1] ?? "").trim()} ${riskMatch[2].trim()}`.trim()
+    : undefined;
+  const reason = [...questionText.matchAll(PERMISSION_QUOTE_RE)]
+    .map((match) => match[1]?.trim() ?? "")
+    .find(Boolean);
+
+  let command: string | undefined;
+  let description: string | undefined;
+  const jsonBlock = PERMISSION_JSON_BLOCK_RE.exec(questionText)?.[1]?.trim();
+  if (jsonBlock) {
+    try {
+      const parsed = JSON.parse(jsonBlock) as Record<string, unknown>;
+      command =
+        typeof parsed.command === "string"
+          ? parsed.command.trim()
+          : typeof parsed.cmd === "string"
+            ? parsed.cmd.trim()
+            : undefined;
+      description = typeof parsed.description === "string" ? parsed.description.trim() : undefined;
+    } catch {
+      // Ignore malformed JSON blocks in permission prompts.
+    }
+  }
+
+  return {
+    tool,
+    risk,
+    reason,
+    command,
+    description,
+  };
+}
+
+function wrapPlainText(text: string, width: number): string[] {
+  const maxWidth = Math.max(12, width - 1);
+  const source = text.replace(/\r/g, "").split("\n");
+  const lines: string[] = [];
+  for (const rawLine of source) {
+    const words = rawLine.split(/\s+/).filter((word) => word.length > 0);
+    if (words.length === 0) {
+      lines.push("");
+      continue;
+    }
+    let current = "";
+    for (const word of words) {
+      const next = current ? `${current} ${word}` : word;
+      if (next.length <= maxWidth) {
+        current = next;
+        continue;
+      }
+      if (current) {
+        lines.push(current);
+      }
+      current = word.length <= maxWidth ? word : word.slice(0, maxWidth);
+    }
+    if (current) {
+      lines.push(current);
+    }
+  }
+  return lines.length > 0 ? lines : [text.slice(0, maxWidth)];
+}
 
 export class AppScreen implements Component, Focusable {
   private readonly editor: Editor;
@@ -27,7 +109,7 @@ export class AppScreen implements Component, Focusable {
   private draftBeforeQuestion = "";
   private pendingQuestionAnswers = new Map<number, string>();
   private questionList: SelectList | null = null;
-  private showFullThinking = false;
+  private showFullThinking = true;
   private showToolDetails = false;
   private showShortcutHelp = false;
   private exitArmedUntil = 0;
@@ -134,7 +216,6 @@ export class AppScreen implements Component, Focusable {
     const questionLines = this.buildPendingQuestionLines(snapshot, width);
     return buildAppScreenLines(snapshot, {
       width,
-      terminalRows: this.tui.terminal.rows,
       questionLines,
       editorLines,
       showFullThinking: this.showFullThinking,
@@ -287,29 +368,68 @@ export class AppScreen implements Component, Focusable {
     }));
   }
 
-  private buildPendingQuestionLines(snapshot: ReturnType<CliPiAppState["getSnapshot"]>, width: number): string[] {
+  private buildPendingQuestionLines(
+    snapshot: ReturnType<CliPiAppState["getSnapshot"]>,
+    width: number,
+  ): string[] {
     const pendingQuestion = snapshot.pendingQuestion;
     if (!pendingQuestion) {
       return [];
     }
 
-    const question = pendingQuestion.questions[this.activeQuestionIndex] ?? pendingQuestion.questions[0];
+    const question =
+      pendingQuestion.questions[this.activeQuestionIndex] ?? pendingQuestion.questions[0];
     if (!question) {
       return [];
     }
 
     const total = pendingQuestion.questions.length;
     const progress = total > 1 ? ` (${this.activeQuestionIndex + 1}/${total})` : "";
-    const lines = this.wrapQuestionText(`[${question.header || "Question"}${progress}] ${question.question}`, width).map(
-      (line) => padToWidth(palette.status.warning(line), width),
-    );
+    const permissionRequest = isPermissionRequest(pendingQuestion.source, question.question);
+    const lines: string[] = [];
+
+    if (permissionRequest) {
+      const summary = parsePermissionSummary(question.question);
+      lines.push(
+        padToWidth(
+          palette.status.warning(
+            `Permission${progress ? ` ${this.activeQuestionIndex + 1}/${total}` : ""}`,
+          ),
+          width,
+        ),
+      );
+      if (summary.tool) {
+        lines.push(padToWidth(palette.text.assistant(`${summary.tool} wants to run`), width));
+      }
+      const primaryDetail = summary.command ?? summary.description ?? summary.reason;
+      if (primaryDetail) {
+        lines.push(
+          ...wrapPlainText(primaryDetail, width)
+            .slice(0, 2)
+            .map((line) =>
+              padToWidth(summary.command ? palette.text.tool(line) : palette.text.dim(line), width),
+            ),
+        );
+      }
+    } else {
+      lines.push(
+        ...wrapPlainText(
+          `[${question.header || "Question"}${progress}] ${question.question}`,
+          width,
+        ).map((line) => padToWidth(palette.status.warning(line), width)),
+      );
+    }
 
     if (this.questionList !== null) {
       lines.push(" ".repeat(width));
       lines.push(...this.questionList.render(width));
       lines.push(
         padToWidth(
-          palette.text.dim("Use ↑/↓ to choose, Enter to confirm, Esc to reject"),
+          palette.text.dim(
+            permissionRequest
+              ? "Use ↑/↓ to review options, Enter to approve, Esc to reject"
+              : "Use ↑/↓ to choose, Enter to confirm, Esc to reject",
+          ),
           width,
         ),
       );
@@ -317,35 +437,6 @@ export class AppScreen implements Component, Focusable {
 
     lines.push(" ".repeat(width));
     return lines;
-  }
-
-  private wrapQuestionText(text: string, width: number): string[] {
-    const maxWidth = Math.max(12, width - 1);
-    const source = text.replace(/\r/g, "").split("\n");
-    const lines: string[] = [];
-    for (const rawLine of source) {
-      const words = rawLine.split(/\s+/).filter((word) => word.length > 0);
-      if (words.length === 0) {
-        lines.push("");
-        continue;
-      }
-      let current = "";
-      for (const word of words) {
-        const next = current ? `${current} ${word}` : word;
-        if (next.length <= maxWidth) {
-          current = next;
-          continue;
-        }
-        if (current) {
-          lines.push(current);
-        }
-        current = word.length <= maxWidth ? word : word.slice(0, maxWidth);
-      }
-      if (current) {
-        lines.push(current);
-      }
-    }
-    return lines.length > 0 ? lines : [text.slice(0, maxWidth)];
   }
 
   private syncQuestionList(snapshot: ReturnType<CliPiAppState["getSnapshot"]>): void {

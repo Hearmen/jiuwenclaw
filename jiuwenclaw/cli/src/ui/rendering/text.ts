@@ -28,11 +28,14 @@ export function prefixedLines(
   width: number,
   prefix: string,
   prefixFn: (value: string) => string,
+  continuationPrefix?: string,
 ): string[] {
-  const bodyWidth = Math.max(1, width - prefix.length);
-  const prefixPad = " ".repeat(prefix.length);
+  const activeContinuationPrefix =
+    continuationPrefix === undefined ? " ".repeat(prefix.length) : continuationPrefix;
+  const bodyWidth = Math.max(1, width - Math.max(prefix.length, activeContinuationPrefix.length));
   return lines.map(
-    (line, index) => prefixFn(index === 0 ? prefix : prefixPad) + padToWidth(line, bodyWidth),
+    (line, index) =>
+      prefixFn(index === 0 ? prefix : activeContinuationPrefix) + padToWidth(line, bodyWidth),
   );
 }
 

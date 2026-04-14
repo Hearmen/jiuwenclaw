@@ -1,6 +1,6 @@
 import { truncateToWidth, type Component } from "@mariozechner/pi-tui";
 import type { HistoryItem } from "../../../core/types.js";
-import { palette } from "../../theme.js";
+import { chalk, palette } from "../../theme.js";
 import {
   prefixedLines,
   renderMarkdownLines,
@@ -26,7 +26,7 @@ export class UserMessageComponent implements Component {
       1,
       1,
     );
-    return prefixedLines(lines, width, "> ", palette.text.accent);
+    return prefixedLines(lines, width, "> ", palette.text.user, "│ ");
   }
 }
 
@@ -40,15 +40,15 @@ export class AssistantMessageComponent implements Component {
     if (!body) {
       return [];
     }
-    const lines = renderMarkdownLines(Math.max(1, width - 2), body, 1, 0);
+    const lines = renderMarkdownLines(width, body, 0, 0);
     if (this.entry.streaming && lines.length > 0) {
       const lastIndex = lines.length - 1;
       lines[lastIndex] = truncateToWidth(
-        lines[lastIndex] + palette.status.warning(" [streaming]"),
-        Math.max(1, width - 2),
+        lines[lastIndex] + palette.status.warning(" …"),
+        Math.max(1, width),
       );
     }
-    return prefixedLines(lines, width, "• ", palette.text.dim);
+    return lines;
   }
 }
 
@@ -62,18 +62,13 @@ export class ThinkingMessageComponent implements Component {
 
   render(width: number): string[] {
     if (!this.expanded) {
-      const lines = renderStyledMarkdownLines(
-        Math.max(1, width - 2),
-        "Thinking...",
-        {
-          color: palette.text.dim,
-          italic: true,
-        },
-        1,
-        0,
+      return renderWrappedText(width, "thinking", (value) =>
+        chalk.italic(palette.text.thinking(value)),
       );
-      return prefixedLines(lines, width, "• ", palette.status.success);
     }
+    const lines = renderWrappedText(width, "thinking", (value) =>
+      chalk.italic(palette.text.thinking(value)),
+    );
     const wrapped = renderStyledMarkdownLines(
       Math.max(1, width - 2),
       this.entry.content,
@@ -81,10 +76,10 @@ export class ThinkingMessageComponent implements Component {
         color: palette.text.dim,
         italic: true,
       },
-      1,
+      0,
       0,
     );
-    return prefixedLines(wrapped, width, "• ", palette.status.success);
+    return [...lines, ...prefixedLines(wrapped, width, "│ ", palette.text.dim, "│ ")];
   }
 }
 
@@ -94,12 +89,7 @@ export class SystemMessageComponent implements Component {
   invalidate(): void {}
 
   render(width: number): string[] {
-    return prefixedLines(
-      renderWrappedText(Math.max(1, width - 2), this.entry.content, palette.text.dim),
-      width,
-      "· ",
-      palette.text.dim,
-    );
+    return renderWrappedText(width, `· ${this.entry.content}`, palette.text.system);
   }
 }
 
@@ -114,6 +104,7 @@ export class ErrorMessageComponent implements Component {
       width,
       "! ",
       palette.status.error,
+      "  ",
     );
   }
 }
@@ -126,17 +117,19 @@ export class InfoMessageComponent implements Component {
   render(width: number): string[] {
     const meta = this.entry.meta;
     const lines: string[] = [];
-    const innerWidth = Math.max(1, width - 2);
+    const innerWidth = Math.max(1, width);
     const title = meta?.title ?? this.entry.content;
-    lines.push(...renderWrappedText(innerWidth, title, palette.status.info));
+    lines.push(...renderWrappedText(innerWidth, `· ${title}`, palette.text.info));
     for (const item of meta?.items ?? []) {
       const value = item.value ? `: ${item.value}` : "";
-      lines.push(...renderWrappedText(innerWidth, `  ${item.label}${value}`, palette.text.primary));
+      lines.push(
+        ...renderWrappedText(innerWidth, `  ${item.label}${value}`, palette.text.assistant),
+      );
       if (item.description) {
         lines.push(...renderWrappedText(innerWidth, `    ${item.description}`, palette.text.dim));
       }
     }
-    return prefixedLines(lines, width, "· ", palette.text.dim);
+    return lines;
   }
 }
 
@@ -160,18 +153,22 @@ export class CompactMessageComponent implements Component {
         : this.entry.content;
     const prefix =
       this.entry.kind === "assistant" || this.entry.kind === "thinking"
-        ? "[a] "
+        ? ""
         : this.entry.kind === "user"
           ? "> "
           : this.entry.kind === "error"
             ? "! "
-            : "- ";
+            : "· ";
     const color =
       this.entry.kind === "error"
         ? palette.status.error
         : this.entry.kind === "assistant"
-          ? palette.text.primary
-          : palette.text.dim;
+          ? palette.text.assistant
+          : this.entry.kind === "user"
+            ? palette.text.user
+            : this.entry.kind === "thinking"
+              ? palette.text.thinking
+              : palette.text.dim;
     return renderWrappedText(width, `${prefix}${content}`, color);
   }
 }

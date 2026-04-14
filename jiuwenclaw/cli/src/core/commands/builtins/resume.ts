@@ -24,12 +24,6 @@ interface ResumeResumePayload {
   preview?: string;
 }
 
-type ResumePayload = SessionListPayload | ResumeResumePayload;
-
-function isListPayload(payload: ResumePayload): payload is SessionListPayload {
-  return Array.isArray((payload as SessionListPayload).sessions);
-}
-
 export function createResumeCommand(): SlashCommand {
   return {
     name: "resume",

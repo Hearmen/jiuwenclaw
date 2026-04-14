@@ -101,7 +101,9 @@ function normalizePendingQuestion(payload: Record<string, unknown>): PendingQues
       question: typeof item.question === "string" ? item.question : "",
       options: Array.isArray(item.options)
         ? item.options
-            .filter((option): option is Record<string, unknown> => Boolean(option && typeof option === "object"))
+            .filter((option): option is Record<string, unknown> =>
+              Boolean(option && typeof option === "object"),
+            )
             .map((option) => ({
               label: typeof option.label === "string" ? option.label : "",
               description: typeof option.description === "string" ? option.description : undefined,
@@ -146,27 +148,13 @@ function handleDelta(
 
   const entries = delegate.getEntries();
   if (payload.source_chunk_type === "llm_reasoning") {
-    const existingIndex = findLastIndex(entries, (entry) => entry.kind === "thinking");
-    if (existingIndex === -1) {
-      delegate.setEntries([
-        ...entries,
-        {
-          kind: "thinking",
-          id: createId("reasoning"),
-          sessionId: activeSessionId,
-          content,
-          at: new Date().toISOString(),
-        },
-      ]);
-      return true;
-    }
-    delegate.setEntries(
-      entries.map((entry, index) =>
-        index === existingIndex && entry.kind === "thinking"
-          ? { ...entry, content: `${entry.content}${content}` }
-          : entry,
-      ),
-    );
+    appendEntry(delegate, {
+      kind: "thinking",
+      id: createId("reasoning"),
+      sessionId: activeSessionId,
+      content,
+      at: new Date().toISOString(),
+    });
     return true;
   }
 
@@ -208,14 +196,32 @@ function handleFinal(
 ): boolean {
   const content = typeof payload.content === "string" ? payload.content : "";
   const entries = delegate.getEntries();
-  const hasStreaming = entries.some((entry) => entry.kind === "assistant" && entry.streaming);
+  const streamingIndex = findLastIndex(
+    entries,
+    (entry) => entry.kind === "assistant" && entry.streaming === true,
+  );
   delegate.setEntries(
-    hasStreaming
-      ? entries.map((entry) =>
-          entry.kind === "assistant" && entry.streaming
-            ? { ...entry, content: content || entry.content, streaming: false }
-            : entry,
-        )
+    streamingIndex !== -1
+      ? [
+          ...entries.filter(
+            (entry, index) => !(index === streamingIndex && entry.kind === "assistant"),
+          ),
+          {
+            ...(entries[streamingIndex] as Extract<HistoryItem, { kind: "assistant" }>),
+            content:
+              content ||
+              (entries[streamingIndex]?.kind === "assistant"
+                ? entries[streamingIndex].content
+                : ""),
+            requestId:
+              typeof payload.request_id === "string"
+                ? payload.request_id
+                : entries[streamingIndex]?.kind === "assistant"
+                  ? entries[streamingIndex].requestId
+                  : undefined,
+            streaming: false,
+          },
+        ]
       : [
           ...entries,
           {

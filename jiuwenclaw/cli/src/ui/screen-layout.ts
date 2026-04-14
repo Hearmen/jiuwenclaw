@@ -1,4 +1,5 @@
 import type { AppSnapshot } from "../app-state.js";
+import type { HistoryItem, ToolCallDisplay } from "../core/types.js";
 import { renderHistoryEntry } from "./components/messages/index.js";
 import { renderTodoList } from "./components/todo-list.js";
 import { APP_SCREEN_KEY_BINDINGS } from "./keymap.js";
@@ -8,7 +9,6 @@ import { buildWelcomeLines } from "./welcome.js";
 
 export interface ScreenLayoutOptions {
   width: number;
-  terminalRows: number;
   questionLines: string[];
   editorLines: string[];
   showFullThinking: boolean;
@@ -72,17 +72,6 @@ function buildStatusLines(
   } else if (snapshot.evolutionStatus === "running") {
     lines.push(padToWidth(palette.text.dim("evolution | running"), width));
   }
-  if (snapshot.contextCompression) {
-    const { beforeCompressed, afterCompressed, rate } = snapshot.contextCompression;
-    const parts = ["context"];
-    if (beforeCompressed !== null && afterCompressed !== null) {
-      parts.push(`${beforeCompressed} -> ${afterCompressed}`);
-    }
-    if (rate) {
-      parts.push(`${rate.toFixed(1)}%`);
-    }
-    lines.push(padToWidth(palette.text.dim(parts.join(" | ")), width));
-  }
   return lines;
 }
 
@@ -96,6 +85,22 @@ function buildShortcutLines(width: number): string[] {
     " ".repeat(width),
   ];
   return lines;
+}
+
+function isTodoTool(tool: ToolCallDisplay): boolean {
+  const normalized = tool.name.trim().toLowerCase();
+  return normalized === "todo" || normalized.startsWith("todo_");
+}
+
+function filterTodoToolEntry(entry: HistoryItem): HistoryItem | null {
+  if (entry.kind !== "tool_group") {
+    return entry;
+  }
+  const tools = entry.tools.filter((tool) => !isTodoTool(tool));
+  if (tools.length === 0) {
+    return null;
+  }
+  return tools.length === entry.tools.length ? entry : { ...entry, tools };
 }
 
 function buildTranscriptLines(
@@ -129,6 +134,10 @@ function buildTranscriptLines(
     );
   }
 
+  displayEntries = displayEntries
+    .map((entry) => filterTodoToolEntry(entry))
+    .filter((entry): entry is HistoryItem => entry !== null);
+
   const allLines: string[] = [];
   if (displayEntries.length === 0) {
     allLines.push(...buildWelcomeLines(width));
@@ -159,7 +168,6 @@ export function buildAppScreenLines(snapshot: AppSnapshot, options: ScreenLayout
     options.showToolDetails,
   );
   const todoLines = renderTodoList(snapshot.todos, options.width);
-
   return [
     ...transcriptLines,
     ...todoLines,

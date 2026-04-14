@@ -11,7 +11,12 @@ export function createTeamCommand(): SlashCommand {
     kind: CommandKind.BUILT_IN,
     action: async (ctx) => {
       if (ctx.isProcessing) {
-        ctx.addItem(addError(ctx.sessionId, "session is busy; stop the current run before switching team mode"));
+        ctx.addItem(
+          addError(
+            ctx.sessionId,
+            "session is busy; stop the current run before switching team mode",
+          ),
+        );
         return;
       }
 

@@ -8,18 +8,8 @@ function todoLabel(todo: TodoItem): string {
   return `${prefix} ${todo.activeForm || todo.content}`;
 }
 
-function todoDescription(todo: TodoItem): string {
-  if (todo.status === "in_progress") {
-    return "in progress";
-  }
-  if (todo.status === "completed") {
-    return "completed";
-  }
-  return "pending";
-}
-
 export function renderTodoList(todos: TodoItem[], width: number): string[] {
-  if (todos.length === 0) {
+  if (todos.every((todo) => todo.status === "completed")) {
     return [];
   }
 
@@ -33,7 +23,6 @@ export function renderTodoList(todos: TodoItem[], width: number): string[] {
     ordered.map((todo) => ({
       value: todo.id,
       label: todoLabel(todo),
-      description: todoDescription(todo),
     })),
     Math.min(Math.max(ordered.length, 1), 8),
     selectListTheme,
