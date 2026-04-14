@@ -366,7 +366,31 @@ class JiuClawStreamEventRail(DeepAgentRail):
             logger.debug("context_compression emit failed", exc_info=True)
 
     @staticmethod
-    async def _fix_incomplete_tool_context(context: Any) -> None:
+    def _ensure_json_arguments(arguments: Any) -> str:
+        """Ensure tool call arguments are valid JSON string.
+
+        If arguments is a dict, convert to JSON string. If arguments is a string,
+        validate it can be parsed as JSON. If parsing fails, return empty JSON object.
+
+        Args:
+            arguments: The arguments value from tool_call.
+
+        Returns:
+            Valid JSON string (e.g., '{"key": "value"}').
+        """
+        import json
+        if isinstance(arguments, dict):
+            return json.dumps(arguments)
+        if isinstance(arguments, str):
+            try:
+                json.loads(arguments)
+                return arguments
+            except (json.JSONDecodeError, TypeError):
+                logger.warning(f"Illegal Tool call arguments: {arguments}")
+                return "{}"
+        return "{}"
+
+    async def _fix_incomplete_tool_context(self, context: Any) -> None:
         """Fix incomplete context: ensure assistant messages with tool_calls have matching tool messages."""
         try:
             messages = context.get_messages()
@@ -381,14 +405,18 @@ class JiuClawStreamEventRail(DeepAgentRail):
             for i in range(len_messages):
                 if isinstance(messages[i], AssistantMessage):
                     if not tool_id_cache:
-                        await context.add_messages(messages[i])
                         tool_calls = getattr(messages[i], "tool_calls", None)
                         if tool_calls:
                             for tc in tool_calls:
+                                arguments = getattr(tc, "arguments", '{}')
+                                arguments = self._ensure_json_arguments(arguments)
+                                if hasattr(tc, "arguments"):
+                                    tc.arguments = arguments
                                 tool_id_cache.append({
                                         "tool_call_id": getattr(tc, "id", ""),
                                         "tool_name": getattr(tc, "name", ""),
                                 })
+                        await context.add_messages(messages[i])
                     else:
                         logger.info("Fixed incomplete tool context with placeholder messages")
                         for tc_info in tool_id_cache:
@@ -402,14 +430,18 @@ class JiuClawStreamEventRail(DeepAgentRail):
                                         tool_call_id=tool_call_id,
                                 ))
                         tool_id_cache = []
-                        await context.add_messages(messages[i])
                         tool_calls = getattr(messages[i], "tool_calls", None)
                         if tool_calls:
                             for tc in tool_calls:
+                                arguments = getattr(tc, "arguments", {})
+                                arguments = self._ensure_json_arguments(arguments)
+                                if hasattr(tc, "arguments"):
+                                    tc.arguments = arguments
                                 tool_id_cache.append({
                                         "tool_call_id": getattr(tc, "id", ""),
                                         "tool_name": getattr(tc, "name", ""),
                                 })
+                        await context.add_messages(messages[i])
                 elif isinstance(messages[i], ToolMessage):
                     if not tool_id_cache:
                         tool_message_cache[messages[i].tool_call_id] = messages[i]

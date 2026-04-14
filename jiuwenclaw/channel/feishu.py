@@ -236,7 +236,7 @@ class FeishuChannel(BaseChannel):
         _chat_type = _meta.get("chat_type", "")
         _is_group = _chat_type == "group"
         _msg_enable_streaming = self.config.enable_streaming
-        _is_stream = True
+        _is_stream = self.config.enable_streaming
         if self.config.group_digital_avatar and _is_group:
             _msg_enable_streaming = False
             _is_stream = False
