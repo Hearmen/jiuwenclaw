@@ -2020,6 +2020,29 @@ class FeishuChannel(BaseChannel):
 
             # 解析消息内容（支持文件类型）
             content, file_info = await self._parse_message_content_with_file(message)
+            if content == "/mode team" and self.config.enable_streaming == False:
+                # 非流式情况下不支持team模式，向用户发送提示
+                try:
+                    # 提取发送者open_id
+                    open_id = (
+                        getattr(getattr(sender, "sender_id", None), "open_id", None) or ""
+                    )
+                    # 获取chat_id和判断ID类型
+                    chat_id = getattr(message, "chat_id", None) or ""
+                    if chat_id.startswith("oc_"):
+                        receive_id = chat_id
+                        id_type = "chat_id"
+                    else:
+                        # 私聊场景使用open_id
+                        receive_id = open_id
+                        id_type = "open_id"
+                    hint_text = "⚠️ 非流式模式下不支持 Team 模式，已保持原有模式。\n\n" \
+                        "如需使用 Team 模式，请在配置中开启流式输出 (enable_streaming: true)。"
+                    card = self._build_card_content(hint_text)
+                    await self._send_feishu_message(receive_id, id_type, card, message.message_id)
+                except Exception as e:
+                    logger.warning(f"[FeishuChannel] 发送Team模式提示失败: {e}")
+                return
             if not content and not file_info:
                 return
 

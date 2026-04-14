@@ -152,13 +152,12 @@ class AgentManager:
         Returns:
             JiuWenClaw | None: Agent 实例
         """
-        agent_key = channel_id if channel_id == "acp" else "default"
-        if agent_key not in self.agents:
+        if channel_id not in self.agents:
             config: dict[str, Any] | None = None
             if channel_id == "acp":
                 config = _build_acp_agent_config()
-            await self._create_agent(agent_key, config)
-        return self.agents.get(agent_key)
+            await self._create_agent(channel_id, config)
+        return self.agents.get(channel_id)
 
     def get_agent_nowait(self, channel_id: str = "") -> "JiuWenClaw | None":
         """获取 Agent 实例（同步，不自动创建）.

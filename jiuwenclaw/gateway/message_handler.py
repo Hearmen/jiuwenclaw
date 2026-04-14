@@ -1584,6 +1584,7 @@ class MessageHandler(ABC):
                 "event_type": "chat.processing_status",
                 "session_id": session_id,
                 "is_processing": is_processing,
+                "is_complete": not is_processing
             },
             event_type=EventType.CHAT_PROCESSING_STATUS,
             metadata=None,

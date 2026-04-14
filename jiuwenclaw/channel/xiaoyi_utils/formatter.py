@@ -556,8 +556,7 @@ def should_send_as_status_update(event_type: EventType | None) -> bool:
     # - CHAT_PROCESSING_STATUS: 处理状态
     status_events = {
         EventType.CHAT_TOOL_CALL,
-        EventType.CHAT_TOOL_RESULT,
-        EventType.CHAT_PROCESSING_STATUS,
+        EventType.CHAT_TOOL_RESULT
     }
 
     return event_type in status_events
