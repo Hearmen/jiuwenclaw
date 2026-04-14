@@ -216,6 +216,8 @@ async def user_todos(params: UserTodosParams) -> Dict[str, Any]:
     Returns:
         操作结果字典
     """
+    if isinstance(params, dict):
+        params = UserTodosParams(**{k: v for k, v in params.items() if k in UserTodosParams.__dataclass_fields__})
     return await _handle_user_todos(params)
 
 

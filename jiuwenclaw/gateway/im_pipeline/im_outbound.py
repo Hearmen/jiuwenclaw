@@ -1,4 +1,4 @@
- # Copyright (c) Huawei Technologies Co., Ltd. 2025. All rights reserved.
+# Copyright (c) Huawei Technologies Co., Ltd. 2025. All rights reserved.
 
 """IMOutboundPipeline — 出站预处理管线：路由决策（群发 vs 私发）。
 
@@ -224,15 +224,27 @@ class IMOutboundPipeline:
             return None, ""
 
         target_name = str(metadata.get("reply_target_name") or "").strip() or "目标用户"
+        original_query = str(metadata.get("avatar_original_query") or "").strip()
+
+        query_section = ""
+        if original_query:
+            query_section = f"群聊中的原始提问：\n{original_query[:300]}\n\n"
+
         prompt = (
             "请判断下面这条{platform}机器人回复，是否应该私发给特定用户，而不是直接回到群里。\n\n"
             "判断标准：\n"
             "- 如果内容是在为该用户记录待办、设置提醒、安排日程、私下跟进、单独通知，输出 DM\n"
             "- 如果内容是在公开回复群讨论、解释问题、同步信息、继续群聊协作，输出 CHAT\n"
             "- 只输出 DM 或 CHAT，不要输出其他内容\n\n"
+            "{query_section}"
             "目标用户：{name}\n"
             "机器人回复：\n{content}"
-        ).format(platform=platform_name, name=target_name, content=content[:500])
+        ).format(
+            platform=platform_name,
+            query_section=query_section,
+            name=target_name,
+            content=content[:500],
+        )
 
         logger.info(
             "[IMOutboundPipeline] LLM 请求: model=%r target=%s content_len=%d prompt:\n%s",

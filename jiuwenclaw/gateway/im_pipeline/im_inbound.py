@@ -430,6 +430,7 @@ class IMConversationProcessor:
             )
             if response and isinstance(response.content, str):
                 return response.content.strip() or None
+            
         except Exception as exc:
             logger.warning(
                 "[IMConversationProcessor] 调用 LLM 改写失败，将回退原始消息: %s",
@@ -484,6 +485,12 @@ class IMInboundPipeline:
             msg.params["query"] = result.rewritten_content
             if "content" in msg.params:
                 msg.params["content"] = result.rewritten_content
+        
+        # 将原始 query 存入 metadata，供 outbound pipeline 路由决策使用
+        if original_query:
+            merged = dict(msg.metadata or {})
+            merged["avatar_original_query"] = original_query
+            msg.metadata = merged
 
         # 补全 avatar 详情字段（avatar_mode 已在 channel 层源头注入）
         # 只在群聊模式下补全 avatar 详情字段

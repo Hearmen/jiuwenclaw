@@ -849,19 +849,20 @@ class WecomChannel(BaseChannel):
             },
         )
 
-        try:
-            self._message_storage.add_message_to_memory(
-                chat_id=chatid,
-                message={
-                    "message_id": req_id,
-                    "content": content,
-                    "timestamp": int(time.time() * 1000),
-                    "user_id": sender_user_id,
-                    "chat_type": chat_type,
-                }
-            )
-        except Exception as e:
-            logger.warning(f"[WecomChannel] 记录消息到本地存储失败: {e}")
+        if self.config.group_digital_avatar:
+            try:
+                self._message_storage.add_message_to_memory(
+                    chat_id=chatid,
+                    message={
+                        "message_id": req_id,
+                        "content": content,
+                        "timestamp": int(time.time() * 1000),
+                        "user_id": sender_user_id,
+                        "chat_type": chat_type,
+                    }
+                )
+            except Exception as e:
+                logger.warning(f"[WecomChannel] 记录消息到本地存储失败: {e}")
         _effective_streaming = self.config.enable_streaming
         if self.config.group_digital_avatar and chat_type == "group":
             _effective_streaming = False
@@ -897,13 +898,24 @@ class WecomChannel(BaseChannel):
                 else:
                     await self._send_stream_placeholder(req_id_final)
 
-        await self._enqueue_message_batch(
-            chat_id=chatid,
-            user_id=sender_user_id,
-            content=content,
-            timestamp_ms=int(time.time() * 1000),
-            metadata=metadata,
-        )
+        # 数字分身模式：走消息批次合并；否则直接处理
+        _ts = int(time.time() * 1000)
+        if self.config.group_digital_avatar:
+            await self._enqueue_message_batch(
+                chat_id=chatid,
+                user_id=sender_user_id,
+                content=content,
+                timestamp_ms=_ts,
+                metadata=metadata,
+            )
+        else:
+            await self._process_batched_message(
+                chat_id=chatid,
+                user_id=sender_user_id,
+                merged_content=content,
+                timestamp_ms=_ts,
+                metadata=metadata,
+            )
 
     def _extract_chatid(self, msg: Message) -> str | None:
         """从出站消息提取 chatid；私发模式优先使用 reply_wecom_user_id。"""
@@ -1203,6 +1215,15 @@ class WecomChannel(BaseChannel):
             self._clear_group_progress_state(request_id)
 
         try:
+            is_dm = str(meta.get("reply_scope") or "").strip().lower() == "dm"
+            # 群聊数字分身回复到群聊时，@发送人
+            if msg.group_digital_avatar and not is_dm:
+                sender_user_id = str(
+                    meta.get("im_sender_user_id") or ""
+                ).strip()
+                if sender_user_id and not sender_user_id.startswith("bot"):
+                    content = f"<@{sender_user_id}>\n{content}"
+
             body = {"msgtype": "markdown", "markdown": {"content": content}}
             await self._ws_client.send_message(chatid, body)
             
@@ -1217,19 +1238,20 @@ class WecomChannel(BaseChannel):
                 if group_chat_id and group_chat_id != chatid:
                     asyncio.create_task(self._send_group_ack(meta, content))
 
-            try:
-                self._message_storage.add_message_to_memory(
-                    chat_id=chatid,
-                    message={
-                        "message_id": f"bot_{int(time.time() * 1000)}_{msg.id}",
-                        "content": content,
-                        "timestamp": int(time.time() * 1000),
-                        "user_id": f"bot_{self.config.bot_id}",
-                        "chat_type": "bot_reply",
-                    }
-                )
-            except Exception as e:
-                logger.warning(f"[WecomChannel] 记录机器人回复消息失败: {e}")
+            if self.config.group_digital_avatar:
+                try:
+                    self._message_storage.add_message_to_memory(
+                        chat_id=chatid,
+                        message={
+                            "message_id": f"bot_{int(time.time() * 1000)}_{msg.id}",
+                            "content": content,
+                            "timestamp": int(time.time() * 1000),
+                            "user_id": f"bot_{self.config.bot_id}",
+                            "chat_type": "bot_reply",
+                        }
+                    )
+                except Exception as e:
+                    logger.warning(f"[WecomChannel] 记录机器人回复消息失败: {e}")
 
         except Exception as e:
             logger.error("WecomChannel 发送失败: %s", e)

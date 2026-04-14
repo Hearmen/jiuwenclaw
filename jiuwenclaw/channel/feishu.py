@@ -1414,6 +1414,16 @@ class FeishuChannel(BaseChannel):
                                 await self._send_file_card(receive_id, id_type, fp, os.path.basename(fp))
                         except Exception as file_err:
                             logger.error("飞书兜底文件发送失败: %s %s", fp, file_err)
+            
+            # 群聊数字分身回复到群聊时，@发送人
+            if msg.group_digital_avatar and id_type == "chat_id":
+                sender_open_id = str(
+                    meta.get("im_sender_user_id")
+                    or meta.get("open_id")
+                    or ""
+                ).strip()
+                if sender_open_id and not sender_open_id.startswith("bot"):
+                    content_str = f"<at id={sender_open_id}></at>\n{content_str}"
 
             card_content = self._build_card_content(content_str)
             await self._send_feishu_message(receive_id, id_type, card_content, msg.id)
@@ -1438,11 +1448,11 @@ class FeishuChannel(BaseChannel):
                     else:
                         chat_id = meta.get("feishu_chat_id") or ""
 
-                # 记录机器人回复消息到群聊历史中去
-                if chat_id:
+                # 记录机器人回复消息到群聊历史中去（仅数字分身模式）
+                if chat_id and self.config.group_digital_avatar:
                     self._message_storage.add_message_to_memory(
-                        chat_id=chat_id,
-                        message={
+                            chat_id=chat_id,
+                            message={
                             "message_id": f"bot_{int(time.time() * 1000)}_{msg.id}",
                             "content": content_str,
                             "timestamp": int(time.time() * 1000),
@@ -2077,36 +2087,46 @@ class FeishuChannel(BaseChannel):
                 **({"file_info": file_info} if file_info else {}),
             }
 
-            # 记录消息到本地存储（支持数字分身记忆功能）
-            try:
-                self._message_storage.add_message_to_memory(
-                    chat_id=message.chat_id,
-                    message={
-                        "message_id": message.message_id,
-                        "content": content,
-                        "timestamp": getattr(message, "create_time", int(time.time() * 1000)),
-                        "msg_type": message.message_type,
-                        "open_id": open_id,
-                        "chat_type": message.chat_type,
-                    }
-                )
-            except Exception as e:
-                logger.warning(f"记录消息到本地存储失败: {e}")
+            # 记录消息到本地存储（仅数字分身模式）
+            if self.config.group_digital_avatar:
+                try:
+                    self._message_storage.add_message_to_memory(
+                        chat_id=message.chat_id,
+                        message={
+                            "message_id": message.message_id,
+                            "content": content,
+                            "timestamp": getattr(message, "create_time", int(time.time() * 1000)),
+                            "msg_type": message.message_type,
+                            "open_id": open_id,
+                            "chat_type": message.chat_type,
+                        }
+                    )
+                except Exception as e:
+                    logger.warning(f"记录消息到本地存储失败: {e}")
 
-            # 使用消息批次处理（支持数字分身功能）
-            await self._enqueue_message_batch(
-                chat_id=message.chat_id,
-                open_id=open_id or "",
-                content=content,
-                timestamp_ms=int(
-                    getattr(message, "create_time", int(time.time() * 1000))
-                ),
-                metadata=self._build_reply_metadata(
-                    message=message,
-                    sender_open_id=open_id,
-                    base_metadata=base_metadata,
-                ),
+            # 数字分身模式：走消息批次合并；否则直接处理
+            _ts = int(getattr(message, "create_time", int(time.time() * 1000)))
+            _meta = self._build_reply_metadata(
+                message=message,
+                sender_open_id=open_id,
+                base_metadata=base_metadata,
             )
+            if self.config.group_digital_avatar:
+                await self._enqueue_message_batch(
+                    chat_id=message.chat_id,
+                    open_id=open_id or "",
+                    content=content,
+                    timestamp_ms=_ts,
+                    metadata=_meta,
+                )
+            else:
+                await self._process_batched_message(
+                    chat_id=message.chat_id,
+                    open_id=open_id or "",
+                    merged_content=content,
+                    timestamp_ms=_ts,
+                    metadata=_meta,
+                )
 
         except Exception as e:
             logger.error(f"处理飞书消息时发生异常: {e}")
