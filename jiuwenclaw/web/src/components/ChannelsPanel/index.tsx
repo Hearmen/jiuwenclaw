@@ -1299,6 +1299,7 @@ export function ChannelsPanel({ isConnected }: ChannelsPanelProps) {
       setWhatsappConfig(normalized);
       setWhatsappDraft(draftFromWhatsAppConfig(normalized));
       setWhatsappSuccess(t('channels.saved.whatsapp'));
+      void fetchChannels();
     } catch (saveErr) {
       const message = saveErr instanceof Error ? saveErr.message : t('channels.errors.saveGeneric');
       setWhatsappSaveError(message);
@@ -1360,6 +1361,7 @@ export function ChannelsPanel({ isConnected }: ChannelsPanelProps) {
       setFeishuConfig(normalized);
       setDraft(draftFromFeishuConfig(normalized));
       setSuccess(t('channels.saved.feishu'));
+      void fetchChannels();
     } catch (saveErr) {
       const message = saveErr instanceof Error ? saveErr.message : t('channels.errors.saveGeneric');
       setSaveError(message);
@@ -1379,6 +1381,7 @@ export function ChannelsPanel({ isConnected }: ChannelsPanelProps) {
       setXiaoyiConfig(normalized);
       setXiaoyiDraft(draftFromXiaoyiConfig(normalized));
       setXiaoyiSuccess(t('channels.saved.xiaoyi'));
+      void fetchChannels();
     } catch (saveErr) {
       const message = saveErr instanceof Error ? saveErr.message : t('channels.errors.saveGeneric');
       setXiaoyiSaveError(message);
@@ -1398,6 +1401,7 @@ export function ChannelsPanel({ isConnected }: ChannelsPanelProps) {
       setDingtalkConfig(normalized);
       setDingtalkDraft(draftFromDingtalkConfig(normalized));
       setDingtalkSuccess(t('channels.saved.dingtalk'));
+      void fetchChannels();
     } catch (saveErr) {
       const message = saveErr instanceof Error ? saveErr.message : t('channels.errors.saveGeneric');
       setDingtalkSaveError(message);
@@ -1417,6 +1421,7 @@ export function ChannelsPanel({ isConnected }: ChannelsPanelProps) {
       setTelegramConfig(normalized);
       setTelegramDraft(draftFromTelegramConfig(normalized));
       setTelegramSuccess(t('channels.saved.telegram'));
+      void fetchChannels();
     } catch (saveErr) {
       const message = saveErr instanceof Error ? saveErr.message : t('channels.errors.saveGeneric');
       setTelegramSaveError(message);
@@ -1436,6 +1441,7 @@ export function ChannelsPanel({ isConnected }: ChannelsPanelProps) {
       setDiscordConfig(normalized);
       setDiscordDraft(draftFromDiscordConfig(normalized));
       setDiscordSuccess(t('channels.saved.discord'));
+      void fetchChannels();
     } catch (saveErr) {
       const message = saveErr instanceof Error ? saveErr.message : t('channels.errors.saveGeneric');
       setDiscordSaveError(message);
@@ -1455,6 +1461,7 @@ export function ChannelsPanel({ isConnected }: ChannelsPanelProps) {
       setWecomConfig(normalized);
       setWecomDraft(draftFromWecomConfig(normalized));
       setWecomSuccess(t('channels.saved.wecom'));
+      void fetchChannels();
     } catch (saveErr) {
       const message = saveErr instanceof Error ? saveErr.message : t('channels.errors.saveGeneric');
       setWecomSaveError(message);
@@ -1475,6 +1482,7 @@ export function ChannelsPanel({ isConnected }: ChannelsPanelProps) {
       setWechatConfig(normalized);
       setWechatDraft(draftFromWechatConfig(normalized));
       setWechatSuccess(t('channels.saved.wechat'));
+      void fetchChannels();
       if (shouldOpenWechatQr) {
         wechatLoginPollAppliedAt.current = null;
         setWechatQrModalOpen(true);
