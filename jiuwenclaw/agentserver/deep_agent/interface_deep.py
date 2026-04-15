@@ -37,6 +37,7 @@ from openjiuwen.harness.factory import create_deep_agent
 from openjiuwen.harness.subagents.code_agent import create_code_agent
 from openjiuwen.harness.prompts import resolve_language
 from openjiuwen.harness.rails import SkillUseRail, TaskPlanningRail, SecurityRail, SkillEvolutionRail
+from openjiuwen.harness.rails.subagent_rail import SubagentRail
 from openjiuwen.harness.rails.lsp_rail import LspRail
 from openjiuwen.harness.rails.context_engineering_rail import ContextEngineeringRail
 from openjiuwen.harness.rails.filesystem_rail import FileSystemRail
@@ -313,6 +314,7 @@ class JiuWenClawDeepAdapter:
         self._lsp_rail: LspRail | None = None
         self._heartbeat_rail: HeartbeatRail | None = None
         self._skill_evolution_rail: SkillEvolutionRail | None = None
+        self._subagent_rail: SubagentRail | None = None
         self._pending_evolution_data: dict[str, dict] = {}
         self._permission_rail: Any = None
         self._avatar_rail: Any = None
@@ -923,6 +925,17 @@ class JiuWenClawDeepAdapter:
             task_planning_rail = None
         return task_planning_rail
 
+    @staticmethod
+    def _build_subagent_rail() -> SubagentRail | None:
+        """Build SubagentRail for subagent delegation."""
+        try:
+            subagent_rail = SubagentRail()
+            logger.info("[JiuWenClawDeepAdapter] SubagentRail create success")
+        except Exception as exc:
+            logger.warning("[JiuWenClawDeepAdapter] SubagentRail create failed: %s", exc)
+            subagent_rail = None
+        return subagent_rail
+
     def _build_security_rail(self) -> SecurityRail | None:
         """Build SecurityPromptRail."""
         try:
@@ -1072,6 +1085,7 @@ class JiuWenClawDeepAdapter:
             _RailBuildInfo("_security_rail", self._build_security_rail),
             _RailBuildInfo("_heartbeat_rail", self._build_heartbeat_rail),
             _RailBuildInfo("_avatar_rail", self._build_avatar_rail),
+            _RailBuildInfo("_subagent_rail", self._build_subagent_rail),
             _RailBuildInfo("_permission_rail", build_permission_rail, {"config": config_base, "llm": self._model,
                                                                        "model_name": config_base.get("models", {}).get(
                                                                            "default", {}).get("model_client_config",
@@ -1600,12 +1614,19 @@ class JiuWenClawDeepAdapter:
             if self._skill_evolution_rail is not None:
                 await self._instance.register_rail(self._skill_evolution_rail)
                 logger.info("[JiuWenClawDeepAdapter] SkillEvolutionRail registered for plan mode")
+        # 注册 subagent rail（plan 模式下启用）
+        if self._subagent_rail is None:
+            self._subagent_rail = self._build_subagent_rail()
+            if self._subagent_rail is not None:
+                await self._instance.register_rail(self._subagent_rail)
+                logger.info("[JiuWenClawDeepAdapter] SubagentRail registered for plan mode")
 
     async def _update_agent_mode_rails(self) -> None:
         """agent 模式：卸载 plan 专属 rails，按需注册 agent 专属 rails。"""
         for attr, label in (
             ("_task_planning_rail", "TaskPlanningRail"),
             ("_skill_evolution_rail", "SkillEvolutionRail"),
+            ("_subagent_rail", "SubagentRail"),
         ):
             rail = getattr(self, attr)
             if rail is not None:
