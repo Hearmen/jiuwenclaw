@@ -168,8 +168,7 @@ class AgentManager:
         Returns:
             JiuWenClaw | None: Agent 实例，如果不存在则返回 None
         """
-        agent_key = channel_id if channel_id == "acp" else "default"
-        return self.agents.get(agent_key)
+        return self.agents.get(channel_id)
 
     async def cleanup(self) -> None:
         """清理所有 agent 实例."""
