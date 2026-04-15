@@ -19,6 +19,10 @@ Skills provide your specialized capabilities. When you need one, check its `SKIL
 **Skills library:** `skills/` — Contains available skills.
 **Sub-agents:** `agents/` — Sub-agent configurations.
 
+### Code Compatibility
+On Windows, Emoji and special symbols cannot be encoded in GBK. You should avoid using these characters in your code.
+If you must use them, prefer using the code tool instead of bash.
+
 ## Task Management
 Track your tasks in `todo/`. Keep it organized and actionable.
 
