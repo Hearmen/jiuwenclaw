@@ -17,6 +17,8 @@ from openjiuwen.core.single_agent.rail.base import AgentCallbackContext
 from openjiuwen.harness.prompts import PromptSection
 from openjiuwen.harness.rails.base import DeepAgentRail
 
+_CN_WEEKDAYS = ["星期一", "星期二", "星期三", "星期四", "星期五", "星期六", "星期日"]
+
 
 class RuntimePromptRail(DeepAgentRail):
     """在 before_model_call 中注入运行时动态 section（时间、运行时信息）。"""
@@ -84,11 +86,13 @@ class RuntimePromptRail(DeepAgentRail):
         if not self.system_prompt_builder:
             return
 
-        now_str = datetime.now(tz=self._tz).strftime("%Y-%m-%d %H:%M:%S")
-
+        now = datetime.now(tz=self._tz)
         if self._language == "cn":
+            weekday_str = _CN_WEEKDAYS[now.weekday()]
+            now_str = now.strftime("%Y-%m-%d") + f" {weekday_str} " + now.strftime("%H:%M:%S")
             time_content = f"# 当前日期与时间\n\n{now_str}"
         else:
+            now_str = now.strftime("%Y-%m-%d %A %H:%M:%S")
             time_content = f"# Current Date & Time\n\n{now_str}"
 
         self.system_prompt_builder.add_section(PromptSection(
