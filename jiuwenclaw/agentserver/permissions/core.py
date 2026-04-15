@@ -136,12 +136,12 @@ class PermissionEngine:
             PermissionResult 包含权限级别和匹配规则.
         """
         logger.info(
-            "[PermissionEngine] check_permission: tool=%s channel=%s enabled=%s",
+            "[PermissionEngine] permission.check.start tool=%s channel=%s enabled=%s",
             tool_name, channel_id, self._enabled,
         )
 
         if not self._enabled:
-            logger.info("[PermissionEngine] Permission system is disabled, returning ALLOW")
+            logger.info("[PermissionEngine] permission.check.skip reason=system_disabled decision=allow")
             return PermissionResult(
                 permission=PermissionLevel.ALLOW,
                 reason="Permission system is disabled",
@@ -149,7 +149,10 @@ class PermissionEngine:
 
         normalized_channel = (channel_id or "").strip() or "web"
         if normalized_channel not in PERMISSION_ENABLED_CHANNELS:
-            logger.info("[PermissionEngine] Skipping permission check for channel: %s", normalized_channel)
+            logger.info(
+                "[PermissionEngine] permission.check.skip reason=channel_disabled channel=%s",
+                normalized_channel,
+            )
             return PermissionResult(
                 permission=PermissionLevel.ALLOW,
                 reason=f"Skipped for channel: {normalized_channel}",
@@ -174,7 +177,8 @@ class PermissionEngine:
             permission = PermissionLevel.ASK
             matched_rule = "default"
         logger.info(
-            "[PermissionEngine] direct result: permission=%s matched_rule=%s",
+            "[PermissionEngine] permission.policy.result tool=%s permission=%s matched_rule=%s",
+            tool_name,
             permission.value, matched_rule,
         )
 
@@ -182,12 +186,23 @@ class PermissionEngine:
         ext_result = self._external_checker.check_external_paths(tool_name, tool_args)
         if ext_result is not None:
             logger.info(
-                "Tool %s external_directory check: %s (merging with %s)",
-                tool_name, ext_result.permission.value, permission.value,
+                "[PermissionEngine] permission.external.result tool=%s checked=true permission=%s "
+                "matched_rule=%s external_paths=%s merged_with=%s",
+                tool_name,
+                ext_result.permission.value,
+                ext_result.matched_rule or "external_directory",
+                ext_result.external_paths,
+                permission.value,
             )
             permission = tiered_policy_strictest(permission, ext_result.permission)
             matched_rule = f"{matched_rule}|{ext_result.matched_rule or 'external_directory'}"
             external_paths = ext_result.external_paths
+        else:
+            logger.info(
+                "[PermissionEngine] permission.external.result tool=%s checked=true permission=none "
+                "matched_rule=none external_paths=[]",
+                tool_name,
+            )
 
         result = PermissionResult(
             permission=permission,
@@ -198,8 +213,13 @@ class PermissionEngine:
         )
 
         logger.info(
-            "Permission check: tool=%s, result=%s, rule=%s, channel=%s",
-            tool_name, permission.value, matched_rule, channel_id,
+            "[PermissionEngine] permission.check.final tool=%s channel=%s permission=%s matched_rule=%s "
+            "external_paths=%s",
+            tool_name,
+            channel_id,
+            permission.value,
+            matched_rule,
+            external_paths or [],
         )
         return result
 

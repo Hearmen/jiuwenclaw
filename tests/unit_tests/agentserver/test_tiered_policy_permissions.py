@@ -15,6 +15,12 @@ from jiuwenclaw.agentserver.permissions.core import PermissionEngine, set_permis
 from jiuwenclaw.agentserver.permissions.models import PermissionLevel
 from jiuwenclaw.agentserver.permissions.owner_scopes import _get_global_tool_level
 from jiuwenclaw.agentserver.permissions.patterns import persist_permission_allow_rule
+from jiuwenclaw.agentserver.permissions.shell_ast import (
+    ShellAstParseResult,
+    ShellStructureFlags,
+    ShellSubcommand,
+)
+from jiuwenclaw.agentserver.permissions.suggestions import build_shell_permission_suggestions
 from jiuwenclaw.agentserver.permissions.tiered_policy import (
     collect_builtin_permission_rail_tool_names,
     evaluate_tiered_policy,
@@ -23,6 +29,28 @@ from jiuwenclaw.agentserver.permissions.tiered_policy import (
     severity_to_decision,
     strictest,
 )
+
+
+class _FakeTreeNode:
+    def __init__(self, node_type, start_byte=0, end_byte=0, children=None):
+        self.type = node_type
+        self.start_byte = start_byte
+        self.end_byte = end_byte
+        self.children = children or []
+        self.has_error = False
+
+
+class _FakeTree:
+    def __init__(self, root_node):
+        self.root_node = root_node
+
+
+class _FakeParser:
+    def __init__(self, root_node):
+        self._root_node = root_node
+
+    def parse(self, _source):
+        return _FakeTree(self._root_node)
 
 
 def test_schema_detection():
@@ -143,6 +171,101 @@ def test_create_terminal_operator_chain_escalates_allow_to_ask():
     ) == PermissionLevel.ASK
 
 
+def test_shell_ast_fallback_keeps_simple_command(monkeypatch):
+    shell_ast_module = importlib.import_module("jiuwenclaw.agentserver.permissions.shell_ast")
+    monkeypatch.setattr(shell_ast_module, "_TREE_SITTER_BASH_READY", False)
+    monkeypatch.setattr(shell_ast_module, "_TREE_SITTER_PARSER", None)
+
+    result = shell_ast_module.parse_shell_for_permission("git status")
+
+    assert result.kind == "simple"
+    assert [item.text for item in result.subcommands] == ["git status"]
+
+
+def test_shell_ast_fallback_marks_compound_command_parse_unavailable(monkeypatch):
+    shell_ast_module = importlib.import_module("jiuwenclaw.agentserver.permissions.shell_ast")
+    monkeypatch.setattr(shell_ast_module, "_TREE_SITTER_BASH_READY", False)
+    monkeypatch.setattr(shell_ast_module, "_TREE_SITTER_PARSER", None)
+
+    result = shell_ast_module.parse_shell_for_permission("git status && rm -rf /tmp/x")
+
+    assert result.kind == "parse_unavailable"
+    assert result.flags.has_compound_operators
+
+
+def test_shell_ast_tree_sitter_extracts_subcommands(monkeypatch):
+    shell_ast_module = importlib.import_module("jiuwenclaw.agentserver.permissions.shell_ast")
+    command = "git status && npm test"
+    command_one = _FakeTreeNode("command", 0, 10)
+    operator = _FakeTreeNode("&&", 11, 13)
+    command_two = _FakeTreeNode("command", 14, len(command))
+    list_node = _FakeTreeNode("list", 0, len(command), [command_one, operator, command_two])
+    root = _FakeTreeNode("program", 0, len(command), [list_node])
+    parser = _FakeParser(root)
+
+    monkeypatch.setattr(shell_ast_module, "_TREE_SITTER_BASH_READY", True)
+    monkeypatch.setattr(shell_ast_module, "_TREE_SITTER_PARSER", parser)
+
+    result = shell_ast_module.parse_shell_for_permission(command)
+
+    assert result.kind == "simple"
+    assert result.backend == "tree-sitter"
+    assert [item.text for item in result.subcommands] == ["git status", "npm test"]
+    assert result.flags.has_compound_operators
+    assert result.flags.has_actual_operator_nodes
+    assert result.flags.operators == ("&&",)
+
+
+def test_shell_ast_tree_sitter_marks_command_substitution_too_complex(monkeypatch):
+    shell_ast_module = importlib.import_module("jiuwenclaw.agentserver.permissions.shell_ast")
+    command = "echo $(whoami)"
+    command_substitution = _FakeTreeNode("command_substitution", 5, len(command))
+    command_node = _FakeTreeNode("command", 0, len(command), [command_substitution])
+    root = _FakeTreeNode("program", 0, len(command), [command_node])
+    parser = _FakeParser(root)
+
+    monkeypatch.setattr(shell_ast_module, "_TREE_SITTER_BASH_READY", True)
+    monkeypatch.setattr(shell_ast_module, "_TREE_SITTER_PARSER", parser)
+
+    result = shell_ast_module.parse_shell_for_permission(command)
+
+    assert result.kind == "too_complex"
+    assert result.backend == "tree-sitter"
+    assert result.flags.has_command_substitution
+
+
+def test_shell_ast_real_tree_sitter_extracts_subcommands(monkeypatch):
+    pytest.importorskip("tree_sitter")
+    pytest.importorskip("tree_sitter_bash")
+
+    shell_ast_module = importlib.import_module("jiuwenclaw.agentserver.permissions.shell_ast")
+    monkeypatch.setattr(shell_ast_module, "_TREE_SITTER_BASH_READY", None)
+    monkeypatch.setattr(shell_ast_module, "_TREE_SITTER_PARSER", None)
+
+    result = shell_ast_module.parse_shell_for_permission("git status && npm test")
+
+    assert result.backend == "tree-sitter"
+    assert result.kind == "simple"
+    assert [item.text for item in result.subcommands] == ["git status", "npm test"]
+    assert result.flags.has_compound_operators
+    assert result.flags.has_actual_operator_nodes
+
+
+def test_shell_ast_real_tree_sitter_marks_command_substitution_too_complex(monkeypatch):
+    pytest.importorskip("tree_sitter")
+    pytest.importorskip("tree_sitter_bash")
+
+    shell_ast_module = importlib.import_module("jiuwenclaw.agentserver.permissions.shell_ast")
+    monkeypatch.setattr(shell_ast_module, "_TREE_SITTER_BASH_READY", None)
+    monkeypatch.setattr(shell_ast_module, "_TREE_SITTER_PARSER", None)
+
+    result = shell_ast_module.parse_shell_for_permission("echo $(whoami)")
+
+    assert result.backend == "tree-sitter"
+    assert result.kind == "too_complex"
+    assert result.flags.has_command_substitution
+
+
 def test_whole_tool_allow_ignores_default_ask():
     cfg = {
         "permission_mode": "normal",
@@ -153,6 +276,145 @@ def test_whole_tool_allow_ignores_default_ask():
     perm, mr = evaluate_tiered_policy(cfg, "mcp_exec_command", {"command": "unknown-cmd-xyz"})
     assert perm == PermissionLevel.ALLOW
     assert "defaults" not in mr
+
+
+def test_shell_ast_subcommand_aggregation_hits_stricter_rule(monkeypatch):
+    tiered_policy_module = importlib.import_module("jiuwenclaw.agentserver.permissions.tiered_policy")
+    monkeypatch.setattr(
+        tiered_policy_module,
+        "parse_shell_for_permission",
+        lambda _command: ShellAstParseResult(
+            kind="simple",
+            subcommands=(
+                ShellSubcommand(text="git status"),
+                ShellSubcommand(text="rm -rf /tmp/x"),
+            ),
+            flags=ShellStructureFlags(has_compound_operators=True, has_actual_operator_nodes=True, operators=("&&",)),
+            backend="test",
+        ),
+    )
+
+    cfg = {
+        "permission_mode": "strict",
+        "defaults": {"*": "allow"},
+        "tools": {"bash": "allow"},
+        "rules": [
+            {
+                "id": "allow_git",
+                "tools": ["bash"],
+                "pattern": "git status *",
+                "severity": "LOW",
+            },
+            {
+                "id": "deny_rm",
+                "tools": ["bash"],
+                "pattern": "re:^rm\\s+-rf\\b.*$",
+                "severity": "CRITICAL",
+            },
+        ],
+    }
+
+    perm, mr = evaluate_tiered_policy(cfg, "bash", {"command": "git status && rm -rf /tmp/x"})
+    assert perm == PermissionLevel.DENY
+    assert "builtin" in mr or "deny_rm" in mr
+
+
+def test_shell_ast_subcommand_aggregation_falls_back_for_unmatched_subcommand(monkeypatch):
+    tiered_policy_module = importlib.import_module("jiuwenclaw.agentserver.permissions.tiered_policy")
+    monkeypatch.setattr(
+        tiered_policy_module,
+        "parse_shell_for_permission",
+        lambda _command: ShellAstParseResult(
+            kind="simple",
+            subcommands=(
+                ShellSubcommand(text="git status"),
+                ShellSubcommand(text="echo secret"),
+            ),
+            flags=ShellStructureFlags(has_compound_operators=True, has_actual_operator_nodes=True, operators=("&&",)),
+            backend="test",
+        ),
+    )
+
+    cfg = {
+        "permission_mode": "normal",
+        "defaults": {"*": "allow"},
+        "tools": {"bash": "ask"},
+        "rules": [
+            {
+                "id": "allow_git",
+                "tools": ["bash"],
+                "pattern": "git status *",
+                "severity": "LOW",
+            },
+        ],
+    }
+
+    perm, _mr = evaluate_tiered_policy(cfg, "bash", {"command": "git status && echo secret"})
+    assert perm == PermissionLevel.ASK
+
+
+def test_shell_ast_structure_guard_upgrades_allow_to_ask(monkeypatch):
+    tiered_policy_module = importlib.import_module("jiuwenclaw.agentserver.permissions.tiered_policy")
+    monkeypatch.setattr(
+        tiered_policy_module,
+        "parse_shell_for_permission",
+        lambda _command: ShellAstParseResult(
+            kind="simple",
+            subcommands=(ShellSubcommand(text="cat notes.txt"),),
+            flags=ShellStructureFlags(has_output_redirection=True),
+            backend="test",
+        ),
+    )
+
+    cfg = {
+        "permission_mode": "normal",
+        "defaults": {"*": "allow"},
+        "tools": {"bash": "allow"},
+        "rules": [
+            {
+                "id": "allow_cat",
+                "tools": ["bash"],
+                "pattern": "cat *",
+                "severity": "LOW",
+            },
+        ],
+    }
+
+    perm, mr = evaluate_tiered_policy(cfg, "bash", {"command": "cat notes.txt > out.txt"})
+    assert perm == PermissionLevel.ASK
+    assert "shell_ast" in mr
+
+
+def test_shell_ast_parse_unavailable_fail_closed(monkeypatch):
+    tiered_policy_module = importlib.import_module("jiuwenclaw.agentserver.permissions.tiered_policy")
+    monkeypatch.setattr(
+        tiered_policy_module,
+        "parse_shell_for_permission",
+        lambda _command: ShellAstParseResult(
+            kind="parse_unavailable",
+            flags=ShellStructureFlags(has_pipeline=True),
+            reason="fallback detected shell structure",
+            backend="test",
+        ),
+    )
+
+    cfg = {
+        "permission_mode": "normal",
+        "defaults": {"*": "allow"},
+        "tools": {"bash": "allow"},
+        "rules": [
+            {
+                "id": "allow_git",
+                "tools": ["bash"],
+                "pattern": "git status *",
+                "severity": "LOW",
+            },
+        ],
+    }
+
+    perm, mr = evaluate_tiered_policy(cfg, "bash", {"command": "git status | cat"})
+    assert perm == PermissionLevel.ASK
+    assert "shell_ast:parse_unavailable" in mr
 
 
 def test_builtin_hits_ignore_user_rules():
@@ -305,7 +567,9 @@ def test_evaluate_global_policy_directly_uses_tiered_policy_even_when_disabled()
     assert "rules" in mr
 
 
-def test_owner_scope_global_level_sees_approval_overrides():
+def test_owner_scope_global_level_sees_approval_overrides(tmp_path, monkeypatch):
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("JIUWENCLAW_CONFIG_DIR", str(tmp_path))
     engine = PermissionEngine({
         "enabled": False,
         "schema": "tiered_policy",
@@ -559,6 +823,186 @@ def test_default_sensitive_rule_can_persist_always_allow(tmp_path, monkeypatch):
     assert overrides[0]["action"] == "allow"
 
 
+def test_build_shell_permission_suggestions_prefers_exact_for_simple_command():
+    suggestions = build_shell_permission_suggestions(
+        "bash",
+        "git status",
+        shell_ast_result=ShellAstParseResult(
+            kind="simple",
+            subcommands=(ShellSubcommand(text="git status"),),
+            flags=ShellStructureFlags(),
+            backend="test",
+        ),
+    )
+
+    assert len(suggestions) == 1
+    assert suggestions[0].pattern == "git status"
+    assert suggestions[0].scope == "exact"
+
+
+def test_build_shell_permission_suggestions_returns_exact_rules_for_compound():
+    suggestions = build_shell_permission_suggestions(
+        "bash",
+        "git status && npm test",
+        shell_ast_result=ShellAstParseResult(
+            kind="simple",
+            subcommands=(
+                ShellSubcommand(text="git status"),
+                ShellSubcommand(text="npm test"),
+            ),
+            flags=ShellStructureFlags(has_compound_operators=True, has_actual_operator_nodes=True, operators=("&&",)),
+            backend="test",
+        ),
+    )
+
+    assert [item.pattern for item in suggestions] == ["git status", "npm test"]
+
+
+def test_build_shell_permission_suggestions_dedupes_duplicate_subcommands():
+    suggestions = build_shell_permission_suggestions(
+        "bash",
+        "git status && git status",
+        shell_ast_result=ShellAstParseResult(
+            kind="simple",
+            subcommands=(
+                ShellSubcommand(text="git status"),
+                ShellSubcommand(text="git status"),
+            ),
+            flags=ShellStructureFlags(has_compound_operators=True, has_actual_operator_nodes=True, operators=("&&",)),
+            backend="test",
+        ),
+    )
+
+    assert [item.pattern for item in suggestions] == ["git status"]
+
+
+def test_build_shell_permission_suggestions_uses_prefix_for_multiline_command():
+    suggestions = build_shell_permission_suggestions(
+        "bash",
+        "python script.py\npython script.py --verbose",
+        shell_ast_result=ShellAstParseResult(
+            kind="simple",
+            subcommands=(ShellSubcommand(text="python script.py\npython script.py --verbose"),),
+            flags=ShellStructureFlags(),
+            backend="test",
+        ),
+    )
+
+    assert len(suggestions) == 1
+    assert suggestions[0].pattern == "python script.py *"
+    assert suggestions[0].scope == "prefix"
+
+
+def test_build_shell_permission_suggestions_returns_empty_for_parse_unavailable_risky():
+    suggestions = build_shell_permission_suggestions(
+        "bash",
+        "cat notes.txt > out.txt",
+        shell_ast_result=ShellAstParseResult(
+            kind="parse_unavailable",
+            flags=ShellStructureFlags(has_output_redirection=True),
+            reason="fallback detected shell structure",
+            backend="test",
+        ),
+    )
+
+    assert suggestions == []
+
+
+def test_persist_permission_allow_rule_writes_multiple_overrides_for_compound_command(tmp_path, monkeypatch):
+    cfg_path = tmp_path / "config.yaml"
+    cfg_path.write_text(
+        yaml.safe_dump({
+            "permissions": {
+                "schema": "tiered_policy",
+                "enabled": True,
+                "permission_mode": "normal",
+                "defaults": {"*": "allow"},
+                "tools": {"bash": "ask"},
+                "rules": [],
+            },
+        }, allow_unicode=True, sort_keys=False),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("JIUWENCLAW_CONFIG_DIR", str(tmp_path))
+    config_module = importlib.import_module("jiuwenclaw.config")
+    tiered_policy_module = importlib.import_module("jiuwenclaw.agentserver.permissions.tiered_policy")
+    shell_ast_module = importlib.import_module("jiuwenclaw.agentserver.permissions.shell_ast")
+
+    monkeypatch.setattr(config_module, "_CONFIG_YAML_PATH", cfg_path)
+    monkeypatch.setattr(
+        tiered_policy_module,
+        "parse_shell_for_permission",
+        lambda _command: ShellAstParseResult(
+            kind="simple",
+            subcommands=(
+                ShellSubcommand(text="git status"),
+                ShellSubcommand(text="npm test"),
+            ),
+            flags=ShellStructureFlags(has_compound_operators=True, has_actual_operator_nodes=True, operators=("&&",)),
+            backend="test",
+        ),
+    )
+    monkeypatch.setattr(
+        shell_ast_module,
+        "parse_shell_for_permission",
+        lambda _command: ShellAstParseResult(
+            kind="simple",
+            subcommands=(
+                ShellSubcommand(text="git status"),
+                ShellSubcommand(text="npm test"),
+            ),
+            flags=ShellStructureFlags(has_compound_operators=True, has_actual_operator_nodes=True, operators=("&&",)),
+            backend="test",
+        ),
+    )
+    set_permission_engine(PermissionEngine({"schema": "tiered_policy"}))
+
+    persist_permission_allow_rule("bash", {"command": "git status && npm test"})
+
+    saved = yaml.safe_load(cfg_path.read_text(encoding="utf-8"))
+    overrides = saved["permissions"].get("approval_overrides") or []
+    assert [item["pattern"] for item in overrides] == ["git status", "npm test"]
+
+
+def test_persist_permission_allow_rule_skips_complex_shell_suggestion(tmp_path, monkeypatch):
+    cfg_path = tmp_path / "config.yaml"
+    cfg_path.write_text(
+        yaml.safe_dump({
+            "permissions": {
+                "schema": "tiered_policy",
+                "enabled": True,
+                "permission_mode": "normal",
+                "defaults": {"*": "allow"},
+                "tools": {"bash": "ask"},
+                "rules": [],
+            },
+        }, allow_unicode=True, sort_keys=False),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("JIUWENCLAW_CONFIG_DIR", str(tmp_path))
+    config_module = importlib.import_module("jiuwenclaw.config")
+    tiered_policy_module = importlib.import_module("jiuwenclaw.agentserver.permissions.tiered_policy")
+    shell_ast_module = importlib.import_module("jiuwenclaw.agentserver.permissions.shell_ast")
+
+    monkeypatch.setattr(config_module, "_CONFIG_YAML_PATH", cfg_path)
+    risky_result = ShellAstParseResult(
+        kind="parse_unavailable",
+        flags=ShellStructureFlags(has_output_redirection=True),
+        reason="fallback detected shell structure",
+        backend="test",
+    )
+    monkeypatch.setattr(tiered_policy_module, "parse_shell_for_permission", lambda _command: risky_result)
+    monkeypatch.setattr(shell_ast_module, "parse_shell_for_permission", lambda _command: risky_result)
+    set_permission_engine(PermissionEngine({"schema": "tiered_policy"}))
+
+    persist_permission_allow_rule("bash", {"command": "cat notes.txt > out.txt"})
+
+    saved = yaml.safe_load(cfg_path.read_text(encoding="utf-8"))
+    assert "approval_overrides" not in saved["permissions"]
+
+
 def test_permission_rail_before_tool_call_applies_interrupt_decision():
     module_path = (
         Path(__file__).resolve().parents[3]
@@ -584,3 +1028,102 @@ def test_permission_rail_before_tool_call_applies_interrupt_decision():
     assert "self._apply_decision(ctx, tool_call, tool_name, decision)" in method_src
     assert "user_input=user_input" in method_src
     assert "user_input=None" not in method_src
+
+
+def test_interface_always_allow_payload_marks_persist_allow():
+    module_path = (
+        Path(__file__).resolve().parents[3]
+        / "jiuwenclaw"
+        / "agentserver"
+        / "interface.py"
+    )
+    source = module_path.read_text(encoding="utf-8")
+    tree = ast.parse(source)
+
+    method_src = None
+    for node in tree.body:
+        if isinstance(node, ast.ClassDef) and node.name == "JiuWenClaw":
+            for child in node.body:
+                if isinstance(child, ast.FunctionDef) and child.name == "_build_interactive_input_from_answers":
+                    method_src = ast.get_source_segment(source, child)
+                    break
+
+    assert method_src is not None
+    assert '"persist_allow": True' in method_src
+
+
+def test_permission_rail_shell_auto_confirm_key_requires_simple_command():
+    module_path = (
+        Path(__file__).resolve().parents[3]
+        / "jiuwenclaw"
+        / "agentserver"
+        / "deep_agent"
+        / "rails"
+        / "permission_rail.py"
+    )
+    source = module_path.read_text(encoding="utf-8")
+    tree = ast.parse(source)
+
+    helper_src = None
+    getter_src = None
+    for node in tree.body:
+        if isinstance(node, ast.ClassDef) and node.name == "PermissionInterruptRail":
+            for child in node.body:
+                if isinstance(child, ast.FunctionDef) and child.name == "_build_shell_auto_confirm_key":
+                    helper_src = ast.get_source_segment(source, child)
+                if isinstance(child, ast.FunctionDef) and child.name == "_get_auto_confirm_key":
+                    getter_src = ast.get_source_segment(source, child)
+
+    assert getter_src is not None
+    assert "return self._build_shell_auto_confirm_key(tool_name, str(cmd or \"\"))" in getter_src
+    assert helper_src is not None
+    assert 'if shell_ast_result.kind != "simple":' in helper_src
+    assert "if shell_ast_result.flags.has_risky_structure():" in helper_src
+    assert "if len(shell_ast_result.subcommands) != 1:" in helper_src
+    assert 'return f"{tool_name}:{subcommand}"' in helper_src
+
+
+def test_permission_rail_allow_always_persists_rule_without_session_auto_confirm(monkeypatch):
+    del monkeypatch
+    module_path = (
+        Path(__file__).resolve().parents[3]
+        / "jiuwenclaw"
+        / "agentserver"
+        / "deep_agent"
+        / "rails"
+        / "permission_rail.py"
+    )
+    source = module_path.read_text(encoding="utf-8")
+    tree = ast.parse(source)
+
+    resolve_src = None
+    parse_src = None
+    for node in tree.body:
+        if isinstance(node, ast.ClassDef) and node.name == "PermissionInterruptRail":
+            for child in node.body:
+                if isinstance(child, ast.AsyncFunctionDef) and child.name == "resolve_interrupt":
+                    resolve_src = ast.get_source_segment(source, child)
+                if isinstance(child, ast.FunctionDef) and child.name == "_parse_confirm_payload":
+                    parse_src = ast.get_source_segment(source, child)
+
+    assert parse_src is not None
+    assert 'persist_allow=bool(user_input.get("persist_allow", False))' in parse_src
+    assert resolve_src is not None
+    assert "persisted = persist_permission_allow_rule(normalized_name, tool_args)" in resolve_src
+    assert "if self._should_store_auto_confirm(" in resolve_src
+
+
+def test_permission_rail_allow_always_does_not_session_auto_confirm_compound_shell(monkeypatch):
+    del monkeypatch
+    module_path = (
+        Path(__file__).resolve().parents[3]
+        / "jiuwenclaw"
+        / "agentserver"
+        / "deep_agent"
+        / "rails"
+        / "permission_rail.py"
+    )
+    source = module_path.read_text(encoding="utf-8")
+    assert "if shell_ast_result.kind != \"simple\":" in source
+    assert "if shell_ast_result.flags.has_risky_structure():" in source
+    assert "if len(shell_ast_result.subcommands) != 1:" in source

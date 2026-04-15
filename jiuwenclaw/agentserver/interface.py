@@ -259,7 +259,12 @@ class JiuWenClaw:
         if "本次允许" in selected_options:
             confirm_payload = {"approved": True, "auto_confirm": False, "feedback": ""}
         elif "总是允许" in selected_options:
-            confirm_payload = {"approved": True, "auto_confirm": True, "feedback": ""}
+            confirm_payload = {
+                "approved": True,
+                "auto_confirm": True,
+                "persist_allow": True,
+                "feedback": "",
+            }
         elif "拒绝" in selected_options:
             confirm_payload = {"approved": False, "auto_confirm": False, "feedback": custom_input or "用户拒绝"}
         else:

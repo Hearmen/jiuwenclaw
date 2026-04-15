@@ -119,7 +119,7 @@ async def check_tool_permissions(
     normalized_channel_id = (channel_id or "").strip()
     if normalized_channel_id not in PERMISSION_ENABLED_CHANNELS:
         logger.info(
-            "Tool permissions check skipped for channel=%s",
+            "[PermissionEngine] permission.batch.skip channel=%s",
             normalized_channel_id or "(empty)",
         )
         return list(tool_calls), []
@@ -147,20 +147,20 @@ async def check_tool_permissions(
 
         if result.is_allowed:
             allowed.append(tc)
-            logger.warning(
-                "Permission ALLOWED: tool=%s, rule=%s",
+            logger.info(
+                "[PermissionEngine] permission.batch.result tool=%s decision=allow matched_rule=%s",
                 tool_name, result.matched_rule,
             )
         elif result.is_denied:
             deny_msg = f"[PERMISSION_DENIED] {result.reason or 'Operation not allowed'}"
             denied.append((tc, deny_msg))
             logger.warning(
-                "Permission DENIED: tool=%s, rule=%s",
+                "[PermissionEngine] permission.batch.result tool=%s decision=deny matched_rule=%s",
                 tool_name, result.matched_rule,
             )
         elif result.needs_approval:
-            logger.warning(
-                "Permission needs_approval: tool=%s, rule=%s",
+            logger.info(
+                "[PermissionEngine] permission.batch.result tool=%s decision=ask matched_rule=%s",
                 tool_name, result.matched_rule,
             )
             if session is not None and request_approval_callback is not None:
@@ -168,16 +168,20 @@ async def check_tool_permissions(
                 if decision == "allow_always":
                     allowed.append(tc)
                     logger.info(
-                        "Permission ALWAYS-ALLOW persisted: tool=%s (rule written to config)",
+                        "[PermissionEngine] permission.batch.user_decision tool=%s decision=allow_always",
                         tool_name,
                     )
                 elif decision == "allow_once":
                     allowed.append(tc)
                     logger.info(
-                        "Permission ALLOW-ONCE: tool=%s (no rule persisted)",
+                        "[PermissionEngine] permission.batch.user_decision tool=%s decision=allow_once",
                         tool_name,
                     )
                 else:
+                    logger.info(
+                        "[PermissionEngine] permission.batch.user_decision tool=%s decision=deny",
+                        tool_name,
+                    )
                     denied.append(
                         (tc, "[PERMISSION_REJECTED] User rejected the request.")
                     )
@@ -325,12 +329,16 @@ def _extract_paths_from_command(command: str, workdir: str | Path) -> list[Path]
     if not tokens:
         return []
     cmd = tokens[0].lower()
-    logger.info("[_extract_paths_from_command] command=%s cmd=%s _PATH_AWARE_COMMANDS=%s", command, cmd,
-                cmd in _PATH_AWARE_COMMANDS)
+    logger.debug(
+        "[PermissionEngine] permission.external.parse tool_command=%s cmd=%s path_aware=%s",
+        command,
+        cmd,
+        cmd in _PATH_AWARE_COMMANDS,
+    )
     if cmd not in _PATH_AWARE_COMMANDS:
         return []
     base = Path(workdir).resolve()
-    logger.info("[_extract_paths_from_command] base=%s", base)
+    logger.debug("[PermissionEngine] permission.external.parse_base base=%s", base)
     paths: list[Path] = []
     for tok in tokens[1:]:
         tok = tok.strip().strip('"').strip("'")
@@ -342,7 +350,7 @@ def _extract_paths_from_command(command: str, workdir: str | Path) -> list[Path]
         if not p.is_absolute():
             p = base / tok
         paths.append(p.resolve())
-    logger.info("[_extract_paths_from_command] extracted paths=%s", paths)
+    logger.debug("[PermissionEngine] permission.external.parse_paths extracted_paths=%s", paths)
     return paths
 
 
@@ -375,12 +383,18 @@ class ExternalDirectoryChecker:
             try:
                 from jiuwenclaw.utils import get_agent_workspace_dir
                 workspace = get_agent_workspace_dir()
-                logger.info("[ExternalDirectoryChecker] workspace from get_agent_workspace_dir: %s", workspace)
+                logger.debug(
+                    "[PermissionEngine] permission.external.workspace source=get_agent_workspace_dir workspace=%s",
+                    workspace,
+                )
             except ImportError:
-                logger.error("[ExternalDirectoryChecker] Failed to import get_agent_workspace_dir")
+                logger.error("[PermissionEngine] permission.external.workspace source=get_agent_workspace_dir failed")
                 return None
         else:
-            logger.info("[ExternalDirectoryChecker] workspace from _workspace_root: %s", workspace)
+            logger.debug(
+                "[PermissionEngine] permission.external.workspace source=config workspace=%s",
+                workspace,
+            )
 
         paths: list[Path] = []
         if tool_name in ("mcp_exec_command", "bash", "create_terminal"):
@@ -390,8 +404,8 @@ class ExternalDirectoryChecker:
             except (OSError, RuntimeError):
                 workdir_resolved = workspace
             cmd = str(tool_args.get("command", "") or tool_args.get("cmd", ""))
-            logger.info(
-                "[ExternalDirectoryChecker] tool_name=%s cmd=%s workdir=%s",
+            logger.debug(
+                "[PermissionEngine] permission.external.shell_input tool=%s cmd=%s workdir=%s",
                 tool_name, cmd, workdir_resolved,
             )
             paths = _extract_paths_from_command(cmd, workdir_resolved)
@@ -409,13 +423,11 @@ class ExternalDirectoryChecker:
                     paths.append(p)
                 except (OSError, RuntimeError):
                     continue
-            logger.info("[ExternalDirectoryChecker] tool_name=%s path-tool paths=%s", tool_name, paths)
+            logger.debug("[PermissionEngine] permission.external.path_input tool=%s paths=%s", tool_name, paths)
         else:
             return None
 
-        logger.info("[ExternalDirectoryChecker] extracted paths: %s", paths)
         external = [p for p in paths if not contains_path(workspace, p)]
-        logger.info("[ExternalDirectoryChecker] external paths: %s", external)
         if not external:
             return None
         ext_paths_str = [str(p).replace("\\", "/") for p in external]

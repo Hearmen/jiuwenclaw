@@ -8,6 +8,7 @@ import logging
 import os
 import re
 import sys
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -15,6 +16,10 @@ import yaml
 
 from jiuwenclaw.agentserver.permissions.models import PermissionLevel
 from jiuwenclaw.agentserver.permissions.patterns import match_path, match_wildcard
+from jiuwenclaw.agentserver.permissions.shell_ast import (
+    ShellAstParseResult,
+    parse_shell_for_permission,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -46,6 +51,17 @@ _MR = "tiered_policy"
 _APPROVAL_OVERRIDES_PREFIX = f"{_MR}:approval_overrides"
 
 
+@dataclass(frozen=True)
+class _TieredInvocationContext:
+    mode: str
+    builtin_rules: list[dict[str, Any]]
+    rules: list[dict[str, Any]]
+    approval_overrides: list[dict[str, Any]]
+    baseline_level: PermissionLevel | None
+    baseline_rule: str | None
+    defaults_cfg: dict[str, Any]
+
+
 def _package_builtin_rules_path() -> Path:
     return Path(__file__).resolve().parent.parent.parent / "resources" / "builtin_rules.yaml"
 
@@ -72,7 +88,7 @@ def _resolve_builtin_rules_yaml_path() -> Path | None:
     if pkg_path.is_file():
         return pkg_path
     logger.warning(
-        "builtin_rules.yaml not found under %s or %s",
+        "[PermissionEngine] permission.tiered_policy.builtin_rules_missing user_path=%s package_path=%s",
         fallback_user_path,
         pkg_path,
     )
@@ -151,7 +167,7 @@ def severity_to_decision(severity: str, permission_mode: str) -> PermissionLevel
         return PermissionLevel.ASK
     if sev == "CRITICAL":
         return PermissionLevel.DENY if mode == "strict" else PermissionLevel.ASK
-    logger.warning("unknown severity %r, treating as HIGH", severity)
+    logger.warning("[PermissionEngine] permission.tiered_policy.unknown_severity severity=%r fallback=HIGH", severity)
     return PermissionLevel.ASK
 
 
@@ -213,7 +229,7 @@ def _shell_pattern_matches(pattern: str, command: str) -> bool:
                 for part in expr.split("|"):
                     if _try_subexpr(part.strip()):
                         return True
-            logger.warning("invalid shell regex %r", expr)
+            logger.warning("[PermissionEngine] permission.tiered_policy.invalid_shell_regex expr=%r", expr)
             return False
         return False
     glob_chars = frozenset("*?[")
@@ -232,7 +248,7 @@ def _path_pattern_matches(pattern: str, value: str) -> bool:
         try:
             return bool(re.search(expr, value.replace("\\", "/"), flags))
         except re.error:
-            logger.warning("invalid path regex %r", expr)
+            logger.warning("[PermissionEngine] permission.tiered_policy.invalid_path_regex expr=%r", expr)
             return False
     return match_path(p, value)
 
@@ -276,7 +292,8 @@ def _collect_param_rule_hits(
         r_tools_s = [str(x).strip() for x in r_tools if isinstance(x, str) and str(x).strip()]
         if not rule_tools_category_consistent(r_tools_s):
             logger.warning(
-                "skip rule %r: tools must be same category %s",
+                "[PermissionEngine] permission.tiered_policy.rule_skipped "
+                "id=%r reason=inconsistent_tool_category tools=%s",
                 rule.get("id"),
                 r_tools_s,
             )
@@ -321,7 +338,8 @@ def _collect_approval_override_hits(
         r_tools_s = [str(x).strip() for x in r_tools if isinstance(x, str) and str(x).strip()]
         if not rule_tools_category_consistent(r_tools_s):
             logger.warning(
-                "skip approval override %r: tools must be same category %s",
+                "[PermissionEngine] permission.tiered_policy.override_skipped "
+                "id=%r reason=inconsistent_tool_category tools=%s",
                 rule.get("id"),
                 r_tools_s,
             )
@@ -368,18 +386,25 @@ def _baseline_level(tools_cfg: dict[str, Any], tool_name: str) -> tuple[Permissi
         try:
             return _parse_level(raw), f"tools.{tool_name}"
         except ValueError:
-            logger.warning("invalid tools.%s level %r", tool_name, raw)
+            logger.warning(
+                "[PermissionEngine] permission.tiered_policy.invalid_tool_level tool=%s value=%r",
+                tool_name,
+                raw,
+            )
             return None, None
     if isinstance(raw, dict) and isinstance(raw.get("*"), str):
         try:
             logger.warning(
-                "tools.%s uses legacy dict; tiered_policy expects scalar — using '*' only",
+                "[PermissionEngine] permission.tiered_policy.legacy_tool_dict tool=%s using=asterisk_only",
                 tool_name,
             )
             return _parse_level(raw["*"]), f"tools.{tool_name}.*"
         except ValueError:
             return None, None
-    logger.warning("tools.%s is not a scalar allow|ask|deny; ignored for baseline", tool_name)
+    logger.warning(
+        "[PermissionEngine] permission.tiered_policy.invalid_tool_baseline tool=%s reason=non_scalar_level",
+        tool_name,
+    )
     return None, None
 
 
@@ -391,6 +416,126 @@ def _finalize_hits(hits: list[tuple[PermissionLevel, str]], prefix: str) -> tupl
     contributing = sorted({r for lev, r in hits if lev == final})
     matched = f"{_MR}:{prefix}:" + "+".join(contributing) if contributing else f"{_MR}:{prefix}"
     return final, matched
+
+
+def _shell_ast_floor(
+        shell_parse: ShellAstParseResult | None,
+) -> tuple[PermissionLevel | None, str | None]:
+    if shell_parse is None:
+        return None, None
+    flags = shell_parse.flags
+    if shell_parse.kind == "too_complex":
+        reason = shell_parse.reason or "unsupported_complex_structure"
+        return PermissionLevel.ASK, f"{_MR}:shell_ast:too_complex:{reason}"
+    if shell_parse.kind == "parse_unavailable" and flags.has_risky_structure():
+        reason = shell_parse.reason or "conservative_fallback"
+        return PermissionLevel.ASK, f"{_MR}:shell_ast:parse_unavailable:{reason}"
+    if any((
+            flags.has_input_redirection,
+            flags.has_output_redirection,
+            flags.has_command_substitution,
+            flags.has_process_substitution,
+            flags.has_heredoc,
+    )):
+        return PermissionLevel.ASK, f"{_MR}:shell_ast:structure_guard"
+    return None, None
+
+
+def _apply_shell_ast_floor(
+        permission: PermissionLevel,
+        matched_rule: str,
+        shell_floor: PermissionLevel | None,
+        shell_floor_rule: str | None,
+) -> tuple[PermissionLevel, str]:
+    if shell_floor is None:
+        return permission, matched_rule
+    final = strictest(permission, shell_floor)
+    if final == permission:
+        return permission, matched_rule
+    if matched_rule and shell_floor_rule:
+        return final, f"{shell_floor_rule}|{matched_rule}"
+    return final, shell_floor_rule or matched_rule
+
+
+def _with_shell_command(tool_args: dict[str, Any], command: str) -> dict[str, Any]:
+    sub_args = dict(tool_args)
+    if "command" in sub_args or "cmd" not in sub_args:
+        sub_args["command"] = command
+    if "cmd" in sub_args:
+        sub_args["cmd"] = command
+    return sub_args
+
+
+def _evaluate_single_invocation(
+        tool_name: str,
+        tool_args: dict[str, Any],
+        ctx: _TieredInvocationContext,
+) -> tuple[PermissionLevel, str]:
+    builtin_hits = _collect_param_rule_hits(
+        ctx.builtin_rules,
+        tool_name,
+        tool_args,
+        ctx.mode,
+        "builtin",
+    )
+    if any(lev == PermissionLevel.DENY for lev, _ in builtin_hits):
+        return _finalize_hits(builtin_hits, "builtin")
+
+    user_hits = _collect_param_rule_hits(
+        ctx.rules,
+        tool_name,
+        tool_args,
+        ctx.mode,
+        "rules",
+    )
+    if any(lev == PermissionLevel.DENY for lev, _ in user_hits):
+        return _finalize_hits(user_hits, "rules")
+
+    override_hits = _collect_approval_override_hits(ctx.approval_overrides, tool_name, tool_args)
+    if override_hits:
+        contributing = sorted(set(override_hits))
+        return PermissionLevel.ALLOW, _APPROVAL_OVERRIDES_PREFIX + ":" + "+".join(contributing)
+
+    if builtin_hits:
+        return _finalize_hits(builtin_hits, "builtin")
+
+    if user_hits:
+        return _finalize_hits(user_hits, "rules")
+
+    if ctx.baseline_level is not None:
+        return ctx.baseline_level, ctx.baseline_rule or f"{_MR}:tools"
+
+    if "*" in ctx.defaults_cfg and isinstance(ctx.defaults_cfg["*"], str):
+        try:
+            dl = _parse_level(ctx.defaults_cfg["*"])
+            return dl, f"{_MR}:defaults.*"
+        except ValueError:
+            logger.warning(
+                "[PermissionEngine] permission.tiered_policy.invalid_default_level value=%r",
+                ctx.defaults_cfg["*"],
+            )
+
+    return PermissionLevel.ASK, f"{_MR}:fallback(no_config)"
+
+
+def _aggregate_subcommand_results(
+        results: list[tuple[str, PermissionLevel, str]],
+) -> tuple[PermissionLevel, str]:
+    if not results:
+        return PermissionLevel.ASK, f"{_MR}:shell_subcommands:fallback"
+    if len(results) == 1:
+        _, permission, matched_rule = results[0]
+        return permission, matched_rule
+
+    final = strictest(*(permission for _, permission, _ in results))
+    contributing = sorted({
+        f"{command}=>{matched_rule}"
+        for command, permission, matched_rule in results
+        if permission == final
+    })
+    if not contributing:
+        return final, f"{_MR}:shell_subcommands"
+    return final, f"{_MR}:shell_subcommands:" + "+".join(contributing)
 
 
 def evaluate_tiered_policy(
@@ -428,40 +573,45 @@ def evaluate_tiered_policy(
     if bl == PermissionLevel.DENY:
         return PermissionLevel.DENY, bl_rule or f"{_MR}:tools.deny"
 
-    builtin_hits = _collect_param_rule_hits(
-        get_builtin_security_rules(), tool_name, tool_args, mode, "builtin",
+    shell_parse: ShellAstParseResult | None = None
+    if _tool_category(tool_name) == "shell":
+        shell_parse = parse_shell_for_permission(_command_text(tool_args))
+    shell_floor, shell_floor_rule = _shell_ast_floor(shell_parse)
+    builtin_rules = get_builtin_security_rules()
+    invocation_ctx = _TieredInvocationContext(
+        mode=mode,
+        builtin_rules=builtin_rules,
+        rules=rules,
+        approval_overrides=approval_overrides,
+        baseline_level=bl,
+        baseline_rule=bl_rule,
+        defaults_cfg=defaults_cfg,
     )
-    if any(lev == PermissionLevel.DENY for lev, _ in builtin_hits):
-        return _finalize_hits(builtin_hits, "builtin")
 
-    user_hits = _collect_param_rule_hits(rules, tool_name, tool_args, mode, "rules")
-    if any(lev == PermissionLevel.DENY for lev, _ in user_hits):
-        return _finalize_hits(user_hits, "rules")
+    if _tool_category(tool_name) == "shell" and shell_parse is not None and shell_parse.kind == "simple":
+        subcommand_results: list[tuple[str, PermissionLevel, str]] = []
+        for subcommand in shell_parse.subcommands:
+            if not subcommand.text:
+                continue
+            sub_args = _with_shell_command(tool_args, subcommand.text)
+            sub_permission, sub_rule = _evaluate_single_invocation(
+                tool_name,
+                sub_args,
+                invocation_ctx,
+            )
+            subcommand_results.append((subcommand.text, sub_permission, sub_rule))
+            if sub_permission == PermissionLevel.DENY:
+                break
 
-    override_hits = _collect_approval_override_hits(
-        approval_overrides, tool_name, tool_args,
+        aggregated = _aggregate_subcommand_results(subcommand_results)
+        return _apply_shell_ast_floor(*aggregated, shell_floor, shell_floor_rule)
+
+    result = _evaluate_single_invocation(
+        tool_name,
+        tool_args,
+        invocation_ctx,
     )
-    if override_hits:
-        contributing = sorted(set(override_hits))
-        return PermissionLevel.ALLOW, _APPROVAL_OVERRIDES_PREFIX + ":" + "+".join(contributing)
-
-    if builtin_hits:
-        return _finalize_hits(builtin_hits, "builtin")
-
-    if user_hits:
-        return _finalize_hits(user_hits, "rules")
-
-    if bl is not None:
-        return bl, bl_rule or f"{_MR}:tools"
-
-    if "*" in defaults_cfg and isinstance(defaults_cfg["*"], str):
-        try:
-            dl = _parse_level(defaults_cfg["*"])
-            return dl, f"{_MR}:defaults.*"
-        except ValueError:
-            logger.warning("invalid defaults.* %r", defaults_cfg["*"])
-
-    return PermissionLevel.ASK, f"{_MR}:fallback(no_config)"
+    return _apply_shell_ast_floor(*result, shell_floor, shell_floor_rule)
 
 
 def maybe_escalate_shell_operators(

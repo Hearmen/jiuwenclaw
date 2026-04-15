@@ -118,7 +118,7 @@ async def check_tool_permissions_with_context(
 
     # normal_im → 委托原有逻辑（而非跳过权限检查）
     if scene == "normal_im":
-        logger.info("Tool permissions check delegated to default engine for scene=normal_im")
+        logger.info("[PermissionEngine] permission.owner_scope.delegate scene=normal_im")
         return await check_tool_permissions(
             tool_calls, channel_id=channel_id, session_id=session_id,
             session=session, request_approval_callback=request_approval_callback,
@@ -159,14 +159,14 @@ async def _check_avatar_permissions(
 
     # 无 owner_scopes 配置 → 委托原有逻辑
     if not isinstance(owner_scopes, dict) or not owner_scopes:
-        logger.info("Tool permissions check skipped for group_digital_avatar: no owner_scopes configured")
+        logger.info("[PermissionEngine] permission.owner_scope.skip scene=group_digital_avatar reason=no_owner_scopes")
         return list(tool_calls), []
 
     # 硬保护：avatar 模式必须有 principal_user_id
     if not perm_ctx.principal_user_id:
         logger.error(
-            "group_digital_avatar scene but principal_user_id is empty — "
-            "refusing all tool calls (fail-closed)."
+            "[PermissionEngine] permission.owner_scope.fail_closed scene=group_digital_avatar "
+            "reason=empty_principal_user_id"
         )
         deny_msg = (
             "[PERMISSION_DENIED] 数字分身未配置 my_user_id，"
@@ -213,8 +213,14 @@ async def _check_avatar_permissions(
             final_level = os_level if _severity.get(os_level, 2) >= _severity.get(global_level, 2) else global_level
 
         logger.info(
-            "Avatar permission: tool=%s owner_scope=%s global=%s final=%s channel=%s user=%s",
-            tool_name, os_level, global_level, final_level, cid, uid,
+            "[PermissionEngine] permission.owner_scope.result tool=%s owner_scope=%s global=%s "
+            "final=%s channel=%s user=%s",
+            tool_name,
+            os_level,
+            global_level,
+            final_level,
+            cid,
+            uid,
         )
 
         if final_level == "allow":
@@ -225,7 +231,7 @@ async def _check_avatar_permissions(
             # ask → deny 降级
             denied.append((tc, f"[PERMISSION_DENIED] {deny_guidance}"))
             logger.warning(
-                "Permission ASK downgraded to DENY (scene=group_digital_avatar): tool=%s",
+                "[PermissionEngine] permission.owner_scope.ask_downgraded tool=%s scene=group_digital_avatar",
                 tool_name,
             )
         else:
@@ -259,7 +265,11 @@ async def _get_global_tool_level(
             return None
         return permission.value  # "allow" / "ask" / "deny"
     except Exception as exc:
-        logger.warning("_get_global_tool_level failed for tool=%s: %s", tool_name, exc)
+        logger.warning(
+            "[PermissionEngine] permission.owner_scope.global_lookup_failed tool=%s error=%s",
+            tool_name,
+            exc,
+        )
         return None
 
 
@@ -352,4 +362,4 @@ def persist_to_owner_scope(
                 tools[tool_name] = pattern
             set_config(raw)
     except Exception as e:
-        logger.warning("persist_to_owner_scope failed: %s", e)
+        logger.warning("[PermissionEngine] permission.owner_scope.persist_failed error=%s", e)

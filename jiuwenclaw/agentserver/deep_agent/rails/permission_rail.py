@@ -8,6 +8,7 @@ for ASK decisions using the built-in interrupt rail flow.
 from __future__ import annotations
 
 import json
+from dataclasses import dataclass
 from typing import Any, Iterable, Optional
 from openjiuwen.core.foundation.llm.schema.tool_call import ToolCall
 from openjiuwen.core.single_agent.interrupt.response import InterruptRequest
@@ -19,6 +20,8 @@ from openjiuwen.harness.rails.interrupt.confirm_rail import (
 )
 
 from jiuwenclaw.agentserver.permissions.core import PermissionEngine, get_permission_engine
+from jiuwenclaw.agentserver.permissions.patterns import persist_permission_allow_rule
+from jiuwenclaw.agentserver.permissions.shell_ast import parse_shell_for_permission
 from jiuwenclaw.config import get_config
 from jiuwenclaw.agentserver.permissions.checker import (
     TOOL_PERMISSION_CHANNEL_ID,
@@ -34,6 +37,14 @@ TOOL_NAME_ALIASES = {
     "fetch_webpage": "mcp_fetch_webpage",
     "exec_command": "mcp_exec_command",
 }
+
+
+@dataclass(frozen=True)
+class PermissionConfirmResponse:
+    approved: bool
+    feedback: str = ""
+    auto_confirm: bool = False
+    persist_allow: bool = False
 
 
 class PermissionInterruptRail(ConfirmInterruptRail):
@@ -68,7 +79,7 @@ class PermissionInterruptRail(ConfirmInterruptRail):
                 model_name=model_name,
             )
         logger.info(
-            "[PermissionRail] Initialized with tool_names=%s tools.keys=%s llm=%s model_name=%s",
+            "[PermissionEngine] permission.rail.init tool_names=%s tools_keys=%s llm_enabled=%s model_name=%s",
             list(self._tool_names),
             list((self._static_config.get("tools") or {}).keys()),
             self._engine._llm is not None,
@@ -83,37 +94,54 @@ class PermissionInterruptRail(ConfirmInterruptRail):
         return TOOL_NAME_ALIASES.get(tool_name, tool_name)
 
     def _get_auto_confirm_key(self, tool_call: ToolCall) -> str:
-        """Generate fine-grained auto-confirm key based on tool call.
-        
-        For bash tool: key = "bash_<command>" (e.g., "bash_dir", "bash_rm")
-        For mcp_exec_command: key = "mcp_exec_command_<command>"
-        For create_terminal: key = "create_terminal_<command>"
-        For other tools: key = tool_name
-        
-        This enables pattern-based auto-confirm like the old mcp_exec_command patterns.
-        """
+        """Generate a conservative session auto-confirm key for the tool call."""
         if tool_call is None:
             return ""
-        
+
         tool_name = tool_call.name or ""
         tool_args = self._parse_tool_args(tool_call)
-        
+
         if tool_name in {"bash", "mcp_exec_command", "create_terminal"}:
             cmd = tool_args.get("command", tool_args.get("cmd", ""))
-            if cmd:
-                cmd_base = cmd.strip().split()[0] if cmd.strip() else ""
-                if cmd_base:
-                    return f"{tool_name}_{cmd_base}"
-            return tool_name
-        
+            return self._build_shell_auto_confirm_key(tool_name, str(cmd or ""))
+
         return tool_name
+
+    @staticmethod
+    def _build_shell_auto_confirm_key(tool_name: str, command: str) -> str:
+        text = (command or "").strip()
+        if not text:
+            return ""
+
+        shell_ast_result = parse_shell_for_permission(text)
+        if shell_ast_result.kind != "simple":
+            return ""
+        if shell_ast_result.flags.has_risky_structure():
+            return ""
+        if len(shell_ast_result.subcommands) != 1:
+            return ""
+
+        subcommand = (shell_ast_result.subcommands[0].text or "").strip()
+        if not subcommand:
+            return ""
+        return f"{tool_name}:{subcommand}"
+
+    @staticmethod
+    def _should_store_auto_confirm(
+        *,
+        auto_confirm: bool,
+        session: Any,
+        auto_confirm_key: str,
+        persisted: bool,
+    ) -> bool:
+        return bool(auto_confirm and session is not None and auto_confirm_key and not persisted)
 
     async def before_tool_call(self, ctx: AgentCallbackContext) -> None:
         tool_name = ctx.inputs.tool_name
         tool_call = ctx.inputs.tool_call
         normalized_name = self._normalize_tool_name(tool_name)
         logger.info(
-            "[PermissionRail] before_tool_call: tool_name=%s normalized=%s _tool_names=%s",
+            "[PermissionEngine] permission.rail.before_tool_call tool=%s normalized=%s tracked_tools=%s",
             tool_name, normalized_name, list(self._tool_names)
         )
         if normalized_name not in self._tool_names:
@@ -146,7 +174,7 @@ class PermissionInterruptRail(ConfirmInterruptRail):
             merged = sorted(set(merged) | extra)
         self._tool_names = set(merged)
         logger.info(
-            "[PermissionRail] Hot-updated tool_names=%s",
+            "[PermissionEngine] permission.rail.config_updated tool_names=%s",
             list(self._tool_names),
         )
 
@@ -163,8 +191,8 @@ class PermissionInterruptRail(ConfirmInterruptRail):
         auto_confirm_key = self._get_auto_confirm_key(tool_call)
 
         logger.info(
-            "[PermissionRail] resolve_interrupt called: tool_name=%s normalized=%s "
-            "tool_args=%s auto_confirm_key=%s user_input=%s",
+            "[PermissionEngine] permission.rail.resolve tool=%s normalized=%s "
+            "tool_args=%s auto_confirm_key=%s user_input_type=%s",
             tool_name, normalized_name, tool_args, auto_confirm_key,
             type(user_input).__name__ if user_input else None
         )
@@ -178,7 +206,7 @@ class PermissionInterruptRail(ConfirmInterruptRail):
 
         if perm_ctx is not None:
             logger.info(
-                "[PermissionRail] perm_ctx: scene=%s channel_id=%s principal_user_id=%s",
+                "[PermissionEngine] permission.rail.context scene=%s channel_id=%s principal_user_id=%s",
                 perm_ctx.scene, perm_ctx.channel_id, perm_ctx.principal_user_id
             )
             if perm_ctx.scene == "group_digital_avatar":
@@ -198,8 +226,11 @@ class PermissionInterruptRail(ConfirmInterruptRail):
             if perm_ctx.principal_user_id:
                 owner_scopes = self._static_config.get("owner_scopes", {})
                 logger.info(
-                    "[PermissionRail] owner_scopes lookup: channel_id=%s user_id=%s owner_scopes_keys=%s",
-                    perm_ctx.channel_id, perm_ctx.principal_user_id, list(owner_scopes.keys()) if owner_scopes else []
+                    "[PermissionEngine] permission.rail.owner_scope_lookup "
+                    "channel_id=%s user_id=%s owner_scope_channels=%s",
+                    perm_ctx.channel_id,
+                    perm_ctx.principal_user_id,
+                    list(owner_scopes.keys()) if owner_scopes else [],
                 )
                 if isinstance(owner_scopes, dict) and owner_scopes:
                     cid = perm_ctx.channel_id.strip()
@@ -208,7 +239,7 @@ class PermissionInterruptRail(ConfirmInterruptRail):
                     owner_level = _resolve_owner_scope_level(scope_cfg, normalized_name, tool_args)
                     if owner_level is not None:
                         logger.info(
-                            "[PermissionRail] owner_scopes matched: tool=%s normalized=%s level=%s",
+                            "[PermissionEngine] permission.rail.owner_scope_match tool=%s normalized=%s level=%s",
                             tool_name, normalized_name, owner_level
                         )
                         if owner_level == "allow":
@@ -219,7 +250,7 @@ class PermissionInterruptRail(ConfirmInterruptRail):
 
         if user_input is None:
             logger.info(
-                "[PermissionRail] First call - checking permission for tool=%s normalized=%s",
+                "[PermissionEngine] permission.rail.first_check tool=%s normalized=%s",
                 tool_name, normalized_name
             )
             # 与磁盘上的 permissions 对齐：persist_cli_trusted_directory 等只更新了全局
@@ -238,21 +269,28 @@ class PermissionInterruptRail(ConfirmInterruptRail):
                 channel_id=self._resolve_channel_id(),
             )
 
-            logger.info(
-                "[PermissionRail] Engine returned: permission=%s matched_rule=%s risk=%s",
-                result.permission.value, result.matched_rule, result.risk,
-            )
-
             if result.permission == PermissionLevel.ALLOW:
-                logger.info("[PermissionRail] ALLOW tool=%s rule=%s", tool_name, result.matched_rule)
+                logger.info(
+                    "[PermissionEngine] permission.rail.result tool=%s decision=allow matched_rule=%s",
+                    tool_name,
+                    result.matched_rule,
+                )
                 return self.approve()
 
             if result.permission == PermissionLevel.DENY:
-                logger.warning("[PermissionRail] DENY tool=%s rule=%s", tool_name, result.matched_rule)
+                logger.warning(
+                    "[PermissionEngine] permission.rail.result tool=%s decision=deny matched_rule=%s",
+                    tool_name,
+                    result.matched_rule,
+                )
                 return self.reject(tool_result=f"[PERMISSION_DENIED] {result.reason or 'Operation not allowed'}")
 
             if self._is_auto_confirmed(auto_confirm_config, auto_confirm_key):
-                logger.info("[PermissionRail] AUTO_CONFIRM key=%s", auto_confirm_key)
+                logger.info(
+                    "[PermissionEngine] permission.auto_confirm.hit tool=%s key=%s",
+                    tool_name,
+                    auto_confirm_key,
+                )
                 return self.approve()
 
             resolved_channel = self._resolve_channel_id()
@@ -270,24 +308,51 @@ class PermissionInterruptRail(ConfirmInterruptRail):
                             "(ACP permission request failed)"
                         )
                     )
-                if confirm_payload.auto_confirm and ctx.session is not None and auto_confirm_key:
+                should_persist = confirm_payload.persist_allow
+                persisted = False
+                if should_persist:
+                    persisted = persist_permission_allow_rule(normalized_name, tool_args)
+                    logger.info(
+                        "[PermissionEngine] permission.persist.result tool=%s channel=acp persisted=%s",
+                        tool_name,
+                        persisted,
+                    )
+                if self._should_store_auto_confirm(
+                    auto_confirm=confirm_payload.auto_confirm,
+                    session=ctx.session,
+                    auto_confirm_key=auto_confirm_key,
+                    persisted=persisted,
+                ):
                     self._store_auto_confirm(ctx, auto_confirm_key)
                 if confirm_payload.approved:
-                    logger.info("[PermissionRail] ACP user approved tool=%s", tool_name)
+                    decision = "allow_always" if confirm_payload.persist_allow else "allow_once"
+                    logger.info(
+                        "[PermissionEngine] permission.user.decision tool=%s channel=acp decision=%s persisted=%s",
+                        tool_name,
+                        decision,
+                        persisted,
+                    )
                     return self.approve()
-                logger.info("[PermissionRail] ACP user rejected tool=%s", tool_name)
+                logger.info(
+                    "[PermissionEngine] permission.user.decision tool=%s channel=acp decision=deny",
+                    tool_name,
+                )
                 return self.reject(
                     tool_result=confirm_payload.feedback or "[PERMISSION_REJECTED] User rejected the request."
                 )
 
-            logger.info("[PermissionRail] ASK - triggering interrupt for tool=%s", tool_name)
+            logger.info(
+                "[PermissionEngine] permission.interrupt.ask tool=%s matched_rule=%s",
+                tool_name,
+                result.matched_rule,
+            )
             message = self._build_message(tool_call, result)
             return self.interrupt(InterruptRequest(
                 message=message,
                 payload_schema=ConfirmPayload.to_schema(),
             ))
 
-        logger.info("[PermissionRail] User response received for tool=%s", tool_name)
+        logger.info("[PermissionEngine] permission.rail.user_response tool=%s", tool_name)
         payload = self._parse_confirm_payload(user_input)
         if payload is None:
             message = self._build_message(tool_call, PermissionResult(
@@ -300,14 +365,40 @@ class PermissionInterruptRail(ConfirmInterruptRail):
                 payload_schema=ConfirmPayload.to_schema(),
             ))
 
-        if payload.auto_confirm and ctx.session is not None and auto_confirm_key:
+        persisted = False
+        if payload.persist_allow:
+            persisted = persist_permission_allow_rule(normalized_name, tool_args)
+            logger.info(
+                "[PermissionEngine] permission.persist.result tool=%s channel=%s persisted=%s",
+                tool_name,
+                self._resolve_channel_id(),
+                persisted,
+            )
+
+        if self._should_store_auto_confirm(
+            auto_confirm=payload.auto_confirm,
+            session=ctx.session,
+            auto_confirm_key=auto_confirm_key,
+            persisted=persisted,
+        ):
             self._store_auto_confirm(ctx, auto_confirm_key)
 
         if payload.approved:
-            logger.info("[PermissionRail] User approved tool=%s", tool_name)
+            decision = "allow_always" if payload.persist_allow else "allow_once"
+            logger.info(
+                "[PermissionEngine] permission.user.decision tool=%s channel=%s decision=%s persisted=%s",
+                tool_name,
+                self._resolve_channel_id(),
+                decision,
+                persisted,
+            )
             return self.approve()
 
-        logger.info("[PermissionRail] User rejected tool=%s", tool_name)
+        logger.info(
+            "[PermissionEngine] permission.user.decision tool=%s channel=%s decision=deny",
+            tool_name,
+            self._resolve_channel_id(),
+        )
         return self.reject(tool_result=payload.feedback or "[PERMISSION_REJECTED] User rejected the request.")
 
     @staticmethod
@@ -326,19 +417,34 @@ class PermissionInterruptRail(ConfirmInterruptRail):
         return {}
 
     @staticmethod
-    def _parse_confirm_payload(user_input: Any) -> Optional[ConfirmPayload]:
-        if isinstance(user_input, ConfirmPayload):
+    def _parse_confirm_payload(user_input: Any) -> Optional[PermissionConfirmResponse]:
+        if isinstance(user_input, PermissionConfirmResponse):
             return user_input
+        if isinstance(user_input, ConfirmPayload):
+            return PermissionConfirmResponse(
+                approved=user_input.approved,
+                feedback=user_input.feedback,
+                auto_confirm=user_input.auto_confirm,
+            )
         if isinstance(user_input, dict):
             try:
-                return ConfirmPayload.model_validate(user_input)
+                payload = ConfirmPayload.model_validate(user_input)
             except Exception:
                 return None
+            return PermissionConfirmResponse(
+                approved=payload.approved,
+                feedback=payload.feedback,
+                auto_confirm=payload.auto_confirm,
+                persist_allow=bool(user_input.get("persist_allow", False)),
+            )
         if isinstance(user_input, str):
             try:
-                return ConfirmPayload.model_validate(json.loads(user_input))
+                raw_payload = json.loads(user_input)
             except Exception:
                 return None
+            if not isinstance(raw_payload, dict):
+                return None
+            return PermissionInterruptRail._parse_confirm_payload(raw_payload)
         return None
 
     @staticmethod
@@ -358,7 +464,7 @@ class PermissionInterruptRail(ConfirmInterruptRail):
             config = {}
         config[auto_confirm_key] = True
         ctx.session.update_state({INTERRUPT_AUTO_CONFIRM_KEY: config})
-        logger.info("[PermissionRail] Stored auto_confirm for key=%s", auto_confirm_key)
+        logger.info("[PermissionEngine] permission.auto_confirm.store key=%s", auto_confirm_key)
 
     @staticmethod
     def _read_session_attr_value(session: Any, attr_name: str) -> Any:
@@ -369,7 +475,7 @@ class PermissionInterruptRail(ConfirmInterruptRail):
             return attr()
         except Exception:
             logger.debug(
-                "[PermissionRail] Failed to read session attribute: %s",
+                "[PermissionEngine] permission.rail.session_attr_read_failed attr=%s",
                 attr_name,
                 exc_info=True,
             )
@@ -449,17 +555,17 @@ class PermissionInterruptRail(ConfirmInterruptRail):
         tool_call: Optional[ToolCall],
         result: PermissionResult,
         auto_confirm_key: str,
-    ) -> ConfirmPayload | None:
+    ) -> PermissionConfirmResponse | None:
         session_id = self._resolve_session_id(ctx)
         if not session_id:
-            logger.warning("[PermissionRail] ACP permission request skipped: missing session_id")
+            logger.warning("[PermissionEngine] permission.acp.request_skipped reason=missing_session_id")
             return None
 
         from jiuwenclaw.agentserver.tools.acp_output_tools import get_acp_output_manager
 
         request_params = self._build_acp_permission_request(tool_call, result)
         logger.info(
-            "[PermissionRail] ACP permission request: session_id=%s tool=%s auto_confirm_key=%s",
+            "[PermissionEngine] permission.acp.request_start session_id=%s tool=%s auto_confirm_key=%s",
             session_id,
             tool_call.name if tool_call else "",
             auto_confirm_key,
@@ -471,18 +577,18 @@ class PermissionInterruptRail(ConfirmInterruptRail):
                 session_id=session_id,
             )
         except Exception as exc:
-            logger.warning("[PermissionRail] ACP permission request failed: %s", exc)
+            logger.warning("[PermissionEngine] permission.acp.request_failed error=%s", exc)
             return None
 
         if not isinstance(response, dict):
-            logger.warning("[PermissionRail] ACP permission request returned invalid response: %s", response)
+            logger.warning("[PermissionEngine] permission.acp.invalid_response response=%s", response)
             return None
 
         if isinstance(response.get("error"), dict):
             err = response["error"]
             message = str(err.get("message") or "Permission request failed")
-            logger.warning("[PermissionRail] ACP permission request error: %s", message)
-            return ConfirmPayload(
+            logger.warning("[PermissionEngine] permission.acp.error_response message=%s", message)
+            return PermissionConfirmResponse(
                 approved=False,
                 auto_confirm=False,
                 feedback=f"[PERMISSION_DENIED] {message}",
@@ -495,38 +601,43 @@ class PermissionInterruptRail(ConfirmInterruptRail):
 
         if outcome_kind == "selected":
             if option_id == "allow-once":
-                return ConfirmPayload(approved=True, auto_confirm=False, feedback="")
+                return PermissionConfirmResponse(approved=True, auto_confirm=False, feedback="")
             if option_id == "allow-always":
-                return ConfirmPayload(approved=True, auto_confirm=True, feedback="")
+                return PermissionConfirmResponse(
+                    approved=True,
+                    auto_confirm=True,
+                    persist_allow=True,
+                    feedback="",
+                )
             if option_id in {"reject-once", "reject-always"}:
-                return ConfirmPayload(
+                return PermissionConfirmResponse(
                     approved=False,
                     auto_confirm=False,
                     feedback="[PERMISSION_REJECTED] User rejected the request.",
                 )
             logger.warning(
-                "[PermissionRail] ACP permission request returned unknown option_id=%s",
+                "[PermissionEngine] permission.acp.unknown_option option_id=%s",
                 option_id,
             )
-            return ConfirmPayload(
+            return PermissionConfirmResponse(
                 approved=False,
                 auto_confirm=False,
                 feedback=f"[PERMISSION_DENIED] Unknown permission option: {option_id or 'empty'}",
             )
 
         if outcome_kind == "cancelled":
-            return ConfirmPayload(
+            return PermissionConfirmResponse(
                 approved=False,
                 auto_confirm=False,
                 feedback="[PERMISSION_REJECTED] Permission request was cancelled.",
             )
 
         logger.warning(
-            "[PermissionRail] ACP permission request returned unknown outcome=%s payload=%s",
+            "[PermissionEngine] permission.acp.unknown_outcome outcome=%s payload=%s",
             outcome_kind,
             result_payload,
         )
-        return ConfirmPayload(
+        return PermissionConfirmResponse(
             approved=False,
             auto_confirm=False,
             feedback="[PERMISSION_DENIED] Invalid ACP permission response.",
@@ -578,18 +689,17 @@ class PermissionInterruptRail(ConfirmInterruptRail):
         
         if tool_name == "bash":
             cmd = tool_args.get("command", tool_args.get("cmd", ""))
-            if cmd:
-                cmd_base = cmd.strip().split()[0] if cmd.strip() else ""
-                if cmd_base:
-                    return f'\n\n> 选择"总是允许"将自动放行 `{cmd_base}` 命令'
+            shell_key = self._build_shell_auto_confirm_key(tool_name, str(cmd or ""))
+            if shell_key:
+                return f'\n\n> 选择"总是允许"将为当前命令尝试写入持久化允许规则'
         if tool_name == "mcp_exec_command":
             cmd = tool_args.get("command", tool_args.get("cmd", ""))
-            if cmd:
-                return f'\n\n> 选择"总是允许"将自动放行 `{cmd}` 命令'
+            if self._build_shell_auto_confirm_key(tool_name, str(cmd or "")):
+                return '\n\n> 选择"总是允许"将为当前命令尝试写入持久化允许规则'
         if tool_name == "create_terminal":
             cmd = tool_args.get("command", tool_args.get("cmd", ""))
-            if cmd:
-                return f'\n\n> 选择"总是允许"将自动放行 `{cmd}` 终端命令'
+            if self._build_shell_auto_confirm_key(tool_name, str(cmd or "")):
+                return '\n\n> 选择"总是允许"将为当前终端命令尝试写入持久化允许规则'
         if auto_confirm_key:
             return f'\n\n> 选择"总是允许"将自动放行 `{auto_confirm_key}` 调用'
         return ""

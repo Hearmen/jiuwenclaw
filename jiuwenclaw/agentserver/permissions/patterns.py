@@ -22,6 +22,11 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
 
+from jiuwenclaw.agentserver.permissions.suggestions import (
+    PermissionSuggestion,
+    build_permission_suggestions,
+)
+
 logger = logging.getLogger(__name__)
 
 _SHELL_APPROVAL_TOOLS = frozenset({"bash", "mcp_exec_command"})
@@ -233,7 +238,7 @@ def contains_path(parent: str | Path, child: str | Path) -> bool:
 # ---------- 权限规则持久化 ----------
 
 
-def persist_permission_allow_rule(tool_name: str, tool_args: dict | str) -> None:
+def persist_permission_allow_rule(tool_name: str, tool_args: dict | str) -> bool:
     """用户选择「总是允许」时，将 allow 规则写入 config.yaml.
 
     For mcp_exec_command with a command arg, adds a wildcard pattern.
@@ -246,12 +251,15 @@ def persist_permission_allow_rule(tool_name: str, tool_args: dict | str) -> None
             tool_args = {}
 
     logger.info(
-        "[Persist] START tool_name=%s tool_args_type=%s tool_args=%s",
-        tool_name, type(tool_args).__name__, str(tool_args)[:200],
+        "[PermissionEngine] permission.persist.start tool=%s tool_args_type=%s tool_args=%s",
+        tool_name,
+        type(tool_args).__name__,
+        str(tool_args)[:200],
     )
 
     try:
         from jiuwenclaw.agentserver.permissions.core import get_permission_engine
+        from jiuwenclaw.agentserver.permissions.shell_ast import parse_shell_for_permission
         from jiuwenclaw.agentserver.permissions.tiered_policy import (
             evaluate_tiered_policy,
             permissions_schema_is_tiered_policy,
@@ -263,42 +271,65 @@ def persist_permission_allow_rule(tool_name: str, tool_args: dict | str) -> None
             _dump_yaml_round_trip,
         )
 
-        logger.info("[Persist] Config path: %s", _CONFIG_YAML_PATH)
+        logger.debug("[PermissionEngine] permission.persist.config_path path=%s", _CONFIG_YAML_PATH)
         data = _load_yaml_round_trip(_CONFIG_YAML_PATH)
         permissions = data.get("permissions")
         if permissions is None:
-            logger.warning("[Persist] ABORT: No 'permissions' section in config")
-            return
+            logger.warning(
+                "[PermissionEngine] permission.persist.abort tool=%s reason=no_permissions_section",
+                tool_name,
+            )
+            return False
         if permissions_schema_is_tiered_policy(permissions):
             current_permission, _matched_rule = evaluate_tiered_policy(
                 permissions, tool_name, tool_args,
             )
             if current_permission != PermissionLevel.ASK:
                 logger.warning(
-                    "[Persist] Skip tiered approval override for %s because current permission is %s",
+                    "[PermissionEngine] permission.persist.skip tool=%s reason=current_permission_not_ask current=%s",
                     tool_name,
                     current_permission.value,
                 )
-            elif _persist_tiered_approval_override(permissions, tool_name, tool_args):
-                logger.info("[Persist] Tiered approval override written for %s", tool_name)
+                return False
             else:
-                logger.warning(
-                    "[Persist] Skip tiered approval override for %s because exact override could not be derived",
+                shell_ast_result = None
+                if tool_name in _SHELL_APPROVAL_TOOLS:
+                    shell_ast_result = parse_shell_for_permission(
+                        str(tool_args.get("command", "") or tool_args.get("cmd", "") or "").strip()
+                    )
+                suggestions = build_permission_suggestions(
                     tool_name,
+                    tool_args,
+                    shell_ast_result=shell_ast_result,
                 )
+                persisted = _persist_tiered_approval_override_suggestions(permissions, suggestions)
+                if persisted:
+                    logger.info(
+                        "[PermissionEngine] permission.persist.write tool=%s target=approval_overrides persisted=true",
+                        tool_name,
+                    )
+                else:
+                    logger.warning(
+                        "[PermissionEngine] permission.persist.skip tool=%s reason=no_safe_suggestion",
+                        tool_name,
+                    )
+                    return False
         else:
             _persist_legacy_allow_rule(permissions, tool_name, tool_args)
+            persisted = True
 
         _dump_yaml_round_trip(_CONFIG_YAML_PATH, data)
-        logger.info("[Persist] YAML written to disk")
+        logger.info("[PermissionEngine] permission.persist.write tool=%s target=config_yaml persisted=true", tool_name)
 
         verify_data = _load_yaml_round_trip(_CONFIG_YAML_PATH)
         engine = get_permission_engine()
         engine.update_config(verify_data.get("permissions", {}))
-        logger.info("[Persist] Engine hot-reloaded")
+        logger.info("[PermissionEngine] permission.persist.reload tool=%s reloaded=true", tool_name)
+        return persisted
 
     except Exception:
-        logger.error("[Persist] FAILED to persist permission allow rule", exc_info=True)
+        logger.error("[PermissionEngine] permission.persist.failed tool=%s", tool_name, exc_info=True)
+        return False
 
 
 def _persist_legacy_allow_rule(permissions: dict, tool_name: str, tool_args: dict) -> None:
@@ -309,10 +340,14 @@ def _persist_legacy_allow_rule(permissions: dict, tool_name: str, tool_args: dic
 
     if tool_name == "mcp_exec_command":
         cmd = str(tool_args.get("command", tool_args.get("cmd", "")))
-        logger.info("[Persist] Extracted command: '%s'", cmd)
+        logger.debug("[PermissionEngine] permission.persist.legacy.command tool=%s command=%s", tool_name, cmd)
         if cmd:
             new_pattern = build_command_allow_pattern(cmd)
-            logger.info("[Persist] Built legacy pattern: %s", new_pattern)
+            logger.debug(
+                "[PermissionEngine] permission.persist.legacy.pattern tool=%s pattern=%s",
+                tool_name,
+                new_pattern,
+            )
 
             tool_entry = tools_section.get("mcp_exec_command")
             if not isinstance(tool_entry, dict):
@@ -326,36 +361,68 @@ def _persist_legacy_allow_rule(permissions: dict, tool_name: str, tool_args: dic
 
             if isinstance(patterns, dict):
                 if new_pattern in patterns:
-                    logger.info("[Persist] Legacy pattern already exists, skip")
+                    logger.info(
+                        "[PermissionEngine] permission.persist.legacy.skip tool=%s reason=pattern_exists pattern=%s",
+                        tool_name,
+                        new_pattern,
+                    )
                     return
                 patterns[new_pattern] = "allow"
             else:
                 for p in patterns:
                     if isinstance(p, dict) and p.get("pattern") == new_pattern:
-                        logger.info("[Persist] Legacy pattern already exists, skip")
+                        logger.info(
+                            "[PermissionEngine] permission.persist.legacy.skip "
+                            "tool=%s reason=pattern_exists pattern=%s",
+                            tool_name,
+                            new_pattern,
+                        )
                         return
                 patterns.append({"pattern": new_pattern, "permission": "allow"})
-            logger.info("[Persist] Appended legacy pattern: %s", new_pattern)
+            logger.info(
+                "[PermissionEngine] permission.persist.legacy.write tool=%s pattern=%s",
+                tool_name,
+                new_pattern,
+            )
             return
 
     tools_section[tool_name] = "allow"
-    logger.info("[Persist] Set %s = allow", tool_name)
+    logger.info("[PermissionEngine] permission.persist.legacy.write tool=%s action=allow", tool_name)
 
 
-def _persist_tiered_approval_override(
+def _persist_tiered_approval_override_suggestions(
     permissions: dict,
-    tool_name: str,
-    tool_args: dict,
+    suggestions: list[PermissionSuggestion],
 ) -> bool:
-    override_match = _build_tiered_approval_override_match(tool_name, tool_args)
-    if override_match is None:
+    if not suggestions:
         return False
-    match_type, pattern = override_match
     overrides = permissions.get("approval_overrides")
     if not isinstance(overrides, list):
         overrides = []
         permissions["approval_overrides"] = overrides
 
+    persisted_any = False
+    for suggestion in suggestions:
+        for tool_name in suggestion.tools:
+            if _ensure_single_allow_override(
+                    overrides,
+                    tool_name=tool_name,
+                    match_type=suggestion.match_type,
+                    pattern=suggestion.pattern,
+                    action=suggestion.action,
+            ):
+                persisted_any = True
+    return persisted_any
+
+
+def _ensure_single_allow_override(
+    overrides: list[Any],
+    *,
+    tool_name: str,
+    match_type: str,
+    pattern: str,
+    action: str,
+) -> bool:
     for existing in overrides:
         if not isinstance(existing, dict):
             continue
@@ -375,7 +442,13 @@ def _persist_tiered_approval_override(
             existing_action=existing_action,
         )
         if _is_same_allow_override(signature):
-            logger.info("[Persist] approval_override already exists, skip")
+            logger.info(
+                "[PermissionEngine] permission.persist.skip tool=%s reason=approval_override_exists "
+                "match_type=%s pattern=%s",
+                tool_name,
+                match_type,
+                pattern,
+            )
             return True
 
     overrides.append({
@@ -383,43 +456,10 @@ def _persist_tiered_approval_override(
         "tools": [tool_name],
         "match_type": match_type,
         "pattern": pattern,
-        "action": "allow",
+        "action": action,
         "source": "user_approval",
     })
     return True
-
-
-def _build_tiered_approval_override_match(
-    tool_name: str,
-    tool_args: dict,
-) -> tuple[str, str] | None:
-    if tool_name in _SHELL_APPROVAL_TOOLS:
-        command = str(tool_args.get("command", "") or tool_args.get("cmd", "") or "").strip()
-        if command:
-            return "command", command
-        return None
-    if tool_name in _PATH_APPROVAL_TOOLS:
-        for key in _PATH_APPROVAL_KEYS:
-            value = tool_args.get(key)
-            if isinstance(value, str) and value.strip():
-                return "path", value.strip()
-        for key, value in tool_args.items():
-            if not isinstance(value, str):
-                continue
-            text = value.strip()
-            if not text:
-                continue
-            if _value_looks_like_path(key, text):
-                return "path", text
-    return None
-
-
-def _value_looks_like_path(key: str, text: str) -> bool:
-    if key in _PATH_APPROVAL_KEYS:
-        return True
-    if "/" in text or "\\" in text:
-        return True
-    return len(text) > 1 and text[1] == ":"
 
 
 def _is_same_allow_override(signature: _ApprovalOverrideSignature) -> bool:
@@ -444,7 +484,7 @@ def persist_external_directory_allow(paths: list[str]) -> None:
     """用户选择「总是允许」外部路径时，写入 external_directory 配置."""
     if not paths:
         return
-    logger.info("[Persist] external_directory allow: paths=%s", paths[:3])
+    logger.info("[PermissionEngine] permission.persist.external.start paths=%s", paths[:3])
     try:
         from jiuwenclaw.agentserver.permissions.core import get_permission_engine
         from jiuwenclaw.config import (
@@ -469,13 +509,16 @@ def persist_external_directory_allow(paths: list[str]) -> None:
             key = parent if parent and parent != "." else path_norm
             if key not in ext_cfg or ext_cfg[key] != "allow":
                 ext_cfg[DoubleQuotedScalarString(key)] = DoubleQuotedScalarString("allow")
-                logger.info("[Persist] Added external_directory[%s] = allow", key)
+                logger.info(
+                    "[PermissionEngine] permission.persist.external.write path=%s action=allow",
+                    key,
+                )
         _dump_yaml_round_trip(_CONFIG_YAML_PATH, data)
         engine = get_permission_engine()
         engine.update_config(data.get("permissions", {}))
-        logger.info("[Persist] external_directory written, engine hot-reloaded")
+        logger.info("[PermissionEngine] permission.persist.external.reload reloaded=true")
     except Exception:
-        logger.error("[Persist] FAILED to persist external_directory allow", exc_info=True)
+        logger.error("[PermissionEngine] permission.persist.external.failed", exc_info=True)
 
 
 def persist_cli_trusted_directory(raw_path: str) -> dict[str, Any]:
@@ -524,7 +567,10 @@ def persist_cli_trusted_directory(raw_path: str) -> dict[str, Any]:
             ext_cfg = {"*": "ask"}
             permissions["external_directory"] = ext_cfg
         ext_cfg[DoubleQuotedScalarString(dir_norm)] = DoubleQuotedScalarString("allow")
-        logger.info("[Persist] cli add_dir external_directory[%s] = allow", dir_norm)
+        logger.info(
+            "[PermissionEngine] permission.persist.cli_add_dir.external.write path=%s action=allow",
+            dir_norm,
+        )
 
         path_pattern = "re:^" + re.escape(dir_norm) + r"(?:$|/)"
         posix = dir_norm
@@ -558,7 +604,10 @@ def persist_cli_trusted_directory(raw_path: str) -> dict[str, Any]:
                     "action": "allow",
                     "source": "cli_add_dir",
                 })
-                logger.info("[Persist] cli add_dir approval_overrides path id=%s", path_override_id)
+                logger.info(
+                    "[PermissionEngine] permission.persist.cli_add_dir.override.write target=path id=%s",
+                    path_override_id,
+                )
 
             shell_tools = sorted(_SHELL_TOOLS)
             if not _has_id(shell_override_id):
@@ -570,10 +619,13 @@ def persist_cli_trusted_directory(raw_path: str) -> dict[str, Any]:
                     "action": "allow",
                     "source": "cli_add_dir",
                 })
-                logger.info("[Persist] cli add_dir approval_overrides shell id=%s", shell_override_id)
+                logger.info(
+                    "[PermissionEngine] permission.persist.cli_add_dir.override.write target=shell id=%s",
+                    shell_override_id,
+                )
         else:
             logger.warning(
-                "[Persist] cli add_dir: permissions not tiered_policy; only external_directory updated",
+                "[PermissionEngine] permission.persist.cli_add_dir.skip reason=not_tiered_policy",
             )
 
         _dump_yaml_round_trip(_CONFIG_YAML_PATH, data)
@@ -587,5 +639,5 @@ def persist_cli_trusted_directory(raw_path: str) -> dict[str, Any]:
             "tiered_overrides": tiered,
         }
     except Exception as e:  # noqa: BLE001
-        logger.exception("[Persist] cli add_dir failed: %s", e)
+        logger.exception("[PermissionEngine] permission.persist.cli_add_dir.failed error=%s", e)
         return {"ok": False, "error": str(e)}
