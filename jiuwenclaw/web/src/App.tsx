@@ -420,6 +420,18 @@ function AppContent() {
     }
   }, []);
 
+  const validateModelConfig = useCallback(
+    async (fields: {
+      api_base: string;
+      api_key: string;
+      model: string;
+      model_provider: string;
+    }) => {
+      await request('config.validate_model', fields, { timeoutMs: 60000 });
+    },
+    [request],
+  );
+
   const saveConfigAndRestart = useCallback(async (updates: Record<string, string>) => {
     const payload = await request<{ updated?: string[]; applied_without_restart?: boolean }>(
       'config.set',
@@ -1016,6 +1028,7 @@ function AppContent() {
               config={serverConfig}
               isConnected={isConnected}
               onSaveConfig={saveConfigAndRestart}
+              onValidateModel={validateModelConfig}
               initialExpandGroupTag={configInitialExpandGroup}
             />
           </div>

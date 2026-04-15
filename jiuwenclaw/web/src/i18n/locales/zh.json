@@ -386,6 +386,15 @@
     },
     "hideValue": "隐藏明文",
     "showValue": "显示明文",
+    "validateModel": {
+      "legend": "发送「Hi」极小请求，不写入配置。",
+      "button": "测试默认模型",
+      "validating": "测试中…",
+      "success": "配置有效",
+      "notWorking": "配置不可用",
+      "needConnection": "请先连接服务器后再测试。",
+      "needFields": "请先填写 api_base、api_key、model、model_provider。"
+    },
     "groups": {
       "modelDefault": { "label": "默认模型（主对话）", "hint": "主对话模型服务与鉴权参数" },
       "modelVideo": { "label": "视频模型", "hint": "视频理解（可选）" },

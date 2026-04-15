@@ -17,7 +17,8 @@ from typing import Any
 from dotenv import load_dotenv
 import psutil
 from openjiuwen.core.common.logging import LogManager
-from openjiuwen.core.foundation.llm import ProviderType
+from openjiuwen.core.foundation.llm import Model, ProviderType
+from openjiuwen.core.foundation.llm.schema.config import ModelClientConfig, ModelRequestConfig
 
 from jiuwenclaw.config import (
     get_config,
@@ -457,6 +458,123 @@ def _register_web_handlers(bind: WebHandlersBindParams) -> None:
         await channel.send_response(
             ws, req_id, ok=True,
             payload={"updated": updated_param_keys, "applied_without_restart": applied_without_restart},
+        )
+
+    async def _config_validate_model(ws, req_id, params, session_id, max_tokens_bounds=None):
+        """Send a minimal chat completion (user message \"Hi\") using draft default-model fields.
+
+        Tries ``max_tokens=infimum_max_tokens`` first to limit cost; if the API rejects it (e.g. minimum output length),
+        retries with ``max_tokens=supremum_max_tokens``.
+        """
+        if max_tokens_bounds is None:
+            max_tokens_bounds = {
+                "infimum_max_tokens": 1,
+                "supremum_max_tokens": 16,
+            }
+
+        if isinstance(max_tokens_bounds, dict):
+            infimum_max_tokens = max_tokens_bounds.get("infimum_max_tokens")
+            supremum_max_tokens = max_tokens_bounds.get("supremum_max_tokens")
+        else:
+            infimum_max_tokens = 1
+            supremum_max_tokens = 16
+
+        if not isinstance(params, dict):
+            await channel.send_response(ws, req_id, ok=False, error="params must be object", code="BAD_REQUEST")
+            return
+        api_base = str(params.get("api_base") or "").strip()
+        api_key = str(params.get("api_key") or "").strip()
+        model = str(params.get("model") or "").strip()
+        model_provider = str(params.get("model_provider") or "").strip()
+        if not all([api_base, api_key, model, model_provider]):
+            await channel.send_response(
+                ws, req_id, ok=False,
+                error="api_base, api_key, model, and model_provider are required",
+                code="BAD_REQUEST",
+            )
+            return
+        available_model_providers = [provider.value for provider in ProviderType]
+        if model_provider not in available_model_providers:
+            await channel.send_response(
+                ws, req_id, ok=False,
+                error=f"Model provider must be one of: {available_model_providers}",
+                code="BAD_REQUEST",
+            )
+            return
+        if api_base.endswith("/chat/completions"):
+            api_base = api_base.rsplit("/chat/completions", 1)[0]
+        api_base = api_base.rstrip("/")
+
+        verify_ssl = bool(params.get("verify_ssl", False))
+
+        model_request_config = ModelRequestConfig(
+            model=model,
+            temperature=0,
+        )
+        model_client_config = ModelClientConfig(
+            client_id="config-validate",
+            client_provider=model_provider,
+            api_key=api_key,
+            api_base=api_base,
+            timeout=25.0,
+            max_retries=0,
+            verify_ssl=verify_ssl,
+        )
+        llm = Model(model_config=model_request_config, model_client_config=model_client_config)
+
+        async def test_invoke(max_tokens: int):
+            return await llm.invoke(
+                [{"role": "user", "content": "Hi"}],
+                max_tokens=max_tokens,
+                temperature=0,
+            )
+
+        try:
+            try:
+                resp = await test_invoke(infimum_max_tokens)
+            except Exception as first_exc:  # noqa: BLE001
+                logger.info(
+                    "[config.validate_model] max_tokens=%d failed, retrying with %d: %s",
+                    infimum_max_tokens,
+                    supremum_max_tokens,
+                    first_exc,
+                )
+                try:
+                    resp = await test_invoke(supremum_max_tokens)
+                except Exception as exc:  # noqa: BLE001
+                    logger.warning("[config.validate_model] Testing LLM failed: %s", exc)
+                    await channel.send_response(
+                        ws, req_id, ok=False,
+                        error=str(exc).strip() or "LLM request failed",
+                        code="LLM_ERROR",
+                    )
+                    return
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("[config.validate_model] LLM probe failed: %s", exc)
+            await channel.send_response(
+                ws, req_id, ok=False,
+                error=str(exc).strip() or "LLM request failed",
+                code="LLM_ERROR",
+            )
+            return
+
+        if hasattr(resp, "content"):
+            content = resp.content
+        elif isinstance(resp, dict):
+            content = resp.get("content", "")
+        else:
+            content = str(resp)
+        if not (isinstance(content, str) and content.strip()):
+            await channel.send_response(
+                ws, req_id, ok=False,
+                error="Empty response from model",
+                code="LLM_ERROR",
+            )
+            return
+
+        await channel.send_response(
+            ws, req_id, ok=True,
+            payload={"ok": True, "model_provider": model_provider},
         )
 
     async def _channel_get(ws, req_id, params, session_id):
@@ -1443,6 +1561,7 @@ def _register_web_handlers(bind: WebHandlersBindParams) -> None:
 
     channel.register_method("config.get", _config_get)
     channel.register_method("config.set", _config_set)
+    channel.register_method("config.validate_model", _config_validate_model)
     channel.register_method("channel.get", _channel_get)
 
     channel.register_method("session.list", _session_list)

@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useMemo, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useState, type ReactNode } from "react";
 import { useTranslation } from 'react-i18next';
 import { useChatStore } from '../../stores';
 
@@ -6,6 +6,13 @@ interface ConfigPanelProps {
   config: Record<string, unknown> | null;
   isConnected: boolean;
   onSaveConfig: (updates: Record<string, string>) => Promise<void>;
+  /** 校验默认模型配置（api_base / api_key / model / model_provider）能否完成一次最小 LLM 请求 */
+  onValidateModel?: (fields: {
+    api_base: string;
+    api_key: string;
+    model: string;
+    model_provider: string;
+  }) => Promise<void>;
   /** 首次进入配置页时展开的分组 tag（如 third_party_api）；离开配置页时由 App 清空 */
   initialExpandGroupTag?: string | null;
 }
@@ -256,6 +263,7 @@ function GroupSection({
   defaultOpen,
   t,
   nested = false,
+  afterTable,
 }: {
   group: ConfigGroup;
   draftValues: Record<string, string>;
@@ -263,6 +271,8 @@ function GroupSection({
   defaultOpen: boolean;
   t: (key: string, options?: Record<string, unknown>) => string;
   nested?: boolean;
+  /** Rendered below the key/value table when the section is expanded (e.g. default model test action). */
+  afterTable?: ReactNode;
 }) {
   const [open, setOpen] = useState(defaultOpen);
   const [visibleFields, setVisibleFields] = useState<Record<string, boolean>>({});
@@ -312,6 +322,7 @@ function GroupSection({
         </span>
       </button>
       {open && (
+        <>
         <table className="w-full text-sm border-t border-border">
           <tbody>
             {group.keys.map(([key, value]) => (
@@ -425,6 +436,8 @@ function GroupSection({
             ))}
           </tbody>
         </table>
+        {afterTable}
+        </>
       )}
     </div>
   );
@@ -436,11 +449,25 @@ function ModelConfigSection({
   draftValues,
   onChange,
   t,
+  canValidateDefaultModel,
+  validateLoading,
+  validateDisabled,
+  validateDisabledReason,
+  validateStatus,
+  validateMessage,
+  onValidateDefaultModel,
 }: {
   modelGroups: ConfigGroup[];
   draftValues: Record<string, string>;
   onChange: (key: string, value: string) => void;
   t: (key: string, options?: Record<string, unknown>) => string;
+  canValidateDefaultModel: boolean;
+  validateLoading: boolean;
+  validateDisabled: boolean;
+  validateDisabledReason: string | null;
+  validateStatus: "idle" | "loading" | "ok" | "err";
+  validateMessage: string | null;
+  onValidateDefaultModel: () => void;
 }) {
   const [open, setOpen] = useState(true);
   const totalItems = modelGroups.reduce((s, g) => s + g.keys.length, 0);
@@ -485,6 +512,35 @@ function ModelConfigSection({
               defaultOpen={group.tag === "model_default"}
               t={t}
               nested
+              afterTable={
+                canValidateDefaultModel && group.tag === "model_default" ? (
+                  <div className="border-t border-border px-4 py-4 bg-secondary/10">
+                    <div className="flex flex-col items-center gap-2.5 text-center">
+                      <button
+                        type="button"
+                        onClick={onValidateDefaultModel}
+                        disabled={validateDisabled}
+                        title={validateDisabledReason ?? undefined}
+                        className="btn !px-3 !py-1.5 text-sm disabled:opacity-50 disabled:cursor-not-allowed whitespace-nowrap"
+                      >
+                        {validateLoading ? t("config.validateModel.validating") : t("config.validateModel.button")}
+                      </button>
+                      <p className="text-[11px] leading-snug text-text-muted max-w-sm">
+                        {t("config.validateModel.legend")}
+                      </p>
+                      {validateMessage && validateStatus !== "idle" && validateStatus !== "loading" ? (
+                        <p
+                          className={`text-xs max-w-md break-words ${
+                            validateStatus === "ok" ? "text-ok" : "text-danger"
+                          }`}
+                        >
+                          {validateMessage}
+                        </p>
+                      ) : null}
+                    </div>
+                  </div>
+                ) : null
+              }
             />
           ))}
         </div>
@@ -497,6 +553,7 @@ export function ConfigPanel({
   config,
   isConnected,
   onSaveConfig,
+  onValidateModel,
   initialExpandGroupTag = null,
 }: ConfigPanelProps) {
   const { t } = useTranslation();
@@ -504,6 +561,10 @@ export function ConfigPanel({
   const [draftValues, setDraftValues] = useState<Record<string, string>>({});
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [modelValidateStatus, setModelValidateStatus] = useState<
+    "idle" | "loading" | "ok" | "err"
+  >("idle");
+  const [modelValidateMessage, setModelValidateMessage] = useState<string | null>(null);
 
   const normalizedConfig = useMemo<Record<string, string>>(() => {
     if (!config) return {};
@@ -518,6 +579,16 @@ export function ConfigPanel({
     setDraftValues(normalizedConfig);
     setError(null);
   }, [normalizedConfig]);
+
+  useEffect(() => {
+    setModelValidateStatus("idle");
+    setModelValidateMessage(null);
+  }, [
+    draftValues.api_base,
+    draftValues.api_key,
+    draftValues.model,
+    draftValues.model_provider,
+  ]);
 
   const groups = useMemo<ConfigGroup[]>(() => {
     if (!Object.keys(normalizedConfig).length) return [];
@@ -586,6 +657,29 @@ export function ConfigPanel({
     if (!hasChanges) return;
     setDraftValues(normalizedConfig);
     setError(null);
+  };
+
+  const handleValidateDefaultModel = () => {
+    if (!onValidateModel) {
+      return;
+    }
+    void (async () => {
+      setModelValidateStatus("loading");
+      setModelValidateMessage(null);
+      try {
+        await onValidateModel({
+          api_base: (draftValues.api_base ?? "").trim(),
+          api_key: (draftValues.api_key ?? "").trim(),
+          model: (draftValues.model ?? "").trim(),
+          model_provider: (draftValues.model_provider ?? "").trim(),
+        });
+        setModelValidateStatus("ok");
+        setModelValidateMessage(t("config.validateModel.success"));
+      } catch {
+        setModelValidateStatus("err");
+        setModelValidateMessage(t("config.validateModel.notWorking"));
+      }
+    })();
   };
 
   const handleSaveAndRestart = async () => {
@@ -665,6 +759,23 @@ export function ConfigPanel({
                 draftValues={draftValues}
                 onChange={handleFieldChange}
                 t={t}
+                canValidateDefaultModel={Boolean(onValidateModel)}
+                validateLoading={modelValidateStatus === "loading"}
+                validateDisabled={
+                  !isConnected ||
+                  hasMissingRequiredModelFields ||
+                  modelValidateStatus === "loading"
+                }
+                validateDisabledReason={
+                  !isConnected
+                    ? t("config.validateModel.needConnection")
+                    : hasMissingRequiredModelFields
+                      ? t("config.validateModel.needFields")
+                      : null
+                }
+                validateStatus={modelValidateStatus}
+                validateMessage={modelValidateMessage}
+                onValidateDefaultModel={handleValidateDefaultModel}
               />
             )}
             {otherGroups.map((group) => (

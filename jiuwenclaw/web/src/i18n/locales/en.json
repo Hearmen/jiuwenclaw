@@ -387,6 +387,15 @@
     },
     "hideValue": "Hide value",
     "showValue": "Show value",
+    "validateModel": {
+      "legend": "Sends “Hi” with minimal tokens. Nothing is saved.",
+      "button": "Test Default Model",
+      "validating": "Testing…",
+      "success": "Configuration is working.",
+      "notWorking": "Configuration is not working",
+      "needConnection": "Connect to the server before testing.",
+      "needFields": "Fill api_base, api_key, model, and model_provider first."
+    },
     "groups": {
       "modelDefault": { "label": "Default Model (Main Chat)", "hint": "Primary chat model service and auth" },
       "modelVideo": { "label": "Video Model", "hint": "Video understanding/generation model (optional)" },
