@@ -19,6 +19,10 @@ _USER_AGENT = (
     "Chrome/124.0.0.0 Safari/537.36"
 )
 _REQUEST_HEADERS = {"User-Agent": _USER_AGENT}
+_FREE_SEARCH_PROXY_URL_ENV = "FREE_SEARCH_PROXY_URL"
+_FREE_SEARCH_DEFAULT_NO_PROXY = (
+    "127.0.0.1,.huawei.com,localhost,local,.local,10.155.97.247,.myhuaweicloud.coms"
+)
 _CHARSET_HEADER_RE = re.compile(r"charset=([^\s;]+)", flags=re.IGNORECASE)
 _CHARSET_META_RE = re.compile(
     br"""<meta[^>]+charset=["']?\s*([A-Za-z0-9._-]+)""",
@@ -40,6 +44,40 @@ def _extract_declared_charset(response: requests.Response) -> str:
         except Exception:
             return ""
     return ""
+
+
+def _get_free_search_proxy_url() -> str:
+    return str(os.environ.get(_FREE_SEARCH_PROXY_URL_ENV, "") or "").strip()
+
+
+def _no_proxy_entries() -> list[str]:
+    configured = os.environ.get("NO_PROXY") or os.environ.get("no_proxy") or _FREE_SEARCH_DEFAULT_NO_PROXY
+    return [entry.strip().lower() for entry in configured.split(",") if entry.strip()]
+
+
+def _should_bypass_free_search_proxy(url: str) -> bool:
+    proxy_url = _get_free_search_proxy_url()
+    if not proxy_url:
+        return True
+    hostname = (urlparse(url).hostname or "").lower()
+    if not hostname:
+        return False
+    for entry in _no_proxy_entries():
+        if entry == "*":
+            return True
+        if entry.startswith(".") and (hostname == entry[1:] or hostname.endswith(entry)):
+            return True
+        if hostname == entry or hostname.endswith(f".{entry}"):
+            return True
+    return False
+
+
+def _apply_free_search_proxy(url: str, kwargs: dict[str, object]) -> bool:
+    proxy_url = _get_free_search_proxy_url()
+    if not proxy_url or _should_bypass_free_search_proxy(url):
+        return False
+    kwargs.setdefault("proxies", {"http": proxy_url, "https": proxy_url})
+    return True
 
 
 def _decode_response_text(response: requests.Response) -> str:
@@ -86,9 +124,12 @@ def _decode_response_text(response: requests.Response) -> str:
 
 def _http_get(url: str, **kwargs) -> requests.Response:
     """Try normal requests first; retry without env proxies on ProxyError."""
+    explicit_proxy = _apply_free_search_proxy(url, kwargs)
     try:
         return requests.get(url, **kwargs)
     except requests.exceptions.ProxyError:
+        if explicit_proxy:
+            raise
         with requests.Session() as session:
             session.trust_env = False
             return session.get(url, **kwargs)

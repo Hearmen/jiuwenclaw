@@ -40,7 +40,8 @@ const THIRD_PARTY_API_KEYS = new Set([
 const REQUIRED_MODEL_FIELDS = ["api_base", "api_key", "model", "model_provider"] as const;
 const REQUIRED_MODEL_FIELD_SET = new Set<string>(REQUIRED_MODEL_FIELDS);
 const EVOLUTION_KEYS = new Set(["evolution_auto_scan"]);
-const FREE_SEARCH_KEYS = new Set(["free_search_ddg_enabled", "free_search_bing_enabled"]);
+const FREE_SEARCH_BOOLEAN_KEYS = new Set(["free_search_ddg_enabled", "free_search_bing_enabled"]);
+const FREE_SEARCH_KEYS = new Set([...FREE_SEARCH_BOOLEAN_KEYS, "free_search_proxy_url"]);
 const MEMORY_KEYS = new Set(["memory_forbidden_enabled", "memory_forbidden_description"]);
 
 function classifyKey(key: string): string {
@@ -160,7 +161,7 @@ function getNestedModelStyle(tag: string): string {
 function isBooleanKey(key: string): boolean {
   return (
     EVOLUTION_KEYS.has(key) ||
-    FREE_SEARCH_KEYS.has(key) ||
+    FREE_SEARCH_BOOLEAN_KEYS.has(key) ||
     key === "context_engine_enabled" ||
     key === "kv_cache_affinity_enabled" ||
     key === "permissions_enabled" ||
@@ -191,7 +192,8 @@ function isSensitiveKey(key: string): boolean {
     lower.includes("key") ||
     lower.includes("secret") ||
     lower.includes("token") ||
-    lower.includes("password")
+    lower.includes("password") ||
+    lower.includes("proxy")
   );
 }
 
@@ -236,15 +238,20 @@ function isProviderKey(key: string): boolean {
 /** 表格列显示用：video_api_base -> api_base，避免与分组标题重复 */
 /** i18n 键名映射：字段名 -> 翻译 key（显示名 / placeholder） */
 const KEY_DISPLAY_I18N: Record<string, string> = {
+  free_search_proxy_url: "config.keys.freeSearchProxyUrl",
   memory_forbidden_enabled: "config.keys.memoryForbiddenEnabled",
   memory_forbidden_description: "config.keys.memoryForbiddenDescription",
 };
 const KEY_PLACEHOLDER_I18N: Record<string, string> = {
+  free_search_proxy_url: "config.keys.freeSearchProxyUrlPlaceholder",
   memory_forbidden_description: "config.keys.memoryForbiddenDescriptionPlaceholder",
 };
 
 /** 组内字段排序优先级，数字越小越靠前 */
 const KEY_SORT_PRIORITY: Record<string, number> = {
+  free_search_ddg_enabled: 0,
+  free_search_bing_enabled: 1,
+  free_search_proxy_url: 2,
   memory_forbidden_enabled: 0,
   memory_forbidden_description: 1,
 };

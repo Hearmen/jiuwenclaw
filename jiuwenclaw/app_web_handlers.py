@@ -176,6 +176,7 @@ _CONFIG_SET_ENV_MAP = {
     "evolution_auto_scan": "EVOLUTION_AUTO_SCAN",
     "free_search_ddg_enabled": "FREE_SEARCH_DDG_ENABLED",
     "free_search_bing_enabled": "FREE_SEARCH_BING_ENABLED",
+    "free_search_proxy_url": "FREE_SEARCH_PROXY_URL",
 }
 # 配置项键名列表，用于日志等说明
 CONFIG_KEYS = tuple(_CONFIG_SET_ENV_MAP.keys())

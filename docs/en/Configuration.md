@@ -30,6 +30,7 @@ These can be changed in the web app; values are written back to `.env` or config
 | `serper_api_key` | `SERPER_API_KEY` | Serper search API key |
 | `perplexity_api_key` | `PERPLEXITY_API_KEY` | Perplexity API key |
 | `github_token` | `GITHUB_TOKEN` | GitHub PAT; SkillNet search/install uses the GitHub API |
+| `free_search_proxy_url` | `FREE_SEARCH_PROXY_URL` | Optional HTTP/HTTPS proxy for free search and webpage fetch, for example `http://username:password@proxyhk.huawei.com:8080` |
 | `evolution_auto_scan` | `EVOLUTION_AUTO_SCAN` | Auto-scan evolvable skills after each turn (`true`/`false`) |
 
 **Note**: After saving, the backend restarts to load new settings. Model fields (`api_base`, `api_key`, `model`, `model_provider`) are required.
