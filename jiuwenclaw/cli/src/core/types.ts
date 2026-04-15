@@ -11,6 +11,14 @@ export interface JsonObject {
   [key: string]: JsonValue;
 }
 
+export interface MediaItem {
+  type: "image" | "audio" | "video" | "document";
+  mimeType: string;
+  filename: string;
+  base64Data?: string;
+  url?: string;
+}
+
 export interface SystemMeta {
   eventType?: "chat.media" | "chat.file" | "notice";
   rawPayload?: JsonObject;
@@ -30,10 +38,24 @@ export interface ToolCallDisplay {
   arguments?: unknown;
   description?: string;
   formattedArgs?: string;
-  status: "running" | "completed" | "error";
+  status: "running" | "completed" | "error" | "timeout";
   result?: string;
   summary?: string;
   isError?: boolean;
+}
+
+export type ToolExecutionStatus = "pending" | "timeout" | "completed" | "error";
+
+export interface ToolExecution {
+  toolCallId: string;
+  sessionId: string;
+  requestId?: string;
+  tool: ToolCallDisplay;
+  startedAt: string;
+  updatedAt: string;
+  timeoutAt: string;
+  timedOutAt?: string;
+  resultArrivedAfterTimeout?: boolean;
 }
 
 export type SubtaskStatus = "starting" | "tool_call" | "tool_result" | "completed" | "error";
@@ -67,6 +89,39 @@ export interface TodoItem {
   updatedAt: string;
 }
 
+export interface TeamMemberEvent {
+  id: string;
+  type: string;
+  teamId: string;
+  memberId: string;
+  oldStatus?: string;
+  newStatus?: string;
+  reason?: string;
+  restartCount?: number;
+  force?: boolean;
+  timestamp: number;
+}
+
+export interface TeamTaskEvent {
+  id: string;
+  type: string;
+  teamId: string;
+  taskId: string;
+  status?: string;
+  timestamp: number;
+}
+
+export interface TeamMessageEvent {
+  id: string;
+  type: string;
+  teamId: string;
+  messageId?: string;
+  fromMember: string;
+  toMember?: string;
+  content: string;
+  timestamp: number;
+}
+
 export type HistoryItem =
   | { kind: "user"; id: string; sessionId: string; content: string; at: string }
   | {
@@ -74,6 +129,9 @@ export type HistoryItem =
       id: string;
       sessionId: string;
       content: string;
+      mediaItems?: MediaItem[];
+      audioBase64?: string;
+      audioMime?: string;
       streaming?: boolean;
       requestId?: string;
       at: string;
@@ -86,6 +144,21 @@ export type HistoryItem =
       requestId?: string;
       tools: ToolCallDisplay[];
       at: string;
+    }
+  | {
+      kind: "collapsed_tool_group";
+      id: string;
+      sessionId: string;
+      requestId?: string;
+      tools: ToolCallDisplay[];
+      at: string;
+      latestHint?: string;
+      counts: {
+        read: number;
+        search: number;
+        list: number;
+        fetch: number;
+      };
     }
   | {
       kind: "system";
@@ -103,5 +176,6 @@ export type HistoryItem =
       content: string;
       icon?: string;
       meta?: InfoMeta;
+      mediaItems?: MediaItem[];
       at: string;
     };

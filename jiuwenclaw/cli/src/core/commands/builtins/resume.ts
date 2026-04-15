@@ -1,7 +1,7 @@
 import { addError, addInfo } from "../helpers.js";
 import { CommandKind, type SlashCommand } from "../types.js";
 
-interface SessionMeta {
+export interface SessionMeta {
   session_id: string;
   title?: string;
   channel_id?: string;
@@ -10,14 +10,14 @@ interface SessionMeta {
   message_count?: number;
 }
 
-interface SessionListPayload {
+export interface SessionListPayload {
   sessions?: SessionMeta[];
   total?: number;
   limit?: number;
   offset?: number;
 }
 
-interface ResumeResumePayload {
+export interface ResumeResumePayload {
   session_id?: string;
   query?: string;
   resumed?: boolean;
@@ -28,15 +28,15 @@ export function createResumeCommand(): SlashCommand {
   return {
     name: "resume",
     altNames: ["continue"],
-    description: "Resume a previous conversation, or list sessions with /resume list",
+    description: "Resume a previous conversation, or list sessions with /resume",
     usage: "/resume [list | conversation id or search term]",
-    example: "/resume list",
+    example: "/resume",
     kind: CommandKind.BUILT_IN,
     takesArgs: true,
     action: async (ctx, args) => {
       const value = args.trim();
       try {
-        if (value === "list") {
+        if (value === "" || value === "list") {
           const payload = await ctx.request<SessionListPayload>("session.list", {});
           const sessions = payload.sessions ?? [];
           const total = payload.total ?? sessions.length;

@@ -8,15 +8,23 @@ import {
   type Focusable,
   type SlashCommand as TuiSlashCommand,
   TUI,
+  matchesKey,
 } from "@mariozechner/pi-tui";
+import { statSync } from "node:fs";
+import { basename, extname, resolve } from "node:path";
+import { spawnSync } from "node:child_process";
 import type { CliPiAppState } from "../app-state.js";
 import { CommandService, parseSlashCommand } from "../core/commands/CommandService.js";
+import { addError, addInfo } from "../core/commands/helpers.js";
+import type { SessionListPayload, SessionMeta } from "../core/commands/builtins/resume.js";
 import { handleAppScreenKeyInput } from "./keymap.js";
 import { buildAppScreenLines } from "./screen-layout.js";
+import { orderedMemberIds } from "./components/team-shared.js";
 import { padToWidth } from "./rendering/text.js";
 import { editorTheme, palette, selectListTheme } from "./theme.js";
 
 const END_CURSOR = "\x1b[7m \x1b[0m";
+const COMPOSER_ATTACHMENT_TOKEN_RE = /\[Image #(\d+)\]/g;
 const PERMISSION_TOOL_RE = /工具\s+`([^`]+)`\s+需要授权/;
 const PERMISSION_RISK_RE = /安全风险评估：\**\s*([^\s*]+)?\s*\**([^*\n]+?风险)\**/m;
 const PERMISSION_QUOTE_RE = /^>\s*(.+)$/gm;
@@ -29,6 +37,175 @@ type PermissionSummary = {
   command?: string;
   description?: string;
 };
+
+type ComposerAttachment = {
+  id: string;
+  kind: "image";
+  path: string;
+  filename: string;
+};
+
+type ResumeSessionListState = {
+  list: SelectList;
+  sessions: SessionMeta[];
+  total: number;
+};
+
+const IMAGE_MIME_TYPES: Record<string, string> = {
+  ".png": "image/png",
+  ".jpg": "image/jpeg",
+  ".jpeg": "image/jpeg",
+  ".gif": "image/gif",
+  ".webp": "image/webp",
+};
+
+function resolveFdBinary(): string | null {
+  for (const candidate of ["fd", "fdfind"]) {
+    const result = spawnSync(candidate, ["--version"], {
+      stdio: "ignore",
+      timeout: 400,
+    });
+    if (result.status === 0) {
+      return candidate;
+    }
+  }
+  return null;
+}
+
+function normalizeComposerPath(raw: string): string | null {
+  const trimmed = raw
+    .trim()
+    .replace(/^@/, "")
+    .replace(/^"(.*)"$/, "$1");
+  if (!trimmed) return null;
+  if (trimmed.startsWith("file://")) {
+    try {
+      return decodeURIComponent(trimmed.slice("file://".length));
+    } catch {
+      return trimmed.slice("file://".length);
+    }
+  }
+  return trimmed;
+}
+
+function looksLikeImagePath(path: string): boolean {
+  return extname(path).toLowerCase() in IMAGE_MIME_TYPES;
+}
+
+function expandUserPath(path: string): string {
+  if (path === "~") {
+    return process.env.HOME ?? path;
+  }
+  if (path.startsWith("~/")) {
+    return resolve(process.env.HOME ?? "~", path.slice(2));
+  }
+  return resolve(process.cwd(), path);
+}
+
+function formatComposerAttachmentPath(path: string): string {
+  return /\s/.test(path) ? `@"${path}"` : `@${path}`;
+}
+
+function composerAttachmentToken(index: number): string {
+  return `[Image #${index}] `;
+}
+
+function findAttachmentTokenAtCursor(
+  line: string,
+  cursorCol: number,
+): { start: number; end: number } | null {
+  for (const match of line.matchAll(COMPOSER_ATTACHMENT_TOKEN_RE)) {
+    const start = match.index ?? -1;
+    if (start < 0) continue;
+    const end = start + match[0].length;
+    if (cursorCol > start && cursorCol <= end) {
+      return { start, end };
+    }
+  }
+  return null;
+}
+
+function syncComposerImageTokens(
+  text: string,
+  existingAttachments: ComposerAttachment[],
+  shouldConsume: (path: string) => boolean,
+): { normalizedText: string; attachments: ComposerAttachment[] } {
+  let attachments = [...existingAttachments];
+  let working = text;
+
+  const findOrAddAttachment = (resolvedPath: string): number => {
+    const existingIndex = attachments.findIndex((attachment) => attachment.path === resolvedPath);
+    if (existingIndex >= 0) {
+      return existingIndex + 1;
+    }
+    attachments.push({
+      id: `attachment-${Date.now().toString(16)}-${attachments.length}`,
+      kind: "image",
+      path: resolvedPath,
+      filename: basename(resolvedPath),
+    });
+    return attachments.length;
+  };
+
+  const consume = (rawPath: string): string | null => {
+    const normalized = normalizeComposerPath(rawPath);
+    if (!normalized) return null;
+    const resolved = expandUserPath(normalized);
+    if (!shouldConsume(resolved)) return null;
+    return composerAttachmentToken(findOrAddAttachment(resolved));
+  };
+
+  working = working.replace(/(^|[\t ])@(?:"([^"]+)"|([^\s]+))/gm, (full, prefix, quoted, plain) => {
+    const replacement = consume(quoted ?? plain ?? "");
+    return replacement ? `${prefix}${replacement}` : full;
+  });
+
+  working = working.replace(
+    /(^|[\t ])((?:file:\/\/[^\s]+|(?:~\/|\.{1,2}\/|\/)[^\s"'`]+\.(?:png|jpe?g|gif|webp)))(?=$|[\t ])/gim,
+    (full, prefix, rawPath) => {
+      const replacement = consume(rawPath ?? "");
+      return replacement ? `${prefix}${replacement}` : full;
+    },
+  );
+
+  const tokenMatches = [...working.matchAll(/\[Image #(\d+)\]/g)];
+  const nextAttachments: ComposerAttachment[] = [];
+  for (const match of tokenMatches) {
+    const tokenIndex = Number.parseInt(match[1] ?? "", 10);
+    if (!Number.isFinite(tokenIndex) || tokenIndex < 1) {
+      continue;
+    }
+    const attachment = attachments[tokenIndex - 1];
+    if (attachment) {
+      nextAttachments.push(attachment);
+    }
+  }
+  attachments = nextAttachments;
+
+  let tokenOrdinal = 0;
+  working = working.replace(/\[Image #(\d+)\]\s*/g, () => {
+    tokenOrdinal += 1;
+    return composerAttachmentToken(tokenOrdinal);
+  });
+
+  const normalizedText = working
+    .replace(/[ \t]+\n/g, "\n")
+    .replace(/\n[ \t]+/g, "\n")
+    .replace(/[ \t]{2,}/g, " ");
+
+  return { normalizedText, attachments };
+}
+
+function expandComposerImageTokens(text: string, attachments: ComposerAttachment[]): string {
+  return text.replace(/\[Image #(\d+)\]\s*/g, (_full, rawIndex: string) => {
+    const index = Number.parseInt(rawIndex, 10);
+    if (!Number.isFinite(index) || index < 1) {
+      return "";
+    }
+    const attachment = attachments[index - 1];
+    return attachment ? `${formatComposerAttachmentPath(attachment.path)} ` : "";
+  });
+}
 
 function isPermissionRequest(source: string | undefined, questionText: string): boolean {
   return source === "permission" || PERMISSION_TOOL_RE.test(questionText);
@@ -71,6 +248,147 @@ function parsePermissionSummary(questionText: string): PermissionSummary {
   };
 }
 
+function compressRiskLabel(risk: string | undefined): string | undefined {
+  if (!risk) return undefined;
+  const normalized = risk.replace(/\s+/g, " ").trim();
+  return normalized
+    .replace(/^高\s*/u, "High ")
+    .replace(/^中\s*/u, "Medium ")
+    .replace(/^低\s*/u, "Low ")
+    .replace(/风险$/u, "risk");
+}
+
+function permissionToolKind(tool: string | undefined): "bash" | "filesystem" | "generic" {
+  const normalized = tool?.trim().toLowerCase() ?? "";
+  if (
+    normalized === "bash" ||
+    normalized === "shell" ||
+    normalized === "sh" ||
+    normalized === "powershell" ||
+    normalized === "command" ||
+    normalized === "exec" ||
+    normalized === "run" ||
+    normalized === "mcp_exec_command" ||
+    normalized === "create_terminal"
+  ) {
+    return "bash";
+  }
+  if (
+    normalized.includes("read") ||
+    normalized.includes("write") ||
+    normalized.includes("edit") ||
+    normalized.includes("search") ||
+    normalized.includes("grep") ||
+    normalized.includes("glob") ||
+    normalized.includes("fetch") ||
+    normalized.includes("file") ||
+    normalized.includes("memory")
+  ) {
+    return "filesystem";
+  }
+  return "generic";
+}
+
+function extractFilesystemTarget(summary: PermissionSummary): string | undefined {
+  const raw = summary.command ?? summary.description ?? "";
+  const quoted = /(["'`])([^"'`]+)\1/.exec(raw)?.[2]?.trim();
+  if (quoted) return quoted;
+  const pathish = /((?:\/|\.\/|\.\.\/)[^\s,)]+)/.exec(raw)?.[1]?.trim();
+  if (pathish) return pathish;
+  return undefined;
+}
+
+function renderPermissionBlock(
+  width: number,
+  summary: PermissionSummary,
+  progressLabel: string,
+): string[] {
+  const lines: string[] = [];
+  const risk = compressRiskLabel(summary.risk);
+  const kind = permissionToolKind(summary.tool);
+  const primaryDetail = summary.command ?? summary.description ?? summary.reason;
+
+  lines.push(padToWidth(palette.status.warning(progressLabel), width));
+
+  if (kind === "bash") {
+    lines.push(
+      padToWidth(palette.text.assistant(`${summary.tool ?? "command"} wants to run`), width),
+    );
+    if (summary.command) {
+      lines.push(
+        ...wrapPlainText(summary.command, width)
+          .slice(0, 2)
+          .map((line) => padToWidth(palette.text.tool(line), width)),
+      );
+    } else if (primaryDetail) {
+      lines.push(
+        ...wrapPlainText(primaryDetail, width)
+          .slice(0, 2)
+          .map((line) => padToWidth(palette.text.dim(line), width)),
+      );
+    }
+  } else if (kind === "filesystem") {
+    lines.push(
+      padToWidth(palette.text.assistant(`${summary.tool ?? "tool"} wants to access files`), width),
+    );
+    const target = extractFilesystemTarget(summary);
+    if (target) {
+      lines.push(padToWidth(palette.text.tool(target), width));
+    }
+    if (primaryDetail && primaryDetail !== target) {
+      lines.push(
+        ...wrapPlainText(primaryDetail, width)
+          .slice(0, 1)
+          .map((line) => padToWidth(palette.text.dim(line), width)),
+      );
+    }
+  } else {
+    if (summary.tool) {
+      lines.push(padToWidth(palette.text.assistant(`${summary.tool} requires permission`), width));
+    }
+    if (primaryDetail) {
+      lines.push(
+        ...wrapPlainText(primaryDetail, width)
+          .slice(0, 2)
+          .map((line) =>
+            padToWidth(summary.command ? palette.text.tool(line) : palette.text.dim(line), width),
+          ),
+      );
+    }
+  }
+
+  if (risk) {
+    lines.push(
+      padToWidth(
+        /high/i.test(risk) ? palette.status.error(risk) : palette.status.warning(risk),
+        width,
+      ),
+    );
+  }
+
+  return lines;
+}
+
+function normalizePermissionOptionLabel(label: string): string {
+  const trimmed = label.trim();
+  if (trimmed === "本次允许") return "Allow once";
+  if (trimmed === "总是允许") return "Always allow";
+  if (trimmed === "拒绝") return "Reject";
+  return trimmed;
+}
+
+function isAllowOption(label: string): boolean {
+  const normalized = label.trim();
+  return normalized.includes("允许") || /^allow\b/i.test(normalized);
+}
+
+function isRejectOption(label: string): boolean {
+  const normalized = label.trim();
+  return (
+    normalized.includes("拒绝") || /^reject\b/i.test(normalized) || /^deny\b/i.test(normalized)
+  );
+}
+
 function wrapPlainText(text: string, width: number): string[] {
   const maxWidth = Math.max(12, width - 1);
   const source = text.replace(/\r/g, "").split("\n");
@@ -100,21 +418,42 @@ function wrapPlainText(text: string, width: number): string[] {
   return lines.length > 0 ? lines : [text.slice(0, maxWidth)];
 }
 
+function formatSessionTime(timestamp: number | undefined): string {
+  if (!timestamp) return "-";
+  return new Date(timestamp * 1000).toLocaleString();
+}
+
+function buildResumeSessionItems(sessions: SessionMeta[]): SelectItem[] {
+  return sessions.map((session) => ({
+    value: session.session_id,
+    label: session.title?.trim() || session.session_id,
+    description: `${session.session_id} · msgs ${session.message_count ?? 0} · ${formatSessionTime(session.last_message_at)}`,
+  }));
+}
+
 export class AppScreen implements Component, Focusable {
   private readonly editor: Editor;
   private readonly unsubscribe: () => void;
+  private readonly composerAutocompleteProvider: CombinedAutocompleteProvider;
   private _focused = false;
   private activeQuestionId: string | null = null;
   private activeQuestionIndex = 0;
   private draftBeforeQuestion = "";
+  private draftAttachmentsBeforeQuestion: ComposerAttachment[] = [];
+  private composerAttachments: ComposerAttachment[] = [];
+  private syncingComposerInput = false;
   private pendingQuestionAnswers = new Map<number, string>();
   private questionList: SelectList | null = null;
-  private showFullThinking = true;
-  private showToolDetails = false;
-  private showShortcutHelp = false;
+  private resumeSessionList: ResumeSessionListState | null = null;
+  private showTodos = true;
+  private showTeamPanel = false;
+  private selectedTeamMemberId: string | null = null;
   private exitArmedUntil = 0;
   private transientNotice: string | null = null;
   private transientNoticeTimer: ReturnType<typeof setTimeout> | null = null;
+  private animationTimer: ReturnType<typeof setInterval> | null = null;
+  private animationPhase = 0;
+  private runningStartedAtMs: number | null = null;
 
   constructor(
     private readonly tui: TUI,
@@ -123,10 +462,14 @@ export class AppScreen implements Component, Focusable {
     private readonly exit: () => void,
   ) {
     this.editor = new Editor(tui, editorTheme, { paddingX: 1, autocompleteMaxVisible: 6 });
-    this.editor.setAutocompleteProvider(
-      new CombinedAutocompleteProvider(this.buildSlashCommands(), process.cwd()),
+    this.composerAutocompleteProvider = new CombinedAutocompleteProvider(
+      this.buildSlashCommands(),
+      process.cwd(),
+      resolveFdBinary(),
     );
+    this.editor.setAutocompleteProvider(this.composerAutocompleteProvider);
     this.editor.onChange = () => {
+      this.syncComposerAttachmentsFromEditor();
       this.tui.requestRender();
     };
     this.editor.onSubmit = (value) => {
@@ -151,6 +494,10 @@ export class AppScreen implements Component, Focusable {
       clearTimeout(this.transientNoticeTimer);
       this.transientNoticeTimer = null;
     }
+    if (this.animationTimer) {
+      clearInterval(this.animationTimer);
+      this.animationTimer = null;
+    }
     this.unsubscribe();
   }
 
@@ -159,8 +506,21 @@ export class AppScreen implements Component, Focusable {
   }
 
   handleInput(data: string): void {
+    const snapshot = this.state.getSnapshot();
+    const pendingQuestion = snapshot.pendingQuestion;
+    const activeQuestion =
+      pendingQuestion?.questions[this.activeQuestionIndex] ?? pendingQuestion?.questions[0];
+    const permissionRequest = activeQuestion
+      ? isPermissionRequest(pendingQuestion?.source, activeQuestion.question)
+      : false;
+
+    if (!pendingQuestion && snapshot.isProcessing && matchesKey(data, "escape")) {
+      this.state.cancel();
+      return;
+    }
+
     const handled = handleAppScreenKeyInput(data, {
-      getSnapshot: () => this.state.getSnapshot(),
+      getSnapshot: () => snapshot,
       cancel: () => this.state.cancel(),
       requestExit: () => {
         const now = Date.now();
@@ -180,16 +540,32 @@ export class AppScreen implements Component, Focusable {
         }, 1500);
         this.tui.requestRender();
       },
-      toggleThinking: () => {
-        this.showFullThinking = !this.showFullThinking;
+      toggleTodos: () => {
+        this.showTodos = !this.showTodos;
         this.tui.requestRender();
       },
-      toggleToolDetails: () => {
-        this.showToolDetails = !this.showToolDetails;
+      toggleTeamPanel: () => {
+        this.showTeamPanel = !this.showTeamPanel;
         this.tui.requestRender();
       },
-      toggleShortcutHelp: () => {
-        this.showShortcutHelp = !this.showShortcutHelp;
+      toggleTranscript: () => {
+        const snapshot = this.state.getSnapshot();
+        this.state.setTranscriptMode(
+          snapshot.transcriptMode === "detailed" ? "compact" : "detailed",
+        );
+      },
+      redraw: () => {
+        this.tui.invalidate();
+        this.tui.requestRender(true);
+        this.transientNotice = "Screen redrawn";
+        if (this.transientNoticeTimer) {
+          clearTimeout(this.transientNoticeTimer);
+        }
+        this.transientNoticeTimer = setTimeout(() => {
+          this.transientNotice = null;
+          this.transientNoticeTimer = null;
+          this.tui.requestRender();
+        }, 1200);
         this.tui.requestRender();
       },
     });
@@ -197,11 +573,66 @@ export class AppScreen implements Component, Focusable {
       return;
     }
 
-    const snapshot = this.state.getSnapshot();
+    if (permissionRequest && activeQuestion) {
+      const lower = data.toLowerCase();
+      if (lower === "y") {
+        const allow = activeQuestion.options.find((option) => isAllowOption(option.label));
+        if (allow) {
+          this.handleQuestionSelection(allow.label);
+          return;
+        }
+      }
+      if (lower === "n") {
+        const reject = activeQuestion.options.find((option) => isRejectOption(option.label));
+        if (reject) {
+          this.handleQuestionSelection(reject.label);
+          return;
+        }
+      }
+    }
+
+    if (!snapshot.pendingQuestion && this.resumeSessionList !== null) {
+      this.resumeSessionList.list.handleInput(data);
+      this.tui.requestRender();
+      return;
+    }
+
+    if (!snapshot.pendingQuestion && this.showTeamPanel) {
+      if (matchesKey(data, "up")) {
+        this.moveTeamPanelSelection(snapshot, -1);
+        this.tui.requestRender();
+        return;
+      }
+      if (matchesKey(data, "down")) {
+        this.moveTeamPanelSelection(snapshot, 1);
+        this.tui.requestRender();
+        return;
+      }
+    }
+
     if (snapshot.pendingQuestion && this.questionList !== null) {
       this.questionList.handleInput(data);
       this.tui.requestRender();
       return;
+    }
+
+    if (
+      !snapshot.pendingQuestion &&
+      this.editor.getText().length === 0 &&
+      this.composerAttachments.length > 0
+    ) {
+      if (matchesKey(data, "backspace")) {
+        this.composerAttachments = this.composerAttachments.slice(0, -1);
+        this.tui.requestRender();
+        return;
+      }
+    }
+
+    if (!snapshot.pendingQuestion && matchesKey(data, "backspace")) {
+      if (this.deleteComposerAttachmentTokenBackwards()) {
+        this.tui.requestRender();
+        return;
+      }
     }
 
     this.editor.handleInput(data);
@@ -211,23 +642,39 @@ export class AppScreen implements Component, Focusable {
     const snapshot = this.state.getSnapshot();
     this.editor.borderColor = snapshot.pendingQuestion
       ? palette.border.question
-      : palette.border.active;
-    const editorLines = this.applySlashCommandHint(this.editor.render(width), width);
-    const questionLines = this.buildPendingQuestionLines(snapshot, width);
+      : palette.border.panel;
+    const editorLines = this.applyComposerTokenHighlight(
+      this.applySlashCommandHint(this.editor.render(width), width),
+    );
+    const composerPreviewLines: string[] = [];
+    const questionLines = [
+      ...this.buildResumeSessionListLines(width),
+      ...this.buildPendingQuestionLines(snapshot, width),
+    ];
     return buildAppScreenLines(snapshot, {
       width,
       questionLines,
       editorLines,
-      showFullThinking: this.showFullThinking,
-      showToolDetails: this.showToolDetails,
-      showShortcutHelp: this.showShortcutHelp,
+      composerPreviewLines,
+      showFullThinking: snapshot.transcriptMode === "detailed",
+      showToolDetails: snapshot.transcriptMode === "detailed",
+      showShortcutHelp: false,
+      showTodos: this.showTodos,
+      showTeamPanel: this.showTeamPanel,
+      selectedTeamMemberId: this.selectedTeamMemberId,
       transientNotice: this.transientNotice,
+      animationPhase: this.animationPhase,
+      runningElapsedMs:
+        snapshot.isProcessing && this.runningStartedAtMs !== null
+          ? Date.now() - this.runningStartedAtMs
+          : undefined,
     });
   }
 
   private async handleSubmit(raw: string): Promise<void> {
     const text = raw.trim();
-    if (!text) return;
+    const content = this.composeOutgoingMessage(text);
+    if (!content) return;
 
     const snapshot = this.state.getSnapshot();
     if (snapshot.pendingQuestion) {
@@ -236,31 +683,47 @@ export class AppScreen implements Component, Focusable {
       }
       this.editor.addToHistory(text);
       this.editor.setText("");
+      this.composerAttachments = [];
       return;
     }
 
     if (text.startsWith("/")) {
+      if (/^\/(?:resume|continue)\s*$/.test(text)) {
+        this.editor.addToHistory(text);
+        this.editor.setText("");
+        this.composerAttachments = [];
+        await this.openResumeSessionList();
+        return;
+      }
       await this.commands.execute(text, {
         ...this.state.getCommandContext(),
         exitApp: this.exit,
       });
       this.editor.addToHistory(text);
       this.editor.setText("");
+      this.composerAttachments = [];
       return;
     }
 
-    if (snapshot.isProcessing) {
-      this.state.addItem({
-        kind: "error",
-        id: `busy-${Date.now()}`,
-        sessionId: snapshot.sessionId,
-        content: "session is busy, run /cancel first",
-        at: new Date().toISOString(),
-      });
+    if (snapshot.isProcessing || snapshot.isPaused) {
+      const requestId = this.state.supplement(content);
+      if (!requestId) {
+        this.state.addItem({
+          kind: "error",
+          id: `offline-${Date.now()}`,
+          sessionId: snapshot.sessionId,
+          content: "offline: waiting for reconnect",
+          at: new Date().toISOString(),
+        });
+        return;
+      }
+      this.editor.addToHistory(text);
+      this.editor.setText("");
+      this.composerAttachments = [];
       return;
     }
 
-    const requestId = this.state.sendMessage(text);
+    const requestId = this.state.sendMessage(content);
     if (!requestId) {
       this.state.addItem({
         kind: "error",
@@ -274,6 +737,7 @@ export class AppScreen implements Component, Focusable {
 
     this.editor.addToHistory(text);
     this.editor.setText("");
+    this.composerAttachments = [];
   }
 
   private handleStateChange(): void {
@@ -284,7 +748,9 @@ export class AppScreen implements Component, Focusable {
       this.activeQuestionIndex = 0;
       this.pendingQuestionAnswers.clear();
       this.draftBeforeQuestion = this.editor.getText();
+      this.draftAttachmentsBeforeQuestion = [...this.composerAttachments];
       this.editor.setText("");
+      this.composerAttachments = [];
       this.syncQuestionList(snapshot);
     } else if (questionId && this.activeQuestionId) {
       this.syncQuestionList(snapshot);
@@ -297,8 +763,202 @@ export class AppScreen implements Component, Focusable {
         this.editor.setText(this.draftBeforeQuestion);
       }
       this.draftBeforeQuestion = "";
+      this.composerAttachments = [...this.draftAttachmentsBeforeQuestion];
+      this.draftAttachmentsBeforeQuestion = [];
     }
+    this.syncTeamPanelSelection(snapshot);
+    this.syncAnimationLoop(snapshot);
     this.tui.requestRender();
+  }
+
+  private syncTeamPanelSelection(snapshot: ReturnType<CliPiAppState["getSnapshot"]>): void {
+    const memberIds = orderedMemberIds(snapshot.teamMemberEvents, snapshot.teamMessageEvents);
+    if (memberIds.length === 0) {
+      this.selectedTeamMemberId = null;
+      return;
+    }
+    if (!this.selectedTeamMemberId || !memberIds.includes(this.selectedTeamMemberId)) {
+      this.selectedTeamMemberId = memberIds[0] ?? null;
+    }
+  }
+
+  private moveTeamPanelSelection(
+    snapshot: ReturnType<CliPiAppState["getSnapshot"]>,
+    delta: -1 | 1,
+  ): void {
+    const memberIds = orderedMemberIds(snapshot.teamMemberEvents, snapshot.teamMessageEvents);
+    if (memberIds.length === 0) {
+      this.selectedTeamMemberId = null;
+      return;
+    }
+    const currentIndex = this.selectedTeamMemberId
+      ? memberIds.indexOf(this.selectedTeamMemberId)
+      : 0;
+    const baseIndex = currentIndex >= 0 ? currentIndex : 0;
+    const nextIndex = Math.max(0, Math.min(memberIds.length - 1, baseIndex + delta));
+    this.selectedTeamMemberId = memberIds[nextIndex] ?? memberIds[0] ?? null;
+  }
+
+  private async openResumeSessionList(): Promise<void> {
+    const snapshot = this.state.getSnapshot();
+    try {
+      const payload = await this.state.request<SessionListPayload>("session.list", {});
+      const sessions = payload.sessions ?? [];
+      const total = payload.total ?? sessions.length;
+      if (sessions.length === 0) {
+        this.resumeSessionList = null;
+        this.state.addItem(addInfo(snapshot.sessionId, "No sessions found", "r"));
+        return;
+      }
+
+      const items = buildResumeSessionItems(sessions);
+      const list = new SelectList(items, Math.min(Math.max(items.length, 1), 8), selectListTheme, {
+        minPrimaryColumnWidth: 24,
+        maxPrimaryColumnWidth: 42,
+      });
+      list.onSelect = (item) => {
+        void this.handleResumeSessionSelection(item.value);
+      };
+      list.onCancel = () => {
+        this.resumeSessionList = null;
+        this.tui.requestRender();
+      };
+      this.resumeSessionList = { list, sessions, total };
+      this.tui.requestRender();
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      this.resumeSessionList = null;
+      this.state.addItem(addError(snapshot.sessionId, `resume failed: ${message}`));
+    }
+  }
+
+  private async handleResumeSessionSelection(sessionId: string): Promise<void> {
+    const nextSessionId = sessionId.trim();
+    if (!nextSessionId) {
+      return;
+    }
+    this.resumeSessionList = null;
+    this.state.updateSession(nextSessionId);
+    this.state.clearEntries();
+    await this.state.restoreHistory(nextSessionId);
+    this.tui.requestRender();
+  }
+
+  private buildResumeSessionListLines(width: number): string[] {
+    if (!this.resumeSessionList) {
+      return [];
+    }
+    return [
+      padToWidth(
+        palette.status.warning(`Resume session (${this.resumeSessionList.total} total)`),
+        width,
+      ),
+      ...this.resumeSessionList.list.render(width),
+      padToWidth(palette.text.dim("↑/↓ choose · Enter resume · Esc cancel"), width),
+    ];
+  }
+
+  private syncComposerAttachmentsFromEditor(): void {
+    if (this.syncingComposerInput) {
+      return;
+    }
+
+    const originalText = this.editor.getText();
+    const { normalizedText, attachments } = syncComposerImageTokens(
+      originalText,
+      this.composerAttachments,
+      (path) => this.isComposerImageFile(path),
+    );
+
+    this.composerAttachments = attachments;
+
+    if (normalizedText !== originalText) {
+      this.syncingComposerInput = true;
+      this.editor.setText(normalizedText);
+      this.syncingComposerInput = false;
+    }
+  }
+
+  private deleteComposerAttachmentTokenBackwards(): boolean {
+    const cursor = this.editor.getCursor();
+    const lines = this.editor.getLines();
+    const currentLine = lines[cursor.line] ?? "";
+    const tokenRange = findAttachmentTokenAtCursor(currentLine, cursor.col);
+    if (!tokenRange) {
+      return false;
+    }
+
+    const nextLine =
+      `${currentLine.slice(0, tokenRange.start)}${currentLine.slice(tokenRange.end)}`.replace(
+        / {2,}/g,
+        " ",
+      );
+    const nextLines = [...lines];
+    nextLines[cursor.line] = nextLine;
+    const nextText = nextLines.join("\n");
+    const nextCol = Math.min(tokenRange.start, nextLine.length);
+
+    this.syncingComposerInput = true;
+    this.editor.setText(nextText);
+    const editorState = this.editor as unknown as {
+      state?: { cursorLine: number; cursorCol: number };
+    };
+    if (editorState.state) {
+      editorState.state.cursorLine = cursor.line;
+      editorState.state.cursorCol = nextCol;
+    }
+    this.syncingComposerInput = false;
+    this.syncComposerAttachmentsFromEditor();
+    return true;
+  }
+
+  private composeOutgoingMessage(text: string): string {
+    return expandComposerImageTokens(text, this.composerAttachments)
+      .replace(/[ \t]{2,}/g, " ")
+      .replace(/[ \t]+\n/g, "\n")
+      .trim();
+  }
+
+  private isComposerImageFile(path: string): boolean {
+    if (!looksLikeImagePath(path)) {
+      return false;
+    }
+
+    try {
+      const stats = statSync(path);
+      if (!stats.isFile()) {
+        return false;
+      }
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  private syncAnimationLoop(snapshot: ReturnType<CliPiAppState["getSnapshot"]>): void {
+    const hasRunningTools = snapshot.toolExecutions.some(
+      (execution) => execution.tool.status === "running",
+    );
+    const shouldAnimate = snapshot.isProcessing || hasRunningTools;
+    if (!shouldAnimate) {
+      if (this.animationTimer) {
+        clearInterval(this.animationTimer);
+        this.animationTimer = null;
+      }
+      this.animationPhase = 0;
+      this.runningStartedAtMs = null;
+      return;
+    }
+    if (snapshot.isProcessing && this.runningStartedAtMs === null) {
+      this.runningStartedAtMs = Date.now();
+    }
+    if (this.animationTimer) {
+      return;
+    }
+    this.animationTimer = setInterval(() => {
+      this.animationPhase = (this.animationPhase + 1) % 12;
+      this.tui.requestRender();
+    }, 220);
   }
 
   private applySlashCommandHint(editorLines: string[], width: number): string[] {
@@ -322,6 +982,12 @@ export class AppScreen implements Component, Focusable {
     const nextLines = [...editorLines];
     nextLines[contentIndex] = hintedLine;
     return nextLines;
+  }
+
+  private applyComposerTokenHighlight(editorLines: string[]): string[] {
+    return editorLines.map((line) =>
+      line.replace(COMPOSER_ATTACHMENT_TOKEN_RE, (token) => palette.text.info(token)),
+    );
   }
 
   private getInlineSlashCommandHint(): string | null {
@@ -390,27 +1056,8 @@ export class AppScreen implements Component, Focusable {
 
     if (permissionRequest) {
       const summary = parsePermissionSummary(question.question);
-      lines.push(
-        padToWidth(
-          palette.status.warning(
-            `Permission${progress ? ` ${this.activeQuestionIndex + 1}/${total}` : ""}`,
-          ),
-          width,
-        ),
-      );
-      if (summary.tool) {
-        lines.push(padToWidth(palette.text.assistant(`${summary.tool} wants to run`), width));
-      }
-      const primaryDetail = summary.command ?? summary.description ?? summary.reason;
-      if (primaryDetail) {
-        lines.push(
-          ...wrapPlainText(primaryDetail, width)
-            .slice(0, 2)
-            .map((line) =>
-              padToWidth(summary.command ? palette.text.tool(line) : palette.text.dim(line), width),
-            ),
-        );
-      }
+      const title = progress ? `Permission ${this.activeQuestionIndex + 1}/${total}` : "Permission";
+      lines.push(...renderPermissionBlock(width, summary, title));
     } else {
       lines.push(
         ...wrapPlainText(
@@ -421,21 +1068,18 @@ export class AppScreen implements Component, Focusable {
     }
 
     if (this.questionList !== null) {
-      lines.push(" ".repeat(width));
       lines.push(...this.questionList.render(width));
       lines.push(
         padToWidth(
           palette.text.dim(
             permissionRequest
-              ? "Use ↑/↓ to review options, Enter to approve, Esc to reject"
-              : "Use ↑/↓ to choose, Enter to confirm, Esc to reject",
+              ? "↑/↓ review · Enter confirm · Esc reject"
+              : "↑/↓ choose · Enter confirm · Esc reject",
           ),
           width,
         ),
       );
     }
-
-    lines.push(" ".repeat(width));
     return lines;
   }
 
@@ -454,10 +1098,18 @@ export class AppScreen implements Component, Focusable {
 
     const items: SelectItem[] = question.options.map((option) => ({
       value: option.label,
-      label: option.label,
+      label:
+        pendingQuestion.source === "permission"
+          ? normalizePermissionOptionLabel(option.label)
+          : option.label,
       description: option.description,
     }));
-    const list = new SelectList(items, Math.min(Math.max(items.length, 1), 6), selectListTheme);
+    const maxVisible = pendingQuestion.source === "permission" ? 4 : 6;
+    const list = new SelectList(
+      items,
+      Math.min(Math.max(items.length, 1), maxVisible),
+      selectListTheme,
+    );
     list.onSelect = (item) => {
       this.handleQuestionSelection(item.value);
     };

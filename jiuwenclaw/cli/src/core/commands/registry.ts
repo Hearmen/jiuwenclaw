@@ -1,7 +1,5 @@
 import type { SlashCommand } from "./types.js";
 import { createAddDirCommand } from "./builtins/add-dir.js";
-import { createCancelCommand } from "./builtins/cancel.js";
-import { createChromeCommand } from "./builtins/chrome.js";
 import { createClearCommand } from "./builtins/clear.js";
 import { createColorCommand } from "./builtins/color.js";
 import { createCompactCommand } from "./builtins/compact.js";
@@ -23,8 +21,6 @@ export function createBuiltinCommands(): SlashCommand[] {
   const commands: SlashCommand[] = [
     createHelpCommand(() => commands),
     createAddDirCommand(),
-    createCancelCommand(),
-    createChromeCommand(),
     createClearCommand(),
     createColorCommand(),
     createCompactCommand(),

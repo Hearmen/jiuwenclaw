@@ -8,4 +8,4 @@ export {
   UserMessageComponent,
 } from "./basic-message-components.js";
 export { renderHistoryEntry } from "./history-entry.js";
-export type { MessageRenderOptions } from "./history-entry.js";
+export type { MessageRenderOptions } from "./types.js";

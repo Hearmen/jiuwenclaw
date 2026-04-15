@@ -12,7 +12,7 @@ export function createNewCommand(): SlashCommand {
     takesArgs: true,
     action: async (ctx, args) => {
       if (ctx.isProcessing) {
-        ctx.addItem(makeItem(ctx.sessionId, "error", "session is busy, run /cancel first"));
+        ctx.addItem(makeItem(ctx.sessionId, "error", "session is busy"));
         return;
       }
       const nextId = args.trim() || generateSessionId();

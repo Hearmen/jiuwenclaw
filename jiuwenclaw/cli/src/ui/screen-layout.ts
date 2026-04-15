@@ -1,20 +1,26 @@
 import type { AppSnapshot } from "../app-state.js";
-import type { HistoryItem, ToolCallDisplay } from "../core/types.js";
-import { renderHistoryEntry } from "./components/messages/index.js";
+import { renderMiniTeamTree, renderTeamPanel } from "./components/team-panel.js";
+import { renderTeamStatusPill } from "./components/team-status-pill.js";
 import { renderTodoList } from "./components/todo-list.js";
 import { APP_SCREEN_KEY_BINDINGS } from "./keymap.js";
 import { padToWidth } from "./rendering/text.js";
 import { palette } from "./theme.js";
-import { buildWelcomeLines } from "./welcome.js";
+import { buildTranscriptLines } from "./transcript-renderer.js";
 
 export interface ScreenLayoutOptions {
   width: number;
   questionLines: string[];
   editorLines: string[];
+  composerPreviewLines: string[];
   showFullThinking: boolean;
   showToolDetails: boolean;
   showShortcutHelp: boolean;
+  showTodos: boolean;
+  showTeamPanel: boolean;
+  selectedTeamMemberId: string | null;
   transientNotice: string | null;
+  animationPhase: number;
+  runningElapsedMs?: number;
 }
 
 function formatSubtaskStatus(status: string): string {
@@ -34,16 +40,42 @@ function formatSubtaskStatus(status: string): string {
   }
 }
 
+function formatElapsed(ms: number | undefined): string {
+  if (ms === undefined || !Number.isFinite(ms) || ms < 0) {
+    return "0s";
+  }
+  const totalSeconds = Math.max(0, Math.floor(ms / 1000));
+  const minutes = Math.floor(totalSeconds / 60);
+  const seconds = totalSeconds % 60;
+  return minutes > 0 ? `${minutes}m ${seconds}s` : `${seconds}s`;
+}
+
+function renderRunningStatus(animationPhase: number, elapsedMs: number | undefined): string {
+  const label = "Working";
+  const sweep = animationPhase % (label.length + 3);
+  const focus = sweep - 1;
+  const animatedLabel = label
+    .split("")
+    .map((char, index) => {
+      const distance = Math.abs(index - focus);
+      if (distance === 0) return palette.text.assistant(char);
+      if (distance === 1) return palette.text.dim(char);
+      return palette.text.subtle(char);
+    })
+    .join("");
+  return `• ${animatedLabel} (${formatElapsed(elapsedMs)} • esc to interrupt)`;
+}
+
 function buildStatusLines(
   snapshot: AppSnapshot,
   width: number,
   transientNotice: string | null,
+  animationPhase: number,
+  runningElapsedMs: number | undefined,
 ): string[] {
-  const left = [
-    `status:${snapshot.connectionStatus}`,
-    `mode:${snapshot.mode}`,
-    `view:${snapshot.transcriptMode}`,
-  ];
+  const left: string[] = [];
+  if (snapshot.connectionStatus !== "connected") left.push(`status:${snapshot.connectionStatus}`);
+  if (snapshot.mode !== "plan") left.push(`mode:${snapshot.mode}`);
   if (snapshot.transcriptFoldMode !== "none") left.push(`fold:${snapshot.transcriptFoldMode}`);
 
   const right = snapshot.lastError
@@ -51,13 +83,17 @@ function buildStatusLines(
     : snapshot.isPaused
       ? "paused"
       : snapshot.isProcessing
-        ? "running"
-        : "ready";
+        ? renderRunningStatus(animationPhase, runningElapsedMs)
+        : null;
 
   const lines = transientNotice ? [padToWidth(palette.status.warning(transientNotice), width)] : [];
-  const content = `${left.join(" | ")} | ${right}`;
-  lines.push(padToWidth(palette.text.dim(content), width));
   const leadSubtask = snapshot.activeSubtasks[0];
+
+  const content = right ? [...left, right].join(" | ") : left.join(" | ");
+  if (content) {
+    lines.push(padToWidth(palette.text.dim(content), width));
+  }
+
   if (leadSubtask) {
     const parts = [
       `subtask ${leadSubtask.index}/${leadSubtask.total || "?"}`,
@@ -87,78 +123,14 @@ function buildShortcutLines(width: number): string[] {
   return lines;
 }
 
-function isTodoTool(tool: ToolCallDisplay): boolean {
-  const normalized = tool.name.trim().toLowerCase();
-  return normalized === "todo" || normalized.startsWith("todo_");
-}
-
-function filterTodoToolEntry(entry: HistoryItem): HistoryItem | null {
-  if (entry.kind !== "tool_group") {
-    return entry;
-  }
-  const tools = entry.tools.filter((tool) => !isTodoTool(tool));
-  if (tools.length === 0) {
-    return null;
-  }
-  return tools.length === entry.tools.length ? entry : { ...entry, tools };
-}
-
-function buildTranscriptLines(
-  snapshot: AppSnapshot,
-  width: number,
-  showFullThinking: boolean,
-  showToolDetails: boolean,
-): string[] {
-  let displayEntries =
-    snapshot.transcriptMode === "compact"
-      ? snapshot.entries
-          .filter((entry) => entry.kind !== "system")
-          .map((entry) =>
-            entry.kind === "tool_group" ? { ...entry, tools: entry.tools.slice(-1) } : entry,
-          )
-      : snapshot.entries;
-
-  if (snapshot.transcriptFoldMode === "all") {
-    displayEntries = displayEntries.filter(
-      (entry) =>
-        entry.kind === "user" ||
-        entry.kind === "assistant" ||
-        entry.kind === "thinking" ||
-        entry.kind === "error",
-    );
-  } else if (snapshot.transcriptFoldMode === "thinking") {
-    displayEntries = displayEntries.filter((entry) => entry.kind !== "thinking");
-  } else if (snapshot.transcriptFoldMode === "tools") {
-    displayEntries = displayEntries.filter(
-      (entry) => entry.kind !== "system" && entry.kind !== "info",
-    );
-  }
-
-  displayEntries = displayEntries
-    .map((entry) => filterTodoToolEntry(entry))
-    .filter((entry): entry is HistoryItem => entry !== null);
-
-  const allLines: string[] = [];
-  if (displayEntries.length === 0) {
-    allLines.push(...buildWelcomeLines(width));
-  }
-  for (const entry of displayEntries) {
-    const collapsed = entry.kind === "tool_group" && snapshot.collapsedToolGroupIds.has(entry.id);
-    allLines.push(
-      ...renderHistoryEntry(entry, width, {
-        compact: snapshot.transcriptMode === "compact",
-        collapsed,
-        thinkingExpanded: showFullThinking,
-        toolDetailsExpanded: showToolDetails,
-      }),
-    );
-    allLines.push(" ".repeat(width));
-  }
-  return allLines;
-}
-
 export function buildAppScreenLines(snapshot: AppSnapshot, options: ScreenLayoutOptions): string[] {
-  const statusLines = buildStatusLines(snapshot, options.width, options.transientNotice);
+  const statusLines = buildStatusLines(
+    snapshot,
+    options.width,
+    options.transientNotice,
+    options.animationPhase,
+    options.runningElapsedMs,
+  );
   const shortcutLines = options.showShortcutHelp ? buildShortcutLines(options.width) : [];
 
   const transcriptLines = buildTranscriptLines(
@@ -166,13 +138,61 @@ export function buildAppScreenLines(snapshot: AppSnapshot, options: ScreenLayout
     options.width,
     options.showFullThinking,
     options.showToolDetails,
+    options.animationPhase,
   );
-  const todoLines = renderTodoList(snapshot.todos, options.width);
+  const todoLines = options.showTodos ? renderTodoList(snapshot.todos, options.width) : [];
+  const teamStatusLines =
+    snapshot.mode === "team" ||
+    snapshot.teamMemberEvents.length > 0 ||
+    snapshot.teamTaskEvents.length > 0 ||
+    snapshot.teamMessageEvents.length > 0
+      ? renderTeamStatusPill(
+          snapshot.teamMemberEvents,
+          snapshot.teamTaskEvents,
+          snapshot.teamMessageEvents,
+          options.width,
+        )
+      : [];
+  const teamPanelLines =
+    options.showTeamPanel &&
+    (snapshot.mode === "team" ||
+      snapshot.teamMemberEvents.length > 0 ||
+      snapshot.teamTaskEvents.length > 0 ||
+      snapshot.teamMessageEvents.length > 0)
+      ? renderTeamPanel(
+          snapshot.teamMemberEvents,
+          snapshot.teamTaskEvents,
+          snapshot.teamMessageEvents,
+          options.width,
+          options.selectedTeamMemberId,
+        )
+      : [];
+  const miniTeamTreeLines =
+    !options.showTeamPanel &&
+    (snapshot.mode === "team" ||
+      snapshot.teamMemberEvents.length > 0 ||
+      snapshot.teamTaskEvents.length > 0 ||
+      snapshot.teamMessageEvents.length > 0)
+      ? renderMiniTeamTree(
+          snapshot.teamMemberEvents,
+          snapshot.teamTaskEvents,
+          snapshot.teamMessageEvents,
+          options.width,
+        )
+      : [];
   return [
     ...transcriptLines,
     ...todoLines,
+    ...(todoLines.length > 0 &&
+    (teamStatusLines.length > 0 || miniTeamTreeLines.length > 0 || teamPanelLines.length > 0)
+      ? [" ".repeat(options.width)]
+      : []),
+    ...teamStatusLines,
+    ...miniTeamTreeLines,
+    ...teamPanelLines,
     ...options.questionLines,
     ...options.editorLines,
+    ...options.composerPreviewLines,
     ...statusLines,
     ...shortcutLines,
   ];

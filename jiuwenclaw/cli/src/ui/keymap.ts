@@ -5,9 +5,10 @@ export interface AppScreenKeymapDelegate {
   getSnapshot(): AppSnapshot;
   cancel(): void;
   requestExit(): void;
-  toggleThinking(): void;
-  toggleToolDetails(): void;
-  toggleShortcutHelp(): void;
+  toggleTodos(): void;
+  toggleTeamPanel(): void;
+  toggleTranscript(): void;
+  redraw(): void;
 }
 
 interface KeyBinding {
@@ -32,27 +33,35 @@ export const APP_SCREEN_KEY_BINDINGS: readonly KeyBinding[] = [
     },
   },
   {
+    key: "ctrl+l",
+    label: "ctrl+l",
+    description: "redraw screen",
+    run: (delegate) => {
+      delegate.redraw();
+    },
+  },
+  {
     key: "ctrl+t",
     label: "ctrl+t",
-    description: "toggle thinking detail",
+    description: "toggle todos",
     run: (delegate) => {
-      delegate.toggleThinking();
+      delegate.toggleTodos();
+    },
+  },
+  {
+    key: "ctrl+g",
+    label: "ctrl+g",
+    description: "toggle team panel",
+    run: (delegate) => {
+      delegate.toggleTeamPanel();
     },
   },
   {
     key: "ctrl+o",
     label: "ctrl+o",
-    description: "toggle tool detail",
+    description: "toggle transcript detail",
     run: (delegate) => {
-      delegate.toggleToolDetails();
-    },
-  },
-  {
-    key: "ctrl+k",
-    label: "ctrl+k",
-    description: "toggle shortcut help",
-    run: (delegate) => {
-      delegate.toggleShortcutHelp();
+      delegate.toggleTranscript();
     },
   },
 ] as const;

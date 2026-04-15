@@ -1,4 +1,10 @@
-import { parseHistoryFrame, createSessionResultToolDisplay } from "./history-parser.js";
+import {
+  parseHistoryFrame,
+  createAttachmentInfoEntry,
+  createSessionResultToolDisplay,
+  extractMediaItems,
+} from "./history-parser.js";
+import { normalizeFinalContent } from "./final-content.js";
 import type { EventFrame } from "./protocol.js";
 import {
   StreamingState,
@@ -6,15 +12,14 @@ import {
   type HistoryItem,
   type JsonObject,
   type SubtaskState,
+  type TeamMemberEvent,
+  type TeamMessageEvent,
+  type TeamTaskEvent,
   type TodoItem,
+  type ToolCallDisplay,
 } from "./types.js";
 import type { ConnectionStatus } from "./ws-client.js";
-import {
-  createId,
-  findLastIndex,
-  isIgnorableHistoryRestoreError,
-  upsertToolGroup,
-} from "./app-state-helpers.js";
+import { createId, findLastIndex, isIgnorableHistoryRestoreError } from "./app-state-helpers.js";
 
 export interface PendingQuestion {
   requestId: string;
@@ -51,8 +56,30 @@ export interface AppEventDelegate {
   setLastError(error: string | null): void;
   getActiveSubtasks(): Map<string, SubtaskState>;
   setTodos(todos: TodoItem[]): void;
+  appendTeamMemberEvent(event: TeamMemberEvent): void;
+  appendTeamTaskEvent(event: TeamTaskEvent): void;
+  appendTeamMessageEvent(event: TeamMessageEvent): void;
   setEvolutionStatus(status: "idle" | "running"): void;
   setContextCompression(stats: ContextCompressionStats | null): void;
+  addToolCallPayload(
+    payload: Record<string, unknown>,
+    sessionId: string,
+    requestId?: string,
+    startedAt?: string,
+  ): void;
+  addToolResultPayload(
+    payload: Record<string, unknown>,
+    sessionId: string,
+    requestId?: string,
+    updatedAt?: string,
+  ): void;
+  addSyntheticToolExecution(
+    tool: ToolCallDisplay,
+    sessionId: string,
+    requestId?: string,
+    at?: string,
+  ): void;
+  clearToolExecutionState(): void;
   pushHistoryEntry(entry: HistoryItem): void;
   scheduleHistoryFlush(): void;
   safeRestoreHistory(sessionId: string): void;
@@ -62,6 +89,33 @@ function appendEntry(delegate: AppEventDelegate, entry: HistoryItem): void {
   delegate.setEntries([...delegate.getEntries(), entry]);
 }
 
+function appendThinkingChunk(
+  delegate: AppEventDelegate,
+  activeSessionId: string,
+  content: string,
+): void {
+  const entries = delegate.getEntries();
+  const lastEntry = entries[entries.length - 1];
+  if (lastEntry && lastEntry.kind === "thinking" && lastEntry.sessionId === activeSessionId) {
+    delegate.setEntries([
+      ...entries.slice(0, -1),
+      {
+        ...lastEntry,
+        content: `${lastEntry.content}${content}`,
+      },
+    ]);
+    return;
+  }
+
+  appendEntry(delegate, {
+    kind: "thinking",
+    id: createId("reasoning"),
+    sessionId: activeSessionId,
+    content,
+    at: new Date().toISOString(),
+  });
+}
+
 function addSessionResultEntry(
   delegate: AppEventDelegate,
   payload: Record<string, unknown>,
@@ -69,14 +123,12 @@ function addSessionResultEntry(
   effectiveEvent: string,
 ): void {
   const tool = createSessionResultToolDisplay(payload, effectiveEvent);
-  appendEntry(delegate, {
-    kind: "tool_group",
-    id: createId("session-result"),
-    sessionId: activeSessionId,
-    requestId: typeof payload.request_id === "string" ? payload.request_id : undefined,
-    tools: [tool],
-    at: new Date().toISOString(),
-  });
+  delegate.addSyntheticToolExecution(
+    tool,
+    activeSessionId,
+    typeof payload.request_id === "string" ? payload.request_id : undefined,
+    new Date().toISOString(),
+  );
 }
 
 function handleConnectionAck(delegate: AppEventDelegate, frame: EventFrame): boolean {
@@ -148,13 +200,7 @@ function handleDelta(
 
   const entries = delegate.getEntries();
   if (payload.source_chunk_type === "llm_reasoning") {
-    appendEntry(delegate, {
-      kind: "thinking",
-      id: createId("reasoning"),
-      sessionId: activeSessionId,
-      content,
-      at: new Date().toISOString(),
-    });
+    appendThinkingChunk(delegate, activeSessionId, content);
     return true;
   }
 
@@ -194,7 +240,8 @@ function handleFinal(
   payload: Record<string, unknown>,
   activeSessionId: string,
 ): boolean {
-  const content = typeof payload.content === "string" ? payload.content : "";
+  const content = normalizeFinalContent(payload);
+  const finalizedAt = new Date().toISOString();
   const entries = delegate.getEntries();
   const streamingIndex = findLastIndex(
     entries,
@@ -219,6 +266,7 @@ function handleFinal(
                 : entries[streamingIndex]?.kind === "assistant"
                   ? entries[streamingIndex].requestId
                   : undefined,
+            at: finalizedAt,
             streaming: false,
           },
         ]
@@ -231,7 +279,7 @@ function handleFinal(
             content,
             requestId: typeof payload.request_id === "string" ? payload.request_id : undefined,
             streaming: false,
-            at: new Date().toISOString(),
+            at: finalizedAt,
           },
         ],
   );
@@ -246,13 +294,7 @@ function handleReasoning(
 ): boolean {
   const content = typeof payload.content === "string" ? payload.content : "";
   if (!content) return false;
-  appendEntry(delegate, {
-    kind: "thinking",
-    id: createId("reasoning"),
-    sessionId: activeSessionId,
-    content,
-    at: new Date().toISOString(),
-  });
+  appendThinkingChunk(delegate, activeSessionId, content);
   return true;
 }
 
@@ -288,24 +330,57 @@ function handleMediaEvent(
   activeSessionId: string,
   effectiveEvent: "chat.media" | "chat.file",
 ): boolean {
-  const name =
-    typeof payload.file_name === "string"
-      ? payload.file_name
-      : typeof payload.name === "string"
-        ? payload.name
-        : "";
-  const content = name ? `[${effectiveEvent}: ${name}]` : `[${effectiveEvent}]`;
+  const at = new Date().toISOString();
+  const content = typeof payload.content === "string" ? payload.content.trim() : "";
+  const mediaItems = extractMediaItems(payload);
+  if (effectiveEvent === "chat.media" && (content || mediaItems.length > 0)) {
+    const entries = delegate.getEntries();
+    const assistantIndex = findLastIndex(
+      entries,
+      (entry) => entry.kind === "assistant" && (entry.streaming === true || !entry.streaming),
+    );
+    if (assistantIndex !== -1) {
+      delegate.setEntries(
+        entries.map((entry, index) =>
+          index === assistantIndex && entry.kind === "assistant"
+            ? {
+                ...entry,
+                ...(content ? { content } : {}),
+                ...(mediaItems.length > 0 ? { mediaItems } : {}),
+                streaming: false,
+              }
+            : entry,
+        ),
+      );
+    } else {
+      appendEntry(delegate, {
+        kind: "assistant",
+        id: createId("assistant-media"),
+        sessionId: activeSessionId,
+        content,
+        ...(mediaItems.length > 0 ? { mediaItems } : {}),
+        at,
+        streaming: false,
+      });
+    }
+    return true;
+  }
+
+  const infoEntry = createAttachmentInfoEntry(payload, activeSessionId, effectiveEvent, at);
+  if (infoEntry) {
+    appendEntry(delegate, infoEntry);
+    return true;
+  }
+
   appendEntry(delegate, {
     kind: "system",
     id: createId("system"),
     sessionId: activeSessionId,
-    content,
-    at: new Date().toISOString(),
+    content: `[${effectiveEvent}]`,
+    at,
     meta: {
       eventType: effectiveEvent,
       rawPayload: payload as JsonObject,
-      fileName: name || undefined,
-      filePath: typeof payload.path === "string" ? payload.path : undefined,
     },
   });
   return true;
@@ -373,6 +448,108 @@ function handleTodoUpdated(delegate: AppEventDelegate, payload: Record<string, u
   return true;
 }
 
+function normalizeNestedPayload(payload: Record<string, unknown>): Record<string, unknown> {
+  const nested = payload.payload;
+  if (nested && typeof nested === "object" && !Array.isArray(nested)) {
+    return nested as Record<string, unknown>;
+  }
+  return payload;
+}
+
+function normalizeTimestamp(value: unknown): number {
+  if (typeof value === "number" && Number.isFinite(value)) {
+    return value;
+  }
+  if (typeof value === "string") {
+    const parsed = Date.parse(value);
+    if (!Number.isNaN(parsed)) {
+      return parsed;
+    }
+  }
+  return Date.now();
+}
+
+function handleTeamMemberEvent(
+  delegate: AppEventDelegate,
+  payload: Record<string, unknown>,
+): boolean {
+  const normalized = normalizeNestedPayload(payload);
+  const event = normalized.event;
+  if (!event || typeof event !== "object" || Array.isArray(event)) {
+    return false;
+  }
+  const record = event as Record<string, unknown>;
+  const memberId = typeof record.member_id === "string" ? record.member_id.trim() : "";
+  if (!memberId) {
+    return false;
+  }
+  delegate.appendTeamMemberEvent({
+    id: createId("team-member"),
+    type: typeof record.type === "string" ? record.type : "team.member",
+    teamId: typeof record.team_id === "string" ? record.team_id : "",
+    memberId,
+    oldStatus: typeof record.old_status === "string" ? record.old_status : undefined,
+    newStatus: typeof record.new_status === "string" ? record.new_status : undefined,
+    reason: typeof record.reason === "string" ? record.reason : undefined,
+    restartCount: typeof record.restart_count === "number" ? record.restart_count : undefined,
+    force: typeof record.force === "boolean" ? record.force : undefined,
+    timestamp: normalizeTimestamp(record.timestamp),
+  });
+  return true;
+}
+
+function handleTeamTaskEvent(
+  delegate: AppEventDelegate,
+  payload: Record<string, unknown>,
+): boolean {
+  const normalized = normalizeNestedPayload(payload);
+  const event = normalized.event;
+  if (!event || typeof event !== "object" || Array.isArray(event)) {
+    return false;
+  }
+  const record = event as Record<string, unknown>;
+  const taskId = typeof record.task_id === "string" ? record.task_id.trim() : "";
+  if (!taskId) {
+    return false;
+  }
+  delegate.appendTeamTaskEvent({
+    id: createId("team-task"),
+    type: typeof record.type === "string" ? record.type : "team.task",
+    teamId: typeof record.team_id === "string" ? record.team_id : "",
+    taskId,
+    status: typeof record.status === "string" ? record.status : undefined,
+    timestamp: normalizeTimestamp(record.timestamp),
+  });
+  return true;
+}
+
+function handleTeamMessageEvent(
+  delegate: AppEventDelegate,
+  payload: Record<string, unknown>,
+): boolean {
+  const normalized = normalizeNestedPayload(payload);
+  const event = normalized.event;
+  if (!event || typeof event !== "object" || Array.isArray(event)) {
+    return false;
+  }
+  const record = event as Record<string, unknown>;
+  const fromMember = typeof record.from_member === "string" ? record.from_member.trim() : "";
+  if (!fromMember) {
+    return false;
+  }
+  delegate.appendTeamMessageEvent({
+    id: createId("team-message"),
+    type: typeof record.type === "string" ? record.type : "team.message",
+    teamId: typeof record.team_id === "string" ? record.team_id : "",
+    messageId: typeof record.message_id === "string" ? record.message_id : undefined,
+    fromMember,
+    toMember: typeof record.to_member === "string" ? record.to_member : undefined,
+    content: typeof record.content === "string" ? record.content : "",
+    timestamp: normalizeTimestamp(record.timestamp),
+  });
+  return true;
+}
+
 export function handleIncomingFrame(delegate: AppEventDelegate, frame: EventFrame): boolean {
   const connectionChanged = handleConnectionAck(delegate, frame);
 
@@ -380,6 +557,9 @@ export function handleIncomingFrame(delegate: AppEventDelegate, frame: EventFram
   const effectiveEvent = typeof payload.event_type === "string" ? payload.event_type : frame.event;
   const activeSessionId = delegate.getSessionId();
   const eventSessionId = typeof payload.session_id === "string" ? payload.session_id : "";
+  if (effectiveEvent === "chat.processing_status" && !eventSessionId) {
+    return connectionChanged;
+  }
   if (eventSessionId && eventSessionId !== activeSessionId) {
     return connectionChanged;
   }
@@ -398,26 +578,18 @@ export function handleIncomingFrame(delegate: AppEventDelegate, frame: EventFram
       return handleError(delegate, payload, activeSessionId) || connectionChanged;
 
     case "chat.tool_call":
-      delegate.setEntries(
-        upsertToolGroup(
-          delegate.getEntries(),
-          activeSessionId,
-          typeof payload.request_id === "string" ? payload.request_id : undefined,
-          payload,
-          false,
-        ),
+      delegate.addToolCallPayload(
+        payload,
+        activeSessionId,
+        typeof payload.request_id === "string" ? payload.request_id : undefined,
       );
       return true;
 
     case "chat.tool_result":
-      delegate.setEntries(
-        upsertToolGroup(
-          delegate.getEntries(),
-          activeSessionId,
-          typeof payload.request_id === "string" ? payload.request_id : undefined,
-          payload,
-          true,
-        ),
+      delegate.addToolResultPayload(
+        payload,
+        activeSessionId,
+        typeof payload.request_id === "string" ? payload.request_id : undefined,
       );
       return true;
 
@@ -433,7 +605,15 @@ export function handleIncomingFrame(delegate: AppEventDelegate, frame: EventFram
 
     case "chat.interrupt_result": {
       const intent = typeof payload.intent === "string" ? payload.intent : "cancel";
-      delegate.setStreamingState(intent === "cancel" ? StreamingState.Idle : StreamingState.Paused);
+      if (intent === "cancel") {
+        delegate.setStreamingState(StreamingState.Idle);
+        delegate.getActiveSubtasks().clear();
+        delegate.setEvolutionStatus("idle");
+      } else if (intent === "pause") {
+        delegate.setStreamingState(StreamingState.Paused);
+      } else {
+        delegate.setStreamingState(StreamingState.Responding);
+      }
       return true;
     }
 
@@ -491,6 +671,15 @@ export function handleIncomingFrame(delegate: AppEventDelegate, frame: EventFram
       }
       return true;
     }
+
+    case "team.member":
+      return handleTeamMemberEvent(delegate, payload);
+
+    case "team.task":
+      return handleTeamTaskEvent(delegate, payload);
+
+    case "team.message":
+      return handleTeamMessageEvent(delegate, payload);
 
     default:
       return connectionChanged;
