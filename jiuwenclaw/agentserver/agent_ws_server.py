@@ -849,14 +849,7 @@ class AgentWebSocketServer:
             config_payload = params.get("config")
             env_overrides = params.get("env")
 
-            agent = await self._agent_manager.get_agent(channel_id="default")
-            if agent is None:
-                raise ValueError("Failed to get default agent")
-
-            await agent.reload_agent_config(
-                config_base=config_payload,
-                env_overrides=env_overrides,
-            )
+            await self._agent_manager.reload_agents_config(config_payload, env_overrides)
             resp = AgentResponse(
                 request_id=request.request_id,
                 channel_id=request.channel_id,

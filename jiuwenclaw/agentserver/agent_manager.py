@@ -170,6 +170,15 @@ class AgentManager:
         """
         return self.agents.get(channel_id)
 
+    async def reload_agents_config(self, config, env) -> None:
+        """reload agent config"""
+        for channel_id, agent in self.agents.items():
+            await agent.reload_agent_config(
+                config_base=config,
+                env_overrides=env,
+            )
+            logger.info(f"channel {channel_id} reload agent config success.")
+
     async def cleanup(self) -> None:
         """清理所有 agent 实例."""
         for key in list(self.agents.keys()):
