@@ -5,24 +5,30 @@
 包含：
 - search_file: 搜索手机文件
 - upload_file: 上传手机文件获取公网 URL
-- send_file_to_user: 通过手机端 SendFileToUser 协议发文件给用户
-
-send_file_to_user 与「本机路径/公网 URL → 上传服务 → 会话回传」类实现不同，此处仅封装设备 Intent。
+- send_file_to_user: 将本地文件或公网文件传到用户手机
 """
 
 from __future__ import annotations
 
+import asyncio
 import json
-from typing import Any, Dict, List, Union
+import os
+import tempfile
+import time
+import uuid
+from typing import Any, Dict, List, Optional, Union
+from urllib.parse import urlparse
+
+import aiohttp
 
 from openjiuwen.core.foundation.tool import tool
 
 from jiuwenclaw.utils import logger
 from .utils import (
+    ToolInputError,
     execute_device_command,
     format_success_response,
     raise_if_device_error,
-    ToolInputError,
 )
 
 
@@ -141,12 +147,12 @@ async def search_file(
     name="upload_file",
     description="""工具能力描述：将手机本地文件上传并获取可公网访问的 URL。
 
-  前置工具调用：此工具使用前必须先调用 search_file 工具获取文件的 uri
+  前置工具调用：此工具使用前必须先调用 search_file 或者 query_collection 工具获取文件的 uri
 
   工具参数说明：
-  a. 入参中的file_Infos数组，每个元素必须包含mediaUri字段（对应于search_file工具返回结果中的uri），必须与search_file结果中对应的uri完全保持一致，不要自行修改。
+  a. 入参中的file_Infos数组，每个元素必须包含mediaUri字段（对应于search_file工具或者query_collection返回结果中的uri），必须与search_file结果中对应的uri完全保持一致，不要自行修改。
   b. file_infos 中的timeout字段是可选的，表示上传文件超时时间，单位是毫秒，默认是20000（20秒）。
-  c. file_infos 是文件在手机本地的信息数组（从 search_file 工具响应中获取）。限制：每次最多支持传入 5 条文件信息。
+  c. file_infos 是文件在手机本地的信息数组（从 search_file 工具或者 query_collection 响应中获取）。限制：每次最多支持传入 5 条文件信息。
 
   注意事项：
   a. 操作超时时间为60秒,请勿重复调用此工具,如果超时或失败,最多重试一次。
@@ -267,3 +273,68 @@ async def upload_file(file_infos: Union[str, List[Dict[str, Any]]]) -> Dict[str,
     except Exception as e:
         logger.error(f"[UPLOAD_FILE_TOOL] Failed to upload files: {e}")
         raise RuntimeError(f"上传文件失败: {str(e)}") from e
+
+
+# ---------------------------------------------------------------------------
+# send_file_to_user - 将本地文件或公网文件传到用户手机
+# ---------------------------------------------------------------------------
+
+_FILE_TYPE_TO_MIME_TYPE: Dict[str, str] = {
+    "txt": "text/plain",
+    "html": "text/html",
+    "css": "text/css",
+    "js": "application/javascript",
+    "json": "application/json",
+    "png": "image/png",
+    "jpeg": "image/jpeg",
+    "jpg": "image/jpeg",
+    "gif": "image/gif",
+    "svg": "image/svg+xml",
+    "pdf": "application/pdf",
+    "zip": "application/zip",
+    "doc": "application/msword",
+    "docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    "xls": "application/vnd.ms-excel",
+    "xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    "ppt": "application/vnd.ms-powerpoint",
+    "pptx": "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+    "mp3": "audio/mpeg",
+    "mp4": "video/mp4",
+}
+
+
+def _get_mime_type(filename: str) -> str:
+    """根据文件扩展名获取 MIME 类型."""
+    ext = filename.rsplit(".", 1)[-1].lower() if "." in filename else ""
+    return _FILE_TYPE_TO_MIME_TYPE.get(ext, "text/plain")
+
+
+async def _download_remote_file(url: str) -> str:
+    """下载远程文件到临时文件，返回本地路径.
+
+    Raises:
+        RuntimeError: 下载失败
+    """
+    async with aiohttp.ClientSession() as session:
+        async with session.get(url, timeout=aiohttp.ClientTimeout(total=120)) as resp:
+            if not resp.ok:
+                raise RuntimeError(f"HTTP {resp.status}: {resp.reason}")
+            data = await resp.read()
+
+    # 从 URL 提取文件名
+    parsed = urlparse(url)
+    raw_name = os.path.basename(parsed.path) or "downloaded_file"
+    raw_name = raw_name.split("?")[0]
+
+    suffix = os.path.splitext(raw_name)[1] or ""
+    base_name = os.path.splitext(raw_name)[0] or "downloaded_file"
+    unique_name = f"{base_name}_{int(time.time())}{suffix}"
+
+    tmp_dir = tempfile.gettempdir()
+    local_path = os.path.join(tmp_dir, unique_name)
+
+    with open(local_path, "wb") as f:
+        f.write(data)
+
+    logger.info("[SEND_FILE_TO_USER] Downloaded remote file: %s -> %s", url, local_path)
+    return local_path
