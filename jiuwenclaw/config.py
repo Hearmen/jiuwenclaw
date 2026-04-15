@@ -233,6 +233,30 @@ def update_updater_in_config(updates: dict[str, Any]) -> None:
     _dump_yaml_round_trip(_CONFIG_YAML_PATH, data)
 
 
+def update_memory_enabled_in_config(mode: str, value: bool) -> None:
+    """更新 memory.enabled（记忆系统开关）并写回。"""
+    _update_memory_in_modes_config(mode, "enabled", value)
+
+
+def update_proactive_memory_in_config(mode: str, value: bool) -> None:
+    """更新 memory.proactive_memory（主动记忆开关）并写回。"""
+    _update_memory_in_modes_config(mode, "is_proactive", value)
+
+
+def _update_memory_in_modes_config(mode: str, item: str, value: bool) -> None:
+    data = _load_yaml_round_trip(_CONFIG_YAML_PATH)
+    if "modes" not in data:
+        data["modes"] = {}
+    if "claw" not in data["modes"]:
+        data["modes"]["claw"] = {}
+    if mode not in data["modes"]["claw"]:
+        data["modes"]["claw"][mode] = {}
+    if "memory" not in data["modes"]["claw"][mode]:
+        data["modes"]["claw"][mode]["memory"] = {}
+    data["modes"]["claw"][mode]["memory"][item] = value
+    _dump_yaml_round_trip(_CONFIG_YAML_PATH, data)
+
+
 # ---------- 数字分身相关配置 ----------
 
 def get_permissions_owner_scopes() -> dict[str, Any]:

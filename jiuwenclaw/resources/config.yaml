@@ -532,10 +532,14 @@ modes:
     # claw 模式支持 性能/规划/集群
     fast:
       memory:
+        enabled: true
+        is_proactive: false
       rails:
       tools:
     plan:
       memory:
+        enabled: true
+        is_proactive: true
       rails:
       tools:
     team:

@@ -189,14 +189,25 @@ def create_memory_settings(
     return settings
 
 
-def is_memory_enabled() -> bool:
+def is_memory_enabled(mode: str, config: Optional[Dict[str, Any]] = None) -> bool:
     """Check if memory is enabled.
-    
-    Reads from config.yaml memory.enabled setting.
+
+    Args:
+        config: Optional config dict. If provided, reads from it directly
+                (avoids stale cache). Otherwise reads from config.yaml.
     """
-    config = _load_config()
-    memory_config = config.get("memory", {})
-    return memory_config.get("enabled", True)
+    memory_config = (config or {}).get("modes", {}).get("claw", {}).get(mode, {}).get("memory", {})
+    return memory_config.get("enabled", False)
+
+
+def is_proactive_memory(mode: str, config: Optional[Dict[str, Any]] = None) -> bool:
+    """Check if proactive memory is enabled.
+
+    When True (default): agent auto-records everything and searches before every response.
+    When False: agent only records/searches when user explicitly asks.
+    """
+    memory_config = (config or {}).get("modes", {}).get("claw", {}).get(mode, {}).get("memory", {})
+    return memory_config.get("is_proactive", False)
 
 
 def get_memory_mode(config: Optional[Dict[str, Any]] = None) -> str:

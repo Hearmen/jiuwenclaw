@@ -81,7 +81,8 @@ from jiuwenclaw.agentserver.deep_agent.permissions.owner_scopes import (
 )
 from jiuwenclaw.agentserver.permissions.core import init_permission_engine
 from jiuwenclaw.agentserver.memory import clear_memory_manager_cache
-from jiuwenclaw.agentserver.memory.config import clear_config_cache, get_memory_mode
+from jiuwenclaw.agentserver.memory.config import (clear_config_cache, get_memory_mode, is_memory_enabled,
+                                                  is_proactive_memory)
 from jiuwenclaw.agentserver.permissions.checker import TOOL_PERMISSION_CHANNEL_ID
 from jiuwenclaw.agentserver.skill_manager import SkillManager
 from jiuwenclaw.agentserver.stream_utils import parse_stream_chunk
@@ -331,6 +332,7 @@ class JiuWenClawDeepAdapter:
         self._runtime_cron_tool_context = _RuntimeCronToolContext(
             tool_scope=f"runtime_{id(self):x}",
         )
+        self._is_proactive_memory: bool | None = None
 
     def set_skill_manager(self, skill_manager: SkillManager) -> None:
         """Inject shared SkillManager from facade for tool reuse."""
@@ -931,7 +933,7 @@ class JiuWenClawDeepAdapter:
             security_prompt_rail = None
         return security_prompt_rail
 
-    def _build_memory_rail(self) -> MemoryRail | None:
+    def _build_memory_rail(self, mode: str) -> MemoryRail | None:
         try:
             config = get_config()
             embed_config = config.get("embed") if isinstance(config, dict) else None
@@ -940,12 +942,14 @@ class JiuWenClawDeepAdapter:
             has_model = embed_config.get("embed_model") if isinstance(embed_config, dict) else None
             if not all([has_api_key, has_base_url, has_model]):
                 logger.warning("[JiuWenClawDeepAdapter] MemoryRail create failed: No available embedding config")
+            self._is_proactive_memory = is_proactive_memory(mode, config)
             memory_rail = MemoryRail(
                 embedding_config=EmbeddingConfig(
                     model_name=embed_config.get("embed_model"),
                     base_url=embed_config.get("embed_base_url"),
                     api_key=embed_config.get("embed_api_key")
                 ),
+                is_proactive=self._is_proactive_memory
             )
             logger.info("[JiuWenClawDeepAdapter] MemoryRail create success")
         except Exception as exc:
@@ -1571,13 +1575,8 @@ class JiuWenClawDeepAdapter:
         for existing in list(self._instance.ability_manager.list() or []):
             if getattr(existing, "name", "").startswith(("session_new", "session_cancel", "session_list")):
                 self._instance.ability_manager.remove(existing.name)
-        # 恢复记忆 rail（仅 local memory 模式下）
-        if get_memory_mode(get_config()) == "local":
-            if self._memory_rail is None:
-                self._memory_rail = self._build_memory_rail()
-            if self._memory_rail is not None:
-                await self._instance.register_rail(self._memory_rail)
-                logger.info("[JiuWenClawDeepAdapter] MemoryRail registered for plan mode")
+        # plan 模式，根据config选择是否注册或者卸载memory rail
+        await self._handle_memory_rail_by_config("plan")
         # 恢复上下文 rail（仅配置启用时）
         if self._config_cache.get("context_engine_config", {}).get("enabled", False):
             if self._context_engineering_rail is not None and self._context_engineering_rail_mode != "plan":
@@ -1606,7 +1605,6 @@ class JiuWenClawDeepAdapter:
         """agent 模式：卸载 plan 专属 rails，按需注册 agent 专属 rails。"""
         for attr, label in (
             ("_task_planning_rail", "TaskPlanningRail"),
-            ("_memory_rail", "MemoryRail"),
             ("_skill_evolution_rail", "SkillEvolutionRail"),
         ):
             rail = getattr(self, attr)
@@ -1614,6 +1612,8 @@ class JiuWenClawDeepAdapter:
                 await self._instance.unregister_rail(rail)
                 setattr(self, attr, None)
                 logger.info("[JiuWenClawDeepAdapter] %s unregistered for agent mode", label)
+        # agent 模式，根据config选择是否注册或者卸载memory rail
+        await self._handle_memory_rail_by_config("fast")
         # agent/智能模式：恢复上下文 rail（仅配置启用时）
         if self._config_cache.get("context_engine_config", {}).get("enabled", False):
             if self._context_engineering_rail is not None and self._context_engineering_rail_mode == "plan":
@@ -2982,3 +2982,27 @@ class JiuWenClawDeepAdapter:
             logger.debug("[_parse_stream_chunk] 解析异常", exc_info=True)
 
         return None
+
+    async def _handle_memory_rail_by_config(self, mode: str):
+        config = get_config()
+        if get_memory_mode(config) == "local":
+            if is_memory_enabled(mode, config):
+                # 开启记忆
+                if self._memory_rail is not None:
+                    cur_memory_type = is_proactive_memory(mode, config)
+                    if self._is_proactive_memory != cur_memory_type:
+                        # 当前记忆类型（主动/被动）和之前注册的不一致，重新注册
+                        await self._instance.unregister_rail(self._memory_rail)
+                        self._memory_rail = None
+                    else:
+                        # 已经注册，且记忆类型相同，无需其他操作
+                        return
+                if self._memory_rail is None:
+                    self._memory_rail = self._build_memory_rail(mode)
+                if self._memory_rail is not None:
+                    await self._instance.register_rail(self._memory_rail)
+                    logger.info(f"[JiuWenClawDeepAdapter] MemoryRail registered for {mode} mode")
+            elif not is_memory_enabled(mode, config) and self._memory_rail is not None:
+                await self._instance.unregister_rail(self._memory_rail)
+                self._memory_rail = None
+                logger.info(f"[JiuWenClawDeepAdapter] MemoryRail unregistered for {mode} mode")
