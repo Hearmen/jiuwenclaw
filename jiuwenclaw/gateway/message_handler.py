@@ -1228,15 +1228,22 @@ class MessageHandler(ABC):
 
                         # 有新输入：取消旧任务 → 保留 todo → 启动新任务（非并发）
 
-                        # 1. 取消 gateway 侧所有运行中的流式任务
+                        # 1. 取消 gateway 侧当前 session 相关的流式任务（而非所有任务）
                         tasks_to_cancel = []
+                        rids_cancelled = []
+                        current_sid = msg.session_id
                         for rid, task in list(self._stream_tasks.items()):
+                            # 只取消与当前 session_id 关联的任务
+                            if self._stream_sessions.get(rid) != current_sid:
+                                continue
                             if not task.done():
                                 logger.info(
-                                    "[MessageHandler] supplement: 取消流式任务 request_id=%s", rid,
+                                    "[MessageHandler] supplement: 取消流式任务 request_id=%s session_id=%s",
+                                    rid, current_sid,
                                 )
                                 task.cancel()
                                 tasks_to_cancel.append(task)
+                                rids_cancelled.append(rid)
                         if tasks_to_cancel:
                             await asyncio.gather(*tasks_to_cancel, return_exceptions=True)
 

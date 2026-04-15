@@ -1134,7 +1134,7 @@ async def _run(
         logger.info("[App] using extension AgentServerClient: %s", agent_server_ext.metadata.name)
         client = agent_server_ext.get_client()
     else:
-        client = WebSocketAgentServerClient(ping_interval=20.0, ping_timeout=20.0)
+        client = WebSocketAgentServerClient(ping_interval=20.0, ping_timeout=600.0)
     await _connect_with_retry(
         client,
         agent_server_url,

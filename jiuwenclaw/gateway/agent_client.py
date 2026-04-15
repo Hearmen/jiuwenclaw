@@ -22,7 +22,7 @@ from jiuwenclaw.schema.agent import AgentResponse, AgentResponseChunk
 
 
 logger = logging.getLogger(__name__)
-_STREAM_TRAILING_MESSAGE_GRACE_SECONDS = 0.35
+_STREAM_TRAILING_MESSAGE_GRACE_SECONDS = 0.7
 
 
 def _wire_request_id_key(request_id: Any) -> str:
