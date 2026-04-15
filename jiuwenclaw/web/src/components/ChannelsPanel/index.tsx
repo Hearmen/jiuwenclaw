@@ -8,7 +8,6 @@ import {
   DEFAULT_WECHAT_CONF,
   buildWechatPayload,
   draftFromWechatConfig,
-  isSensitiveWechatField,
   normalizeWechatConfig,
   normalizeWechatLoginUi,
   type WechatConfig,
@@ -785,7 +784,6 @@ export function ChannelsPanel({ isConnected }: ChannelsPanelProps) {
   const [wecomSuccess, setWecomSuccess] = useState<string | null>(null);
   const [wechatConfig, setWechatConfig] = useState<WechatConfig>(DEFAULT_WECHAT_CONF);
   const [wechatDraft, setWechatDraft] = useState<WechatDraft>(draftFromWechatConfig(DEFAULT_WECHAT_CONF));
-  const [wechatVisibleFields, setWechatVisibleFields] = useState<Record<string, boolean>>({});
   const [wechatLoading, setWechatLoading] = useState(false);
   const [wechatSaving, setWechatSaving] = useState(false);
   const [wechatUnbinding, setWechatUnbinding] = useState(false);
@@ -943,7 +941,6 @@ export function ChannelsPanel({ isConnected }: ChannelsPanelProps) {
       const normalized = normalizeWechatConfig(payload?.config);
       setWechatConfig(normalized);
       setWechatDraft(draftFromWechatConfig(normalized));
-      setWechatVisibleFields({});
     } catch (err) {
       setWechatSaveError(err instanceof Error ? err.message : t('channels.errors.loadWechat'));
     } finally {
@@ -1346,10 +1343,6 @@ export function ChannelsPanel({ isConnected }: ChannelsPanelProps) {
     setWechatSuccess(null);
   };
 
-  const toggleWechatFieldVisible = (field: keyof WechatDraft) => {
-    setWechatVisibleFields((prev) => ({ ...prev, [field]: !prev[field] }));
-  };
-
   const handleSaveConfig = async () => {
     if (!hasConfigChanges || saving) return;
     setSaving(true);
@@ -1505,7 +1498,6 @@ export function ChannelsPanel({ isConnected }: ChannelsPanelProps) {
       const normalized = normalizeWechatConfig(result?.config);
       setWechatConfig(normalized);
       setWechatDraft(draftFromWechatConfig(normalized));
-      setWechatVisibleFields({});
       setWechatSuccess(t('channels.wechatUnbind.success'));
       wechatLoginPollAppliedAt.current = null;
       setWechatUnbindConfirmOpen(false);
@@ -2712,41 +2704,18 @@ export function ChannelsPanel({ isConnected }: ChannelsPanelProps) {
                               </td>
                             </tr>
 
-                            {(['base_url', 'bot_token', 'ilink_bot_id', 'ilink_user_id', 'credential_file'] as const).map(
-                              (field) => (
-                                <tr key={field} className="border-t border-border first:border-t-0 even:bg-secondary/10">
-                                  <td className="px-4 py-2.5 align-middle mono text-xs text-text-muted w-[32%]">{field}</td>
-                                  <td className="px-4 py-2.5 break-all text-[13px] align-middle">
-                                    <div className="relative">
-                                      <input
-                                        type={
-                                          isSensitiveWechatField(field) && !wechatVisibleFields[field]
-                                            ? 'password'
-                                            : 'text'
-                                        }
-                                        value={String(wechatDraft[field])}
-                                        onChange={(e) => handleWechatFieldChange(field, e.target.value)}
-                                        placeholder={t('channels.placeholders.configValue')}
-                                        className={`w-full rounded-md border border-border bg-bg px-3 py-2 text-[13px] outline-none focus:border-accent ${
-                                          isSensitiveWechatField(field) ? 'pr-10' : ''
-                                        }`}
-                                      />
-                                      {isSensitiveWechatField(field) ? (
-                                        <button
-                                          type="button"
-                                          onClick={() => toggleWechatFieldVisible(field)}
-                                          className="channels-panel__visibility-toggle"
-                                          aria-label={wechatVisibleFields[field] ? t('channels.hideValue') : t('channels.showValue')}
-                                          title={wechatVisibleFields[field] ? t('channels.hideValue') : t('channels.showValue')}
-                                        >
-                                          <VisibilityIcon visible={Boolean(wechatVisibleFields[field])} />
-                                        </button>
-                                      ) : null}
-                                    </div>
-                                  </td>
-                                </tr>
-                              ),
-                            )}
+                            <tr className="border-t border-border first:border-t-0 even:bg-secondary/10">
+                                <td className="px-4 py-2.5 align-middle mono text-xs text-text-muted w-[32%]">ilink_bot_id</td>
+                                <td className="px-4 py-2.5 break-all text-[13px] align-middle">
+                                  <input
+                                    type="text"
+                                    value={String(wechatDraft.ilink_bot_id)}
+                                    readOnly
+                                    placeholder={t('channels.placeholders.configValue')}
+                                    className="w-full rounded-md border border-border bg-bg px-3 py-2 text-[13px] outline-none cursor-not-allowed opacity-60"
+                                  />
+                                </td>
+                              </tr>
 
                             <tr className="border-t border-border first:border-t-0 even:bg-secondary/10">
                               <td className="px-4 py-2.5 align-top mono text-xs text-text-muted w-[32%]">allow_from</td>
