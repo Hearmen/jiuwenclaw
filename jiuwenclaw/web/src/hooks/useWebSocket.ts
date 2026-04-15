@@ -230,12 +230,9 @@ export function useWebSocket(options: UseWebSocketOptions): UseWebSocketReturn {
       if (Array.isArray(ackPayload.tools)) {
         setAvailableTools(ackPayload.tools);
       }
-      if (ackPayload.mode) {
-        setMode(normalizeAgentMode(ackPayload.mode));
-      }
       onConnectRef.current?.(ackPayload);
     },
-    [setAvailableTools, setConnected, setMode]
+    [setAvailableTools, setConnected]
   );
 
   // 断开连接

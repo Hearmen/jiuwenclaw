@@ -6,6 +6,7 @@ import { create } from 'zustand';
 import { Session, AgentMode, WebConnectionState } from '../types';
 
 const STORAGE_KEY = 'jiuwenclaw_context_compression';
+const MODE_STORAGE_KEY = 'jiuwenclaw_mode';
 
 function loadFromStorage() {
   try {
@@ -24,6 +25,26 @@ function saveToStorage(data: any) {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
   } catch (error) {
     console.error('Error saving context compression to storage:', error);
+  }
+}
+
+function loadModeFromStorage(): AgentMode {
+  try {
+    const stored = localStorage.getItem(MODE_STORAGE_KEY);
+    if (stored) {
+      return normalizeAgentMode(stored);
+    }
+  } catch (error) {
+    console.error('Error loading mode from storage:', error);
+  }
+  return DEFAULT_MODE;
+}
+
+function saveModeToStorage(mode: AgentMode) {
+  try {
+    localStorage.setItem(MODE_STORAGE_KEY, mode);
+  } catch (error) {
+    console.error('Error saving mode to storage:', error);
   }
 }
 
@@ -129,7 +150,7 @@ interface SessionState {
 export const useSessionStore = create<SessionState>((set) => ({
   currentSession: null,
   sessions: [],
-  mode: DEFAULT_MODE,
+  mode: loadModeFromStorage(),
   isConnected: false,
   availableTools: [],
   connectionStats: {
@@ -153,10 +174,10 @@ export const useSessionStore = create<SessionState>((set) => ({
 
   setCurrentSession: (session) => {
     const normalizedSession = session ? normalizeSession(session) : null;
-    set({
+    set((state) => ({
       currentSession: normalizedSession,
-      mode: normalizedSession?.mode || DEFAULT_MODE,
-    });
+      mode: normalizedSession?.mode || state.mode,
+    }));
   },
 
   setSessions: (sessions) => {
@@ -196,7 +217,9 @@ export const useSessionStore = create<SessionState>((set) => ({
   },
 
   setMode: (mode) => {
-    set({ mode: normalizeAgentMode(mode) });
+    const normalizedMode = normalizeAgentMode(mode);
+    saveModeToStorage(normalizedMode);
+    set({ mode: normalizedMode });
   },
 
   setConnected: (connected) => {
