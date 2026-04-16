@@ -196,8 +196,12 @@ def is_memory_enabled(mode: str, config: Optional[Dict[str, Any]] = None) -> boo
         config: Optional config dict. If provided, reads from it directly
                 (avoids stale cache). Otherwise reads from config.yaml.
     """
-    memory_config = (config or {}).get("modes", {}).get("claw", {}).get(mode, {}).get("memory", {})
-    return memory_config.get("enabled", False)
+    try:
+        memory_config = (config or {}).get("modes", {}).get("claw", {}).get(mode, {}).get("memory", {})
+        return memory_config.get("enabled", False)
+    except Exception as e:
+        logger.warning(f"Invalid memory config, disable memory, error: {e}")
+        return False
 
 
 def is_proactive_memory(mode: str, config: Optional[Dict[str, Any]] = None) -> bool:
@@ -206,8 +210,12 @@ def is_proactive_memory(mode: str, config: Optional[Dict[str, Any]] = None) -> b
     When True (default): agent auto-records everything and searches before every response.
     When False: agent only records/searches when user explicitly asks.
     """
-    memory_config = (config or {}).get("modes", {}).get("claw", {}).get(mode, {}).get("memory", {})
-    return memory_config.get("is_proactive", False)
+    try:
+        memory_config = (config or {}).get("modes", {}).get("claw", {}).get(mode, {}).get("memory", {})
+        return memory_config.get("is_proactive", False)
+    except Exception as e:
+        logger.warning(f"Invalid memory config, disable proactive memory, error: {e}")
+        return False
 
 
 def get_memory_mode(config: Optional[Dict[str, Any]] = None) -> str:
