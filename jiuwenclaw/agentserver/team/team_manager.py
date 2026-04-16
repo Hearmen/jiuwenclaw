@@ -63,6 +63,14 @@ class TeamManager:
             logger.info("[TeamManager] customizer called for agent: channel=%s, agent_id=%s", resolved_channel, id(agent))
             logger.info("[TeamManager] main agent id: %s", id(deep_agent))
 
+            # 调试：打印 agent 的 workspace 信息
+            agent_ws = agent.deep_config.workspace if agent.deep_config else None
+            if agent_ws:
+                logger.info("[TeamManager] agent workspace.root_path=%s, stable_base=%s",
+                           agent_ws.root_path, getattr(agent_ws, 'stable_base', 'N/A'))
+            else:
+                logger.warning("[TeamManager] agent deep_config.workspace is None")
+
             # 复用主 agent 的 sys_operation
             main_sys_operation = deep_agent.deep_config.sys_operation if deep_agent.deep_config else None
             if main_sys_operation and agent.deep_config:
@@ -108,6 +116,28 @@ class TeamManager:
                         logger.warning("[TeamManager] global_skills_dir does not exist: %s", global_skills_dir)
                 except Exception as exc:
                     logger.warning("[TeamManager] skill copy failed: %s", exc)
+
+                # 为 member 创建独立的 SkillManager 和 SkillToolkit
+                try:
+                    from jiuwenclaw.agentserver.skill_manager import SkillManager
+                    from jiuwenclaw.agentserver.tools.skill_toolkits import SkillToolkit
+                    
+                    member_skill_manager = SkillManager(workspace_dir=str(member_workspace.root_path))
+                    skill_toolkit = SkillToolkit(manager=member_skill_manager)
+                    
+                    existing_ability_ids = {card.id for card in agent.ability_manager.list() or []}
+                    for tool in skill_toolkit.get_tools():
+                        if not Runner.resource_mgr.get_tool(tool.card.id):
+                            Runner.resource_mgr.add_tool(tool)
+                        if tool.card.id not in existing_ability_ids:
+                            agent.ability_manager.add(tool.card)
+                            existing_ability_ids.add(tool.card.id)
+                            logger.info("[TeamManager] Added SkillToolkit tool: %s", tool.card.name)
+                        else:
+                            logger.debug("[TeamManager] SkillToolkit tool '%s' already exists, skipped", tool.card.name)
+                    logger.info("[TeamManager] SkillToolkit registered for member workspace: %s", member_workspace.root_path)
+                except Exception as exc:
+                    logger.warning("[TeamManager] SkillToolkit registration failed: %s", exc)
 
                 try:
                     member_rails = build_member_rails(
