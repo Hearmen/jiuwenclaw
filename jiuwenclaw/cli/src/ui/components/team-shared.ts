@@ -87,6 +87,13 @@ export function isLeaderMember(memberId: string): boolean {
   return /(^|[_-])leader($|[_-])/i.test(memberId) || /teamleader/i.test(memberId);
 }
 
+export function memberDisplayTitle(memberId: string): string {
+  if (isLeaderMember(memberId)) {
+    return "Team Lead";
+  }
+  return memberId.replace(/[_-]+/g, " ").replace(/\b\w/g, (char) => char.toUpperCase());
+}
+
 export function memberStatusPhrase(summary: TeamMemberSummary): string {
   if (isWorkingStatusLabel(summary.statusLabel)) {
     return summary.statusLabel;
@@ -116,9 +123,11 @@ export function latestMemberSummaries(
   }
   const latestMessages = new Map<string, TeamMessageEvent>();
   for (const event of messageEvents) {
-    const previous = latestMessages.get(event.fromMember);
-    if (!previous || event.timestamp >= previous.timestamp) {
-      latestMessages.set(event.fromMember, event);
+    for (const memberId of [event.fromMember, event.toMember].filter(Boolean) as string[]) {
+      const previous = latestMessages.get(memberId);
+      if (!previous || event.timestamp >= previous.timestamp) {
+        latestMessages.set(memberId, event);
+      }
     }
   }
   return [...latestMembers.values()]
@@ -146,6 +155,28 @@ export function orderedMemberIds(
   messageEvents: TeamMessageEvent[],
 ): string[] {
   return latestMemberSummaries(memberEvents, messageEvents).map((member) => member.memberId);
+}
+
+export function isTeamWorking(
+  memberEvents: TeamMemberEvent[],
+  messageEvents: TeamMessageEvent[],
+): boolean {
+  return latestMemberSummaries(memberEvents, messageEvents).some((member) =>
+    isWorkingStatusLabel(member.statusLabel),
+  );
+}
+
+export function teamWorkingStartedAtMs(
+  memberEvents: TeamMemberEvent[],
+  messageEvents: TeamMessageEvent[],
+): number | undefined {
+  const activeMembers = latestMemberSummaries(memberEvents, messageEvents).filter((member) =>
+    isWorkingStatusLabel(member.statusLabel),
+  );
+  if (activeMembers.length === 0) {
+    return undefined;
+  }
+  return Math.min(...activeMembers.map((member) => member.timestamp));
 }
 
 export function taskEventLabel(event: TeamTaskEvent): string {

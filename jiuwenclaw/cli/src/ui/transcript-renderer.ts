@@ -15,7 +15,7 @@ export function buildTranscriptLines(
 
   const allLines: string[] = [];
   if (displayEntries.length === 0) {
-    allLines.push(...buildWelcomeLines(width));
+    allLines.push(...buildWelcomeLines(width, snapshot.connectionStatus));
   }
 
   for (const [index, entry] of displayEntries.entries()) {

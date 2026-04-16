@@ -1,9 +1,9 @@
 {
-  "name": "jiuwenclaw-tui",
+  "name": "jiuwenclaw-cli",
   "version": "0.1.0",
-  "description": "Terminal UI for JiuwenClaw",
+  "description": "Terminal CLI for JiuwenClaw",
   "bin": {
-    "jiuwenclaw-tui-pi": "dist/index.js"
+    "jiuwenclaw-cli": "dist/index.js"
   },
   "type": "module",
   "scripts": {

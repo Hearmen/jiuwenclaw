@@ -1,5 +1,6 @@
 import type { AppSnapshot } from "../app-state.js";
 import { renderMiniTeamTree, renderTeamPanel } from "./components/team-panel.js";
+import { isTeamWorking } from "./components/team-shared.js";
 import { renderTeamStatusPill } from "./components/team-status-pill.js";
 import { renderTodoList } from "./components/todo-list.js";
 import { APP_SCREEN_KEY_BINDINGS } from "./keymap.js";
@@ -18,6 +19,7 @@ export interface ScreenLayoutOptions {
   showTodos: boolean;
   showTeamPanel: boolean;
   selectedTeamMemberId: string | null;
+  viewedTeamMemberId: string | null;
   transientNotice: string | null;
   animationPhase: number;
   runningElapsedMs?: number;
@@ -66,6 +68,22 @@ function renderRunningStatus(animationPhase: number, elapsedMs: number | undefin
   return `• ${animatedLabel} (${formatElapsed(elapsedMs)} • esc to interrupt)`;
 }
 
+function connectionStatusLabel(status: AppSnapshot["connectionStatus"]): string | null {
+  switch (status) {
+    case "connecting":
+      return "connecting to backend";
+    case "reconnecting":
+      return "backend unavailable · retrying";
+    case "auth_failed":
+      return "auth failed";
+    case "idle":
+      return "backend unavailable";
+    case "connected":
+    default:
+      return null;
+  }
+}
+
 function buildStatusLines(
   snapshot: AppSnapshot,
   width: number,
@@ -74,15 +92,19 @@ function buildStatusLines(
   runningElapsedMs: number | undefined,
 ): string[] {
   const left: string[] = [];
-  if (snapshot.connectionStatus !== "connected") left.push(`status:${snapshot.connectionStatus}`);
+  const connectionLabel = connectionStatusLabel(snapshot.connectionStatus);
+  if (connectionLabel) left.push(connectionLabel);
   if (snapshot.mode !== "plan") left.push(`mode:${snapshot.mode}`);
   if (snapshot.transcriptFoldMode !== "none") left.push(`fold:${snapshot.transcriptFoldMode}`);
+  const teamWorking =
+    snapshot.mode === "team" &&
+    isTeamWorking(snapshot.teamMemberEvents, snapshot.teamMessageEvents);
 
   const right = snapshot.lastError
     ? `error:${snapshot.lastError}`
     : snapshot.isPaused
       ? "paused"
-      : snapshot.isProcessing
+      : snapshot.isProcessing || teamWorking
         ? renderRunningStatus(animationPhase, runningElapsedMs)
         : null;
 
@@ -165,6 +187,7 @@ export function buildAppScreenLines(snapshot: AppSnapshot, options: ScreenLayout
           snapshot.teamMessageEvents,
           options.width,
           options.selectedTeamMemberId,
+          options.viewedTeamMemberId,
         )
       : [];
   const miniTeamTreeLines =

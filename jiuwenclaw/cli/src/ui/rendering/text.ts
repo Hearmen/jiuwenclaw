@@ -12,7 +12,7 @@ export function emptyLine(width: number): string {
 }
 
 export function padToWidth(value: string, width: number): string {
-  const clipped = truncateToWidth(value, width);
+  const clipped = truncateToWidth(value, width, "");
   const padding = Math.max(0, width - visibleWidth(clipped));
   return clipped + " ".repeat(padding);
 }

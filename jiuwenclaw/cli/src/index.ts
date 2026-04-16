@@ -19,7 +19,7 @@ const { values } = parseArgs({
 });
 
 if (values.help) {
-  console.log(`jiuwenclaw-tui-pi - Terminal UI for JiuwenClaw using pi-tui
+  console.log(`jiuwenclaw-cli - Terminal CLI for JiuwenClaw
 
 Options:
   --url <url>       Gateway CLI WebSocket URL (default: ws://127.0.0.1:19001/cli)
@@ -31,7 +31,7 @@ Options:
 }
 
 if (!process.stdin.isTTY || !process.stdout.isTTY) {
-  console.error("jiuwenclaw-tui-pi requires an interactive TTY");
+  console.error("jiuwenclaw-cli requires an interactive TTY");
   process.exit(1);
 }
 
@@ -47,9 +47,26 @@ tui.setClearOnShrink(true);
 let closed = false;
 let screen: AppScreen | null = null;
 
-function closeUi(exitCode = 0): void {
+async function cancelBeforeExit(): Promise<void> {
+  const snapshot = appState.getSnapshot();
+  if (!snapshot.isProcessing && !snapshot.isPaused) {
+    return;
+  }
+  if (snapshot.connectionStatus !== "connected") {
+    return;
+  }
+  appState.cancel();
+  await new Promise((resolve) => setTimeout(resolve, 120));
+}
+
+async function closeUi(exitCode = 0): Promise<void> {
   if (closed) return;
   closed = true;
+  try {
+    await cancelBeforeExit();
+  } catch {
+    // Best effort only.
+  }
   screen?.dispose();
   appState.stop();
   try {
@@ -60,9 +77,14 @@ function closeUi(exitCode = 0): void {
   process.exit(exitCode);
 }
 
-function crash(error: unknown): void {
+async function crash(error: unknown): Promise<void> {
   const message = error instanceof Error ? (error.stack ?? error.message) : String(error);
   if (!closed) {
+    try {
+      await cancelBeforeExit();
+    } catch {
+      // Best effort only.
+    }
     screen?.dispose();
     appState.stop();
     try {
@@ -76,13 +98,21 @@ function crash(error: unknown): void {
   process.exit(1);
 }
 
-screen = new AppScreen(tui, appState, commandService, () => closeUi(0));
+screen = new AppScreen(tui, appState, commandService, () => {
+  void closeUi(0);
+});
 tui.addChild(screen);
 tui.setFocus(screen);
 
-process.on("SIGTERM", () => closeUi(0));
-process.on("uncaughtException", crash);
-process.on("unhandledRejection", crash);
+process.on("SIGTERM", () => {
+  void closeUi(0);
+});
+process.on("uncaughtException", (error) => {
+  void crash(error);
+});
+process.on("unhandledRejection", (error) => {
+  void crash(error);
+});
 
 appState.start();
 tui.start();

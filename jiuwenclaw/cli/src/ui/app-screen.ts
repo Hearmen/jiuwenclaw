@@ -19,7 +19,11 @@ import { addError, addInfo } from "../core/commands/helpers.js";
 import type { SessionListPayload, SessionMeta } from "../core/commands/builtins/resume.js";
 import { handleAppScreenKeyInput } from "./keymap.js";
 import { buildAppScreenLines } from "./screen-layout.js";
-import { orderedMemberIds } from "./components/team-shared.js";
+import {
+  isTeamWorking,
+  orderedMemberIds,
+  teamWorkingStartedAtMs,
+} from "./components/team-shared.js";
 import { padToWidth } from "./rendering/text.js";
 import { editorTheme, palette, selectListTheme } from "./theme.js";
 
@@ -448,6 +452,7 @@ export class AppScreen implements Component, Focusable {
   private showTodos = true;
   private showTeamPanel = false;
   private selectedTeamMemberId: string | null = null;
+  private viewedTeamMemberId: string | null = null;
   private exitArmedUntil = 0;
   private transientNotice: string | null = null;
   private transientNoticeTimer: ReturnType<typeof setTimeout> | null = null;
@@ -546,6 +551,9 @@ export class AppScreen implements Component, Focusable {
       },
       toggleTeamPanel: () => {
         this.showTeamPanel = !this.showTeamPanel;
+        if (!this.showTeamPanel) {
+          this.viewedTeamMemberId = null;
+        }
         this.tui.requestRender();
       },
       toggleTranscript: () => {
@@ -598,6 +606,16 @@ export class AppScreen implements Component, Focusable {
     }
 
     if (!snapshot.pendingQuestion && this.showTeamPanel) {
+      if (matchesKey(data, "left")) {
+        this.viewedTeamMemberId = null;
+        this.tui.requestRender();
+        return;
+      }
+      if (matchesKey(data, "return")) {
+        this.viewedTeamMemberId = this.selectedTeamMemberId;
+        this.tui.requestRender();
+        return;
+      }
       if (matchesKey(data, "up")) {
         this.moveTeamPanelSelection(snapshot, -1);
         this.tui.requestRender();
@@ -640,6 +658,9 @@ export class AppScreen implements Component, Focusable {
 
   render(width: number): string[] {
     const snapshot = this.state.getSnapshot();
+    const teamWorking =
+      snapshot.mode === "team" &&
+      isTeamWorking(snapshot.teamMemberEvents, snapshot.teamMessageEvents);
     this.editor.borderColor = snapshot.pendingQuestion
       ? palette.border.question
       : palette.border.panel;
@@ -662,10 +683,11 @@ export class AppScreen implements Component, Focusable {
       showTodos: this.showTodos,
       showTeamPanel: this.showTeamPanel,
       selectedTeamMemberId: this.selectedTeamMemberId,
+      viewedTeamMemberId: this.viewedTeamMemberId,
       transientNotice: this.transientNotice,
       animationPhase: this.animationPhase,
       runningElapsedMs:
-        snapshot.isProcessing && this.runningStartedAtMs !== null
+        (snapshot.isProcessing || teamWorking) && this.runningStartedAtMs !== null
           ? Date.now() - this.runningStartedAtMs
           : undefined,
     });
@@ -775,10 +797,14 @@ export class AppScreen implements Component, Focusable {
     const memberIds = orderedMemberIds(snapshot.teamMemberEvents, snapshot.teamMessageEvents);
     if (memberIds.length === 0) {
       this.selectedTeamMemberId = null;
+      this.viewedTeamMemberId = null;
       return;
     }
     if (!this.selectedTeamMemberId || !memberIds.includes(this.selectedTeamMemberId)) {
       this.selectedTeamMemberId = memberIds[0] ?? null;
+    }
+    if (this.viewedTeamMemberId && !memberIds.includes(this.viewedTeamMemberId)) {
+      this.viewedTeamMemberId = null;
     }
   }
 
@@ -796,7 +822,11 @@ export class AppScreen implements Component, Focusable {
       : 0;
     const baseIndex = currentIndex >= 0 ? currentIndex : 0;
     const nextIndex = Math.max(0, Math.min(memberIds.length - 1, baseIndex + delta));
-    this.selectedTeamMemberId = memberIds[nextIndex] ?? memberIds[0] ?? null;
+    const nextMemberId = memberIds[nextIndex] ?? memberIds[0] ?? null;
+    this.selectedTeamMemberId = nextMemberId;
+    if (this.viewedTeamMemberId !== null) {
+      this.viewedTeamMemberId = nextMemberId;
+    }
   }
 
   private async openResumeSessionList(): Promise<void> {
@@ -939,7 +969,14 @@ export class AppScreen implements Component, Focusable {
     const hasRunningTools = snapshot.toolExecutions.some(
       (execution) => execution.tool.status === "running",
     );
-    const shouldAnimate = snapshot.isProcessing || hasRunningTools;
+    const teamWorking =
+      snapshot.mode === "team" &&
+      isTeamWorking(snapshot.teamMemberEvents, snapshot.teamMessageEvents);
+    const teamStartedAt = teamWorkingStartedAtMs(
+      snapshot.teamMemberEvents,
+      snapshot.teamMessageEvents,
+    );
+    const shouldAnimate = snapshot.isProcessing || hasRunningTools || teamWorking;
     if (!shouldAnimate) {
       if (this.animationTimer) {
         clearInterval(this.animationTimer);
@@ -949,8 +986,12 @@ export class AppScreen implements Component, Focusable {
       this.runningStartedAtMs = null;
       return;
     }
-    if (snapshot.isProcessing && this.runningStartedAtMs === null) {
-      this.runningStartedAtMs = Date.now();
+    if (snapshot.isProcessing) {
+      if (this.runningStartedAtMs === null) {
+        this.runningStartedAtMs = Date.now();
+      }
+    } else if (teamWorking) {
+      this.runningStartedAtMs = teamStartedAt ?? this.runningStartedAtMs ?? Date.now();
     }
     if (this.animationTimer) {
       return;

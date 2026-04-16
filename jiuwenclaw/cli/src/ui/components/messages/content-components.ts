@@ -44,7 +44,7 @@ function renderThinkingLabel(active: boolean, animationPhase: number, width: num
     return [padToWidth(chalk.italic(palette.text.dim(label)), width)];
   }
 
-  const focus = animationPhase % (label.length + 2) - 1;
+  const focus = (animationPhase % (label.length + 2)) - 1;
   const animated = label
     .split("")
     .map((char, index) => {
