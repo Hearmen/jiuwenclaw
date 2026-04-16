@@ -26,7 +26,18 @@ from openjiuwen.core.session.checkpointer import CheckpointerFactory
 from openjiuwen.core.session.checkpointer.checkpointer import CheckpointerConfig
 from openjiuwen.core.session.checkpointer.persistence import PersistenceCheckpointerProvider
 from openjiuwen.core.single_agent import AgentCard, ReActAgentConfig
-from openjiuwen.core.sys_operation import SysOperation, SysOperationCard, OperationMode, LocalWorkConfig
+from openjiuwen.core.sys_operation import (
+    SysOperation,
+    SysOperationCard,
+    OperationMode,
+    LocalWorkConfig,
+    SandboxGatewayConfig,
+)
+from openjiuwen.core.sys_operation.config import (
+    SandboxIsolationConfig,
+    PreDeployLauncherConfig,
+    ContainerScope
+)
 from openjiuwen.harness import (
     AudioModelConfig,
     DeepAgent,
@@ -140,6 +151,7 @@ from jiuwenclaw.utils import (
 load_dotenv(dotenv_path=get_env_file())
 
 _react_config = get_config().get("react", {})
+_sandbox_config = get_config().get("sandbox", {})
 
 _CRON_TOOL_CHANNEL_ID: ContextVar[str] = ContextVar(
     "cron_tool_channel_id",
@@ -844,10 +856,28 @@ class JiuWenClawDeepAdapter:
     def _create_sys_operation() -> SysOperation | None:
         """Create a sys operation."""
         try:
-            sysop_card = SysOperationCard(
-                mode=OperationMode.LOCAL,
-                work_config=LocalWorkConfig(shell_allowlist=None),
-            )
+            sandbox_url = _sandbox_config.get("url", None)
+            sandbox_type = _sandbox_config.get("type", None)
+            if sandbox_url and sandbox_type:
+                gateway_config = SandboxGatewayConfig(
+                isolation=SandboxIsolationConfig(container_scope=ContainerScope.SYSTEM),
+                launcher_config=PreDeployLauncherConfig(
+                        base_url=sandbox_url,
+                        sandbox_type=sandbox_type,
+                        idle_ttl_seconds=600,
+                    ),
+                    timeout_seconds=30,
+                )
+                sysop_card = SysOperationCard(
+                    mode=OperationMode.SANDBOX,
+                    work_config=LocalWorkConfig(shell_allowlist=None),
+                    gateway_config=gateway_config,
+                )
+            else:
+                sysop_card = SysOperationCard(
+                    mode=OperationMode.LOCAL,
+                    work_config=LocalWorkConfig(shell_allowlist=None),
+                )
             result = Runner.resource_mgr.add_sys_operation(sysop_card)
             if result.is_err():
                 logger.warning("[JiuWenClawDeepAdapter] add sys_operation failed: %s", result.msg())
