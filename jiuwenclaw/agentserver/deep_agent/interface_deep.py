@@ -1160,6 +1160,110 @@ class JiuWenClawDeepAdapter:
                     [type(r).__name__ for r in rails_list])
         return rails_list
 
+    @staticmethod
+    def build_rails_for_team_member(
+        skills_dir: str,
+        language: str = "cn",
+        channel: str = "default",
+        agent_name: str = "team_member",
+        model_name: str = "gpt-4",
+    ) -> list[Any]:
+        """为 Team 成员创建 rails 列表，复用 DeepAgent 的 rail 创建逻辑。
+
+        Args:
+            skills_dir: 成员 workspace 下的 skills 目录路径
+            language: 语言设置
+            channel: 渠道设置
+            agent_name: 成员名称
+            model_name: 模型名称
+
+        Returns:
+            rail 实例列表
+        """
+        rails_list = []
+
+        try:
+            from openjiuwen.harness.rails.runtime_prompt_rail import RuntimePromptRail
+            rail = RuntimePromptRail(
+                language=language,
+                channel=channel,
+                agent_name=agent_name,
+                model_name=model_name,
+            )
+            rails_list.append(rail)
+            logger.info("[TeamMember] RuntimePromptRail created")
+        except Exception as exc:
+            logger.warning("[TeamMember] RuntimePromptRail failed: %s", exc)
+
+        try:
+            from openjiuwen.harness.rails.response_prompt_rail import ResponsePromptRail
+            rail = ResponsePromptRail()
+            rails_list.append(rail)
+            logger.info("[TeamMember] ResponsePromptRail created")
+        except Exception as exc:
+            logger.warning("[TeamMember] ResponsePromptRail failed: %s", exc)
+
+        try:
+            from openjiuwen.harness.rails.filesystem_rail import FileSystemRail
+            rail = FileSystemRail()
+            rails_list.append(rail)
+            logger.info("[TeamMember] FileSystemRail created")
+        except Exception as exc:
+            logger.warning("[TeamMember] FileSystemRail failed: %s", exc)
+
+        try:
+            rail = SkillUseRail(
+                skills_dir=skills_dir,
+                skill_mode="all",
+            )
+            rails_list.append(rail)
+            logger.info("[TeamMember] SkillUseRail created: %s", skills_dir)
+        except Exception as exc:
+            logger.warning("[TeamMember] SkillUseRail failed: %s", exc)
+
+        try:
+            from jiuwenclaw.agentserver.deep_agent.rails.stream_event_rail import JiuClawStreamEventRail
+            rail = JiuClawStreamEventRail()
+            rails_list.append(rail)
+            logger.info("[TeamMember] JiuClawStreamEventRail created")
+        except Exception as exc:
+            logger.warning("[TeamMember] JiuClawStreamEventRail failed: %s", exc)
+
+        try:
+            from openjiuwen.harness.rails.task_planning_rail import TaskPlanningRail
+            rail = TaskPlanningRail()
+            rails_list.append(rail)
+            logger.info("[TeamMember] TaskPlanningRail created")
+        except Exception as exc:
+            logger.warning("[TeamMember] TaskPlanningRail failed: %s", exc)
+
+        try:
+            from openjiuwen.harness.rails.security_rail import SecurityRail
+            rail = SecurityRail()
+            rails_list.append(rail)
+            logger.info("[TeamMember] SecurityRail created")
+        except Exception as exc:
+            logger.warning("[TeamMember] SecurityRail failed: %s", exc)
+
+        try:
+            from openjiuwen.harness.rails.heartbeat_rail import HeartbeatRail
+            rail = HeartbeatRail()
+            rails_list.append(rail)
+            logger.info("[TeamMember] HeartbeatRail created")
+        except Exception as exc:
+            logger.warning("[TeamMember] HeartbeatRail failed: %s", exc)
+
+        try:
+            from jiuwenclaw.agentserver.deep_agent.rails.avatar_rail import AvatarPromptRail
+            rail = AvatarPromptRail()
+            rails_list.append(rail)
+            logger.info("[TeamMember] AvatarPromptRail created")
+        except Exception as exc:
+            logger.warning("[TeamMember] AvatarPromptRail failed: %s", exc)
+
+        logger.info("[TeamMember] Total rails built: %d", len(rails_list))
+        return rails_list
+
     def _make_deep_agent_config(
             self,
             *,

@@ -23,9 +23,10 @@ def temp_home() -> Generator[Path, None, None]:
     This fixture creates a temporary directory that can be used as HOME
     for testing initialization without affecting the user's actual home directory.
     """
-    with tempfile.TemporaryDirectory() as tmpdir:
-        home = Path(tmpdir)
-        yield home
+    # Fixed path for UT logs
+    fixed_log_dir = Path(r"C:\Users\admin\.jiuwenclaw\logs\ut_logs")
+    fixed_log_dir.mkdir(parents=True, exist_ok=True)
+    yield fixed_log_dir
 
 
 @pytest.fixture

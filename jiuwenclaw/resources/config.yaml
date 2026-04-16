@@ -514,6 +514,18 @@ team:
     persona: "天才项目管理专家，擅长任务分解和团队协调"
     domain: project_management
 
+  workspace:
+    stable_base: true
+    max_iterations: 200
+    completion_timeout: 600.0
+
+  agents:
+    leader:
+      member_name: team_leader
+      name: TeamLeader
+    teammate:
+      member_name: teammate
+
   transport:
     type: inprocess
 
