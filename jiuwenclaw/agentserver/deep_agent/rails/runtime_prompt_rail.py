@@ -7,7 +7,6 @@ static identity prompt and refreshed on every model call via before_model_call()
 """
 from __future__ import annotations
 
-import os
 import platform
 import subprocess
 from shutil import which
@@ -113,7 +112,6 @@ class RuntimePromptRail(DeepAgentRail):
             priority=92,
         ))
 
-        cwd = os.getcwd()
         plat = f"{platform.system()} {platform.machine()}"
         python_ver = platform.python_version()
         git_branch = self._get_git_branch()
@@ -121,7 +119,6 @@ class RuntimePromptRail(DeepAgentRail):
         if self._language == "cn":
             runtime_content = (
                 "# 运行时\n\n"
-                f"- 工作目录：{cwd}\n"
                 f"- 平台：{plat}\n"
                 f"- Python：{python_ver}\n"
                 f"- 模型：{self._model_name}\n"
@@ -133,7 +130,6 @@ class RuntimePromptRail(DeepAgentRail):
         else:
             runtime_content = (
                 "# Runtime\n\n"
-                f"- CWD: {cwd}\n"
                 f"- Platform: {plat}\n"
                 f"- Python: {python_ver}\n"
                 f"- Model: {self._model_name}\n"
