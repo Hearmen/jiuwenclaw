@@ -551,6 +551,65 @@ def _migrate_legacy_workspace(
     logger.info(f"Migration completed: {new_workspace}")
 
 
+def cleanup_team_files(workspace_dir: Path) -> None:
+    """清理 Team 旧版本遗留的文件和目录.
+
+    Legacy cleanup:
+    - Old: {workspace_dir}/workspace/ (旧版本 team workspace)
+    - Old: {workspace_dir}/agent/team_data/ (旧版本 team 数据库目录)
+    - Old: {workspace_dir}/team.db (旧版本 team 数据库文件)
+    - Old: {workspace_dir}/team.db-wal (旧版本 team WAL 文件)
+    - Old: {workspace_dir}/team.db-shm (旧版本 team SHM 文件)
+    - Old: {workspace_dir}/agent/team.db (旧版本 team 数据库文件)
+    - Old: {workspace_dir}/agent/team.db-wal (旧版本 team WAL 文件)
+    - Old: {workspace_dir}/agent/team.db-shm (旧版本 team SHM 文件)
+
+    Args:
+        workspace_dir: JiuWenClaw 用户工作空间根目录 (~/.jiuwenclaw)
+    """
+    agent_dir = workspace_dir / "agent"
+
+    # 清理 {workspace_dir}/workspace/ (旧版本 team workspace)
+    legacy_workspace = workspace_dir / "workspace"
+    if legacy_workspace.exists():
+        try:
+            shutil.rmtree(legacy_workspace)
+            logger.info(f"[Cleanup] Removed legacy workspace directory: {legacy_workspace}")
+        except OSError as e:
+            logger.warning(f"[Cleanup] Failed to remove legacy workspace directory: {e}")
+
+    # 清理 {workspace_dir}/agent/team_data/ (旧版本 team 数据库目录)
+    legacy_team_data = agent_dir / "team_data"
+    if legacy_team_data.exists():
+        try:
+            shutil.rmtree(legacy_team_data)
+            logger.info(f"[Cleanup] Removed legacy team_data directory: {legacy_team_data}")
+        except OSError as e:
+            logger.warning(f"[Cleanup] Failed to remove legacy team_data directory: {e}")
+
+    # 清理 {workspace_dir}/team.db* (旧版本 team 数据库文件)
+    legacy_team_db_root = workspace_dir / "team.db"
+    for suffix in ["", "-wal", "-shm"]:
+        db_file = legacy_team_db_root.with_suffix(".db" + suffix)
+        if db_file.exists():
+            try:
+                db_file.unlink()
+                logger.info(f"[Cleanup] Removed legacy team database file: {db_file}")
+            except OSError as e:
+                logger.warning(f"[Cleanup] Failed to remove legacy team database file: {e}")
+
+    # 清理 {workspace_dir}/agent/team.db* (旧版本 team 数据库文件)
+    legacy_team_db_agent = agent_dir / "team.db"
+    for suffix in ["", "-wal", "-shm"]:
+        db_file = legacy_team_db_agent.with_suffix(".db" + suffix)
+        if db_file.exists():
+            try:
+                db_file.unlink()
+                logger.info(f"[Cleanup] Removed legacy team database file: {db_file}")
+            except OSError as e:
+                logger.warning(f"[Cleanup] Failed to remove legacy team database file: {e}")
+
+
 def prepare_workspace(
     overwrite: bool = True,
     preferred_language: Optional[str] = None,
@@ -979,15 +1038,6 @@ def get_builtin_skills_dir() -> Path:
 
 def get_agent_sessions_dir() -> Path:
     return get_agent_root_dir() / "sessions"
-
-
-def get_agent_team_data_dir() -> Path:
-    """Get the agent team data directory path.
-
-    Returns:
-        Path to team data directory: ~/.jiuwenclaw/agent/team_data
-    """
-    return get_agent_root_dir() / "team_data"
 
 
 def get_checkpoint_dir() -> Path:
