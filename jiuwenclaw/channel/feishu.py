@@ -925,14 +925,9 @@ class FeishuChannel(BaseChannel):
 
     @staticmethod
     def _is_control_message(content: str) -> bool:
-        text = content.strip()
-        if not text or "\n" in text:
-            return False
-        if text == "/new_session":
-            return True
-        if text.startswith("/mode "):
-            return True
-        return False
+        from jiuwenclaw.gateway.slash_command import is_control_like_for_im_batching
+
+        return is_control_like_for_im_batching(content)
 
     async def _enqueue_message_batch(
         self,

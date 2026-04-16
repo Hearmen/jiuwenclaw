@@ -15,6 +15,11 @@ from typing import TYPE_CHECKING, Any, Dict
 from jiuwenclaw.channel.base import ChannelType
 from jiuwenclaw.e2a.constants import E2A_WIRE_INTERNAL_METADATA_KEYS
 from jiuwenclaw.gateway.session_map import SessionMap
+from jiuwenclaw.gateway.slash_command import (
+    ParsedControlAction,
+    format_skills_list_for_notice,
+    parse_channel_control_text,
+)
 from jiuwenclaw.schema.hook_event import GatewayHookEvents
 from jiuwenclaw.schema.hooks_context import GatewayChatHookContext
 
@@ -402,16 +407,13 @@ class MessageHandler(ABC):
         return base
 
     def _handle_channel_control(self, msg: "Message") -> bool:
-        r"""处理 \new_session / \mode 指令.
+        r"""处理 \new_session / \mode / \skills 指令.
 
         Returns:
             True: 该消息是控制指令，已处理完毕，不需要转发给 Agent。
             False: 非控制指令，继续正常处理。
         """
-        # print("this is in _handle_channel_control, msg is ", msg)
-        user_infos = {}
-        user_infos['id'] = msg.id
-        user_infos['meta_data'] = msg.metadata
+        user_infos = {"id": msg.id, "meta_data": msg.metadata}
 
         ch = msg.channel_id
         channel_type = self._resolve_control_channel_type(msg)
@@ -423,18 +425,27 @@ class MessageHandler(ABC):
         if not text:
             return False
 
+        parsed = parse_channel_control_text(text)
+        if parsed.action is ParsedControlAction.NONE:
+            return False
+
         logger.info(
-            'this is in _handle_channel_control, channel id is %s, text is %s, "\\new_session" in text is %s',
+            "[MessageHandler] _handle_channel_control channel=%s text=%s action=%s",
             channel_type,
             text,
-            str("\\new_session" in text),
+            parsed.action.value,
         )
+
+        if parsed.action is ParsedControlAction.SKILLS_OK:
+            asyncio.create_task(
+                self._skills_slash_notice(user_infos, ch, msg.session_id, msg)
+            )
+            return True
 
         # 获取当前会话的状态（使用复合键）
         state = self._get_or_create_channel_state(msg)
 
-        # \new_session：重置当前会话的 session_id
-        if "/new_session" == text:
+        if parsed.action is ParsedControlAction.NEW_SESSION_OK:
             old_sid = state.session_id
             cid = str(getattr(msg, "channel_id", "") or "")
             identity_key = self._extract_identity_tuple(msg)
@@ -456,65 +467,122 @@ class MessageHandler(ABC):
                 )
             )
             return True
-        elif "\n" not in text and text.startswith("/new_session"):
+        if parsed.action is ParsedControlAction.NEW_SESSION_BAD:
             asyncio.create_task(
                 self._send_channel_notice(
-                    user_infos, 
-                    ch, 
-                    msg.session_id, 
-                    f"非法指令")
+                    user_infos,
+                    ch,
+                    msg.session_id,
+                    "非法指令",
+                )
             )
             return True
 
-        # \mode plan / \mode agent(/mode fast) / \mode team（切换模式时与 /new_session 一样先中断当前会话任务）
-        valid_mode_cmds = {"/mode plan", "/mode agent", "/mode fast", "/mode team"}
-        if text in valid_mode_cmds:
-            parts = text.split()
-            mode_str = parts[1] if len(parts) >= 2 else ""
-            if mode_str in ("plan", "agent", "fast", "team"):
-                old_mode = state.mode
-                old_sid = state.session_id
-                if mode_str in ("agent", "fast"):
-                    state.mode = ChannelMode.AGENT
-                elif mode_str == "team":
-                    state.mode = ChannelMode.TEAM
-                else:
-                    state.mode = ChannelMode.PLAN
-                new_label = state.mode.value
-                if old_mode != state.mode:
-                    asyncio.create_task(
-                        self._mode_change_cancel_and_notice(
-                            ModeChangeCancelParams(
-                                user_infos=user_infos,
-                                channel_id=ch,
-                                reply_session_id=msg.session_id,
-                                old_sid=old_sid,
-                                new_mode_label=new_label,
-                            ),
-                            msg,
-                        )
+        if parsed.action is ParsedControlAction.MODE_OK:
+            mode_str = parsed.mode_subcommand or ""
+            if mode_str not in ("plan", "agent", "fast", "team"):
+                asyncio.create_task(
+                    self._send_channel_notice(
+                        user_infos,
+                        ch,
+                        msg.session_id,
+                        "非法指令",
                     )
-                else:
-                    asyncio.create_task(
-                        self._send_channel_notice(
-                            user_infos,
-                            ch,
-                            msg.session_id,
-                            self._build_mode_change_notice_text(new_label),
-                        )
-                    )
+                )
                 return True
-        elif "\n" not in text and text.startswith("/mode"):
+            old_mode = state.mode
+            old_sid = state.session_id
+            if mode_str in ("agent", "fast"):
+                state.mode = ChannelMode.AGENT
+            elif mode_str == "team":
+                state.mode = ChannelMode.TEAM
+            else:
+                state.mode = ChannelMode.PLAN
+            new_label = state.mode.value
+            if old_mode != state.mode:
+                asyncio.create_task(
+                    self._mode_change_cancel_and_notice(
+                        ModeChangeCancelParams(
+                            user_infos=user_infos,
+                            channel_id=ch,
+                            reply_session_id=msg.session_id,
+                            old_sid=old_sid,
+                            new_mode_label=new_label,
+                        ),
+                        msg,
+                    )
+                )
+            else:
+                asyncio.create_task(
+                    self._send_channel_notice(
+                        user_infos,
+                        ch,
+                        msg.session_id,
+                        self._build_mode_change_notice_text(new_label),
+                    )
+                )
+            return True
+        if parsed.action is ParsedControlAction.MODE_BAD:
             asyncio.create_task(
                 self._send_channel_notice(
-                    user_infos, 
-                    ch, 
-                    msg.session_id, 
-                    f"非法指令")
+                    user_infos,
+                    ch,
+                    msg.session_id,
+                    "非法指令",
+                )
             )
             return True
 
         return False
+
+    async def _skills_slash_notice(
+        self,
+        user_infos: dict[str, Any],
+        channel_id: str,
+        reply_session_id: str | None,
+        msg: "Message",
+    ) -> None:
+        """受控通道整行 /skills：请求 skills.list 并以 CHAT_FINAL 通知展示。"""
+        from jiuwenclaw.schema.message import Message, ReqMethod
+
+        req_id = f"skills_slash_{int(time.time() * 1000):x}_{secrets.token_hex(3)}"
+        skills_req = Message(
+            id=req_id,
+            type="req",
+            channel_id=msg.channel_id,
+            session_id=msg.session_id,
+            params={},
+            timestamp=time.time(),
+            ok=True,
+            req_method=ReqMethod.SKILLS_LIST,
+            is_stream=False,
+            metadata=msg.metadata,
+            provider=getattr(msg, "provider", None),
+            chat_id=getattr(msg, "chat_id", None),
+            user_id=getattr(msg, "user_id", None),
+            bot_id=getattr(msg, "bot_id", None),
+        )
+        try:
+            env = self.message_to_e2a(skills_req)
+            resp = await self._agent_client.send_request(env)
+            if resp.ok:
+                body = format_skills_list_for_notice(resp.payload)
+            else:
+                err = ""
+                if isinstance(resp.payload, dict):
+                    err = str(resp.payload.get("error") or "").strip()
+                body = f"获取技能列表失败{(': ' + err) if err else ''}"
+            await self._send_channel_notice(
+                user_infos, channel_id, reply_session_id, body
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.exception("[MessageHandler] /skills 请求失败: %s", exc)
+            await self._send_channel_notice(
+                user_infos,
+                channel_id,
+                reply_session_id,
+                f"获取技能列表失败：{exc}",
+            )
 
     def _apply_channel_state(self, msg: "Message") -> None:
         """将当前 Channel 的控制状态应用到消息上（session_id / mode）."""
@@ -1165,7 +1233,7 @@ class MessageHandler(ABC):
                     continue
                 
          
-                # 先处理受控通道的 Channel 控制指令（如 /new_session、/mode）
+                # 先处理受控通道的 Channel 控制指令（如 /new_session、/mode、/skills）
                 if self._handle_channel_control(msg):
                     # 该消息仅用于修改 session/mode，已给 Channel 回复提示，不再转发给 Agent
                     continue

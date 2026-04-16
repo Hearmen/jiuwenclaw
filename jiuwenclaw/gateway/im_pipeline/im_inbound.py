@@ -14,9 +14,8 @@ from openjiuwen.core.foundation.llm import Model
 from openjiuwen.core.foundation.llm.schema.config import ModelClientConfig, ModelRequestConfig
 
 from jiuwenclaw.schema.message import Message, ReqMethod
+from jiuwenclaw.gateway.slash_command import CONTROL_MESSAGE_TEXTS
 from jiuwenclaw.utils import get_root_dir, logger
-
-CONTROL_MESSAGES = frozenset({"/new_session", "/mode plan", "/mode agent"})
 SYSTEM_PROMPT_TEMPLATE = """
 你是{principal_name}的数字分身，活跃在即时通讯群聊中。当群里有其他用户发送与{principal_name}相关的消息时，你的任务是改写这条消息，使其更清晰、更完整，以便后续帮助{principal_name}生成恰当的回复。
 
@@ -178,7 +177,7 @@ class IMConversationProcessor:
         text = self._extract_text(msg)
         if not text:
             return InboundProcessResult(reason="empty-content")
-        if text.strip() in CONTROL_MESSAGES:
+        if text.strip() in CONTROL_MESSAGE_TEXTS:
             return InboundProcessResult(reason="control-message")
 
         metadata = dict(msg.metadata or {})

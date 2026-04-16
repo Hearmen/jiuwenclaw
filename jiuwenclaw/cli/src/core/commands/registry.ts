@@ -1,3 +1,4 @@
+/** 内置 slash 与 Gateway 受控指令对齐时参见仓库 `jiuwenclaw/gateway/slash_command.py`（SSOT）与 `docs/zh/CLI_COMMANDS.md`。 */
 import type { SlashCommand } from "./types.js";
 import { createAddDirCommand } from "./builtins/add-dir.js";
 import { createClearCommand } from "./builtins/clear.js";

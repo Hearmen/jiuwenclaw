@@ -584,8 +584,9 @@ class WecomChannel(BaseChannel):
 
     @staticmethod
     def _is_control_message(content: str) -> bool:
-        text = content.strip()
-        return text in {"/new_session", "/mode plan", "/mode agent"}
+        from jiuwenclaw.gateway.slash_command import is_control_like_for_im_batching
+
+        return is_control_like_for_im_batching(content)
 
     async def _enqueue_message_batch(
         self,
