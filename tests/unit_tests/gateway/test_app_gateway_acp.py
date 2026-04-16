@@ -74,7 +74,7 @@ def build_server() -> GatewayServerProbe:
         ),
         "/cli": RouteConfig(
             path="/cli",
-            channel_id="cli",
+            channel_id="tui",
             forward_methods=frozenset({ReqMethod.CHAT_SEND.value, ReqMethod.HISTORY_GET.value}),
         ),
     })
@@ -715,13 +715,13 @@ async def test_gateway_server_send_event_routes_same_session_id_by_channel():
     acp_ws = FakeWebSocket()
     cli_ws = FakeWebSocket()
     server.bind_session_client("shared-session", acp_ws, channel_id="acp")
-    server.bind_session_client("shared-session", cli_ws, channel_id="cli")
+    server.bind_session_client("shared-session", cli_ws, channel_id="tui")
 
     await server.send(
         Message(
             id="req-cli",
             type="event",
-            channel_id="cli",
+            channel_id="tui",
             session_id="shared-session",
             params={},
             timestamp=time.time(),

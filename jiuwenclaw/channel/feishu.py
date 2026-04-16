@@ -1360,6 +1360,13 @@ class FeishuChannel(BaseChannel):
 
             receive_id, id_type = self._extract_receive_info(msg)
             payload = getattr(msg, "payload", None) or {}
+            skills_card_content = self._build_skills_list_card_content(payload, event_name)
+            if skills_card_content:
+                request_id = str(msg.id or "").strip()
+                if request_id and msg.event_type != EventType.HEARTBEAT_RELAY:
+                    self._clear_group_progress_state(request_id)
+                await self._send_feishu_message(receive_id, id_type, skills_card_content, msg.id)
+                return
             if (
                 msg.event_type == EventType.HEARTBEAT_RELAY
                 and isinstance(payload, dict)
@@ -1856,6 +1863,101 @@ class FeishuChannel(BaseChannel):
             "elements": elements,
         }
         return json.dumps(card, ensure_ascii=False)
+
+    def _build_skills_list_card_content(self, payload: Any, event_name: str) -> str | None:
+        """将 skills.list 返回渲染为飞书卡片；非 skills.list 数据返回 None。"""
+        if event_name != "chat.final":
+            return None
+        if not isinstance(payload, dict):
+            return None
+        if "skills" not in payload and not self._looks_like_skills_error_payload(payload):
+            return None
+
+        skills = payload.get("skills")
+        error_text = str(payload.get("error") or "").strip()
+        header_title = "技能列表"
+        elements: list[dict[str, Any]] = []
+
+        if error_text:
+            elements.append({
+                "tag": "div",
+                "text": {"tag": "lark_md", "content": f"获取技能列表失败：{error_text}"},
+            })
+        elif not isinstance(skills, list) or not skills:
+            elements.append({
+                "tag": "div",
+                "text": {"tag": "lark_md", "content": "当前无可用技能。"},
+            })
+        else:
+            source_counter: dict[str, int] = {}
+            for item in skills:
+                if not isinstance(item, dict):
+                    continue
+                src = str(item.get("source") or "unknown").strip() or "unknown"
+                source_counter[src] = source_counter.get(src, 0) + 1
+
+            source_parts = [f"{k}: {v}" for k, v in sorted(source_counter.items(), key=lambda kv: kv[0])]
+            if source_parts:
+                source_summary = " | ".join(source_parts[:4])
+                if len(source_parts) > 4:
+                    source_summary += " | ..."
+                elements.append({
+                    "tag": "note",
+                    "elements": [
+                        {"tag": "plain_text", "content": f"总数: {len(skills)}"},
+                        {"tag": "plain_text", "content": f"来源: {source_summary}"},
+                    ],
+                })
+                elements.append({"tag": "hr"})
+
+            limit = 20
+            for i, item in enumerate(skills[:limit], 1):
+                if isinstance(item, dict):
+                    name = str(item.get("name") or item.get("title") or "?").strip()
+                    desc = str(item.get("description") or "").strip()
+                    source = str(item.get("source") or "").strip()
+                    path = str(item.get("path") or "").strip()
+                    title = f"{i}. {name}" + (f" ({source})" if source else "")
+                    body = title
+                    if desc:
+                        short_desc = desc if len(desc) <= 180 else f"{desc[:180]}..."
+                        body = f"{title}\n{short_desc}"
+                    if path:
+                        short_path = path if len(path) <= 120 else f"...{path[-117:]}"
+                        body = f"{body}\n`{short_path}`"
+                    elements.append({
+                        "tag": "div",
+                        "text": {"tag": "lark_md", "content": body},
+                    })
+                else:
+                    elements.append({
+                        "tag": "div",
+                        "text": {"tag": "lark_md", "content": f"{i}. {item}"},
+                    })
+            if len(skills) > limit:
+                elements.append({
+                    "tag": "note",
+                    "elements": [{"tag": "plain_text", "content": f"共 {len(skills)} 项，仅显示前 {limit} 项"}],
+                })
+
+        card = {
+            "config": {"wide_screen_mode": True},
+            "header": {
+                "template": "blue",
+                "title": {"tag": "plain_text", "content": header_title},
+            },
+            "elements": elements,
+        }
+        return json.dumps(card, ensure_ascii=False)
+
+    @staticmethod
+    def _looks_like_skills_error_payload(payload: dict[str, Any]) -> bool:
+        """判定是否为 skills.list 的错误透传载荷。"""
+        if "error" not in payload:
+            return False
+        # 避免误判 chat.error/chat.final 的普通错误消息
+        noisy_keys = {"content", "output", "result", "text", "event_type"}
+        return not any(k in payload for k in noisy_keys)
 
     async def _send_ask_user_question_card(self, msg: Message) -> None:
         """

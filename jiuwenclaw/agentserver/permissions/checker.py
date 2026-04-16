@@ -51,8 +51,8 @@ TOOL_PERMISSION_CHANNEL_ID: contextvars.ContextVar[str] = contextvars.ContextVar
 )
 
 # 启用工具权限检查的通道集合。仅当通道 ID 在此集合内时才执行权限校验，其它通道跳过。
-# web：浏览器；acp：Agent 协议（如 Cursor）；cli：本地 CLI。
-PERMISSION_ENABLED_CHANNELS = frozenset({"web", "acp", "cli"})
+# web：浏览器；acp：Agent 协议（如 Cursor）；tui：本地 CLI。
+PERMISSION_ENABLED_CHANNELS = frozenset({"web", "acp", "tui"})
 
 
 def collect_permission_rail_tool_names(permission_config: dict[str, Any]) -> list[str]:

@@ -17,7 +17,6 @@ from jiuwenclaw.e2a.constants import E2A_WIRE_INTERNAL_METADATA_KEYS
 from jiuwenclaw.gateway.session_map import SessionMap
 from jiuwenclaw.gateway.slash_command import (
     ParsedControlAction,
-    format_skills_list_for_notice,
     parse_channel_control_text,
 )
 from jiuwenclaw.schema.hook_event import GatewayHookEvents
@@ -283,9 +282,25 @@ class MessageHandler(ABC):
             return provider
         return str(getattr(msg, "channel_id", "") or "")
 
-    async def _send_channel_notice(self, user_infos: dict, channel_id: str, session_id: str | None, text: str) -> None:
-        """向指定 channel 发送一条系统提示消息."""
+    async def _send_channel_notice(
+        self,
+        user_infos: dict,
+        channel_id: str,
+        session_id: str | None,
+        text_or_payload: str | dict[str, Any],
+    ) -> None:
+        """向指定 channel 发送一条系统提示消息.
+
+        - str: 兼容历史行为，封装为 {"content": text, "is_complete": True}
+        - dict: 透传给 channel（仅确保 is_complete=True）
+        """
         from jiuwenclaw.schema.message import Message, EventType
+
+        if isinstance(text_or_payload, dict):
+            payload = dict(text_or_payload)
+            payload.setdefault("is_complete", True)
+        else:
+            payload = {"content": text_or_payload, "is_complete": True}
 
         msg = Message(
             id=user_infos['id'],
@@ -295,7 +310,7 @@ class MessageHandler(ABC):
             params={},
             timestamp=time.time(),
             ok=True,
-            payload={"content": text, "is_complete": True},
+            payload=payload,
             event_type=EventType.CHAT_FINAL,
             metadata=user_infos['meta_data']
         )
@@ -542,7 +557,7 @@ class MessageHandler(ABC):
         reply_session_id: str | None,
         msg: "Message",
     ) -> None:
-        """受控通道整行 /skills：请求 skills.list 并以 CHAT_FINAL 通知展示。"""
+        """受控通道整行 /skills list：请求 skills.list 并以 CHAT_FINAL 通知透传。"""
         from jiuwenclaw.schema.message import Message, ReqMethod
 
         req_id = f"skills_slash_{int(time.time() * 1000):x}_{secrets.token_hex(3)}"
@@ -566,22 +581,27 @@ class MessageHandler(ABC):
             env = self.message_to_e2a(skills_req)
             resp = await self._agent_client.send_request(env)
             if resp.ok:
-                body = format_skills_list_for_notice(resp.payload)
+                if isinstance(resp.payload, dict):
+                    notice_payload: dict[str, Any] = dict(resp.payload)
+                else:
+                    notice_payload = {"data": resp.payload}
             else:
                 err = ""
                 if isinstance(resp.payload, dict):
                     err = str(resp.payload.get("error") or "").strip()
-                body = f"获取技能列表失败{(': ' + err) if err else ''}"
+                notice_payload = {
+                    "error": f"获取技能列表失败{(': ' + err) if err else ''}",
+                }
             await self._send_channel_notice(
-                user_infos, channel_id, reply_session_id, body
+                user_infos, channel_id, reply_session_id, notice_payload
             )
         except Exception as exc:  # noqa: BLE001
-            logger.exception("[MessageHandler] /skills 请求失败: %s", exc)
+            logger.exception("[MessageHandler] /skills list 请求失败: %s", exc)
             await self._send_channel_notice(
                 user_infos,
                 channel_id,
                 reply_session_id,
-                f"获取技能列表失败：{exc}",
+                {"error": f"获取技能列表失败：{exc}"},
             )
 
     def _apply_channel_state(self, msg: "Message") -> None:
@@ -1233,7 +1253,7 @@ class MessageHandler(ABC):
                     continue
                 
          
-                # 先处理受控通道的 Channel 控制指令（如 /new_session、/mode、/skills）
+                # 先处理受控通道的 Channel 控制指令（如 /new_session、/mode、/skills list）
                 if self._handle_channel_control(msg):
                     # 该消息仅用于修改 session/mode，已给 Channel 回复提示，不再转发给 Agent
                     continue

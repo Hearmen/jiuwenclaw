@@ -79,7 +79,7 @@ async def test_handle_command_add_dir_returns_path_and_remember(server, fake_ws,
     )
     request = AgentRequest(
         request_id="req-add-dir",
-        channel_id="cli",
+        channel_id="tui",
         req_method=ReqMethod.COMMAND_ADD_DIR,
         params={"path": "/tmp/demo", "remember": True},
     )
@@ -103,7 +103,7 @@ async def test_handle_command_add_dir_returns_path_and_remember(server, fake_ws,
 async def test_handle_command_compact_returns_custom_instructions(server, fake_ws):
     request = AgentRequest(
         request_id="req-compact",
-        channel_id="cli",
+        channel_id="tui",
         req_method=ReqMethod.COMMAND_COMPACT,
         params={"instructions": "focus on architecture"},
     )
@@ -123,7 +123,7 @@ async def test_handle_command_compact_returns_custom_instructions(server, fake_w
 async def test_handle_command_diff_returns_summary_payload(server, fake_ws):
     request = AgentRequest(
         request_id="req-diff",
-        channel_id="cli",
+        channel_id="tui",
         req_method=ReqMethod.COMMAND_DIFF,
         params={},
     )
@@ -150,7 +150,7 @@ async def test_handle_command_diff_returns_summary_payload(server, fake_ws):
 async def test_handle_command_model_returns_current_and_requested_model(server, fake_ws):
     request = AgentRequest(
         request_id="req-model",
-        channel_id="cli",
+        channel_id="tui",
         req_method=ReqMethod.COMMAND_MODEL,
         params={"model": "planner-model"},
     )
@@ -175,7 +175,7 @@ async def test_handle_command_model_returns_current_and_requested_model(server, 
 async def test_handle_command_resume_returns_mock_session(server, fake_ws):
     request = AgentRequest(
         request_id="req-resume",
-        channel_id="cli",
+        channel_id="tui",
         req_method=ReqMethod.COMMAND_RESUME,
         params={"query": "sess_123"},
     )
@@ -200,7 +200,7 @@ async def test_handle_command_resume_returns_mock_session(server, fake_ws):
 async def test_handle_command_session_returns_remote_handoff(server, fake_ws):
     request = AgentRequest(
         request_id="req-session",
-        channel_id="cli",
+        channel_id="tui",
         session_id="sess_demo",
         req_method=ReqMethod.COMMAND_SESSION,
         params={},

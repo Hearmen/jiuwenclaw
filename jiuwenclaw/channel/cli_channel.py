@@ -121,7 +121,7 @@ class CliRouteBindParams:
     message_handler: Any = None
     on_config_saved: Any = None
     path: str = "/cli"
-    channel_id: str = "cli"
+    channel_id: str = "tui"
 
 
 _CLI_CONFIG_SET_ENV_MAP = {
@@ -351,7 +351,7 @@ def register_cli_handlers(bind: CliHandlersBindParams) -> None:
             return
         env = e2a_from_agent_fields(
             request_id=req_id,
-            channel_id="cli",
+            channel_id="tui",
             session_id=session_id,
             req_method=ReqMethod.SESSION_LIST,
             params=params or {},
@@ -363,7 +363,7 @@ def register_cli_handlers(bind: CliHandlersBindParams) -> None:
             await channel.send_response(ws, req_id, ok=False, error="session.list failed")
             return
         all_sessions = resp.payload.get("sessions", []) if isinstance(resp.payload, dict) else []
-        cli_sessions = [s for s in all_sessions if s.get("channel_id", "") == "cli"][:limit]
+        cli_sessions = [s for s in all_sessions if s.get("channel_id", "") == "tui"][:limit]
         await channel.send_response(ws, req_id, ok=True, payload={"sessions": cli_sessions})
 
     async def _session_create(ws, req_id, params, session_id):
@@ -453,7 +453,7 @@ def register_cli_handlers(bind: CliHandlersBindParams) -> None:
         resume_params = {"session_id": target_session_id, "intent": "resume"}
         env = e2a_from_agent_fields(
             request_id=req_id,
-            channel_id="cli",
+            channel_id="tui",
             session_id=target_session_id,
             req_method=ReqMethod.CHAT_CANCEL,
             params=resume_params,

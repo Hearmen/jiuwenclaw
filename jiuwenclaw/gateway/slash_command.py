@@ -23,6 +23,7 @@ class GatewaySlashCommand(str, Enum):
     NEW_SESSION = "/new_session"
     MODE = "/mode"
     SKILLS = "/skills"
+    SKILLS_LIST = "/skills list"
 
 
 class ModeSubcommand(str, Enum):
@@ -39,7 +40,7 @@ _VALID_MODE_LINES: frozenset[str] = frozenset(
 )
 
 CONTROL_MESSAGE_TEXTS: frozenset[str] = frozenset(
-    {GatewaySlashCommand.NEW_SESSION.value, *_VALID_MODE_LINES, GatewaySlashCommand.SKILLS.value}
+    {GatewaySlashCommand.NEW_SESSION.value, *_VALID_MODE_LINES, GatewaySlashCommand.SKILLS_LIST.value}
 )
 
 
@@ -64,23 +65,24 @@ class ParsedChannelControl:
 
 
 def parse_channel_control_text(text: str) -> ParsedChannelControl:
-    """解析单条用户文本是否为 /new_session、/mode、/skills 控制指令。
+    """解析单条用户文本是否为 /new_session、/mode、/skills list 控制指令。
 
     - 含换行则视为非控制（与原 _handle_channel_control 一致）。
     - /new_session 仅整行精确匹配为合法；带后缀为非法但仍为控制指令。
     - /mode 仅白名单整行合法；其它以 /mode 开头且单行非法。
-    - /skills 仅整行精确匹配。
+    - /skills list 仅整行精确匹配（/skills 本身不再触发）。
     """
     if not text:
         return ParsedChannelControl(ParsedControlAction.NONE)
     if "\n" in text:
         return ParsedChannelControl(ParsedControlAction.NONE)
     t = text.strip()
+    normalized = " ".join(t.split())
     if t == GatewaySlashCommand.NEW_SESSION.value:
         return ParsedChannelControl(ParsedControlAction.NEW_SESSION_OK)
     if t.startswith(GatewaySlashCommand.NEW_SESSION.value):
         return ParsedChannelControl(ParsedControlAction.NEW_SESSION_BAD)
-    if t == GatewaySlashCommand.SKILLS.value:
+    if normalized == GatewaySlashCommand.SKILLS_LIST.value:
         return ParsedChannelControl(ParsedControlAction.SKILLS_OK)
     if t in _VALID_MODE_LINES:
         parts = t.split()
@@ -92,7 +94,7 @@ def parse_channel_control_text(text: str) -> ParsedChannelControl:
 
 
 def is_control_like_for_im_batching(text: str) -> bool:
-    """飞书/企微等：控制类消息不走合并窗口（与历史行为一致并补全 mode 变体与 /skills）。
+    """飞书/企微等：控制类消息不走合并窗口（与历史行为一致并补全 mode 变体与 /skills list）。
 
     单条文本、且为已知控制句、或以 /mode / /new_session 为前缀（含非法变体）时返回 True。
     """
@@ -101,7 +103,10 @@ def is_control_like_for_im_batching(text: str) -> bool:
     if "\n" in text:
         return False
     t = text.strip()
+    normalized = " ".join(t.split())
     if t in CONTROL_MESSAGE_TEXTS:
+        return True
+    if normalized == GatewaySlashCommand.SKILLS_LIST.value:
         return True
     if t.startswith(f"{GatewaySlashCommand.MODE.value} "):
         return True
@@ -143,10 +148,10 @@ FIRST_BATCH_REGISTRY: tuple[SlashCommandEntry, ...] = (
     ),
     SlashCommandEntry(
         id="skills",
-        canonical_text=GatewaySlashCommand.SKILLS.value,
+        canonical_text=GatewaySlashCommand.SKILLS_LIST.value,
         scope="gateway",
         req_method="skills.list",
-        notes="受控通道整行 /skills 时 Gateway 调 skills.list 并以通知回复；CLI 同路径见 builtins/skills.ts。",
+        notes="受控通道整行 /skills list 时 Gateway 调 skills.list 并以通知回复；CLI 同路径见 builtins/skills.ts。",
     ),
     SlashCommandEntry(
         id="resume",

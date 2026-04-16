@@ -1354,7 +1354,7 @@ async def _run(
                 message_handler=message_handler,
                 on_config_saved=_on_config_saved,
                 path="/cli",
-                channel_id="cli",
+                channel_id="tui",
             )
         ),
     ]
