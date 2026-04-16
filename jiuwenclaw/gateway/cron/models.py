@@ -106,6 +106,8 @@ class CronJob:
     chat_type: str | None = None
     # 定时任务执行时使用的 mode（"plan" 或 "agent"），创建时从对话上下文继承；无上下文时默认 "agent"
     mode: str = "agent"
+    # 执行一次后自动删除（用于提醒类任务）
+    delete_after_run: bool = False
 
     def to_dict(self) -> dict[str, Any]:
         d: dict[str, Any] = {
@@ -127,6 +129,8 @@ class CronJob:
             d["chat_type"] = self.chat_type
         if self.mode:
             d["mode"] = self.mode
+        if self.delete_after_run:
+            d["delete_after_run"] = bool(self.delete_after_run)
         return d
 
     @staticmethod
@@ -196,6 +200,9 @@ class CronJob:
             if isinstance(mode_raw, str) and str(mode_raw).strip()
             else "agent"
         )
+
+        delete_after_run = bool(data.get("delete_after_run", False))
+
         return CronJob(
             id=job_id,
             name=name,
@@ -211,6 +218,7 @@ class CronJob:
             updated_at=updated_at_f,
             chat_type=job_chat_type,
             mode=job_mode,
+            delete_after_run=delete_after_run,
         )
 
 

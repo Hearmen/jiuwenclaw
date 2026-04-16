@@ -286,7 +286,14 @@ class CronSchedulerService:
             await self._on_wake(job, ev.run_id)
         elif ev.kind == "push":
             await self._on_push(job, ev.run_id)
-            # Schedule next occurrence after push is triggered
+            if job.delete_after_run:
+                logger.info("[Cron] delete_after_run job=%s, deleting after push", job.id)
+                try:
+                    await self._store.delete_job(job.id)
+                    self._jobs.pop(job.id, None)
+                except Exception as delete_exc:
+                    logger.warning("[Cron] delete_after_run failed job=%s: %s", job.id, delete_exc)
+                return
             try:
                 push_dt, wake_dt, next_run_id = self._compute_next_run(job, now_ts=self._now_fn())
                 self._schedule_event(wake_dt, "wake", job.id, next_run_id)

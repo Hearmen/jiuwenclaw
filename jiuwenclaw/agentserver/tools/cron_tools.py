@@ -251,6 +251,7 @@ class CronTools:
             targets=targets_str,
             enabled=bool(normalized.get("enabled", True)),
             wake_offset_seconds=normalized.get("wake_offset_seconds"),
+            delete_after_run=normalized.get("delete_after_run"),
             **session_kw,
         )
         try:

@@ -135,6 +135,7 @@ class CronController:
 
         routing_sid = self._routing_session_id_for_enterprise(targets, params.get("session_id"))
         chat_type = params.get("chat_type")
+        delete_after_run = params.get("delete_after_run")
         job = await self._store.create_job(
             job_id=str(params.get("id") or "").strip() or None,
             name=name,
@@ -147,6 +148,7 @@ class CronController:
             session_id=routing_sid,
             chat_type=chat_type,
             mode=mode,
+            delete_after_run=delete_after_run,
         )
         await self._scheduler.reload()
         return job.to_dict()

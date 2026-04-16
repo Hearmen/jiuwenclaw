@@ -302,6 +302,8 @@ def _extract_legacy_params(
             out["enabled"] = bool(data.get("enabled"))
         if "wake_offset_seconds" in data:
             out["wake_offset_seconds"] = data.get("wake_offset_seconds")
+        if "deleteAfterRun" in data:
+            out["delete_after_run"] = bool(data.get("deleteAfterRun"))
 
         context_mode = getattr(context, "mode", None)
         mode_resolved = (
