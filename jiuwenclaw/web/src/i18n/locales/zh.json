@@ -28,6 +28,19 @@
     "logs": "日志",
     "update": "更新"
   },
+  "team": {
+    "members": "团队成员",
+    "taskEventLog": "任务事件日志",
+    "task": "任务",
+    "executing": "正在执行",
+    "statusUnstarted": "未启动",
+    "statusReady": "就绪",
+    "statusBusy": "忙碌",
+    "statusRestarting": "重启中",
+    "statusShutdownRequested": "请求关闭",
+    "statusShutdown": "已关闭",
+    "statusError": "错误"
+  },
   "statusBar": {
     "cancel": "取消",
     "pause": "暂停",

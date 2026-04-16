@@ -984,12 +984,14 @@ function AppContent() {
                   />
                 </div>
 
-                {/* Status Bar */}
-                <StatusBar
-                  onPause={handlePause}
-                  onCancel={handleCancel}
-                  onResume={handleResume}
-                />
+                {/* Status Bar - 只在非集群模式下显示 */}
+                {mode !== 'agentteam' && (
+                  <StatusBar
+                    onPause={handlePause}
+                    onCancel={handleCancel}
+                    onResume={handleResume}
+                  />
+                )}
               </div>
 
               {/* Tool Panel */}

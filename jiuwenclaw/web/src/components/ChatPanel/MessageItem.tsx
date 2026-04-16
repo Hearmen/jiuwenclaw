@@ -24,6 +24,7 @@ interface MessageItemProps {
 export function MessageItem({ message, autoSpeak = false }: MessageItemProps) {
   const { t } = useTranslation();
   const {
+    id,
     role,
     content,
     timestamp,
@@ -294,9 +295,10 @@ export function MessageItem({ message, autoSpeak = false }: MessageItemProps) {
 	       }
 	     }
 	     
-	     // 检查是否为 team_leader 消息（chat.delta/chat.final 累积的消息）
-	     // 支持两种格式：1. team.leader: 2. 直接的 content（但需要 isStreaming 标记）
-	     if (content && (content.startsWith('team.leader:') || (role === 'system' && isStreaming === true && !content.startsWith('team.event:') && !content.startsWith('chat.')))) {
+	     // 检查是否为 team_leader 消息（通过 ID 判断）
+	     const isTeamLeaderMsg = id && id.startsWith('team-leader-');
+	     
+	     if (isTeamLeaderMsg) {
 	       let messageContent = content;
 	       let eventTimestamp: number | undefined;
 	       
@@ -317,39 +319,19 @@ export function MessageItem({ message, autoSpeak = false }: MessageItemProps) {
 	       };
 	       
 	       return (
-	         <div className="flex justify-start my-3">
-	           <div className="max-w-[82%] min-w-0">
-	             <div className="flex items-start gap-3">
-	               <div className="w-8 h-8 rounded-full bg-accent/20 flex items-center justify-center flex-shrink-0 mt-1">
-	                 <svg className="w-4 h-4 text-accent" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}>
-	                   <path strokeLinecap="round" strokeLinejoin="round" d="M17.982 18.725A7.488 7.488 0 0012 15.75a7.488 7.488 0 00-5.982 2.975m11.963 0a9 9 0 10-11.963 0m11.963 0A8.966 8.966 0 0112 21a8.966 8.966 0 01-5.982-2.275M15 9.75a3 3 0 11-6 0 3 3 0 016 0z" />
-	                 </svg>
-	               </div>
-	               <div className="flex-1 min-w-0">
-	                 <div className="flex items-center gap-2 mb-1">
-	                   <span className="font-medium text-sm text-text">team_leader</span>
-	                   <span className="text-xs text-text-muted">{formatEventTime(eventTimestamp)}</span>
-	                 </div>
-	                 <div className="chat-text">
-	                   <ReactMarkdown 
-	                     remarkPlugins={[remarkGfm]}
-	                     components={{
-	                       a: ({ node, href, children, ...props }) => (
-	                         <a 
-	                           href={href} 
-	                           target="_blank" 
-	                           rel="noopener noreferrer"
-	                           {...props}
-	                         >
-	                           {children}
-	                         </a>
-	                       )
-	                     }}
-	                   >
-	                     {messageContent}
-	                   </ReactMarkdown>
-	                 </div>
-	               </div>
+	         <div className="flex justify-center my-2 animate-fade-in">
+	           <div className="max-w-[85%] w-full rounded-xl border border-border bg-secondary/50 p-3 shadow-sm">
+	             <div className="flex items-center gap-2 mb-1.5">
+	               <div className="w-2 h-2 rounded-full bg-accent" />
+	               <span className="font-medium text-sm text-text">
+	                 team_leader
+	               </span>
+	               <span className="text-xs text-text-muted">
+	                 {formatEventTime(eventTimestamp)}
+	               </span>
+	             </div>
+	             <div className="text-sm text-text leading-relaxed whitespace-pre-wrap">
+	               <span>{messageContent}</span>
 	             </div>
 	           </div>
 	         </div>

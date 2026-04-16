@@ -28,6 +28,19 @@
     "logs": "Logs",
     "update": "Updates"
   },
+  "team": {
+    "members": "Team Members",
+    "taskEventLog": "Task Event Log",
+    "task": "Task",
+    "executing": "Executing",
+    "statusUnstarted": "Unstarted",
+    "statusReady": "Ready",
+    "statusBusy": "Busy",
+    "statusRestarting": "Restarting",
+    "statusShutdownRequested": "Shutdown Requested",
+    "statusShutdown": "Shutdown",
+    "statusError": "Error"
+  },
   "statusBar": {
     "cancel": "Cancel",
     "pause": "Pause",

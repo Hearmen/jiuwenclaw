@@ -140,7 +140,6 @@ export function ToolPanel() {
           <div className="flex-1 overflow-y-auto">
             <div className="bg-card rounded-lg border border-border overflow-hidden h-full">
               <TeamArea 
-                teamName="团队成员"
                 members={teamMembers}
               />
             </div>

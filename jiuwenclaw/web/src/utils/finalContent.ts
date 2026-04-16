@@ -36,6 +36,18 @@ export function normalizeFinalContent(payload: Record<string, unknown>): string 
   }
 
   if (!trimmed.includes('result_type') || !trimmed.includes('output')) {
+    // 处理嵌套在 delta 中的 chat.final 格式
+    try {
+      const parsed = JSON.parse(trimmed) as Record<string, unknown>;
+      if (parsed.delta && typeof parsed.delta === 'object') {
+        const delta = parsed.delta as Record<string, unknown>;
+        if (typeof delta.content === 'string') {
+          return normalizeFinalDisplayText(delta.content);
+        }
+      }
+    } catch {
+      // ignore
+    }
     return normalizeFinalDisplayText(rawContent);
   }
 
