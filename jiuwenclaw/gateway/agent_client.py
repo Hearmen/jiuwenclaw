@@ -179,7 +179,7 @@ class WebSocketAgentServerClient(AgentServerClient):
                     meta = data.get("metadata")
                     if isinstance(meta, dict) and meta.get(E2A_WIRE_SERVER_PUSH_KEY):
                         if self._on_server_push is not None:
-                            await self._on_server_push(data)
+                            asyncio.create_task(self._on_server_push(data))
                         else:
                             logger.warning(
                                 "[WebSocketAgentServerClient] 收到 server_push 但未注册 handler，已丢弃: "

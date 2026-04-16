@@ -36,6 +36,10 @@ from jiuwenclaw.agentserver.agent_manager import AgentManager, ACP_DEFAULT_CAPAB
 
 logger = logging.getLogger(__name__)
 
+# 流式处理心跳间隔：当 Agent 处理时间超过此阈值时，发送心跳 chunk 保持 WebSocket 连接活跃
+# 避免 ping_timeout 导致连接关闭。默认 10 秒，小于服务端 ping_timeout=20s。
+_STREAM_HEARTBEAT_INTERVAL_SECONDS = 10.0
+
 
 def _payload_to_request(data: dict[str, Any]) -> AgentRequest:
     """将 Gateway 发送的 JSON 载荷解析为 AgentRequest."""
@@ -443,15 +447,70 @@ class AgentWebSocketServer:
             raise ValueError("Failed to get agent")
 
         chunk_count = 0
-        async for chunk in agent.process_message_stream(request):
-            chunk_count += 1
-            wire = encode_agent_chunk_for_wire(
-                chunk,
-                response_id=request.request_id,
-                sequence=chunk_count - 1,
-            )
-            async with send_lock:
-                await ws.send(json.dumps(wire, ensure_ascii=False))
+        # 心跳控制：当有真实 chunk 发送时重置，空闲时发送心跳
+        heartbeat_event = asyncio.Event()
+        heartbeat_task: asyncio.Task | None = None
+
+        async def _heartbeat_loop() -> None:
+            """后台心跳任务：在空闲期间定期发送 keepalive chunk."""
+            try:
+                while True:
+                    # 等待心跳间隔，如果期间有真实 chunk 发送则 heartbeat_event 被设置，重置等待
+                    try:
+                        await asyncio.wait_for(
+                            heartbeat_event.wait(),
+                            timeout=_STREAM_HEARTBEAT_INTERVAL_SECONDS,
+                        )
+                        # 有真实 chunk 发送，重置 event 继续等待
+                        heartbeat_event.clear()
+                    except asyncio.TimeoutError:
+                        # 超时：空闲超过心跳间隔，发送 keepalive chunk
+                        heartbeat_chunk = AgentResponseChunk(
+                            request_id=request.request_id,
+                            channel_id=channel_id,
+                            payload={"event_type": "keepalive"},
+                            is_complete=False,
+                        )
+                        wire = encode_agent_chunk_for_wire(
+                            heartbeat_chunk,
+                            response_id=request.request_id,
+                            sequence=-1,  # 心跳使用特殊序列号 -1
+                        )
+                        async with send_lock:
+                            await ws.send(json.dumps(wire, ensure_ascii=False))
+                        logger.info(
+                            "[AgentWebSocketServer] keepalive chunk 发送: request_id=%s",
+                            request.request_id,
+                        )
+            except asyncio.CancelledError:
+                pass
+
+        # 启动心跳任务
+        heartbeat_task = asyncio.create_task(_heartbeat_loop())
+
+        try:
+            async for chunk in agent.process_message_stream(request):
+                chunk_count += 1
+                # 通知心跳任务有真实 chunk 发送，重置心跳计时
+                heartbeat_event.set()
+                wire = encode_agent_chunk_for_wire(
+                    chunk,
+                    response_id=request.request_id,
+                    sequence=chunk_count - 1,
+                )
+                async with send_lock:
+                    await ws.send(json.dumps(wire, ensure_ascii=False))
+                # 清除 event，让心跳任务重新开始计时
+                heartbeat_event.clear()
+        finally:
+            # 停止心跳任务
+            if heartbeat_task is not None:
+                heartbeat_task.cancel()
+                try:
+                    await heartbeat_task
+                except asyncio.CancelledError:
+                    pass
+
         logger.info(
             "[AgentWebSocketServer] 流式响应已发送: request_id=%s 共 %s 个 chunk",
             request.request_id,
