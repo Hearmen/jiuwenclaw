@@ -82,9 +82,59 @@ jiuwenclaw-start
 | **小艺频道** | 华为手机用户可直接唤醒小艺，与JiuwenClaw对话               |
 | **飞书频道** | 完成渠道配置后，在飞书中与JiuwenClaw畅聊                 |
 
-#### 2️⃣ 定时任务
+#### 2️⃣ 配置模型
+
+在 Web 页面左侧找到「配置信息」，进入配置页面：
+
+![](docs/assets/images/jiuwenclaw_configuration_Info.png)
+
+完善以下四项基本配置，完成后点击右上角「保存」：
+
+![](docs/assets/images/jiuwenclaw_config_api.png)
+
+#### 3️⃣ 开始对话
+
+在 Web 页面左侧找到「对话」，输入问题即可开始：
+
+![](docs/assets/images/jiuwenclaw_example.png)
+
+#### 4️⃣ 会话管理
+
+点击下方的「+」号，可清空当前会话并开启新会话：
+
+![](docs/assets/images/jiuwenclaw_new_session.png)
+
+清理后页面显示：
+
+![](docs/assets/images/jiuwenclaw_clear_session.png)
+
+#### 5️⃣ 定时任务
 
 设置心跳任务，填写待办事项，JiuwenClaw即可定时被唤醒，自动执行预设任务。让你的日程管理更加智能高效！
+
+#### 6️⃣ 清空记忆
+
+当你需要让 JiuwenClaw 忘记之前的所有对话历史和用户信息时，可以清空记忆文件。
+
+**适用场景：**
+- **隐私保护**：清除包含敏感信息的历史记录
+- **全新开始**：开始一个完全不同的项目或话题，避免历史信息干扰
+- **调试排错**：记忆文件损坏或内容异常时重置
+- **用户切换**：多用户共用环境时，清除上一个用户的信息
+
+**清空记忆操作步骤：**
+
+记忆文件存储在 `{workspace_dir}/memory/` 目录下：
+
+**方式一：通过 Agent 删除**
+直接告诉 JiuwenClaw："请删除所有记忆文件" 或 "清空我的记忆"，Agent 会调用文件工具删除 memory 目录下的文件。
+![](docs/assets/images/jiuwenclaw_delete_memory.png)
+
+**方式二：手动删除**
+停止 JiuwenClaw 服务后，直接删除 `memory/` 目录下的所有 Markdown 文件即可。
+![](docs/assets/images/jiuwenclaw_memory.png)
+
+> ⚠️ **注意**：清空记忆后无法恢复，请谨慎操作。建议定期备份重要的记忆文件。
 
 ## 📚 文档导航
 
