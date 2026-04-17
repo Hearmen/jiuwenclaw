@@ -4,6 +4,11 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     PIP_NO_CACHE_DIR=1
 
+RUN sed -i \
+        -e 's|http://archive.ubuntu.com/ubuntu|http://mirrors.tuna.tsinghua.edu.cn/ubuntu|g' \
+        -e 's|http://security.ubuntu.com/ubuntu|http://mirrors.tuna.tsinghua.edu.cn/ubuntu|g' \
+        /etc/apt/sources.list.d/ubuntu.sources
+
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
         bubblewrap \
@@ -25,8 +30,8 @@ COPY scripts ./scripts
 
 RUN chmod +x ./scripts/server.sh
 
-RUN pip install --break-system-packages -e . \
-    && pip install --break-system-packages \
+RUN pip install --break-system-packages -e . -i https://pypi.tuna.tsinghua.edu.cn/simple \
+    && pip install --break-system-packages -i https://pypi.tuna.tsinghua.edu.cn/simple \
         "fastapi>=0.104.0" \
         "uvicorn>=0.24.0" \
         "pydantic>=2.5.0" \

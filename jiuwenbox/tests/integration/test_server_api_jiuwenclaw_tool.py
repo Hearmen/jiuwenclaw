@@ -1,5 +1,6 @@
 """Integration tests for box-server API endpoints."""
 
+import copy
 import logging
 import os
 import textwrap
@@ -7,9 +8,29 @@ import textwrap
 import httpx
 import pytest
 
-LONG_RUNNING_COMMAND = ["/usr/bin/python3", "-c", "import time; time.sleep(3600)"]
+LONG_RUNNING_COMMAND = ["/usr/bin/python3", "-c", "import time; time.sleep(36000)"]
 JIUWENCLAW_SANDBOX_WORKSPACE = "/tmp/sandbox"
-JIUWENCLAW_READ_WRITE_PATH = "/"
+JIUWENCLAW_READ_WRITE_PATHS = ["/tmp", "/home/zzx/.jiuwenclaw"]
+SYSTEM_BIND_MOUNTS = [
+    {"host_path": "/bin", "sandbox_path": "/bin", "mode": "ro"},
+    {"host_path": "/sbin", "sandbox_path": "/sbin", "mode": "ro"},
+    {"host_path": "/usr", "sandbox_path": "/usr", "mode": "ro"},
+    {"host_path": "/lib", "sandbox_path": "/lib", "mode": "ro"},
+    {"host_path": "/lib64", "sandbox_path": "/lib64", "mode": "ro"},
+    {"host_path": "/etc/resolv.conf", "sandbox_path": "/etc/resolv.conf", "mode": "ro"},
+    {"host_path": "/etc/hosts", "sandbox_path": "/etc/hosts", "mode": "ro"},
+    {"host_path": "/etc/nsswitch.conf", "sandbox_path": "/etc/nsswitch.conf", "mode": "ro"},
+    {"host_path": "/etc/host.conf", "sandbox_path": "/etc/host.conf", "mode": "ro"},
+    {"host_path": "/etc/ssl/certs", "sandbox_path": "/etc/ssl/certs", "mode": "ro"},
+    {"host_path": "/etc/ssl/openssl.cnf", "sandbox_path": "/etc/ssl/openssl.cnf", "mode": "ro"},
+    {"host_path": "/opt", "sandbox_path": "/opt", "mode": "ro"},
+]
+JIUWENCLAW_BIND_MOUNT = {
+    "host_path": "/home/zzx/.jiuwenclaw",
+    "sandbox_path": "/home/zzx/.jiuwenclaw",
+    "mode": "rw",
+}
+TMP_DIRECTORY = {"path": "/tmp", "permissions": "1777"}
 logger = logging.getLogger(__name__)
 
 
@@ -128,6 +149,38 @@ def _loopback_ingress_script(expect_success: bool) -> str:
     ])
 
 
+def _has_directory(directories: list, path: str) -> bool:
+    for directory in directories:
+        if isinstance(directory, str) and directory == path:
+            return True
+        if isinstance(directory, dict) and directory.get("path") == path:
+            return True
+    return False
+
+
+def _has_bind_mount(bind_mounts: list, sandbox_path: str) -> bool:
+    return any(mount.get("sandbox_path") == sandbox_path for mount in bind_mounts)
+
+
+def _with_runtime_support(policy: dict) -> dict:
+    runtime_policy = copy.deepcopy(policy)
+    filesystem_policy = runtime_policy.setdefault("filesystem_policy", {})
+    bind_mounts = filesystem_policy.setdefault("bind_mounts", [])
+    for mount in SYSTEM_BIND_MOUNTS:
+        if mount not in bind_mounts:
+            bind_mounts.append(mount.copy())
+
+    directories = filesystem_policy.setdefault("directories", [])
+    if (
+        "/tmp" in filesystem_policy.get("read_write", [])
+        and not _has_directory(directories, "/tmp")
+        and not _has_bind_mount(bind_mounts, "/tmp")
+    ):
+        directories.append(TMP_DIRECTORY.copy())
+
+    return runtime_policy
+
+
 @pytest.fixture
 def client(server_endpoint):
     with httpx.Client(base_url=_normalize_endpoint(server_endpoint), timeout=30.0) as external:
@@ -150,7 +203,7 @@ def create_sandbox_with_policy(client):
         response = client.post("/api/v1/sandboxes", json={
             "command": command or LONG_RUNNING_COMMAND,
             "policy_mode": policy_mode,
-            "policy": policy,
+            "policy": _with_runtime_support(policy),
         })
         assert response.status_code == 201, response.text
         sandbox = response.json()
@@ -296,9 +349,18 @@ class TestPolicyAPI:
         assert data["name"] == "server-default"
         assert data["sandbox_workspace"] == JIUWENCLAW_SANDBOX_WORKSPACE
         assert "resources" not in data
-        assert data["filesystem_policy"]["directories"] == []
-        assert data["filesystem_policy"]["read_only"] == ["/usr", "/lib", "/lib64", "/etc", "/opt"]
-        assert data["filesystem_policy"]["read_write"] == [JIUWENCLAW_READ_WRITE_PATH]
+        assert data["filesystem_policy"]["directories"] == [TMP_DIRECTORY]
+        assert data["filesystem_policy"]["read_only"] == [
+            "/bin",
+            "/sbin",
+            "/usr",
+            "/lib",
+            "/lib64",
+            "/etc",
+            "/opt",
+        ]
+        assert data["filesystem_policy"]["read_write"] == JIUWENCLAW_READ_WRITE_PATHS
+        assert data["filesystem_policy"]["bind_mounts"] == SYSTEM_BIND_MOUNTS + [JIUWENCLAW_BIND_MOUNT]
         assert data["namespace"] == {
             "user": False,
             "pid": True,
@@ -398,6 +460,8 @@ class TestPolicyAPI:
         ]
         assert data["network"]["ingress"]["allowed_ports"] == [8080, 9090]
         assert data["filesystem_policy"]["read_only"] == [
+            "/bin",
+            "/sbin",
             "/usr",
             "/lib",
             "/lib64",
@@ -406,11 +470,20 @@ class TestPolicyAPI:
             "/var/log",
         ]
         assert data["filesystem_policy"]["read_write"] == [
-            JIUWENCLAW_READ_WRITE_PATH,
+            *JIUWENCLAW_READ_WRITE_PATHS,
             "/var/tmp",
         ]
         assert data["filesystem_policy"]["directories"] == [
+            TMP_DIRECTORY,
             {"path": "/tmp/appended-dir", "permissions": "0700"},
+        ]
+        assert data["filesystem_policy"]["bind_mounts"] == SYSTEM_BIND_MOUNTS + [
+            JIUWENCLAW_BIND_MOUNT,
+            {
+                "host_path": "/tmp",
+                "sandbox_path": "/tmp",
+                "mode": "rw",
+            },
         ]
         assert data["process"]["run_as_user"] == "root"
         assert data["process"]["run_as_group"] == "root"
@@ -441,6 +514,7 @@ class TestPolicyAPI:
                     }],
                     "read_only": ["/usr"],
                     "read_write": ["/var/tmp"],
+                    "bind_mounts": SYSTEM_BIND_MOUNTS,
                 },
                 "network": {
                     "mode": "host",
@@ -502,6 +576,7 @@ class TestPolicyAPI:
         assert data["network"]["ingress"]["blocked_ports"] == [22]
         assert data["filesystem_policy"]["read_only"] == ["/usr"]
         assert data["filesystem_policy"]["read_write"] == ["/var/tmp"]
+        assert data["filesystem_policy"]["bind_mounts"] == SYSTEM_BIND_MOUNTS
         assert data["filesystem_policy"]["directories"] == [{
             "path": "/tmp/override-dir",
             "permissions": "0700",

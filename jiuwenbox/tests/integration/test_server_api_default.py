@@ -1,12 +1,31 @@
 """Integration tests for box-server API endpoints."""
 
+import copy
 import logging
 import textwrap
 
 import httpx
 import pytest
 
-LONG_RUNNING_COMMAND = ["/usr/bin/python3", "-c", "import time; time.sleep(3600)"]
+from jiuwenbox.models.policy import SecurityPolicy
+from jiuwenbox.supervisor.bwrap import BwrapConfig
+
+LONG_RUNNING_COMMAND = ["/usr/bin/python3", "-c", "import time; time.sleep(36000)"]
+SYSTEM_BIND_MOUNTS = [
+    {"host_path": "/bin", "sandbox_path": "/bin", "mode": "ro"},
+    {"host_path": "/sbin", "sandbox_path": "/sbin", "mode": "ro"},
+    {"host_path": "/usr", "sandbox_path": "/usr", "mode": "ro"},
+    {"host_path": "/lib", "sandbox_path": "/lib", "mode": "ro"},
+    {"host_path": "/lib64", "sandbox_path": "/lib64", "mode": "ro"},
+    {"host_path": "/etc/resolv.conf", "sandbox_path": "/etc/resolv.conf", "mode": "ro"},
+    {"host_path": "/etc/hosts", "sandbox_path": "/etc/hosts", "mode": "ro"},
+    {"host_path": "/etc/nsswitch.conf", "sandbox_path": "/etc/nsswitch.conf", "mode": "ro"},
+    {"host_path": "/etc/host.conf", "sandbox_path": "/etc/host.conf", "mode": "ro"},
+    {"host_path": "/etc/ssl/certs", "sandbox_path": "/etc/ssl/certs", "mode": "ro"},
+    {"host_path": "/etc/ssl/openssl.cnf", "sandbox_path": "/etc/ssl/openssl.cnf", "mode": "ro"},
+    {"host_path": "/opt", "sandbox_path": "/opt", "mode": "ro"},
+]
+TMP_DIRECTORY = {"path": "/tmp", "permissions": "1777"}
 logger = logging.getLogger(__name__)
 
 
@@ -125,6 +144,52 @@ def _loopback_ingress_script(expect_success: bool) -> str:
     ])
 
 
+def _has_directory(directories: list, path: str) -> bool:
+    for directory in directories:
+        if isinstance(directory, str) and directory == path:
+            return True
+        if isinstance(directory, dict) and directory.get("path") == path:
+            return True
+    return False
+
+
+def _has_bind_mount(bind_mounts: list, sandbox_path: str) -> bool:
+    return any(mount.get("sandbox_path") == sandbox_path for mount in bind_mounts)
+
+
+def _with_runtime_support(policy: dict) -> dict:
+    runtime_policy = copy.deepcopy(policy)
+    filesystem_policy = runtime_policy.setdefault("filesystem_policy", {})
+    bind_mounts = filesystem_policy.setdefault("bind_mounts", [])
+    for mount in SYSTEM_BIND_MOUNTS:
+        if mount not in bind_mounts:
+            bind_mounts.append(mount.copy())
+
+    directories = filesystem_policy.setdefault("directories", [])
+    if (
+        "/tmp" in filesystem_policy.get("read_write", [])
+        and not _has_directory(directories, "/tmp")
+        and not _has_bind_mount(bind_mounts, "/tmp")
+    ):
+        directories.append(TMP_DIRECTORY.copy())
+
+    return runtime_policy
+
+
+def _has_mount(args: list[str], flag: str, source: str, target: str) -> bool:
+    for index, value in enumerate(args[:-2]):
+        if value == flag and args[index + 1] == source and args[index + 2] == target:
+            return True
+    return False
+
+
+def _has_arg_pair(args: list[str], flag: str, value: str) -> bool:
+    for index, item in enumerate(args[:-1]):
+        if item == flag and args[index + 1] == value:
+            return True
+    return False
+
+
 @pytest.fixture
 def client(server_endpoint):
     with httpx.Client(base_url=_normalize_endpoint(server_endpoint), timeout=30.0) as external:
@@ -147,7 +212,7 @@ def create_sandbox_with_policy(client):
         response = client.post("/api/v1/sandboxes", json={
             "command": command or LONG_RUNNING_COMMAND,
             "policy_mode": policy_mode,
-            "policy": policy,
+            "policy": _with_runtime_support(policy),
         })
         assert response.status_code == 201, response.text
         sandbox = response.json()
@@ -294,8 +359,18 @@ class TestPolicyAPI:
         assert "resources" not in data
         assert data["filesystem_policy"]["directories"] == [{'path': '/home', 'permissions': '0755'},
                                                             {'path': '/tmp', 'permissions': '1777'}]
-        assert data["filesystem_policy"]["read_only"] == ["/usr", "/lib", "/lib64", "/etc", "/opt"]
-        assert data["filesystem_policy"]["bind_mounts"] == []
+        assert data["filesystem_policy"]["read_only"] == [
+            "/",
+            "/bin",
+            "/sbin",
+            "/usr",
+            "/lib",
+            "/lib64",
+            "/etc",
+            "/opt",
+        ]
+        assert data["filesystem_policy"]["read_write"] == ["/home", "/tmp"]
+        assert data["filesystem_policy"]["bind_mounts"] == SYSTEM_BIND_MOUNTS
         assert data["process"]["run_as_user"] == "sandbox"
         assert data["process"]["run_as_group"] == "sandbox"
         assert data["namespace"] == {
@@ -397,6 +472,9 @@ class TestPolicyAPI:
         ]
         assert data["network"]["ingress"]["allowed_ports"] == [8080, 9090]
         assert data["filesystem_policy"]["read_only"] == [
+            "/",
+            "/bin",
+            "/sbin",
             "/usr",
             "/lib",
             "/lib64",
@@ -404,11 +482,11 @@ class TestPolicyAPI:
             "/opt",
             "/var/log",
         ]
-        assert data["filesystem_policy"]["read_write"] == ["/", "/var/tmp"]
+        assert data["filesystem_policy"]["read_write"] == ["/home", "/tmp", "/var/tmp"]
         assert data["filesystem_policy"]["directories"] == [{'path': '/home', 'permissions': '0755'},
                                                             {'path': '/tmp', 'permissions': '1777'},
                                                             {"path": "/tmp/appended-dir", "permissions": "0700"}]
-        assert data["filesystem_policy"]["bind_mounts"] == [{
+        assert data["filesystem_policy"]["bind_mounts"] == SYSTEM_BIND_MOUNTS + [{
             "host_path": "/tmp",
             "sandbox_path": "/tmp",
             "mode": "rw",
@@ -442,6 +520,7 @@ class TestPolicyAPI:
                     }],
                     "read_only": ["/usr"],
                     "read_write": ["/var/tmp"],
+                    "bind_mounts": SYSTEM_BIND_MOUNTS,
                 },
                 "network": {
                     "mode": "host",
@@ -502,6 +581,7 @@ class TestPolicyAPI:
         assert data["network"]["ingress"]["blocked_ports"] == [22]
         assert data["filesystem_policy"]["read_only"] == ["/usr"]
         assert data["filesystem_policy"]["read_write"] == ["/var/tmp"]
+        assert data["filesystem_policy"]["bind_mounts"] == SYSTEM_BIND_MOUNTS
         assert data["filesystem_policy"]["directories"] == [{
             "path": "/tmp/override-dir",
             "permissions": "0700",
@@ -1384,6 +1464,54 @@ class TestPolicyEnforcement:
         assert "huawei.com" in data["stdout"].lower()
 
     @staticmethod
+    def test_default_policy_does_not_expose_sensitive_etc_files(client):
+        response = client.post("/api/v1/sandboxes", json={
+            "command": LONG_RUNNING_COMMAND,
+        })
+        assert response.status_code == 201, response.text
+        sandbox = response.json()
+        assert sandbox["phase"] == "ready", sandbox
+
+        script = textwrap.dedent(
+            """
+            from pathlib import Path
+            import sys
+
+            sensitive_paths = [
+                "/etc/passwd",
+                "/etc/shadow",
+                "/etc/group",
+                "/etc/gshadow",
+            ]
+
+            for sensitive_path in sensitive_paths:
+                try:
+                    content = Path(sensitive_path).read_text()
+                except (FileNotFoundError, PermissionError):
+                    print(f"denied:{sensitive_path}")
+                    continue
+
+                print(f"leaked:{sensitive_path}:{content[:80]!r}")
+                sys.exit(1)
+            """
+        ).strip()
+        response = client.post(f"/api/v1/sandboxes/{sandbox['id']}/exec", json={
+            "command": ["/usr/bin/python3", "-c", script],
+            "timeout_seconds": 5,
+        })
+        assert response.status_code == 200
+        data = response.json()
+        assert data["exit_code"] == 0, data
+        assert "leaked:" not in data["stdout"]
+        assert "root:" not in data["stdout"]
+        assert data["stdout"].splitlines() == [
+            "denied:/etc/passwd",
+            "denied:/etc/shadow",
+            "denied:/etc/group",
+            "denied:/etc/gshadow",
+        ]
+
+    @staticmethod
     def test_ingress_allowed_port_accepts_loopback_connection(
         client,
         create_sandbox_with_policy,
@@ -1501,6 +1629,53 @@ class TestPolicyEnforcement:
 
         delete_response = client.delete(f"/api/v1/sandboxes/{sandbox['id']}")
         assert delete_response.status_code == 204
+
+
+class TestBwrapFilesystem:
+    @staticmethod
+    def test_read_rules_do_not_mount_host_paths():
+        policy = SecurityPolicy.model_validate({
+            "filesystem_policy": {
+                "read_only": ["/host-read-only"],
+                "read_write": ["/host-read-write"],
+                "bind_mounts": [
+                    {
+                        "host_path": "/host-source-ro",
+                        "sandbox_path": "/sandbox-target-ro",
+                        "mode": "ro",
+                    },
+                    {
+                        "host_path": "/host-source-rw",
+                        "sandbox_path": "/sandbox-target-rw",
+                        "mode": "rw",
+                    },
+                ],
+            },
+        })
+
+        args = BwrapConfig.from_policy(policy, ["/usr/bin/true"]).to_args()
+
+        assert not _has_mount(args, "--ro-bind", "/host-read-only", "/host-read-only")
+        assert not _has_mount(args, "--bind", "/host-read-write", "/host-read-write")
+        assert _has_mount(args, "--ro-bind", "/host-source-ro", "/sandbox-target-ro")
+        assert _has_mount(args, "--bind", "/host-source-rw", "/sandbox-target-rw")
+
+    @staticmethod
+    def test_nested_bind_targets_create_parent_directories():
+        policy = SecurityPolicy.model_validate({
+            "filesystem_policy": {
+                "bind_mounts": [{
+                    "host_path": "/etc/resolv.conf",
+                    "sandbox_path": "/etc/resolv.conf",
+                    "mode": "ro",
+                }],
+            },
+        })
+
+        args = BwrapConfig.from_policy(policy, ["/usr/bin/true"]).to_args()
+
+        assert _has_arg_pair(args, "--dir", "/etc")
+        assert _has_mount(args, "--ro-bind", "/etc/resolv.conf", "/etc/resolv.conf")
 
 
 class TestSandboxExec:

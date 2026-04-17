@@ -7,6 +7,7 @@ the lifecycle of the sandboxed process.
 from __future__ import annotations
 
 import logging
+import posixpath
 import signal
 import subprocess
 from dataclasses import dataclass, field
@@ -37,6 +38,30 @@ def _normalize_capability(capability: str) -> str:
 
 def _same_path_bind_is_covered_by_root(src: str, dst: str) -> bool:
     return src == dst and dst != "/" and dst.startswith("/")
+
+
+def _path_depth(path: str) -> int:
+    return len([part for part in path.split("/") if part])
+
+
+def _bind_parent_dirs(binds: list[tuple[str, str]], existing_dirs: set[str]) -> list[str]:
+    """Return parent directories bwrap must create before nested bind targets."""
+    result: list[str] = []
+    seen = {"/", *existing_dirs}
+
+    for _, target in binds:
+        parent = posixpath.dirname(target.rstrip("/") or "/")
+        parents: list[str] = []
+        while parent and parent != "/" and parent not in seen:
+            parents.append(parent)
+            parent = posixpath.dirname(parent)
+
+        for path in reversed(parents):
+            if path not in seen:
+                seen.add(path)
+                result.append(path)
+
+    return result
 
 
 @dataclass
@@ -97,10 +122,8 @@ class BwrapConfig:
 
     @staticmethod
     def _apply_filesystem(cfg: BwrapConfig, fs: FilesystemPolicy) -> None:
-        for path in fs.read_only:
-            cfg.ro_binds.append((path, path))
-        for path in fs.read_write:
-            cfg.rw_binds.append((path, path))
+        # read_only/read_write are in-sandbox access rules enforced by
+        # Landlock. Only bind_mounts expose host paths in the sandbox.
         for mount in fs.bind_mounts:
             if mount.mode == "ro":
                 cfg.ro_binds.append((mount.host_path, mount.sandbox_path))
@@ -206,8 +229,16 @@ class BwrapConfig:
         args.extend(["--proc", self.proc_path])
         args.extend(["--dev", self.dev_path])
 
+        explicit_dir_paths = {path for path, _ in self.dir_mounts}
+        auto_dir_mounts = [
+            (path, None)
+            for path in _bind_parent_dirs([*ro_binds, *rw_binds], explicit_dir_paths)
+        ]
+        dir_mounts = [*self.dir_mounts, *auto_dir_mounts]
+        dir_mounts.sort(key=lambda item: _path_depth(item[0]))
+
         # create directories before binding over them
-        for path, permissions in self.dir_mounts:
+        for path, permissions in dir_mounts:
             if permissions:
                 args.extend(["--perms", permissions])
             args.extend(["--dir", path])

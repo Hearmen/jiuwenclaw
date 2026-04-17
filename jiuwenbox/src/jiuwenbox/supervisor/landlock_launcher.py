@@ -108,11 +108,29 @@ def _fail_or_continue(payload: dict, message: str) -> bool:
     return False
 
 
+def _rule_anchor_path(path: str) -> str:
+    """Landlock path-beneath rules must be anchored on a directory fd.
+
+    For file mounts such as /etc/resolv.conf, fall back to the parent
+    directory (e.g. /etc) so rule installation remains valid.
+    """
+    if os.path.isdir(path):
+        return path
+
+    normalized = path.rstrip("/") or "/"
+    parent = os.path.dirname(normalized) or "/"
+    return parent
+
+
 def _add_rule(ruleset_fd: int, path: str, access: int) -> None:
     if not os.path.exists(path):
         return
 
-    fd = os.open(path, os.O_PATH | os.O_CLOEXEC, 0o600)
+    anchor_path = _rule_anchor_path(path)
+    if not os.path.exists(anchor_path):
+        return
+
+    fd = os.open(anchor_path, os.O_PATH | os.O_CLOEXEC, 0o600)
     try:
         rule = LandlockPathBeneathAttr()
         rule.allowed_access = access
@@ -125,7 +143,7 @@ def _add_rule(ruleset_fd: int, path: str, access: int) -> None:
             0,
         )
         if ret < 0:
-            raise OSError(ctypes.get_errno(), f"landlock_add_rule failed for {path}")
+            raise OSError(ctypes.get_errno(), f"landlock_add_rule failed for {anchor_path}")
     finally:
         os.close(fd)
 

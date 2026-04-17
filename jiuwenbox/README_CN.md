@@ -131,9 +131,10 @@ Docker 镜像默认会启动 `./scripts/server.sh`。
 - `filesystem_policy.directories`
   - 由服务端创建并在沙箱生命周期内绑定到沙箱中的目录。
 - `filesystem_policy.read_only`
-  - 在沙箱内可见并以只读方式挂载的路径。
+  - 沙箱内授予只读访问权限的路径；这些条目本身不会挂载 host 路径。
 - `filesystem_policy.read_write`
-  - 在沙箱内可见并以读写方式挂载的路径。
+  - 沙箱内授予读写访问权限的路径；需要通过 `directories` 或 `bind_mounts`
+    让这些路径实际存在于沙箱内。
 - `filesystem_policy.bind_mounts`
   - 显式的宿主机到沙箱路径的 bind mount 配置。
 
@@ -151,13 +152,48 @@ filesystem_policy:
     - path: "/tmp"
       permissions: "1777"
   read_only:
+    - "/bin"
+    - "/sbin"
     - "/usr"
     - "/lib"
     - "/lib64"
     - "/etc"
   read_write:
     - "/tmp"
-  bind_mounts: []
+  bind_mounts:
+    - host_path: "/bin"
+      sandbox_path: "/bin"
+      mode: "ro"
+    - host_path: "/sbin"
+      sandbox_path: "/sbin"
+      mode: "ro"
+    - host_path: "/usr"
+      sandbox_path: "/usr"
+      mode: "ro"
+    - host_path: "/lib"
+      sandbox_path: "/lib"
+      mode: "ro"
+    - host_path: "/lib64"
+      sandbox_path: "/lib64"
+      mode: "ro"
+    - host_path: "/etc/resolv.conf"
+      sandbox_path: "/etc/resolv.conf"
+      mode: "ro"
+    - host_path: "/etc/hosts"
+      sandbox_path: "/etc/hosts"
+      mode: "ro"
+    - host_path: "/etc/nsswitch.conf"
+      sandbox_path: "/etc/nsswitch.conf"
+      mode: "ro"
+    - host_path: "/etc/host.conf"
+      sandbox_path: "/etc/host.conf"
+      mode: "ro"
+    - host_path: "/etc/ssl/certs"
+      sandbox_path: "/etc/ssl/certs"
+      mode: "ro"
+    - host_path: "/etc/ssl/openssl.cnf"
+      sandbox_path: "/etc/ssl/openssl.cnf"
+      mode: "ro"
 
 process:
   run_as_user: sandbox
@@ -262,7 +298,7 @@ curl -sS -X DELETE http://127.0.0.1:8321/api/v1/sandboxes/<sandbox-id>
 
 ```bash
 ./scripts/test.sh default # jiuwenbox 使用 default-policy.yaml 作为安全策略运行服务。
-./scripts/test.sh jiuwenclaw # jiuwenbox 使用 jiuwenclaw-policy.yaml 作为安全策略运行服务。
+./scripts/test.sh jiuwenclaw-tool # jiuwenbox 使用 jiuwenclaw-tool-policy.yaml 作为安全策略运行服务。
 ```
 
 ## 注意事项
