@@ -5,7 +5,13 @@ from typing import Any
 
 import pytest
 
-from jiuwenclaw.app_gateway import AcpRouteHandler, GatewayServer, GatewayServerConfig, RouteConfig
+from jiuwenclaw.app_gateway import (
+    AcpRouteHandler,
+    GatewayServer,
+    GatewayServerConfig,
+    RouteConfig,
+    _normalize_gateway_message,
+)
 from jiuwenclaw.schema.message import EventType, Message, ReqMethod
 
 
@@ -72,13 +78,32 @@ def build_server() -> GatewayServerProbe:
             outbound_interceptor=acp_handler.outbound_intercept,
             inbound_interceptor=acp_handler.inbound_intercept,
         ),
-        "/cli": RouteConfig(
-            path="/cli",
+        "/tui": RouteConfig(
+            path="/tui",
             channel_id="tui",
             forward_methods=frozenset({ReqMethod.CHAT_SEND.value, ReqMethod.HISTORY_GET.value}),
         ),
     })
     return server
+
+
+def test_normalize_gateway_message_maps_chat_resume_to_interrupt_resume():
+    msg = Message(
+        id="req-resume",
+        type="req",
+        channel_id="tui",
+        session_id="sess-1",
+        params={"session_id": "sess-1"},
+        timestamp=time.time(),
+        ok=True,
+        req_method=ReqMethod.CHAT_RESUME,
+    )
+
+    normalized = _normalize_gateway_message(msg)
+
+    assert normalized.req_method == ReqMethod.CHAT_CANCEL
+    assert normalized.params["intent"] == "resume"
+    assert normalized.session_id == "sess-1"
 
 
 @pytest.mark.asyncio

@@ -42,14 +42,15 @@ async def test_register_cli_handlers_registers_local_methods():
             agent_client=None,
             message_handler=None,
             on_config_saved=None,
-            path="/cli",
+            path="/tui",
         )
     )
 
-    cli_handlers = server.local_handlers["/cli"]
+    cli_handlers = server.local_handlers["/tui"]
     assert "config.get" in cli_handlers
     assert "session.list" in cli_handlers
     assert "chat.send" in cli_handlers
+    assert "chat.resume" in cli_handlers
     assert "history.get" in cli_handlers
 
     await cli_handlers["chat.send"](object(), "req-1", {}, "sess-1")
@@ -66,10 +67,10 @@ async def test_register_cli_handlers_registers_local_methods():
 
 
 def test_build_cli_route_binding_creates_route_and_install_hook():
-    binding = build_cli_route_binding(CliRouteBindParams(path="/cli"))
+    binding = build_cli_route_binding(CliRouteBindParams(path="/tui"))
     server = FakeGatewayServer()
 
-    assert binding.path == "/cli"
+    assert binding.path == "/tui"
     assert binding.channel_id == "tui"
     assert "chat.send" in binding.forward_methods
     assert "history.get" in binding.forward_methods
@@ -77,6 +78,7 @@ def test_build_cli_route_binding_creates_route_and_install_hook():
 
     binding.install(server)
 
-    cli_handlers = server.local_handlers["/cli"]
+    cli_handlers = server.local_handlers["/tui"]
     assert "config.get" in cli_handlers
+    assert "session.list" in cli_handlers
     assert "chat.send" in cli_handlers

@@ -57,19 +57,24 @@ load_dotenv(dotenv_path=get_env_file())
 logger = logging.getLogger(__name__)
 
 
-def _normalize_and_forward_message(msg, channel_manager) -> bool:
+def _normalize_gateway_message(msg):
     from jiuwenclaw.schema.message import Message, ReqMethod
 
-    method_val = getattr(getattr(msg, "req_method", None), "value", None) or ""
+    req_method = getattr(msg, "req_method", None) or ReqMethod.CHAT_SEND
+    params = dict(msg.params or {})
+    if "query" not in params and "content" in params:
+        params["query"] = params["content"]
+    if req_method == ReqMethod.CHAT_RESUME:
+        req_method = ReqMethod.CHAT_CANCEL
+        params.setdefault("intent", "resume")
+
+    method_val = req_method.value
     is_stream = bool(
         msg.is_stream
         or method_val in (ReqMethod.CHAT_SEND.value, ReqMethod.HISTORY_GET.value)
     )
-    params = dict(msg.params or {})
-    if "query" not in params and "content" in params:
-        params["query"] = params["content"]
 
-    normalized = Message(
+    return Message(
         id=msg.id,
         type=msg.type,
         channel_id=msg.channel_id,
@@ -77,13 +82,17 @@ def _normalize_and_forward_message(msg, channel_manager) -> bool:
         params=params,
         timestamp=msg.timestamp,
         ok=msg.ok,
-        req_method=getattr(msg, "req_method", None) or ReqMethod.CHAT_SEND,
+        req_method=req_method,
         mode=msg.mode,
         is_stream=is_stream,
         stream_seq=msg.stream_seq,
         stream_id=msg.stream_id,
         metadata=msg.metadata,
     )
+
+
+def _normalize_and_forward_message(msg, channel_manager) -> bool:
+    normalized = _normalize_gateway_message(msg)
     channel_manager.deliver_to_message_handler(normalized)
     logger.info("[App] Gateway inbound -> MessageHandler: id=%s channel_id=%s", msg.id, msg.channel_id)
     return False
@@ -1298,28 +1307,7 @@ async def _run(
             method_val = getattr(getattr(msg, "req_method", None), "value", None) or ""
             if method_val not in forward_methods:
                 return False
-            is_stream = bool(
-                msg.is_stream
-                or method_val in (ReqMethod.CHAT_SEND.value, ReqMethod.HISTORY_GET.value)
-            )
-            params = dict(msg.params or {})
-            if "query" not in params and "content" in params:
-                params["query"] = params["content"]
-            normalized = Message(
-                id=msg.id,
-                type=msg.type,
-                channel_id=msg.channel_id,
-                session_id=msg.session_id,
-                params=params,
-                timestamp=msg.timestamp,
-                ok=msg.ok,
-                req_method=getattr(msg, "req_method", None) or ReqMethod.CHAT_SEND,
-                mode=msg.mode,
-                is_stream=is_stream,
-                stream_seq=msg.stream_seq,
-                stream_id=msg.stream_id,
-                metadata=msg.metadata,
-            )
+            normalized = _normalize_gateway_message(msg)
             channel_manager.deliver_to_message_handler(normalized)
             logger.info("[App] %s 入站 -> MessageHandler: id=%s channel_id=%s", source_label, msg.id, msg.channel_id)
             if method_val in no_local_methods:
@@ -1353,7 +1341,7 @@ async def _run(
                 agent_client=client,
                 message_handler=message_handler,
                 on_config_saved=_on_config_saved,
-                path="/cli",
+                path="/tui",
                 channel_id="tui",
             )
         ),

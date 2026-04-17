@@ -112,7 +112,7 @@ class CliHandlersBindParams:
     agent_client: Any = None
     message_handler: Any = None
     on_config_saved: Any = None
-    path: str = "/cli"
+    path: str = "/tui"
 
 
 @dataclass
@@ -120,7 +120,7 @@ class CliRouteBindParams:
     agent_client: Any = None
     message_handler: Any = None
     on_config_saved: Any = None
-    path: str = "/cli"
+    path: str = "/tui"
     channel_id: str = "tui"
 
 
@@ -433,40 +433,8 @@ def register_cli_handlers(bind: CliHandlersBindParams) -> None:
         )
 
     async def _chat_resume(ws, req_id, params, session_id):
-        import time
-        from jiuwenclaw.e2a.gateway_normalize import e2a_from_agent_fields
-        from jiuwenclaw.schema.message import ReqMethod
-
-        target_session_id = (
-            str(params.get("session_id") or session_id or "").strip()
-            if isinstance(params, dict)
-            else session_id
-        )
-        if not target_session_id:
-            target_session_id = session_id
-
-        real_client = agent_client.get("value") if isinstance(agent_client, dict) else agent_client
-        if real_client is None:
-            await channel.send_response(ws, req_id, ok=False, error="agent client not available", code="INTERNAL_ERROR")
-            return
-
-        resume_params = {"session_id": target_session_id, "intent": "resume"}
-        env = e2a_from_agent_fields(
-            request_id=req_id,
-            channel_id="tui",
-            session_id=target_session_id,
-            req_method=ReqMethod.CHAT_CANCEL,
-            params=resume_params,
-            is_stream=False,
-            timestamp=time.time(),
-        )
-        resp = await real_client.send_request(env)
-        if not resp.ok:
-            await channel.send_response(ws, req_id, ok=False, error=resp.error or "chat.resume failed", code=resp.code)
-            return
         await channel.send_response(
-            ws, req_id, ok=True,
-            payload=resp.payload or {"session_id": target_session_id, "resumed": True}
+            ws, req_id, ok=True, payload={"accepted": True, "session_id": session_id}
         )
 
     async def _chat_interrupt(ws, req_id, params, session_id):

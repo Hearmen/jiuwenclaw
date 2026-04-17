@@ -140,11 +140,11 @@ async def test_cli_route_system_roundtrip(temp_home: Path, monkeypatch: pytest.M
             log_path=gateway_log,
         )
         await _wait_for_websocket_ready(
-            f"ws://127.0.0.1:{gateway_port}/cli",
+            f"ws://127.0.0.1:{gateway_port}/tui",
             timeout=60,
         )
 
-        async with websockets.connect(f"ws://127.0.0.1:{gateway_port}/cli") as ws:
+        async with websockets.connect(f"ws://127.0.0.1:{gateway_port}/tui") as ws:
             req_chat = {
                 "type": "req",
                 "id": "req-chat",
