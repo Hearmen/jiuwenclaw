@@ -2,7 +2,12 @@
 
 """Unit tests for team config loading."""
 
-from jiuwenclaw.agentserver.team.config_loader import load_team_spec_dict
+from pathlib import Path
+
+from jiuwenclaw.agentserver.team.config_loader import (
+    load_team_spec_dict,
+    resolve_team_sqlite_db_path,
+)
 
 
 def test_load_team_spec_dict_supports_member_specific_agents(monkeypatch, tmp_path):
@@ -160,3 +165,28 @@ def test_load_team_spec_dict_preserves_explicit_empty_skills(monkeypatch, tmp_pa
 
     assert "reviewer" in spec["agents"]
     assert spec["agents"]["reviewer"]["skills"] == []
+
+
+def test_resolve_team_sqlite_db_path_defaults_to_agent_teams_home(monkeypatch, tmp_path):
+    """Missing connection_string should fall back to openjiuwen agent-teams team.db."""
+    config = {
+        "team": {
+            "storage": {
+                "type": "sqlite",
+                "params": {},
+            }
+        }
+    }
+
+    monkeypatch.setattr(
+        "jiuwenclaw.agentserver.team.config_loader.get_config",
+        lambda: config,
+    )
+    monkeypatch.setattr(
+        "jiuwenclaw.agentserver.team.config_loader.get_agent_teams_home",
+        lambda: tmp_path / ".agent_teams",
+    )
+
+    db_path = resolve_team_sqlite_db_path()
+
+    assert db_path == Path(tmp_path / ".agent_teams" / "team.db")

@@ -7,6 +7,9 @@ from jiuwenclaw.agentserver.deep_agent.rails.permission_rail import PermissionIn
 from jiuwenclaw.agentserver.deep_agent.rails.avatar_rail import AvatarPromptRail
 from jiuwenclaw.agentserver.deep_agent.rails.response_prompt_rail import ResponsePromptRail
 from jiuwenclaw.agentserver.deep_agent.rails.runtime_prompt_rail import RuntimePromptRail
+from jiuwenclaw.agentserver.deep_agent.rails.team_member_skill_toolkit_rail import (
+    MemberSkillToolkitRail,
+)
 from jiuwenclaw.agentserver.deep_agent.rails.stream_event_rail import JiuClawStreamEventRail
 
 __all__ = [
@@ -16,4 +19,5 @@ __all__ = [
     "AvatarPromptRail",
     "ResponsePromptRail",
     "RuntimePromptRail",
+    "MemberSkillToolkitRail",
 ]

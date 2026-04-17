@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import shutil
 from pathlib import Path
@@ -19,7 +20,9 @@ from openjiuwen.agent_teams.schema.blueprint import TeamAgentSpec
 from openjiuwen.agent_teams.spawn.context import reset_session_id, set_session_id
 from openjiuwen.harness import DeepAgent
 
-from jiuwenclaw.agentserver.team.config_loader import load_team_spec_dict
+from jiuwenclaw.agentserver.team.config_loader import (
+    load_team_spec_dict,
+)
 from jiuwenclaw.agentserver.team.monitor_handler import TeamMonitorHandler
 from jiuwenclaw.agentserver.team.team_runtime_inheritance import (
     RAIL_WHITELIST,
@@ -47,6 +50,28 @@ class TeamManager:
         return self._stream_tasks.pop(session_id, None)
 
     @staticmethod
+    def _load_team_spec(session_id: str) -> TeamAgentSpec:
+        return TeamAgentSpec.model_validate(load_team_spec_dict(session_id))
+
+    @staticmethod
+    async def _cleanup_team_runtime_state(
+        spec: TeamAgentSpec,
+    ) -> tuple[list[str], list[str]]:
+        from openjiuwen.agent_teams.paths import get_agent_teams_home
+        from openjiuwen.agent_teams.spawn.shared_resources import get_shared_db
+        from openjiuwen.agent_teams.tools.database import DatabaseConfig
+
+        db_config = spec.storage.build() if spec.storage else DatabaseConfig()
+        if db_config.db_type == "sqlite" and not db_config.connection_string:
+            db_config.connection_string = str(get_agent_teams_home() / "team.db")
+        try:
+            shared_db = get_shared_db(db_config)
+            return await shared_db.cleanup_all_runtime_state()
+        except Exception as exc:
+            logger.warning("[TeamManager] runtime cleanup failed for team=%s: %s", spec.team_name, exc)
+            return [], []
+
+    @staticmethod
     def _build_agent_customizer(
         spec: TeamAgentSpec,
         deep_agent: DeepAgent,
@@ -55,12 +80,17 @@ class TeamManager:
         channel_id: str | None,
         request_metadata: dict[str, Any] | None,
     ) -> Callable[..., None]:
+        from jiuwenclaw.agentserver.deep_agent.rails.team_member_skill_toolkit_rail import (
+            MemberSkillToolkitRail,
+        )
+        from jiuwenclaw.agentserver.skill_manager import SkillManager
         from jiuwenclaw.agentserver.extensions.rail_manager import get_rail_manager
         from jiuwenclaw.agentserver.tools.send_file_to_user import SendFileToolkit
         from jiuwenclaw.utils import get_agent_skills_dir
         from openjiuwen.core.runner import Runner
 
         global_skills_dir = get_agent_skills_dir()
+        global_skills_state_path = global_skills_dir / "skills_state.json"
         resolved_channel = channel_id or "default"
         resolved_model_name = get_default_model_name()
 
@@ -123,6 +153,92 @@ class TeamManager:
                     logger.warning("[TeamManager] configured skills not found in global dir: %s", missing)
 
             logger.info("[TeamManager] Total skills copied: %d", copied_count)
+
+        def build_member_skill_state(member_skills_dir: Path) -> dict[str, Any]:
+            state: dict[str, Any] = {
+                "marketplaces": [],
+                "installed_plugins": [],
+                "local_skills": [],
+            }
+            if global_skills_state_path.is_file():
+                try:
+                    loaded_state = json.loads(global_skills_state_path.read_text(encoding="utf-8"))
+                    if isinstance(loaded_state, dict):
+                        state.update(loaded_state)
+                except Exception as exc:
+                    logger.warning("[TeamManager] failed to load global skills_state.json: %s", exc)
+
+            skill_manager = SkillManager(workspace_dir=str(member_skills_dir.parent))
+            state["marketplaces"] = skill_manager._normalize_marketplaces(state.get("marketplaces"))
+
+            actual_skill_names = sorted(
+                path.name
+                for path in member_skills_dir.iterdir()
+                if path.is_dir() and (path / "SKILL.md").is_file()
+            )
+            actual_skill_set = set(actual_skill_names)
+
+            installed_plugins = []
+            for plugin in state.get("installed_plugins", []):
+                if not isinstance(plugin, dict):
+                    continue
+                plugin_name = str(plugin.get("name", "")).strip()
+                if not plugin_name or plugin_name not in actual_skill_set:
+                    continue
+                installed_plugins.append(plugin)
+
+            local_skills = []
+            for local_skill in state.get("local_skills", []):
+                if not isinstance(local_skill, dict):
+                    continue
+                skill_name = str(local_skill.get("name", "")).strip()
+                if not skill_name or skill_name not in actual_skill_set:
+                    continue
+                local_skills.append(local_skill)
+
+            existing_plugin_names = {
+                str(plugin.get("name", "")).strip()
+                for plugin in installed_plugins
+                if isinstance(plugin, dict)
+            }
+            existing_local_names = {
+                str(local_skill.get("name", "")).strip()
+                for local_skill in local_skills
+                if isinstance(local_skill, dict)
+            }
+            for skill_name in actual_skill_names:
+                if skill_name not in existing_plugin_names:
+                    installed_plugins.append(
+                        {
+                            "name": skill_name,
+                            "marketplace": "",
+                            "version": "",
+                            "commit": "",
+                            "source": "project",
+                            "installed_at": "",
+                        }
+                    )
+                if skill_name not in existing_local_names:
+                    local_skills.append(
+                        {
+                            "name": skill_name,
+                            "origin": str(member_skills_dir / skill_name),
+                            "source": "project",
+                        }
+                    )
+
+            state["installed_plugins"] = installed_plugins
+            state["local_skills"] = local_skills
+            return state
+
+        def write_member_skill_state(member_skills_dir: Path) -> None:
+            state_file = member_skills_dir / "skills_state.json"
+            state = build_member_skill_state(member_skills_dir)
+            state_file.write_text(
+                json.dumps(state, ensure_ascii=False, indent=2),
+                encoding="utf-8",
+            )
+            logger.info("[TeamManager] Wrote member skills_state.json: %s", state_file)
 
         def customizer(
             agent: DeepAgent,
@@ -190,6 +306,7 @@ class TeamManager:
                         skills_configured=skills_configured,
                         selected_skills=selected_skills,
                     )
+                    write_member_skill_state(member_skills_dir)
                     skills_after_copy = sorted(
                         path.name for path in member_skills_dir.iterdir() if path.is_dir()
                     )
@@ -199,28 +316,17 @@ class TeamManager:
 
                 # 为 member 创建独立的 SkillManager 和 SkillToolkit
                 try:
-                    from jiuwenclaw.agentserver.skill_manager import SkillManager
-                    from jiuwenclaw.agentserver.tools.skill_toolkits import SkillToolkit
-
-                    member_skill_manager = SkillManager(workspace_dir=str(member_workspace.root_path))
-                    skill_toolkit = SkillToolkit(manager=member_skill_manager)
-
-                    existing_ability_ids = {card.id for card in agent.ability_manager.list() or []}
-                    for tool in skill_toolkit.get_tools():
-                        if not Runner.resource_mgr.get_tool(tool.card.id):
-                            Runner.resource_mgr.add_tool(tool)
-                        if tool.card.id not in existing_ability_ids:
-                            agent.ability_manager.add(tool.card)
-                            existing_ability_ids.add(tool.card.id)
-                            logger.info("[TeamManager] Added SkillToolkit tool: %s", tool.card.name)
-                        else:
-                            logger.debug("[TeamManager] SkillToolkit tool '%s' already exists, skipped", tool.card.name)
+                    agent.add_rail(
+                        MemberSkillToolkitRail(
+                            workspace_dir=str(member_workspace.root_path),
+                        )
+                    )
                     logger.info(
-                        "[TeamManager] SkillToolkit registered for member workspace: %s",
+                        "[TeamManager] MemberSkillToolkitRail queued for member workspace: %s",
                         member_workspace.root_path,
                     )
                 except Exception as exc:
-                    logger.warning("[TeamManager] SkillToolkit registration failed: %s", exc)
+                    logger.warning("[TeamManager] MemberSkillToolkitRail setup failed: %s", exc)
 
                 try:
                     member_rails = build_member_rails(
@@ -298,9 +404,15 @@ class TeamManager:
         request_metadata: dict[str, Any] | None = None,
     ) -> TeamAgent:
         logger.info("[TeamManager] building TeamAgentSpec: session_id=%s", session_id)
+        spec = self._load_team_spec(session_id)
+        deleted_tables, cleared_tables = await self._cleanup_team_runtime_state(spec)
+        if deleted_tables or cleared_tables:
+            logger.info(
+                "[TeamManager] pre-create cleanup deleted dynamic tables=%s cleared static tables=%s",
+                deleted_tables,
+                cleared_tables,
+            )
 
-        spec_dict = load_team_spec_dict(session_id)
-        spec = TeamAgentSpec.model_validate(spec_dict)
         spec.agent_customizer = self._build_agent_customizer(
             spec,
             deep_agent,
@@ -398,10 +510,17 @@ class TeamManager:
                 )
 
         team_agent = self._team_agents.pop(session_id, None)
-        if team_agent is None:
-            return False
-
+        cleaned = False
+        cleanup_spec: TeamAgentSpec | None = None
         try:
+            cleanup_spec = self._load_team_spec(session_id)
+            if team_agent is None:
+                logger.info(
+                    "[TeamManager] no in-memory team for session_id=%s, run runtime cleanup fallback only",
+                    session_id,
+                )
+                return False
+
             token = set_session_id(session_id)
             try:
                 cleaned = await team_agent.destroy_team(force=True)
@@ -413,14 +532,36 @@ class TeamManager:
                 session_id,
                 cleaned,
             )
-            return cleaned
         except Exception as exc:
             logger.error(
                 "[TeamManager] destroy team failed: session_id=%s error=%s",
                 session_id,
                 exc,
             )
-            return False
+        finally:
+            if cleanup_spec is None:
+                try:
+                    cleanup_spec = self._load_team_spec(session_id)
+                except Exception as exc:
+                    logger.warning(
+                        "[TeamManager] failed to rebuild team spec for cleanup: session_id=%s error=%s",
+                        session_id,
+                        exc,
+                    )
+                    cleanup_spec = None
+            deleted_tables: list[str] = []
+            cleared_tables: list[str] = []
+            if cleanup_spec is not None:
+                deleted_tables, cleared_tables = await self._cleanup_team_runtime_state(cleanup_spec)
+            if deleted_tables or cleared_tables:
+                logger.info(
+                    "[TeamManager] fallback cleanup after destroy deleted dynamic tables=%s "
+                    "cleared static tables=%s",
+                    deleted_tables,
+                    cleared_tables,
+                )
+
+        return cleaned
 
     async def cleanup_all(self) -> None:
         async with self._lock:

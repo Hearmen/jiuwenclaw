@@ -20,6 +20,38 @@ _DEFAULT_COMPLETION_TIMEOUT = 600.0
 _DEFAULT_AGENT_WORKSPACE = {"stable_base": True}
 
 
+def resolve_team_sqlite_db_path(config_base: dict[str, Any] | None = None) -> Path | None:
+    """Resolve the team sqlite database path using openjiuwen semantics."""
+    if config_base is None:
+        config_base = get_config()
+
+    team_raw = config_base.get("team", {})
+    if not isinstance(team_raw, dict):
+        return None
+
+    storage_raw = team_raw.get("storage", {})
+    if not isinstance(storage_raw, dict):
+        return None
+
+    storage_type = str(storage_raw.get("type", "")).strip().lower()
+    if storage_type and storage_type != "sqlite":
+        return None
+
+    storage_params = storage_raw.get("params", {})
+    if not isinstance(storage_params, dict):
+        storage_params = {}
+
+    conn_str = str(storage_params.get("connection_string", "")).strip()
+    if not conn_str:
+        return get_agent_teams_home() / "team.db"
+
+    db_path = Path(conn_str).expanduser()
+    if db_path.is_absolute():
+        return db_path
+
+    return get_agent_teams_home() / conn_str
+
+
 def _build_default_model_dict(config_base: dict[str, Any]) -> dict[str, Any]:
     model_config = config_base.get("models", {}).get("default", {})
     model_client_config = model_config.get("model_client_config", {})
@@ -46,11 +78,11 @@ def _resolve_storage_config(storage_raw: dict[str, Any]) -> dict[str, Any]:
     if "connection_string" not in storage_params:
         return storage_dict
 
-    conn_str = storage_params["connection_string"]
-    db_path = Path(conn_str)
-    if not db_path.is_absolute():
-        db_path = get_agent_teams_home() / conn_str
-        storage_params["connection_string"] = str(db_path)
+    db_path = resolve_team_sqlite_db_path({"team": {"storage": storage_dict}})
+    if db_path is None:
+        return storage_dict
+
+    storage_params["connection_string"] = str(db_path)
 
     db_dir = db_path.parent
     if not db_dir.exists():
