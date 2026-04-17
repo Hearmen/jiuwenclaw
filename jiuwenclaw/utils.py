@@ -742,17 +742,49 @@ def init_user_workspace(overwrite: bool = True) -> Path | Literal["cancelled"]:
     不再由 JiuwenClaw 复制到用户工作区。
 
     交互式 init 会先询问语言；首次启动 app 时非交互 prepare_workspace 则沿用模板 config 中的语言。
+
+    Args:
+        overwrite: True 时强制清理整个工作空间目录后初始化；
+                   False 时保留原有数据，执行迁移合并逻辑。
     """
     workspace_dir = get_user_workspace_dir()
     if workspace_dir.exists():
-        # Warn user about data loss and ask for confirmation
-        print("[jiuwenclaw-init] WARNING: This will delete all historical configuration and memory information.")
-        print("[jiuwenclaw-init] This action cannot be undone.")
-        confirmation = input("[jiuwenclaw-init] Do you want to confirm reinitialization? (yes/no): ").strip().lower()
+        if overwrite:
+            # Force mode: explain both modes and ask for confirmation
+            print(
+                "[jiuwenclaw-init] With -f/--force flag, "
+                "entire ~/.jiuwenclaw will be deleted for clean initialization."
+            )
+            print("[jiuwenclaw-init] WARNING: This will delete all historical configuration and memory information.")
+            print("[jiuwenclaw-init] This action cannot be undone.")
+            confirmation = input(
+                "[jiuwenclaw-init] Do you want to confirm reinitialization? (yes/no): "
+            ).strip().lower()
 
-        if confirmation not in ("yes", "y"):
-            print("[jiuwenclaw-init] Initialization cancelled. Exiting.")
-            return "cancelled"
+            if confirmation not in ("yes", "y"):
+                print("[jiuwenclaw-init] Initialization cancelled. Exiting.")
+                return "cancelled"
+
+            # Delete entire workspace directory for clean initialization
+            try:
+                shutil.rmtree(workspace_dir)
+                logger.info(f"Removed workspace directory: {workspace_dir}")
+            except OSError as e:
+                logger.error(f"Failed to remove workspace directory: {e}")
+                print(f"[jiuwenclaw-init] ERROR: Failed to remove workspace: {e}")
+                return "cancelled"
+        else:
+            # Merge mode: inform about preservation
+            print(
+                "[jiuwenclaw-init] Without -f/--force flag, "
+                "existing files will be preserved and merged with template."
+            )
+            print("[jiuwenclaw-init] This action cannot be undone.")
+            confirmation = input("[jiuwenclaw-init] Do you want to continue? (yes/no): ").strip().lower()
+
+            if confirmation not in ("yes", "y"):
+                print("[jiuwenclaw-init] Initialization cancelled. Exiting.")
+                return "cancelled"
 
     lang = prompt_preferred_language()
     if lang is None:

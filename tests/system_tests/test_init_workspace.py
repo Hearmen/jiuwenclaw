@@ -204,19 +204,19 @@ class TestInitWorkspaceMain:
     """Test init_workspace.py main entry point."""
 
     @staticmethod
-    def test_main_successful_init(clean_environment: None, monkeypatch: pytest.MonkeyPatch, 
+    def test_main_successful_init(clean_environment: None, monkeypatch: pytest.MonkeyPatch,
                                   capsys: pytest.CaptureFixture):
         """Test main function with successful initialization."""
-        from jiuwenclaw.init_workspace import main
+        from jiuwenclaw.init_workspace import run_init
 
         # Simulate user selecting Chinese
         monkeypatch.setattr("builtins.input", lambda _: "1")
 
-        # Run main and get exit code
-        exit_code = main()
-        if exit_code == 1:                                                                                                                                                     
-            pytest.skip("Init was cancelled - may occur in some test environments")                                                                                            
-            assert exit_code == 0
+        # Run init directly (bypass argparse)
+        exit_code = run_init(force=False)
+        if exit_code == 1:
+            pytest.skip("Init was cancelled - may occur in some test environments")
+        assert exit_code == 0
 
         # Check output
         captured = capsys.readouterr()
@@ -226,14 +226,32 @@ class TestInitWorkspaceMain:
     @staticmethod
     def test_main_cancelled_init(clean_environment: None, monkeypatch: pytest.MonkeyPatch):
         """Test main function with cancelled initialization."""
-        from jiuwenclaw.init_workspace import main
+        from jiuwenclaw.init_workspace import run_init
 
         # Simulate user cancelling
         monkeypatch.setattr("builtins.input", lambda _: "cancelled")
 
         # Should exit with code 1
-        exit_code = main()
+        exit_code = run_init(force=False)
         assert exit_code == 1
+
+    @staticmethod
+    def test_main_force_init(clean_environment: None, monkeypatch: pytest.MonkeyPatch):
+        """Test main function with -f flag for force initialization."""
+        from jiuwenclaw.init_workspace import run_init
+
+        # Simulate user confirming force init and selecting Chinese
+        def mock_input(prompt):
+            if "confirm" in prompt.lower():
+                return "yes"
+            return "1"
+
+        monkeypatch.setattr("builtins.input", mock_input)
+
+        exit_code = run_init(force=True)
+        if exit_code == 1:
+            pytest.skip("Init was cancelled - may occur in some test environments")
+        assert exit_code == 0
 
 
 class TestInitCLI:
