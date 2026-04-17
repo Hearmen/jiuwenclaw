@@ -541,7 +541,7 @@ class GatewayServer:
             self.config.host,
             self.config.port,
             ping_interval=20,
-            ping_timeout=20,
+            ping_timeout=600,
         )
         self._running = True
         paths = ", ".join(self.config.routes.keys())

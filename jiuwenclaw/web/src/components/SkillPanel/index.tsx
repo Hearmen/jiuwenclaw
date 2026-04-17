@@ -296,7 +296,8 @@ export function SkillPanel({ sessionId, onNavigateToConfig }: SkillPanelProps) {
           }
         } catch (error) {
           console.error(error);
-          setMessage(t('skills.errors.installFailedHint'));
+          const errorMessage = error instanceof Error ? error.message : String(error);
+          setMessage(errorMessage || t('skills.errors.installFailedHint'));
           setMessageType("error");
         } finally {
           setActionTarget(null);
@@ -386,7 +387,8 @@ export function SkillPanel({ sessionId, onNavigateToConfig }: SkillPanelProps) {
       }
     } catch (error) {
       console.error(error);
-      setMessage(t('skills.errors.importFailedHint'));
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      setMessage(errorMessage || t('skills.errors.importFailedHint'));
       setMessageType("error");
     } finally {
       setActionTarget(null);
@@ -419,7 +421,8 @@ export function SkillPanel({ sessionId, onNavigateToConfig }: SkillPanelProps) {
         handleBackToList();
       } catch (error) {
         console.error(error);
-        setMessage(t('skills.errors.uninstallFailedHint'));
+        const errorMessage = error instanceof Error ? error.message : String(error);
+        setMessage(errorMessage || t('skills.errors.uninstallFailedHint'));
         setMessageType("error");
       } finally {
         setActionTarget(null);

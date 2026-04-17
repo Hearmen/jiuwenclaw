@@ -783,6 +783,7 @@
       "success": "done",
       "failed": "failed",
       "timeout": "Execution timed out",
+      "running": "Running...",
       "arguments": "Arguments",
       "result": "Result",
       "truncated": "result truncated"

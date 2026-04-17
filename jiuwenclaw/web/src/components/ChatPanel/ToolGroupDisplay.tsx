@@ -19,9 +19,268 @@ interface ToolGroupDisplayProps {
   executions: ToolExecution[];
 }
 
+/**
+ * 工具详情弹窗组件
+ *
+ * 以弹窗形式完整展示工具调用的参数和结果
+ */
+interface ToolDetailModalProps {
+  execution: ToolExecution;
+  onClose: () => void;
+}
+
+function ToolDetailModal({ execution, onClose }: ToolDetailModalProps) {
+  const { t } = useTranslation();
+  const { toolCall, result, status } = execution;
+  const isTimeout = status === 'timeout';
+  const isError = status === 'error';
+  const isSuccess = status === 'completed';
+
+  
+  // ESC 键关闭
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        onClose();
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [onClose]);
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+      {/* 背景遮罩 - 点击关闭 */}
+      <div
+        className="absolute inset-0 bg-black/60"
+        onClick={onClose}
+      />
+
+      {/* 弹窗内容 */}
+      <div
+        className="relative w-full max-w-2xl max-h-[85vh] overflow-hidden rounded-xl animate-rise"
+        style={{
+          backgroundColor: 'var(--card)',
+          boxShadow: 'var(--shadow-xl)',
+        }}
+      >
+        {/* 标题栏 */}
+        <div
+          className="px-6 py-4 flex items-center justify-between"
+          style={{
+            backgroundColor: 'var(--panel-strong)',
+            borderBottom: '1px solid var(--border)',
+          }}
+        >
+          <div className="flex items-center gap-4">
+            <span className={clsx(
+              'tool-pair-icon',
+              isSuccess ? 'success' : isError ? 'error' : isTimeout ? 'warning' : 'pending'
+            )}
+            style={{ width: '32px', height: '32px' }}
+            >
+              {isSuccess ? (
+                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
+                </svg>
+              ) : isError ? (
+                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              ) : isTimeout ? (
+                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v4m0 4h.01M12 3C7.029 3 3 7.029 3 12s4.029 9 9 9 9-4.029 9-9-4.029-9-9-9z" />
+                </svg>
+              ) : (
+                <svg className="w-4 h-4 animate-spin" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                </svg>
+              )}
+            </span>
+            <div>
+              <h2
+                className="text-lg font-semibold font-mono"
+                style={{ color: 'var(--text-strong)' }}
+              >
+                {toolCall.name}
+              </h2>
+              {toolCall.formatted_args && (
+                <p
+                  className="text-sm font-mono mt-1"
+                  style={{ color: 'var(--muted)' }}
+                >
+                  {toolCall.formatted_args}
+                </p>
+              )}
+            </div>
+          </div>
+
+          {/* 关闭按钮 */}
+          <button
+            onClick={onClose}
+            className="p-2 rounded-lg transition-colors"
+            style={{ color: 'var(--muted)' }}
+            onMouseEnter={(e) => {
+              e.currentTarget.style.backgroundColor = 'var(--bg-hover)';
+              e.currentTarget.style.color = 'var(--text)';
+            }}
+            onMouseLeave={(e) => {
+              e.currentTarget.style.backgroundColor = 'transparent';
+              e.currentTarget.style.color = 'var(--muted)';
+            }}
+          >
+            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+            </svg>
+          </button>
+        </div>
+
+        {/* 内容区域 */}
+        <div
+          className="px-6 py-5 overflow-y-auto"
+          style={{ maxHeight: '60vh' }}
+        >
+          {/* 工具参数 */}
+          {Object.keys(toolCall.arguments).length > 0 && (
+            <div className="mb-6">
+              <div
+                className="flex items-center gap-2 mb-3"
+                style={{ color: 'var(--text-strong)' }}
+              >
+                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2" />
+                </svg>
+                <span className="text-sm font-semibold">{t('chatUi.toolResult.arguments')}</span>
+              </div>
+              <pre
+                className="p-4 rounded-lg overflow-x-auto"
+                style={{
+                  fontFamily: 'var(--mono)',
+                  fontSize: 'var(--font-size-sm)',
+                  lineHeight: '1.5',
+                  backgroundColor: 'var(--bg-elevated)',
+                  border: '1px solid var(--border)',
+                  color: 'var(--text)',
+                }}
+              >
+                {formatToolArguments(toolCall.arguments)}
+              </pre>
+            </div>
+          )}
+
+          {/* 工具结果 */}
+          {result && (
+            <div>
+              <div
+                className="flex items-center gap-2 mb-3"
+                style={{ color: result.success ? 'var(--ok)' : 'var(--danger)' }}
+              >
+                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+                </svg>
+                <span className="text-sm font-semibold">
+                  {t('chatUi.toolResult.result')}
+                  {!result.success && (
+                    <span
+                      className="ml-2 px-2 py-0.5 rounded text-xs font-medium"
+                      style={{
+                        backgroundColor: 'var(--danger-subtle)',
+                        color: 'var(--danger)',
+                      }}
+                    >
+                      {t('chatUi.toolResult.failed')}
+                    </span>
+                  )}
+                </span>
+              </div>
+              <pre
+                className="p-4 rounded-lg overflow-x-auto"
+                style={{
+                  fontFamily: 'var(--mono)',
+                  fontSize: 'var(--font-size-sm)',
+                  lineHeight: '1.5',
+                  backgroundColor: 'var(--bg-elevated)',
+                  border: '1px solid var(--border)',
+                  color: result.success ? 'var(--text)' : 'var(--danger)',
+                }}
+              >
+                {formatToolResult(result.result)}
+              </pre>
+            </div>
+          )}
+
+          {/* 超时状态 */}
+          {!result && isTimeout && (
+            <div
+              className="flex items-center gap-3 p-4 rounded-lg"
+              style={{
+                backgroundColor: 'var(--warn-subtle)',
+                border: '1px solid var(--warn)',
+                color: 'var(--warn)',
+              }}
+            >
+              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+              </svg>
+              <span className="font-medium">{t('chatUi.toolResult.timeout')}</span>
+            </div>
+          )}
+
+          {/* 等待状态 */}
+          {!result && !isTimeout && (
+            <div
+              className="flex items-center gap-3 p-4 rounded-lg"
+              style={{
+                backgroundColor: 'var(--accent-subtle)',
+                border: '1px solid var(--accent)',
+                color: 'var(--accent)',
+              }}
+            >
+              <svg className="w-5 h-5 animate-spin" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+              </svg>
+              <span className="font-medium">{t('chatUi.toolResult.running')}</span>
+            </div>
+          )}
+        </div>
+
+        {/* 底部状态栏 */}
+        {result && (
+          <div
+            className="px-6 py-3 flex items-center justify-between"
+            style={{
+              backgroundColor: 'var(--panel-strong)',
+              borderTop: '1px solid var(--border)',
+            }}
+          >
+            <span
+              className="text-sm"
+              style={{ color: 'var(--muted)' }}
+            >
+              {result.summary || (result.success ? t('chatUi.toolResult.success') : t('chatUi.toolResult.failed'))}
+            </span>
+            <span
+              className={clsx(
+                'px-3 py-1 rounded-full text-sm font-medium',
+                result.success ? 'success' : 'error'
+              )}
+              style={{
+                backgroundColor: result.success ? 'var(--ok-subtle)' : 'var(--danger-subtle)',
+                color: result.success ? 'var(--ok)' : 'var(--danger)',
+              }}
+            >
+              {result.success ? t('chatUi.toolResult.success') : t('chatUi.toolResult.failed')}
+            </span>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 export function ToolExecutionItem({ execution }: { execution: ToolExecution }) {
   const { t } = useTranslation();
-  const [isExpanded, setIsExpanded] = useState(false);
+  const [showModal, setShowModal] = useState(false);
   const { toolCall, result, status } = execution;
   const subtitle = toolCall.formatted_args || '';
   const hasResult = !!result;
@@ -33,80 +292,68 @@ export function ToolExecutionItem({ execution }: { execution: ToolExecution }) {
     : '';
 
   return (
-    <div
-      className="tool-pair-item animate-rise"
-      data-testid={`tool-execution-${toolCall.id}`}
-      data-tool-name={toolCall.name}
-      data-tool-status={status}
-    >
-      <div className="tool-pair-header" onClick={() => setIsExpanded(!isExpanded)}>
-        <span className={clsx(
-          'tool-pair-icon',
-          isSuccess ? 'success' : isError ? 'error' : isTimeout ? 'warning' : 'pending'
-        )}>
-          {isSuccess ? (
-            <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2}>
-              <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
-            </svg>
-          ) : isError ? (
-            <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2}>
-              <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
-            </svg>
-          ) : isTimeout ? (
-            <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2}>
-              <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v4m0 4h.01M12 3C7.029 3 3 7.029 3 12s4.029 9 9 9 9-4.029 9-9-4.029-9-9-9z" />
-            </svg>
-          ) : (
-            <svg className="w-3 h-3 animate-spin" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2}>
-              <path strokeLinecap="round" strokeLinejoin="round" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
-            </svg>
-          )}
-        </span>
-
-        {toolCall.name === 'session' ? (
-          <span className="tool-pair-name">{subtitle || t('chatUi.toolGroup.sessionCompleted')}</span>
-        ) : (
-          <>
-            <span className="tool-pair-name">{toolCall.name}</span>
-            {subtitle && <span className="tool-pair-summary">{subtitle}</span>}
-          </>
-        )}
-
-        {hasResult && (
+    <>
+      <div
+        className="tool-pair-item animate-rise"
+        data-testid={`tool-execution-${toolCall.id}`}
+        data-tool-name={toolCall.name}
+        data-tool-status={status}
+      >
+        <div className="tool-pair-header" onClick={() => setShowModal(true)}>
           <span className={clsx(
-            'tool-pair-result-badge',
-            result.success ? 'success' : 'error'
+            'tool-pair-icon',
+            isSuccess ? 'success' : isError ? 'error' : isTimeout ? 'warning' : 'pending'
           )}>
-            {resultSummary}
+            {isSuccess ? (
+              <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
+              </svg>
+            ) : isError ? (
+              <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+              </svg>
+            ) : isTimeout ? (
+              <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v4m0 4h.01M12 3C7.029 3 3 7.029 3 12s4.029 9 9 9 9-4.029 9-9-4.029-9-9-9z" />
+              </svg>
+            ) : (
+              <svg className="w-3 h-3 animate-spin" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+              </svg>
+            )}
           </span>
-        )}
-        {!hasResult && isTimeout && (
-          <span className="tool-pair-result-badge warning">
-            {t('chatUi.toolResult.timeout')}
-          </span>
-        )}
-        <span className="tool-pair-toggle">{isExpanded ? '▼' : '▶'}</span>
+
+          {toolCall.name === 'session' ? (
+            <span className="tool-pair-name">{subtitle || t('chatUi.toolGroup.sessionCompleted')}</span>
+          ) : (
+            <>
+              <span className="tool-pair-name">{toolCall.name}</span>
+              {subtitle && <span className="tool-pair-summary">{subtitle}</span>}
+            </>
+          )}
+
+          {hasResult && (
+            <span className={clsx(
+              'tool-pair-result-badge',
+              result.success ? 'success' : 'error'
+            )}>
+              {resultSummary}
+            </span>
+          )}
+          {!hasResult && isTimeout && (
+            <span className="tool-pair-result-badge warning">
+              {t('chatUi.toolResult.timeout')}
+            </span>
+          )}
+          <span className="tool-pair-toggle">▶</span>
+        </div>
       </div>
 
-      {isExpanded && (
-        <div className="tool-pair-detail">
-          {Object.keys(toolCall.arguments).length > 0 && (
-            <div className="tool-pair-section">
-              <div className="tool-pair-section-label">{t('chatUi.toolResult.arguments')}</div>
-              <pre className="tool-pair-pre">{formatToolArguments(toolCall.arguments)}</pre>
-            </div>
-          )}
-          {result && (
-            <div className="tool-pair-section">
-              <div className="tool-pair-section-label">{t('chatUi.toolResult.result')}</div>
-              <pre className={clsx('tool-pair-pre', !result.success && 'error')}>
-                {formatToolResult(result.result, 1000)}
-              </pre>
-            </div>
-          )}
-        </div>
+      {/* 弹窗 */}
+      {showModal && (
+        <ToolDetailModal execution={execution} onClose={() => setShowModal(false)} />
       )}
-    </div>
+    </>
   );
 }
 

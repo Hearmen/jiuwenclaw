@@ -783,6 +783,7 @@
       "success": "完成",
       "failed": "失败",
       "timeout": "执行超时",
+      "running": "执行中...",
       "arguments": "参数",
       "result": "结果",
       "truncated": "结果已截断"
