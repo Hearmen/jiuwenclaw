@@ -30,7 +30,6 @@ class ModeSubcommand(str, Enum):
     """`/mode` 支持的子命令。"""
 
     PLAN = "plan"
-    AGENT = "agent"
     FAST = "fast"
     TEAM = "team"
 
@@ -61,7 +60,7 @@ class ParsedChannelControl:
 
     action: ParsedControlAction
     mode_subcommand: str | None = None
-    """mode_ok 时为 plan|agent|fast|team 之一。"""
+    """mode_ok 时为 plan|fast|team 之一。"""
 
 
 def parse_channel_control_text(text: str) -> ParsedChannelControl:
@@ -141,7 +140,7 @@ FIRST_BATCH_REGISTRY: tuple[SlashCommandEntry, ...] = (
     ),
     SlashCommandEntry(
         id="mode",
-        canonical_text=f"{GatewaySlashCommand.MODE.value} plan|agent|fast|team",
+        canonical_text=f"{GatewaySlashCommand.MODE.value} plan|fast|team",
         scope="gateway",
         req_method=None,
         notes="受控通道切换 ChannelMode；写入 params.mode。",

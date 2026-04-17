@@ -35,7 +35,7 @@ parse_channel_control_text = _MOD.parse_channel_control_text
         ("/new_session", ParsedControlAction.NEW_SESSION_OK, None),
         ("/new_session x", ParsedControlAction.NEW_SESSION_BAD, None),
         ("/mode plan", ParsedControlAction.MODE_OK, "plan"),
-        ("/mode agent", ParsedControlAction.MODE_OK, "agent"),
+        ("/mode agent", ParsedControlAction.MODE_BAD, None),
         ("/mode fast", ParsedControlAction.MODE_OK, "fast"),
         ("/mode team", ParsedControlAction.MODE_OK, "team"),
         ("/mode claw", ParsedControlAction.MODE_BAD, None),

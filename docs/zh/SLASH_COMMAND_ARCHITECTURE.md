@@ -39,7 +39,7 @@
 
 **定义**：到达 Gateway 用户消息中，由 `MessageHandler`（或其后继统一入口）识别后，**可能只改会话/模式/路由，而不进入 Agent 对话**的指令。
 
-**典型**：`/new_session`、受控通道上的 `/mode plan|agent|fast|team`（以当前实现为准）。
+**典型**：`/new_session`、受控通道上的 `/mode plan|fast|team`（以当前实现为准）。
 
 **要求**：
 
@@ -63,7 +63,7 @@
 
 **要求**：
 
-- 在 SSOT 或文档矩阵中增加 **`canonical_name` + `cli_alias`** 等字段，避免「CLI 叫 `/fast`、IM 只认 `/mode agent`」时无据可查。
+- 在 SSOT 或文档矩阵中增加 **`canonical_name` + `cli_alias`** 等字段，避免「CLI 与 IM 斜杠写法不一致」时无据可查。
 - Gateway **不必**理解 CLI 别名；若未来需要服务端识别，应显式列为新需求并扩展协议，而非隐式复用用户输入字符串。
 
 ---

@@ -3,7 +3,7 @@
 JiuwenClaw supports **special prefix commands** to control sessions and modes. Common ones:
 
 - `/new_session`: start a new `session_id` for the current channel
-- `/mode plan` or `/mode agent`: switch the channel’s working mode
+- `/mode plan`, `/mode fast`, or `/mode team`: switch the channel’s working mode
 
 These are handled in the Gateway **`MessageHandler`** and **are not** sent to the agent.
 
@@ -41,13 +41,14 @@ The Gateway will:
 
 ---
 
-### 2. `/mode` — channel mode (`plan` / `agent`)
+### 2. `/mode` — channel mode (`plan` / `fast` / `team`)
 
 **Behavior**
 
 - Sets a logical **mode** for the channel:
   - `plan`: planning, explanation, decomposition (default)
-  - `agent`: more hands-on execution
+  - `fast`: more hands-on execution (same internal semantics as the historical `agent` mode)
+  - `team`: team mode
 - Mode is passed in `params["mode"]` for prompt construction.
 
 **Usage**
@@ -59,14 +60,14 @@ The Gateway will:
   or
 
   ```text
-  /mode agent
+  /mode fast
   ```
 
 The Gateway will:
 
   1. Treat as control, not forward to the agent
   2. Update `ChannelControlState.mode`
-  3. Reply e.g. `mode updated to agent`
+  3. Reply e.g. `mode updated to fast`
 
 **Scope**
 
