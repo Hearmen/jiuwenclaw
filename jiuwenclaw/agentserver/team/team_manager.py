@@ -54,14 +54,13 @@ class TeamManager:
         def customizer(agent: DeepAgent) -> None:
             """Customizer 回调：注入 Claw 能力."""
             rail_manager = get_rail_manager()
-            
-            # 遍历已注册的 rail 扩展名称，重新加载实例
+
+            # 为每个 team 子 agent 创建独立的 rail 实例，避免多 agent 共享同一实例
             for rail_name in rail_manager.get_registered_rail_names():
                 try:
-                    # 重新加载 rail 实例，确保每个 agent 有独立的实例
-                    rail_instance = rail_manager.load_rail_instance_without_enabled_check(rail_name)
+                    rail_instance = rail_manager.create_fresh_rail_instance(rail_name)
                     agent.add_rail(rail_instance)
-                    logger.debug("[TeamManager] Added rail instance for %s: %s", rail_name, rail_instance)
+                    logger.debug("[TeamManager] Added fresh rail instance for %s: %s", rail_name, rail_instance)
                 except Exception as exc:
                     logger.warning("[TeamManager] add rail %s failed: %s", rail_name, exc)
 

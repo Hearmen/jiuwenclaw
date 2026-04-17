@@ -451,16 +451,10 @@ class RailManager:
 
         return self._load_rail_instance_impl(name)
 
-    def _load_rail_instance_impl(self, name: str) -> Any:
-        """加载 rail 实例的实现（缓存机制，确保同一个 rail 只实例化一次）."""
-        # 如果已缓存，直接返回缓存的实例
-        if name in self._rail_instances:
-            logger.debug("[RailManager] 返回缓存的 Rail 实例: %s", name)
-            return self._rail_instances[name]
-
+    def _load_rail_class(self, name: str) -> type:
+        """加载 Rail 类（不实例化，不缓存）."""
         extension = self._extensions[name]
 
-        # 查找 rail.py 文件在扩展文件夹中
         folder_path = self._extensions_dir / name
         plugin_file = folder_path / "rail.py"
         if not plugin_file.exists():
@@ -504,10 +498,7 @@ class RailManager:
             if rail_class is None:
                 raise ValueError(f"模块中未找到类: {extension.class_name}")
 
-            rail_instance = rail_class()
-            self._rail_instances[name] = rail_instance
-            logger.info("[RailManager] 加载并缓存 Rail 实例成功: %s", name)
-            return rail_instance
+            return rail_class
         except ImportError as e:
             if "attempted relative import with no known parent package" in str(e):
                 raise ValueError(
@@ -516,8 +507,41 @@ class RailManager:
                 ) from e
             raise
         except Exception as e:
-            logger.error("[RailManager] 加载 Rail 实例失败: %s, 错误: %s", name, e)
+            logger.error("[RailManager] 加载 Rail 类失败: %s, 错误: %s", name, e)
             raise
+
+    def _load_rail_instance_impl(self, name: str) -> Any:
+        """加载 rail 实例的实现（缓存机制，确保主 agent 的 rail 只实例化一次）."""
+        if name in self._rail_instances:
+            logger.debug("[RailManager] 返回缓存的 Rail 实例: %s", name)
+            return self._rail_instances[name]
+
+        rail_class = self._load_rail_class(name)
+        rail_instance = rail_class()
+        self._rail_instances[name] = rail_instance
+        logger.info("[RailManager] 加载并缓存 Rail 实例成功: %s", name)
+        return rail_instance
+
+    def create_fresh_rail_instance(self, name: str) -> Any:
+        """为 team 子 agent 创建独立的 rail 实例（不使用缓存，每次返回新实例）.
+
+        Args:
+            name: 扩展名称
+
+        Returns:
+            新的 Rail 实例
+
+        Raises:
+            ValueError: 扩展不存在
+            Exception: 加载失败
+        """
+        if name not in self._extensions:
+            raise ValueError(f"扩展 '{name}' 不存在")
+
+        rail_class = self._load_rail_class(name)
+        rail_instance = rail_class()
+        logger.debug("[RailManager] 创建新 Rail 实例（team 专用）: %s -> %s", name, rail_instance)
+        return rail_instance
 
 
 def get_rail_manager() -> RailManager:
