@@ -120,7 +120,7 @@ export function ToolPanel() {
     >
       <div className="h-full bg-panel flex flex-col overflow-hidden">
         {/* 任务事件日志 */}
-        {mode === 'agentteam' ? (
+        {mode === 'team' ? (
           <div className="flex-1 overflow-y-auto mb-4">
             <div className="bg-card rounded-lg border border-border overflow-hidden h-full">
               <TeamTaskEvents events={teamTaskEvents} />
@@ -136,7 +136,7 @@ export function ToolPanel() {
         )}
 
         {/* 团队区域 */}
-        {mode === 'agentteam' && (
+        {mode === 'team' && (
           <div className="flex-1 overflow-y-auto">
             <div className="bg-card rounded-lg border border-border overflow-hidden h-full">
               <TeamArea 

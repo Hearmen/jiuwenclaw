@@ -65,7 +65,7 @@ class AgentWebSocketServerHarness(agent_ws_server_module.AgentWebSocketServer):
 
 class DeepAdapterHarness(interface_deep_module.JiuWenClawDeepAdapter):
     def build_context_engineering_rail_for_test(self, config):
-        return _build_context_engineering_rail(config, "plan")
+        return _build_context_engineering_rail(config, "agent.plan")
 
 
 def fake_encode_agent_response_for_wire(resp, response_id):

@@ -158,7 +158,7 @@ class _CronToolsCronBackend(CronToolBackend):
             params={
                 "query": text,
                 "content": text,
-                "mode": (mode or context.mode or "agent"),
+                "mode": (mode or context.mode or "agent.fast"),
             },
             timestamp=time.time(),
             ok=True,
@@ -309,12 +309,12 @@ def _extract_legacy_params(
         mode_resolved = (
             context_mode
             or data.get("mode")
-            or "agent"
+            or "agent.fast"
         )
         out["mode"] = (
             str(mode_resolved).strip().lower()
             if isinstance(mode_resolved, str) and str(mode_resolved).strip()
-            else "agent"
+            else "agent.fast"
         )
         return out
 

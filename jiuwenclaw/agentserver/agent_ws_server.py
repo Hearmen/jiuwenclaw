@@ -422,7 +422,8 @@ class AgentWebSocketServer:
             await self._handle_acp_tool_response(ws, request, send_lock)
             return
 
-        agent = await self._agent_manager.get_agent(channel_id=channel_id)
+        mode = request.params.get("mode", "agent.plan").split(".")[0]
+        agent = await self._agent_manager.get_agent(channel_id=channel_id, mode=mode)
         if agent is None:
             raise ValueError("Failed to get agent")
 
@@ -441,8 +442,8 @@ class AgentWebSocketServer:
         from jiuwenclaw.schema.message import ReqMethod
 
         channel_id = request.channel_id or "default"
-
-        agent = await self._agent_manager.get_agent(channel_id=channel_id)
+        mode = request.params.get("mode", "agent.plan").split(".")[0]
+        agent = await self._agent_manager.get_agent(channel_id=channel_id, mode=mode)
         if agent is None:
             raise ValueError("Failed to get agent")
 

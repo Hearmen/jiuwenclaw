@@ -81,9 +81,11 @@ interface UseWebSocketReturn {
 }
 
 function normalizeAgentMode(rawMode: unknown): AgentMode {
-  if (typeof rawMode !== 'string') return 'plan';
+  if (typeof rawMode !== 'string') return 'agent.plan';
   const normalized = rawMode.trim().toLowerCase();
-  return normalized === 'agent' ? 'agent' : normalized === 'agentteam' ? 'agentteam' : 'plan';
+  if (normalized === 'agent.fast') return 'agent.fast';
+  if (normalized === 'team') return 'team';
+  return 'agent.plan';
 }
 
 const EVENT_DEDUP_WINDOW_MS = 1500;
@@ -275,12 +277,11 @@ export function useWebSocket(options: UseWebSocketOptions): UseWebSocketReturn {
       
       // 正常调用接口
       const currentMode = useSessionStore.getState().mode;
-      const sendMode = currentMode === 'agentteam' ? 'team' : currentMode;
       try {
         await request('chat.send', {
           session_id: sessionId,
           content,
-          mode: sendMode,
+          mode: currentMode,
         });
       } catch (error) {
         const webError = error as WebError;
@@ -502,7 +503,7 @@ export function useWebSocket(options: UseWebSocketOptions): UseWebSocketReturn {
         const content = typeof payload.content === 'string' ? payload.content : '';
         
         // team 模式下，累积 chat.delta 内容
-        if (currentMode === 'agentteam' && content) {
+        if (currentMode === 'team' && content) {
           setThinking(false);
           
           const { messages } = useChatStore.getState();
@@ -554,7 +555,7 @@ export function useWebSocket(options: UseWebSocketOptions): UseWebSocketReturn {
         const content = normalizeFinalContent(payload);
         
         // team 模式下，将 chat.final 作为 team_leader 消息处理
-        if (currentMode === 'agentteam' && content) {
+        if (currentMode === 'team' && content) {
           setThinking(false);
           
           const { messages } = useChatStore.getState();
@@ -759,7 +760,7 @@ export function useWebSocket(options: UseWebSocketOptions): UseWebSocketReturn {
           // 检查是否有等待的任务队列
           const currentMode = useSessionStore.getState().mode;
           const { taskQueue } = useChatStore.getState();
-          if (currentMode === 'agent' && taskQueue.length > 0) {
+          if (currentMode === 'agent.fast' && taskQueue.length > 0) {
             // 智能执行模式下，自动处理队列中的下一个任务
             const nextTask = taskQueue[0];
             if (nextTask && activeSessionIdRef.current && sendMessageRef.current) {

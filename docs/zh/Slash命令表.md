@@ -16,8 +16,7 @@
 | `/exit` | 退出 |
 | `/help` | 查看可用命令 |
 | `/theme` | 切换主题 |
-| `/team` | 切换 Agent Team 模式（计划更名为 `/mode team`） |
-| `/mode` | 切换当前模式（**仅 IM 通道生效**） |
+| `/mode` | 切换当前模式（支持一级入口与直达值；**仅 IM 通道生效**） |
 | `/config` | 修改配置（当前为 TUI 本地实现；规划改为走 Gateway 统一接口） |
 
 ---
@@ -32,7 +31,26 @@
 | `/plan` | 切换规划子模式 |
 | `/resume` | 见下方子用法 |
 | `/new_session` | 创建新会话（**仅 IM 生效**） |
+| `/mode` | 受控通道模式切换（支持一级与直达写法） |
+| `/switch` | 在当前模式族内切换二级模式 |
 | `/skills` | 见下方「技能」说明 |
+
+**`/mode` 与 `/switch`（受控通道）**
+
+- 一级入口：
+  - `/mode agent` -> `agent.plan`
+  - `/mode code` -> `code.normal`
+  - `/mode team` -> `team`
+- 已移除独立 `/team` 命令，请统一使用 `/mode team`。
+- 直达写法（今日已支持）：
+  - `/mode agent.plan` -> `agent.plan`
+  - `/mode agent.fast` -> `agent.fast`
+  - `/mode code.plan` -> `code.plan`
+  - `/mode code.normal` -> `code.normal`
+- 二级切换（按当前模式族）：
+  - agent 族：`/switch plan` <-> `agent.plan`，`/switch fast` <-> `agent.fast`
+  - code 族：`/switch plan` <-> `code.plan`，`/switch normal` <-> `code.normal`
+- 非法组合（例如 `code.*` 下 `/switch fast`）返回：`非法指令`
 
 **`/resume`**
 

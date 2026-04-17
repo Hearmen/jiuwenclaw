@@ -208,7 +208,7 @@ def _deep_agent_context_engine_config(react_cfg: dict[str, Any] | None) -> Conte
 
 
 def _build_context_engineering_rail(config: dict[str, Any],
-                                    mode: str = "agent") -> ContextEngineeringRail | None:
+                                    mode: str = "agent.fast") -> ContextEngineeringRail | None:
     """Build ContextEngineeringRail with user config merged into presets.
 
     用户提供的 processor 配置（dict 格式）会与预置配置做字段级别合并，
@@ -216,10 +216,10 @@ def _build_context_engineering_rail(config: dict[str, Any],
 
     Args:
         config: 配置字典
-        mode: 模式，plan 模式使用 preset=True 和 processors，其他模式使用 preset=False 和 processors=None
+        mode: 模式，agent.plan 模式使用 preset=True 和 processors，其他模式使用 preset=False 和 processors=None
     """
     try:
-        if mode == "plan":
+        if mode == "agent.plan":
             user_processors: List[Tuple[str, dict]] = []
             context_engine_cfg = config.get("context_engine_config", {})
 
@@ -244,7 +244,7 @@ def _build_context_engineering_rail(config: dict[str, Any],
                 preset=True,
             )
             logger.info(
-                "[JiuWenClawDeepAdapter] JiuClawContextEngineeringRail create success for plan mode, "
+                "[JiuWenClawDeepAdapter] JiuClawContextEngineeringRail create success for agent.plan mode, "
                 "user_processors=%s",
                 [p[0] for p in user_processors] if user_processors else "none"
             )
@@ -1095,7 +1095,7 @@ class JiuWenClawDeepAdapter:
         return rail
 
     def _build_agent_rails(self, config: dict[str, Any], config_base: dict[str, Any], *, 
-                           mode: str = "claw") -> list[Any]:
+                           mode: str = "agent.plan") -> list[Any]:
         """Build DeepAgent rails consistently for cold start and hot reload."""
 
         @dataclass
@@ -1185,7 +1185,7 @@ class JiuWenClawDeepAdapter:
             model=model,
             card=agent_card,
             system_prompt=build_identity_prompt(
-                mode="agent",
+                mode="agent.fast",
                 language=self._resolve_prompt_language(),
                 channel=(
                     "acp" if self._is_acp_tool_profile(self._instance_overrides)
@@ -1397,7 +1397,7 @@ class JiuWenClawDeepAdapter:
         """Backward-compatible no-op hook for tests and legacy call sites."""
         return None
 
-    async def create_instance(self, config: dict[str, Any] | None = None, *, mode: str = "claw") -> None:
+    async def create_instance(self, config: dict[str, Any] | None = None, *, mode: str = "agent.plan") -> None:
         """初始化 DeepAgent 实例.
 
         Args:
@@ -1441,7 +1441,7 @@ class JiuWenClawDeepAdapter:
             model=model,
             card=agent_card,
             system_prompt=build_identity_prompt(
-                mode="agent",
+                mode="agent.fast",
                 language=self._resolve_prompt_language(),
                 channel=(
                     "acp" if self._is_acp_tool_profile(self._instance_overrides)
@@ -1603,7 +1603,7 @@ class JiuWenClawDeepAdapter:
 
     async def _update_rails_for_mode(self, mode: str) -> None:
         """按 mode 注册或卸载 rails。"""
-        if mode == "plan":
+        if mode == "agent.plan":
             await self._update_plan_mode_rails()
         else:
             await self._update_agent_mode_rails()
@@ -1620,18 +1620,18 @@ class JiuWenClawDeepAdapter:
             if getattr(existing, "name", "").startswith(("session_new", "session_cancel", "session_list")):
                 self._instance.ability_manager.remove(existing.name)
         # plan 模式，根据config选择是否注册或者卸载memory rail
-        await self._handle_memory_rail_by_config("plan")
+        await self._handle_memory_rail_by_config("agent.plan")
         # 恢复上下文 rail（仅配置启用时）
         if self._config_cache.get("context_engine_config", {}).get("enabled", False):
-            if self._context_engineering_rail is not None and self._context_engineering_rail_mode != "plan":
+            if self._context_engineering_rail is not None and self._context_engineering_rail_mode != "agent.plan":
                 await self._instance.unregister_rail(self._context_engineering_rail)
                 self._context_engineering_rail = None
                 self._context_engineering_rail_mode = None
             if self._context_engineering_rail is None:
                 self._context_engineering_rail = _build_context_engineering_rail(
-                    self._config_cache, mode="plan")
+                    self._config_cache, mode="agent.plan")
                 if self._context_engineering_rail is not None:
-                    self._context_engineering_rail_mode = "plan"
+                    self._context_engineering_rail_mode = "agent.plan"
                     await self._instance.register_rail(self._context_engineering_rail)
         elif self._context_engineering_rail is not None:
             await self._instance.unregister_rail(self._context_engineering_rail)
@@ -1667,15 +1667,15 @@ class JiuWenClawDeepAdapter:
         await self._handle_memory_rail_by_config("fast")
         # agent/智能模式：恢复上下文 rail（仅配置启用时）
         if self._config_cache.get("context_engine_config", {}).get("enabled", False):
-            if self._context_engineering_rail is not None and self._context_engineering_rail_mode == "plan":
+            if self._context_engineering_rail is not None and self._context_engineering_rail_mode == "agent.plan":
                 await self._instance.unregister_rail(self._context_engineering_rail)
                 self._context_engineering_rail = None
                 self._context_engineering_rail_mode = None
             if self._context_engineering_rail is None:
                 self._context_engineering_rail = _build_context_engineering_rail(
-                    self._config_cache, mode="agent")
+                    self._config_cache, mode="agent.fast")
                 if self._context_engineering_rail is not None:
-                    self._context_engineering_rail_mode = "agent"
+                    self._context_engineering_rail_mode = "agent.fast"
                     await self._instance.register_rail(self._context_engineering_rail)
 
     @staticmethod
@@ -1718,7 +1718,7 @@ class JiuWenClawDeepAdapter:
 
     async def _update_tools_for_mode(self, mode: str, session_id: str | None, request_id: str | None) -> None:
         """按 mode 注册或卸载 multi-session 工具。"""
-        if mode != "agent":
+        if mode != "agent.fast":
             return
         if not (request_id and session_id and self._model_client_config is not None):
             return
@@ -1864,7 +1864,7 @@ class JiuWenClawDeepAdapter:
     async def _update_runtime_config(
             self,
             session_id: str | None,
-            mode: str = "plan",
+            mode: str = "agent.plan",
             request_id: str | None = None,
             channel_id: str | None = None,
             request_metadata: dict[str, Any] | None = None,
@@ -2352,7 +2352,7 @@ class JiuWenClawDeepAdapter:
 
         Returns None when the rail is (or becomes) available, or an error message string.
         """
-        if mode != "plan":
+        if mode != "agent.plan":
             return "agent 模式下演进功能不可用。"
         if not self._config_cache.get("evolution", {}).get("enabled", False):
             return "演进功能未启用。"
@@ -2363,7 +2363,7 @@ class JiuWenClawDeepAdapter:
         return None
 
     async def _handle_slash_command(
-            self, query: str, session_id: str = "default", mode: str = "plan",
+            self, query: str, session_id: str = "default", mode: str = "agent.plan",
     ) -> dict[str, Any] | None:
         """Intercept /evolve and /solidify before agent invocation.
 
@@ -2473,7 +2473,7 @@ class JiuWenClawDeepAdapter:
 
         session_id = request.session_id or "default"
         query = request.params.get("query", "")
-        mode = request.params.get("mode", "plan")
+        mode = request.params.get("mode", "agent.plan")
 
         slash_result = await self._handle_slash_command(query, session_id, mode)
         if slash_result is not None:
@@ -2559,7 +2559,7 @@ class JiuWenClawDeepAdapter:
         rid = request.request_id
         cid = request.channel_id
         query = request.params.get("query", "")
-        mode = request.params.get("mode", "plan")
+        mode = request.params.get("mode", "agent.plan")
 
         # Team 模式处理
         if mode == "team":
@@ -2692,7 +2692,7 @@ class JiuWenClawDeepAdapter:
                     if (
                             not evolution_status_started
                             and self._skill_evolution_rail is not None
-                            and request.params.get("mode", "plan") == "plan"
+                            and request.params.get("mode", "agent.plan") == "agent.plan"
                     ):
                         # Mark evolution phase start before after_invoke auto-evolution runs.
                         yield AgentResponseChunk(

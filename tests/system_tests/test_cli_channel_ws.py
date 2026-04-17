@@ -152,7 +152,7 @@ async def test_cli_route_system_roundtrip(temp_home: Path, monkeypatch: pytest.M
                 "params": {
                     "session_id": "sess_test",
                     "content": "hello cli",
-                    "mode": "plan",
+                    "mode": "agent.plan",
                 },
             }
             await ws.send(json.dumps(req_chat, ensure_ascii=False))

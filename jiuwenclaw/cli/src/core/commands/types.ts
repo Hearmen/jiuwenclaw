@@ -20,7 +20,10 @@ export interface CommandContext {
     method: string,
     params: Record<string, unknown>,
   ) => Promise<T>;
-  sendMessage: (content: string, mode?: "plan" | "agent" | "team") => string | null;
+  sendMessage: (
+    content: string,
+    mode?: "agent.plan" | "agent.fast" | "code.plan" | "code.normal" | "team",
+  ) => string | null;
   sessionId: string;
   entries: HistoryItem[];
   themeName: ThemeName;
@@ -32,8 +35,8 @@ export interface CommandContext {
   exitApp: () => void;
   isProcessing: boolean;
   connectionStatus: ConnectionStatus;
-  mode: "plan" | "agent" | "team";
-  setMode: (mode: "plan" | "agent" | "team") => void;
+  mode: "agent.plan" | "agent.fast" | "code.plan" | "code.normal" | "team";
+  setMode: (mode: "agent.plan" | "agent.fast" | "code.plan" | "code.normal" | "team") => void;
   setThemeName: (theme: ThemeName) => void;
   setAccentColor: (color: AccentColorName) => void;
   transcriptMode: "compact" | "detailed";

@@ -11,11 +11,12 @@ import { createExitCommand } from "./builtins/exit.js";
 import { createHelpCommand } from "./builtins/help.js";
 import { createHotkeyCommand } from "./builtins/hotkey.js";
 import { createModelCommand } from "./builtins/model.js";
+import { createModeCommand } from "./builtins/mode.js";
 import { createPlanCommand } from "./builtins/plan.js";
 import { createResumeCommand } from "./builtins/resume.js";
 import { createSessionCommand } from "./builtins/session.js";
 import { createSkillsCommand } from "./builtins/skills.js";
-import { createTeamCommand } from "./builtins/team.js";
+import { createSwitchCommand } from "./builtins/switch.js";
 import { createThemeCommand } from "./builtins/theme.js";
 
 export function createBuiltinCommands(): SlashCommand[] {
@@ -30,11 +31,12 @@ export function createBuiltinCommands(): SlashCommand[] {
     createDiffCommand(),
     createExitCommand(),
     createModelCommand(),
+    createModeCommand(),
+    createSwitchCommand(),
     createPlanCommand(),
     createResumeCommand(),
     createSessionCommand(),
     createSkillsCommand(),
-    createTeamCommand(),
     createThemeCommand(),
     createHotkeyCommand(),
   ];

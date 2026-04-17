@@ -305,13 +305,13 @@ async def test_live_capture_system_prompt(prompt_capture: PromptCapture):
     """Live-capture the full system prompt for explicit auto_list mode."""
     result, first_system_prompt = await _run_live_capture(
         prompt_capture,
-        mode="plan",
+        mode="agent.plan",
         skill_mode="auto_list",
         output_stem="system_prompt_live_capture",
     )
 
     _assert_common_prompt_structure(first_system_prompt)
-    assert result["request"]["mode"] == "plan"
+    assert result["request"]["mode"] == "agent.plan"
     assert result["request"]["skill_mode"] == "auto_list"
     assert "- list_skill: 列出可用技能" in first_system_prompt
     assert "需要时先调用 list_skill 查看可用技能" in first_system_prompt
@@ -333,13 +333,13 @@ async def test_live_capture_system_prompt_skill_mode_all(prompt_capture: PromptC
     """Live-capture the full system prompt for explicit all mode."""
     result, first_system_prompt = await _run_live_capture(
         prompt_capture,
-        mode="plan",
+        mode="agent.plan",
         skill_mode="all",
         output_stem="system_prompt_live_capture_skill_mode_all",
     )
 
     _assert_common_prompt_structure(first_system_prompt)
-    assert result["request"]["mode"] == "plan"
+    assert result["request"]["mode"] == "agent.plan"
     assert result["request"]["skill_mode"] == "all"
     assert "- list_skill: 列出可用技能" not in first_system_prompt
     assert "需要时先调用 list_skill 查看可用技能" not in first_system_prompt

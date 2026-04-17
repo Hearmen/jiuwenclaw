@@ -985,7 +985,7 @@ function AppContent() {
                 </div>
 
                 {/* Status Bar - 只在非集群模式下显示 */}
-                {mode !== 'agentteam' && (
+                {mode !== 'team' && (
                   <StatusBar
                     onPause={handlePause}
                     onCancel={handleCancel}

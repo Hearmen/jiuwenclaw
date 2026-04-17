@@ -39,7 +39,7 @@
 
 **定义**：到达 Gateway 用户消息中，由 `MessageHandler`（或其后继统一入口）识别后，**可能只改会话/模式/路由，而不进入 Agent 对话**的指令。
 
-**典型**：`/new_session`、受控通道上的 `/mode plan|fast|team`（以当前实现为准）。
+**典型**：`/new_session`、受控通道上的 `/mode agent|code|team` 与 `/switch plan|fast|normal`，以及 `/mode agent.plan|agent.fast|code.plan|code.normal` 直达写法（以当前实现为准）。
 
 **要求**：
 
@@ -115,7 +115,7 @@
 
 ## 7. 测试与质量保障
 
-- 为 SSOT 提供**单元测试**：覆盖精确匹配、非法后缀、多行文本、各 `mode` 变体等与现网一致的行为。
+- 为 SSOT 提供**单元测试**：覆盖精确匹配、非法后缀、多行文本、`/mode` 一级入口与直达值、`/switch` 合法/非法组合等与现网一致的行为。
 - 回归时注意：**SessionMap 通道族**与普通受控通道在 `session_id` 行为上的差异仍由现有状态机负责，SSOT 只解决「字符串层」一致性与可维护性。
 
 ---

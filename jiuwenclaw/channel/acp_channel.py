@@ -934,7 +934,7 @@ class AcpChannel(BaseChannel):
         if msg.session_id:
             params.setdefault("session_id", msg.session_id)
         if msg.mode is not None:
-            params.setdefault("mode", msg.mode.value)
+            params.setdefault("mode", msg.mode.to_runtime_mode())
 
         req_method = getattr(msg.req_method, "value", None)
         if not isinstance(req_method, str) or not req_method:

@@ -527,9 +527,9 @@ team:
       connect_timeout: 300
 
 modes:
-  # 一级模式 claw / code
-  claw:
-    # claw 模式支持 性能/规划/集群
+  # 一级模式 agent / code / team
+  agent:
+    # agent 模式支持 性能/规划/集群
     fast:
       memory:
         enabled: true

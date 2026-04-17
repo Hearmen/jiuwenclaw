@@ -11,8 +11,8 @@ export function createPlanCommand(): SlashCommand {
     takesArgs: true,
     action: (ctx, args) => {
       const value = args.trim();
-      if (ctx.mode !== "plan") {
-        ctx.setMode("plan");
+      if (ctx.mode !== "agent.plan") {
+        ctx.setMode("agent.plan");
       }
 
       if (!value) {
@@ -31,7 +31,7 @@ export function createPlanCommand(): SlashCommand {
         return;
       }
 
-      const requestId = ctx.sendMessage(value, "plan");
+      const requestId = ctx.sendMessage(value, "agent.plan");
       if (!requestId) {
         ctx.addItem(
           addInfo(ctx.sessionId, "offline: waiting for reconnect before sending plan request", "p"),

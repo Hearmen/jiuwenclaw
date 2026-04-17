@@ -508,14 +508,7 @@ class WebChannel(BaseChannel):
 
     @staticmethod
     def _parse_mode(raw_mode: Any) -> Mode:
-        if isinstance(raw_mode, str):
-            normalized = raw_mode.strip().lower()
-            if normalized:
-                try:
-                    return Mode(normalized)
-                except ValueError:
-                    pass
-        return Mode.PLAN
+        return Mode.from_raw(raw_mode, default=Mode.AGENT_PLAN)
 
     @staticmethod
     def _make_session_id() -> str:

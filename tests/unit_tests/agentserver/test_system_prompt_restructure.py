@@ -26,7 +26,7 @@ class _TestableJiuWenClawDeepAdapter(JiuWenClawDeepAdapter):
 
 
 def test_build_identity_prompt_contains_identity_section_only():
-    prompt = build_identity_prompt(mode="agent", language="zh", channel="web")
+    prompt = build_identity_prompt(mode="agent.fast", language="zh", channel="web")
 
     assert "# 你的家" in prompt
     assert "# 消息说明" not in prompt

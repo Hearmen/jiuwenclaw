@@ -128,9 +128,31 @@ class EventType(Enum):
 
 
 class Mode(Enum):
-    AGENT = "agent"
-    PLAN = "plan"
+    AGENT_PLAN = "agent.plan"
+    AGENT_FAST = "agent.fast"
+    CODE_PLAN = "code.plan"
+    CODE_NORMAL = "code.normal"
     TEAM = "team"
+
+    @classmethod
+    def from_raw(cls, raw_mode: Any, default: "Mode | None" = None) -> "Mode":
+        """解析 mode，仅接受新值(agent.plan/agent.fast/code.plan/code.normal/team)。"""
+        fallback = default or cls.AGENT_PLAN
+        if isinstance(raw_mode, Mode):
+            return raw_mode
+        if not isinstance(raw_mode, str):
+            return fallback
+        normalized = raw_mode.strip().lower()
+        if not normalized:
+            return fallback
+        try:
+            return cls(normalized)
+        except ValueError:
+            return fallback
+
+    def to_runtime_mode(self) -> str:
+        """输出新 mode 值本身。"""
+        return self.value
 
 
 @dataclass
@@ -150,7 +172,7 @@ class Message:
     payload: dict | None = None
     req_method: ReqMethod | None = None
     event_type: EventType | None = None
-    mode: Mode = Mode.PLAN
+    mode: Mode = Mode.AGENT_PLAN
     is_stream: bool = False
     stream_seq: int | None = None
     stream_id: str | None = None

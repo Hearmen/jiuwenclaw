@@ -341,7 +341,7 @@ async def test_interface_deep_browser_subagent_task_tool_chain(
                 session_id="sess-browser-1",
                 params={
                     "query": "Use the browser agent to inspect https://example.com.",
-                    "mode": "agent",
+                    "mode": "agent.fast",
                 },
             )
             response = await adapter.process_message_impl(

@@ -48,7 +48,7 @@ export interface AppEventDelegate {
   getConnectionStatus(): ConnectionStatus;
   getSessionId(): string;
   setSessionId(sessionId: string): void;
-  setMode(mode: "plan" | "agent" | "team"): void;
+  setMode(mode: "agent.plan" | "agent.fast" | "code.plan" | "code.normal" | "team"): void;
   getEntries(): HistoryItem[];
   setEntries(entries: HistoryItem[]): void;
   setStreamingState(state: StreamingState): void;
@@ -666,8 +666,14 @@ export function handleIncomingFrame(delegate: AppEventDelegate, frame: EventFram
 
     case "session.updated": {
       const mode = typeof payload.mode === "string" ? payload.mode : "";
-      if (mode === "plan" || mode === "agent" || mode === "team") {
-        delegate.setMode(mode as "plan" | "agent" | "team");
+      if (
+        mode === "agent.plan" ||
+        mode === "agent.fast" ||
+        mode === "code.plan" ||
+        mode === "code.normal" ||
+        mode === "team"
+      ) {
+        delegate.setMode(mode as "agent.plan" | "agent.fast" | "code.plan" | "code.normal" | "team");
       }
       return true;
     }

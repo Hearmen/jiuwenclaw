@@ -57,11 +57,11 @@ class AgentManager:
     """
 
     def __init__(self) -> None:
-        self.agents: dict[str, "JiuWenClaw"] = {}
+        self.agents: dict[str, dict[str, "JiuWenClaw"]] = {}
         self._client_capabilities_by_channel: dict[str, dict[str, Any]] = {}
 
     async def _create_agent(
-        self, agent_key: str, config: dict[str, Any] | None = None
+        self, agent_key: str, mode: str = "agent", config: dict[str, Any] | None = None
     ) -> "JiuWenClaw":
         """创建 Agent 实例.
 
@@ -74,11 +74,10 @@ class AgentManager:
         """
         from jiuwenclaw.agentserver.interface import JiuWenClaw
 
-        mode = "code" if agent_key in ("acp", "tui") else "claw"
         logger.info("[AgentManager] Creating %s agent (mode=%s)", agent_key, mode)
         agent = JiuWenClaw()
         await agent.create_instance(config, mode=mode)
-        self.agents[agent_key] = agent
+        self.agents[agent_key] = {mode: agent}
         logger.info("[AgentManager] %s agent created", agent_key)
         return agent
 
@@ -112,7 +111,7 @@ class AgentManager:
                 del self.agents["acp"]
 
             config = _build_acp_agent_config(extra_config)
-            await self._create_agent("acp", config)
+            await self._create_agent("acp", "code", config)
 
             return ACP_DEFAULT_CAPABILITIES.copy()
         return None
@@ -141,23 +140,26 @@ class AgentManager:
             return session_id
         return "default"
 
-    async def get_agent(self, channel_id: str = "") -> "JiuWenClaw | None":
+    async def get_agent(self, channel_id: str = "", mode: str = "agent") -> "JiuWenClaw | None":
         """获取 Agent 实例（自动创建）.
 
         如果 agent 不存在，会自动创建（仅用于非 ACP 场景）。
 
         Args:
             channel_id: 通道 ID
+            mode: 每个模式对应的实例
 
         Returns:
             JiuWenClaw | None: Agent 实例
         """
-        if channel_id not in self.agents:
+        if channel_id in self.agents and mode in self.agents[channel_id]:
+            return self.agents[channel_id][mode]
+        else:
             config: dict[str, Any] | None = None
             if channel_id == "acp":
                 config = _build_acp_agent_config()
-            await self._create_agent(channel_id, config)
-        return self.agents.get(channel_id)
+            await self._create_agent(channel_id, mode, config)
+        return self.agents.get(channel_id).get(mode)
 
     def get_agent_nowait(self, channel_id: str = "") -> "JiuWenClaw | None":
         """获取 Agent 实例（同步，不自动创建）.

@@ -22,6 +22,7 @@ class GatewaySlashCommand(str, Enum):
 
     NEW_SESSION = "/new_session"
     MODE = "/mode"
+    SWITCH = "/switch"
     SKILLS = "/skills"
     SKILLS_LIST = "/skills list"
 
@@ -29,17 +30,39 @@ class GatewaySlashCommand(str, Enum):
 class ModeSubcommand(str, Enum):
     """`/mode` 支持的子命令。"""
 
-    PLAN = "plan"
-    FAST = "fast"
+    AGENT = "agent"
+    CODE = "code"
     TEAM = "team"
+    AGENT_PLAN = "agent.plan"
+    AGENT_FAST = "agent.fast"
+    CODE_PLAN = "code.plan"
+    CODE_NORMAL = "code.normal"
 
 
 _VALID_MODE_LINES: frozenset[str] = frozenset(
     f"{GatewaySlashCommand.MODE.value} {sub.value}" for sub in ModeSubcommand
 )
 
+
+class SwitchSubcommand(str, Enum):
+    """`/switch` 支持的子命令。"""
+
+    PLAN = "plan"
+    FAST = "fast"
+    NORMAL = "normal"
+
+
+_VALID_SWITCH_LINES: frozenset[str] = frozenset(
+    f"{GatewaySlashCommand.SWITCH.value} {sub.value}" for sub in SwitchSubcommand
+)
+
 CONTROL_MESSAGE_TEXTS: frozenset[str] = frozenset(
-    {GatewaySlashCommand.NEW_SESSION.value, *_VALID_MODE_LINES, GatewaySlashCommand.SKILLS_LIST.value}
+    {
+        GatewaySlashCommand.NEW_SESSION.value,
+        *_VALID_MODE_LINES,
+        *_VALID_SWITCH_LINES,
+        GatewaySlashCommand.SKILLS_LIST.value,
+    }
 )
 
 
@@ -51,6 +74,8 @@ class ParsedControlAction(str, Enum):
     NEW_SESSION_BAD = "new_session_bad"
     MODE_OK = "mode_ok"
     MODE_BAD = "mode_bad"
+    SWITCH_OK = "switch_ok"
+    SWITCH_BAD = "switch_bad"
     SKILLS_OK = "skills_ok"
 
 
@@ -60,15 +85,18 @@ class ParsedChannelControl:
 
     action: ParsedControlAction
     mode_subcommand: str | None = None
-    """mode_ok 时为 plan|fast|team 之一。"""
+    """mode_ok 时为 agent|code|team|agent.plan|agent.fast|code.plan|code.normal 之一。"""
+    switch_subcommand: str | None = None
+    """switch_ok 时为 plan|fast|normal 之一。"""
 
 
 def parse_channel_control_text(text: str) -> ParsedChannelControl:
-    """解析单条用户文本是否为 /new_session、/mode、/skills list 控制指令。
+    """解析单条用户文本是否为 /new_session、/mode、/switch、/skills list 控制指令。
 
     - 含换行则视为非控制（与原 _handle_channel_control 一致）。
     - /new_session 仅整行精确匹配为合法；带后缀为非法但仍为控制指令。
-    - /mode 仅白名单整行合法；其它以 /mode 开头且单行非法。
+    - /mode 仅白名单整行合法；支持 agent|code|team 及四个直达模式值；其它以 /mode 开头且单行非法。
+    - /switch 仅白名单整行合法；其它以 /switch 开头且单行非法。
     - /skills list 仅整行精确匹配（/skills 本身不再触发）。
     """
     if not text:
@@ -87,15 +115,21 @@ def parse_channel_control_text(text: str) -> ParsedChannelControl:
         parts = t.split()
         sub = parts[1] if len(parts) >= 2 else ""
         return ParsedChannelControl(ParsedControlAction.MODE_OK, mode_subcommand=sub)
+    if t in _VALID_SWITCH_LINES:
+        parts = t.split()
+        sub = parts[1] if len(parts) >= 2 else ""
+        return ParsedChannelControl(ParsedControlAction.SWITCH_OK, switch_subcommand=sub)
     if t.startswith(GatewaySlashCommand.MODE.value):
         return ParsedChannelControl(ParsedControlAction.MODE_BAD)
+    if t.startswith(GatewaySlashCommand.SWITCH.value):
+        return ParsedChannelControl(ParsedControlAction.SWITCH_BAD)
     return ParsedChannelControl(ParsedControlAction.NONE)
 
 
 def is_control_like_for_im_batching(text: str) -> bool:
     """飞书/企微等：控制类消息不走合并窗口（与历史行为一致并补全 mode 变体与 /skills list）。
 
-    单条文本、且为已知控制句、或以 /mode / /new_session 为前缀（含非法变体）时返回 True。
+    单条文本、且为已知控制句、或以 /mode / /switch / /new_session 为前缀（含非法变体）时返回 True。
     """
     if not text:
         return False
@@ -108,6 +142,10 @@ def is_control_like_for_im_batching(text: str) -> bool:
     if normalized == GatewaySlashCommand.SKILLS_LIST.value:
         return True
     if t.startswith(f"{GatewaySlashCommand.MODE.value} "):
+        return True
+    if t.startswith(f"{GatewaySlashCommand.SWITCH.value} "):
+        return True
+    if t.startswith(GatewaySlashCommand.SWITCH.value):
         return True
     if t.startswith(GatewaySlashCommand.NEW_SESSION.value):
         return True
@@ -140,10 +178,17 @@ FIRST_BATCH_REGISTRY: tuple[SlashCommandEntry, ...] = (
     ),
     SlashCommandEntry(
         id="mode",
-        canonical_text=f"{GatewaySlashCommand.MODE.value} plan|fast|team",
+        canonical_text=f"{GatewaySlashCommand.MODE.value} agent|code|team|agent.plan|agent.fast|code.plan|code.normal",
         scope="gateway",
         req_method=None,
-        notes="受控通道切换 ChannelMode；写入 params.mode。",
+        notes="受控通道切换模式：一级模式 agent/code/team（映射到默认子模式）或直达 agent.plan/agent.fast/code.plan/code.normal；写入 params.mode。",
+    ),
+    SlashCommandEntry(
+        id="switch",
+        canonical_text=f"{GatewaySlashCommand.SWITCH.value} plan|fast|normal",
+        scope="gateway",
+        req_method=None,
+        notes="受控通道切换二级模式：agent 下 plan/fast，code 下 plan/normal。",
     ),
     SlashCommandEntry(
         id="skills",
@@ -194,3 +239,5 @@ def format_skills_list_for_notice(payload: dict[str, Any] | None, *, max_items: 
 # 供单测校验与外部只读引用（与 _VALID_MODE_LINES 相同）
 VALID_MODE_LINES: frozenset[str] = _VALID_MODE_LINES
 VALID_MODE_SUBCOMMANDS: tuple[str, ...] = tuple(sub.value for sub in ModeSubcommand)
+VALID_SWITCH_LINES: frozenset[str] = _VALID_SWITCH_LINES
+VALID_SWITCH_SUBCOMMANDS: tuple[str, ...] = tuple(sub.value for sub in SwitchSubcommand)

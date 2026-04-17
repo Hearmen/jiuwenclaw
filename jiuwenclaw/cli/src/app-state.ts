@@ -44,7 +44,7 @@ import { type ConnectionStatus, WsClient } from "./core/ws-client.js";
 export interface AppSnapshot {
   connectionStatus: ConnectionStatus;
   sessionId: string;
-  mode: "plan" | "agent" | "team";
+  mode: "agent.plan" | "agent.fast" | "code.plan" | "code.normal" | "team";
   themeName: ThemeName;
   accentColor: AccentColorName;
   transcriptMode: "compact" | "detailed";
@@ -71,7 +71,8 @@ export class CliPiAppState {
   private entries: HistoryItem[] = [];
   private connectionStatus: ConnectionStatus = "idle";
   private sessionId: string;
-  private mode: "plan" | "agent" | "team" = "plan";
+  private mode: "agent.plan" | "agent.fast" | "code.plan" | "code.normal" | "team" =
+    "agent.plan";
   private themeName: ThemeName = getCurrentThemeName();
   private accentColor: AccentColorName = getCurrentAccentColor();
   private transcriptMode: "compact" | "detailed" = "compact";
@@ -333,7 +334,9 @@ export class CliPiAppState {
     this.emitChange();
   };
 
-  readonly setMode = (mode: "plan" | "agent" | "team"): void => {
+  readonly setMode = (
+    mode: "agent.plan" | "agent.fast" | "code.plan" | "code.normal" | "team",
+  ): void => {
     if (this.mode !== mode) {
       this.mode = mode;
       this.emitChange();
@@ -410,7 +413,7 @@ export class CliPiAppState {
 
   readonly sendMessage = (
     content: string,
-    modeOverride?: "plan" | "agent" | "team",
+    modeOverride?: "agent.plan" | "agent.fast" | "code.plan" | "code.normal" | "team",
   ): string | null => {
     if (this.connectionStatus !== "connected") return null;
     const mode = modeOverride ?? this.mode;

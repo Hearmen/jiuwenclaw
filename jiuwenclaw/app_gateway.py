@@ -873,7 +873,7 @@ class GatewayServer:
                         timestamp=time.time(),
                         ok=True,
                         req_method=ReqMethod.CHAT_SEND,
-                        mode=Mode.AGENT,
+                        mode=Mode.CODE_NORMAL,
                         metadata={"acp": {"jsonrpc_id": rpc_id, "method": method}},
                     )
                     if self._on_message_cb is not None:
@@ -967,13 +967,7 @@ class GatewayServer:
             if session_key is not None:
                 self._session_to_client[session_key] = ws
 
-            mode = Mode.PLAN
-            raw_mode = params.get("mode")
-            if isinstance(raw_mode, str):
-                try:
-                    mode = Mode(raw_mode.strip().lower())
-                except ValueError:
-                    mode = Mode.PLAN
+            mode = Mode.from_raw(params.get("mode"), default=Mode.AGENT_PLAN)
 
             msg = Message(
                 id=req_id,

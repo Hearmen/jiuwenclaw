@@ -64,8 +64,30 @@ class TestMode:
     @staticmethod
     def test_mode_values():
         """Test mode enum values."""
-        assert Mode.AGENT.value == "agent"
-        assert Mode.PLAN.value == "plan"
+        assert Mode.AGENT_PLAN.value == "agent.plan"
+        assert Mode.AGENT_FAST.value == "agent.fast"
+        assert Mode.CODE_PLAN.value == "code.plan"
+        assert Mode.CODE_NORMAL.value == "code.normal"
+        assert Mode.TEAM.value == "team"
+
+    @staticmethod
+    def test_mode_from_raw_legacy_compatibility():
+        """Test only new mode strings are accepted directly."""
+        assert Mode.from_raw("agent.plan") == Mode.AGENT_PLAN
+        assert Mode.from_raw("agent.fast") == Mode.AGENT_FAST
+        assert Mode.from_raw("code.plan") == Mode.CODE_PLAN
+        assert Mode.from_raw("code.normal") == Mode.CODE_NORMAL
+        assert Mode.from_raw("team") == Mode.TEAM
+        assert Mode.from_raw("invalid") == Mode.AGENT_PLAN
+
+    @staticmethod
+    def test_mode_to_runtime_mode():
+        """Test runtime mode mapping returns new mode values."""
+        assert Mode.AGENT_PLAN.to_runtime_mode() == "agent.plan"
+        assert Mode.AGENT_FAST.to_runtime_mode() == "agent.fast"
+        assert Mode.CODE_PLAN.to_runtime_mode() == "code.plan"
+        assert Mode.CODE_NORMAL.to_runtime_mode() == "code.normal"
+        assert Mode.TEAM.to_runtime_mode() == "team"
 
 
 class TestAgentRequest:
@@ -255,9 +277,9 @@ class TestMessage:
             params={},
             timestamp=1234567894.0,
             ok=True,
-            mode=Mode.PLAN,
+            mode=Mode.AGENT_PLAN,
         )
-        assert plan_message.mode == Mode.PLAN
+        assert plan_message.mode == Mode.AGENT_PLAN
 
         agent_message = Message(
             id="msg-6",
@@ -267,6 +289,6 @@ class TestMessage:
             params={},
             timestamp=1234567895.0,
             ok=True,
-            mode=Mode.AGENT,
+            mode=Mode.AGENT_FAST,
         )
-        assert agent_message.mode == Mode.AGENT
+        assert agent_message.mode == Mode.AGENT_FAST
