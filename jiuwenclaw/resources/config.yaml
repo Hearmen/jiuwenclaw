@@ -510,33 +510,24 @@ team:
 
   leader:
     member_name: team_leader
-    name: TeamLeader
+    display_name: 团队领导
     persona: "天才项目管理专家，擅长任务分解和团队协调"
-    domain: project_management
-
-  workspace:
-    stable_base: true
-    max_iterations: 200
-    completion_timeout: 600.0
 
   agents:
     leader:
-      member_name: team_leader
-      name: TeamLeader
-    teammate:
-      member_name: teammate
+      workspace:
+        stable_base: true
+      max_iterations: 200
+      completion_timeout: 600.0
+
+  workspace:
+    enabled: true
 
   transport:
     type: inprocess
 
   storage:
     type: sqlite
-    params:
-      connection_string: "team.db"
-      pool_size: 20
-      max_overflow: 40
-      pool_timeout: 120
-      connect_timeout: 300
 
 modes:
   # 一级模式 agent / code / team

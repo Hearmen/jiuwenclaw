@@ -10,6 +10,10 @@ import shutil
 from pathlib import Path
 from typing import Any, Callable
 
+from jiuwenclaw.agentserver.team.bootstrap import configure_agent_teams_home
+
+configure_agent_teams_home()
+
 from openjiuwen.agent_teams.agent.team_agent import TeamAgent
 from openjiuwen.agent_teams.schema.blueprint import TeamAgentSpec
 from openjiuwen.agent_teams.spawn.context import reset_session_id, set_session_id
@@ -44,12 +48,13 @@ class TeamManager:
 
     @staticmethod
     def _build_agent_customizer(
+        spec: TeamAgentSpec,
         deep_agent: DeepAgent,
         session_id: str,
         request_id: str | None,
         channel_id: str | None,
         request_metadata: dict[str, Any] | None,
-    ) -> Callable[[DeepAgent], None]:
+    ) -> Callable[..., None]:
         from jiuwenclaw.agentserver.extensions.rail_manager import get_rail_manager
         from jiuwenclaw.agentserver.tools.send_file_to_user import SendFileToolkit
         from jiuwenclaw.utils import get_agent_skills_dir
@@ -59,15 +64,88 @@ class TeamManager:
         resolved_channel = channel_id or "default"
         resolved_model_name = get_default_model_name()
 
-        def customizer(agent: DeepAgent) -> None:
-            logger.info("[TeamManager] customizer called for agent: channel=%s, agent_id=%s", resolved_channel, id(agent))
+        def resolve_member_spec(
+            member_name: str | None,
+            role: str | None,
+        ) -> Any:
+            if member_name and member_name in spec.agents:
+                return spec.agents[member_name]
+            if role and role in spec.agents:
+                return spec.agents[role]
+            return spec.agents.get("leader")
+
+        def resolve_member_skills(
+            member_name: str | None,
+            role: str | None,
+        ) -> tuple[bool, list[str]]:
+            member_spec = resolve_member_spec(member_name, role)
+            if member_spec is None or not hasattr(member_spec, "skills"):
+                return False, []
+
+            skills = getattr(member_spec, "skills", None)
+            if skills is None:
+                return False, []
+
+            return True, [str(skill).strip() for skill in skills if str(skill).strip()]
+
+        def copy_member_skills(
+            member_skills_dir: Path,
+            *,
+            skills_configured: bool,
+            selected_skills: list[str],
+        ) -> None:
+            if not global_skills_dir.exists():
+                logger.warning("[TeamManager] global_skills_dir does not exist: %s", global_skills_dir)
+                return
+
+            selected_skill_set = set(selected_skills)
+            copied_count = 0
+            for skill_dir in global_skills_dir.iterdir():
+                if not skill_dir.is_dir():
+                    continue
+                if not (skill_dir / "SKILL.md").is_file():
+                    continue
+                if skills_configured and skill_dir.name not in selected_skill_set:
+                    continue
+                dest = member_skills_dir / skill_dir.name
+                if dest.exists():
+                    continue
+                shutil.copytree(skill_dir, dest)
+                copied_count += 1
+                logger.info("[TeamManager] Copied skill '%s' to member workspace", skill_dir.name)
+
+            if skills_configured:
+                existing_skill_names = {
+                    path.name for path in member_skills_dir.iterdir() if path.is_dir()
+                }
+                missing = sorted(selected_skill_set - existing_skill_names)
+                if missing:
+                    logger.warning("[TeamManager] configured skills not found in global dir: %s", missing)
+
+            logger.info("[TeamManager] Total skills copied: %d", copied_count)
+
+        def customizer(
+            agent: DeepAgent,
+            member_name: str | None = None,
+            role: str | None = None,
+        ) -> None:
+            logger.info(
+                "[TeamManager] customizer called: channel=%s member_name=%s role=%s agent_id=%s",
+                resolved_channel,
+                member_name,
+                role,
+                id(agent),
+            )
             logger.info("[TeamManager] main agent id: %s", id(deep_agent))
 
             # 调试：打印 agent 的 workspace 信息
             agent_ws = agent.deep_config.workspace if agent.deep_config else None
             if agent_ws:
-                logger.info("[TeamManager] agent workspace.root_path=%s, stable_base=%s",
-                           agent_ws.root_path, getattr(agent_ws, 'stable_base', 'N/A'))
+                logger.info(
+                    "[TeamManager] agent workspace.root_path=%s, stable_base=%s",
+                    agent_ws.root_path,
+                    getattr(agent_ws, "stable_base", "N/A"),
+                )
             else:
                 logger.warning("[TeamManager] agent deep_config.workspace is None")
 
@@ -89,31 +167,33 @@ class TeamManager:
                     added_count += 1
                 else:
                     logger.debug("[TeamManager] Ability '%s' already exists, skipped", card.name)
-            logger.info("[TeamManager] Added %d inheritable abilities (total: %d)", added_count, len(existing_ability_ids))
+            logger.info(
+                "[TeamManager] Added %d inheritable abilities (total: %d)",
+                added_count,
+                len(existing_ability_ids),
+            )
 
             member_workspace = agent.deep_config.workspace if agent.deep_config else None
             if member_workspace and member_workspace.root_path:
                 member_skills_dir = Path(member_workspace.root_path) / "skills"
+                skills_configured, selected_skills = resolve_member_skills(member_name, role)
 
                 try:
                     member_skills_dir.mkdir(parents=True, exist_ok=True)
-                    logger.info("[TeamManager] member_skills_dir: %s, exists: %s", member_skills_dir, member_skills_dir.exists())
-                    
-                    if global_skills_dir.exists():
-                        copied_count = 0
-                        for skill_dir in global_skills_dir.iterdir():
-                            if skill_dir.is_dir() and not skill_dir.name.startswith("_"):
-                                dest = member_skills_dir / skill_dir.name
-                                if not dest.exists():
-                                    shutil.copytree(skill_dir, dest)
-                                    copied_count += 1
-                                    logger.info("[TeamManager] Copied skill '%s' to member workspace", skill_dir.name)
-                        logger.info("[TeamManager] Total skills copied: %d", copied_count)
-                        
-                        skills_after_copy = list(member_skills_dir.iterdir())
-                        logger.info("[TeamManager] Skills in member workspace: %s", [s.name for s in skills_after_copy])
-                    else:
-                        logger.warning("[TeamManager] global_skills_dir does not exist: %s", global_skills_dir)
+                    logger.info(
+                        "[TeamManager] member_skills_dir=%s selected_skills=%s",
+                        member_skills_dir,
+                        selected_skills if skills_configured else "ALL",
+                    )
+                    copy_member_skills(
+                        member_skills_dir,
+                        skills_configured=skills_configured,
+                        selected_skills=selected_skills,
+                    )
+                    skills_after_copy = sorted(
+                        path.name for path in member_skills_dir.iterdir() if path.is_dir()
+                    )
+                    logger.info("[TeamManager] Skills in member workspace: %s", skills_after_copy)
                 except Exception as exc:
                     logger.warning("[TeamManager] skill copy failed: %s", exc)
 
@@ -121,10 +201,10 @@ class TeamManager:
                 try:
                     from jiuwenclaw.agentserver.skill_manager import SkillManager
                     from jiuwenclaw.agentserver.tools.skill_toolkits import SkillToolkit
-                    
+
                     member_skill_manager = SkillManager(workspace_dir=str(member_workspace.root_path))
                     skill_toolkit = SkillToolkit(manager=member_skill_manager)
-                    
+
                     existing_ability_ids = {card.id for card in agent.ability_manager.list() or []}
                     for tool in skill_toolkit.get_tools():
                         if not Runner.resource_mgr.get_tool(tool.card.id):
@@ -135,7 +215,10 @@ class TeamManager:
                             logger.info("[TeamManager] Added SkillToolkit tool: %s", tool.card.name)
                         else:
                             logger.debug("[TeamManager] SkillToolkit tool '%s' already exists, skipped", tool.card.name)
-                    logger.info("[TeamManager] SkillToolkit registered for member workspace: %s", member_workspace.root_path)
+                    logger.info(
+                        "[TeamManager] SkillToolkit registered for member workspace: %s",
+                        member_workspace.root_path,
+                    )
                 except Exception as exc:
                     logger.warning("[TeamManager] SkillToolkit registration failed: %s", exc)
 
@@ -170,7 +253,11 @@ class TeamManager:
                 try:
                     from jiuwenclaw.agentserver.config import get_config
                     config = get_config()
-                    send_file_enabled = config.get("channels", {}).get(str(channel_id), {}).get("send_file_allowed", False)
+                    send_file_enabled = (
+                        config.get("channels", {})
+                        .get(str(channel_id), {})
+                        .get("send_file_allowed", False)
+                    )
                     if send_file_enabled:
                         sf_toolkit = SendFileToolkit(
                             request_id=request_id,
@@ -189,7 +276,10 @@ class TeamManager:
                                 logger.debug("[TeamManager] SendFile tool '%s' already exists, skipped", tool.card.name)
                         logger.info("[TeamManager] SendFileToolkit registered for channel=%s", channel_id)
                     else:
-                        logger.info("[TeamManager] SendFileToolkit skipped: send_file_allowed=False for channel=%s", channel_id)
+                        logger.info(
+                            "[TeamManager] SendFileToolkit skipped: send_file_allowed=False for channel=%s",
+                            channel_id,
+                        )
                 except Exception as exc:
                     logger.warning("[TeamManager] SendFileToolkit registration failed: %s", exc)
             else:
@@ -212,6 +302,7 @@ class TeamManager:
         spec_dict = load_team_spec_dict(session_id)
         spec = TeamAgentSpec.model_validate(spec_dict)
         spec.agent_customizer = self._build_agent_customizer(
+            spec,
             deep_agent,
             session_id,
             request_id,

@@ -1,37 +1,26 @@
 # Copyright (c) Huawei Technologies Co., Ltd. 2025. All rights reserved.
 
-"""Team 配置加载器.
-
-从 config.yaml 的 team 部分加载配置，构建 TeamAgentSpec 需要的字典格式.
-"""
+"""Team configuration loader."""
 
 from __future__ import annotations
 
 import logging
+from copy import deepcopy
+from pathlib import Path
 from typing import Any
 
+from openjiuwen.agent_teams.paths import get_agent_teams_home
+
 from jiuwenclaw.config import get_config
-from jiuwenclaw.utils import get_agent_workspace_dir
 
 logger = logging.getLogger(__name__)
 
+_DEFAULT_MAX_ITERATIONS = 200
+_DEFAULT_COMPLETION_TIMEOUT = 600.0
+_DEFAULT_AGENT_WORKSPACE = {"stable_base": True}
 
-def load_team_spec_dict(session_id: str) -> dict[str, Any]:
-    """加载 Team 配置并构建 TeamAgentSpec 需要的字典格式.
 
-    Args:
-        session_id: 会话 ID，用于生成唯一的 team_name
-
-    Returns:
-        可直接传给 TeamAgentSpec.model_validate() 的字典
-    """
-    config_base = get_config()
-    team_raw = config_base.get("team", {})
-
-    if not team_raw:
-        logger.warning("[TeamConfigLoader] 配置文件中没有 team 配置，使用默认配置")
-        team_raw = {}
-
+def _build_default_model_dict(config_base: dict[str, Any]) -> dict[str, Any]:
     model_config = config_base.get("models", {}).get("default", {})
     model_client_config = model_config.get("model_client_config", {})
     model_request_config = dict(model_config.get("model_config_obj", {}))
@@ -45,72 +34,173 @@ def load_team_spec_dict(session_id: str) -> dict[str, Any]:
         model_name,
         model_client_config.get("client_provider", "unknown"),
     )
-
-    model_dict = {
+    return {
         "model_client_config": model_client_config,
         "model_request_config": model_request_config,
     }
 
-    workspace_config = team_raw.get("workspace", {})
-    stable_base = workspace_config.get("stable_base", True)
-    max_iterations = workspace_config.get("max_iterations", 200)
-    completion_timeout = workspace_config.get("completion_timeout", 600.0)
 
-    workspace_dict = {"stable_base": stable_base}
+def _resolve_storage_config(storage_raw: dict[str, Any]) -> dict[str, Any]:
+    storage_dict = deepcopy(storage_raw)
+    storage_params = storage_dict.get("params", {})
+    if "connection_string" not in storage_params:
+        return storage_dict
+
+    conn_str = storage_params["connection_string"]
+    db_path = Path(conn_str)
+    if not db_path.is_absolute():
+        db_path = get_agent_teams_home() / conn_str
+        storage_params["connection_string"] = str(db_path)
+
+    db_dir = db_path.parent
+    if not db_dir.exists():
+        db_dir.mkdir(parents=True, exist_ok=True)
+        logger.info("[TeamConfigLoader] Created database directory: %s", db_dir)
+
+    return storage_dict
+
+
+def _build_agent_defaults() -> tuple[dict[str, Any], int, float]:
+    return (
+        deepcopy(_DEFAULT_AGENT_WORKSPACE),
+        _DEFAULT_MAX_ITERATIONS,
+        _DEFAULT_COMPLETION_TIMEOUT,
+    )
+
+
+def _build_agent_spec_dict(
+    agent_config: dict[str, Any],
+    *,
+    default_model: dict[str, Any],
+    default_workspace: dict[str, Any],
+    max_iterations: int,
+    completion_timeout: float,
+) -> dict[str, Any]:
+    merged = deepcopy(agent_config)
+    merged.setdefault("model", deepcopy(default_model))
+    merged.setdefault("workspace", deepcopy(default_workspace))
+    merged.setdefault("max_iterations", max_iterations)
+    merged.setdefault("completion_timeout", completion_timeout)
+    return merged
+
+
+def _build_agents_config(team_raw: dict[str, Any], config_base: dict[str, Any]) -> dict[str, Any]:
+    default_model = _build_default_model_dict(config_base)
+    default_workspace, max_iterations, completion_timeout = _build_agent_defaults()
 
     agents_raw = team_raw.get("agents", {})
-    if not agents_raw:
+    if not isinstance(agents_raw, dict) or not agents_raw:
+        logger.warning("[TeamConfigLoader] agents config is empty, using default leader/teammate")
         agents_raw = {"leader": {}, "teammate": {}}
-        logger.warning("[TeamConfigLoader] agents 配置为空，使用默认 leader/teammate")
 
-    agents = {}
-    for agent_name, agent_config in agents_raw.items():
-        agent_dict = {
-            "model": model_dict,
-            "workspace": workspace_dict,
-            "max_iterations": max_iterations,
-            "completion_timeout": completion_timeout,
+    agents: dict[str, Any] = {}
+    for agent_key, raw_agent_config in agents_raw.items():
+        agent_config = dict(raw_agent_config) if isinstance(raw_agent_config, dict) else {}
+        agent_spec = _build_agent_spec_dict(
+            agent_config,
+            default_model=default_model,
+            default_workspace=default_workspace,
+            max_iterations=max_iterations,
+            completion_timeout=completion_timeout,
+        )
+        agents[agent_key] = agent_spec
+
+    if "leader" not in agents:
+        agents["leader"] = _build_agent_spec_dict(
+            {},
+            default_model=default_model,
+            default_workspace=default_workspace,
+            max_iterations=max_iterations,
+            completion_timeout=completion_timeout,
+        )
+
+    return agents
+
+
+def _build_leader_spec(team_raw: dict[str, Any]) -> dict[str, Any]:
+    leader_raw = team_raw.get("leader", {})
+    return {
+        "member_name": leader_raw.get("member_name", "team_leader"),
+        "display_name": leader_raw.get("display_name", "Team Leader"),
+        "persona": leader_raw.get("persona", "天才项目管理专家"),
+    }
+
+
+def _build_predefined_members(team_raw: dict[str, Any]) -> list[dict[str, Any]]:
+    predefined_members_raw = team_raw.get("predefined_members", [])
+    if not isinstance(predefined_members_raw, list):
+        logger.warning("[TeamConfigLoader] predefined_members must be a list, ignored")
+        return []
+
+    predefined_members: list[dict[str, Any]] = []
+    for item in predefined_members_raw:
+        if not isinstance(item, dict):
+            continue
+
+        member_name = str(item.get("member_name", "")).strip()
+        if not member_name:
+            logger.warning("[TeamConfigLoader] skipped predefined member without member_name: %s", item)
+            continue
+
+        member_spec = {
+            "member_name": member_name,
+            "display_name": item.get("display_name", member_name),
+            "persona": item.get("persona") or "",
         }
-        if agent_config.get("member_name"):
-            agent_dict["member_name"] = agent_config["member_name"]
-        if agent_config.get("name"):
-            agent_dict["name"] = agent_config["name"]
-        agents[agent_name] = agent_dict
 
-    spec_dict = {
+        role_type = item.get("role_type")
+        if role_type:
+            member_spec["role_type"] = role_type
+
+        prompt_hint = item.get("prompt_hint")
+        if prompt_hint:
+            member_spec["prompt_hint"] = prompt_hint
+
+        predefined_members.append(member_spec)
+
+    return predefined_members
+
+
+def load_team_spec_dict(session_id: str) -> dict[str, Any]:
+    """Load team config and build a TeamAgentSpec-compatible dict."""
+    config_base = get_config()
+    team_raw = config_base.get("team", {})
+
+    if not team_raw:
+        logger.warning("[TeamConfigLoader] no team config found, using defaults")
+        team_raw = {}
+
+    agents = _build_agents_config(team_raw, config_base)
+    spec_dict: dict[str, Any] = {
         "team_name": f"{team_raw.get('team_name', 'team')}_{session_id}",
         "lifecycle": team_raw.get("lifecycle", "persistent"),
         "teammate_mode": team_raw.get("teammate_mode", "build_mode"),
         "spawn_mode": team_raw.get("spawn_mode", "inprocess"),
+        "leader": _build_leader_spec(team_raw),
         "agents": agents,
     }
 
+    predefined_members = _build_predefined_members(team_raw)
+    if predefined_members:
+        spec_dict["predefined_members"] = predefined_members
+
     transport_raw = team_raw.get("transport", {})
     if transport_raw:
-        spec_dict["transport"] = transport_raw
+        spec_dict["transport"] = deepcopy(transport_raw)
 
     storage_raw = team_raw.get("storage", {})
     if storage_raw:
-        storage_params = storage_raw.get("params", {})
-        if "connection_string" in storage_params:
-            from pathlib import Path
-            conn_str = storage_params["connection_string"]
-            db_path = Path(conn_str)
-            if not db_path.is_absolute():
-                workspace_dir = get_agent_workspace_dir()
-                db_path = workspace_dir / "team_data" / conn_str
-                storage_params["connection_string"] = str(db_path)
-            db_dir = db_path.parent
-            if not db_dir.exists():
-                db_dir.mkdir(parents=True, exist_ok=True)
-                logger.info("[TeamConfigLoader] Created database directory: %s", db_dir)
-        spec_dict["storage"] = storage_raw
+        spec_dict["storage"] = _resolve_storage_config(storage_raw)
+
+    workspace_raw = team_raw.get("workspace", {})
+    if workspace_raw:
+        spec_dict["workspace"] = deepcopy(workspace_raw)
 
     logger.info(
-        "[TeamConfigLoader] 配置加载成功: team_name=%s, lifecycle=%s, agents=%s",
+        "[TeamConfigLoader] team config loaded: team_name=%s, lifecycle=%s, agents=%s, predefined_members=%s",
         spec_dict["team_name"],
         spec_dict["lifecycle"],
         list(agents.keys()),
+        [item["member_name"] for item in predefined_members],
     )
-
     return spec_dict
