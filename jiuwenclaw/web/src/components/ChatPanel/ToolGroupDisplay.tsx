@@ -153,7 +153,7 @@ function ToolDetailModal({ execution, onClose }: ToolDetailModalProps) {
                 <span className="text-sm font-semibold">{t('chatUi.toolResult.arguments')}</span>
               </div>
               <pre
-                className="p-4 rounded-lg overflow-x-auto"
+                className="p-4 rounded-lg overflow-auto whitespace-pre-wrap break-all"
                 style={{
                   fontFamily: 'var(--mono)',
                   fontSize: 'var(--font-size-sm)',
@@ -161,6 +161,7 @@ function ToolDetailModal({ execution, onClose }: ToolDetailModalProps) {
                   backgroundColor: 'var(--bg-elevated)',
                   border: '1px solid var(--border)',
                   color: 'var(--text)',
+                  wordBreak: 'break-word',
                 }}
               >
                 {formatToolArguments(toolCall.arguments)}
@@ -194,7 +195,7 @@ function ToolDetailModal({ execution, onClose }: ToolDetailModalProps) {
                 </span>
               </div>
               <pre
-                className="p-4 rounded-lg overflow-x-auto"
+                className="p-4 rounded-lg overflow-auto whitespace-pre-wrap break-all"
                 style={{
                   fontFamily: 'var(--mono)',
                   fontSize: 'var(--font-size-sm)',
@@ -202,6 +203,7 @@ function ToolDetailModal({ execution, onClose }: ToolDetailModalProps) {
                   backgroundColor: 'var(--bg-elevated)',
                   border: '1px solid var(--border)',
                   color: result.success ? 'var(--text)' : 'var(--danger)',
+                  wordBreak: 'break-word',
                 }}
               >
                 {formatToolResult(result.result)}

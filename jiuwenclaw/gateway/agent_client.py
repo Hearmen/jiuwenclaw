@@ -23,6 +23,7 @@ from jiuwenclaw.schema.agent import AgentResponse, AgentResponseChunk
 
 logger = logging.getLogger(__name__)
 _STREAM_TRAILING_MESSAGE_GRACE_SECONDS = 0.7
+_UNARY_REQUEST_TIMEOUT_SECONDS = 60.0
 
 
 def _wire_request_id_key(request_id: Any) -> str:
@@ -100,6 +101,8 @@ class WebSocketAgentServerClient(AgentServerClient):
         self._server_ready: bool = False
         # 消息分发机制：根据 request_id 路由到对应队列
         self._message_queues: dict[str, asyncio.Queue] = {}
+        self._queue_lock = asyncio.Lock()  # 保护队列操作的锁
+        self._cancelled_request_ids: set[str] = set()  # 已取消但等待清理的 request_id
         self._receiver_task: asyncio.Task | None = None
         self._running = False
         # AgentServer send_push：旁路投递，勿进入与 request_id 绑定的 RPC 等待队列
@@ -189,15 +192,24 @@ class WebSocketAgentServerClient(AgentServerClient):
                         continue
                     request_id = _wire_request_id_key(data.get("request_id"))
 
-                    if request_id and request_id in self._message_queues:
-                        # 将消息放入对应的队列
-                        await self._message_queues[request_id].put(data)
-                    else:
-                        # 没有对应的队列，记录警告
-                        logger.warning(
-                            "[WebSocketAgentServerClient] 收到无目标队列的消息: request_id=%s",
-                            request_id
-                        )
+                    # 使用锁保护队列访问，避免竞态条件
+                    async with self._queue_lock:
+                        # 检查是否是已取消的请求，静默丢弃消息
+                        if request_id in self._cancelled_request_ids:
+                            logger.debug(
+                                "[WebSocketAgentServerClient] 收到已取消请求的残余消息，已丢弃: request_id=%s",
+                                request_id
+                            )
+                            continue
+
+                        if request_id and request_id in self._message_queues:
+                            await self._message_queues[request_id].put(data)
+                        else:
+                            # 没有对应的队列（非预期情况）
+                            logger.debug(
+                                "[WebSocketAgentServerClient] 收到无目标队列的消息: request_id=%s",
+                                request_id
+                            )
                 except asyncio.CancelledError:
                     break
                 except Exception as e:
@@ -270,16 +282,24 @@ class WebSocketAgentServerClient(AgentServerClient):
                 logger.info("[WebSocketAgentServerClient] 发送请求(非流式) payload: %s", _to_json(payload))
                 await self._ws.send(json.dumps(payload, ensure_ascii=False))
 
-            # 从队列中接收响应
-            data = await queue.get()
+            try:
+                data = await asyncio.wait_for(queue.get(), timeout=_UNARY_REQUEST_TIMEOUT_SECONDS)
+            except asyncio.TimeoutError as e:
+                logger.warning(
+                    "[WebSocketAgentServerClient] 非流式请求超时: request_id=%s timeout=%ss",
+                    rid,
+                    _UNARY_REQUEST_TIMEOUT_SECONDS,
+                )
+                raise RuntimeError(
+                    f"AgentServer 非流式请求超时 (request_id={rid}, timeout={_UNARY_REQUEST_TIMEOUT_SECONDS}s)"
+                ) from e
             logger.info("[WebSocketAgentServerClient] 收到响应(非流式) raw: %s", json.dumps(data, ensure_ascii=False))
             resp = parse_agent_server_wire_unary(data)
             logger.info("[WebSocketAgentServerClient] 收到完整响应 AgentResponse: %s", _to_json(asdict(resp)))
             return resp
         finally:
             # 清理队列
-            if rid in self._message_queues:
-                del self._message_queues[rid]
+            await self._drain_and_remove_queue(rid)
 
     async def send_request_stream(
         self, envelope: E2AEnvelope
@@ -346,8 +366,51 @@ class WebSocketAgentServerClient(AgentServerClient):
             raise
         finally:
             # 清理队列
-            if rid in self._message_queues:
-                del self._message_queues[rid]
+            await self._drain_and_remove_queue(rid)
+
+    async def _drain_and_remove_queue(self, rid: str) -> None:
+        """清空队列中的残余消息并移除队列，同时标记 request_id 为已取消状态.
+
+        标记为已取消后，后续到达的残余消息会被 _message_receiver_loop 静默丢弃。
+        使用锁保护，确保操作的原子性。
+        """
+        async with self._queue_lock:
+            queue = self._message_queues.get(rid)
+            if queue is None:
+                return
+            # 1. 先标记为已取消，阻止后续消息进入队列
+            self._cancelled_request_ids.add(rid)
+            # 2. 删除队列注册
+            del self._message_queues[rid]
+            # 3. 清空队列中的残余消息（非阻塞）
+            drained_count = 0
+            while True:
+                try:
+                    queue.get_nowait()
+                    drained_count += 1
+                except asyncio.QueueEmpty:
+                    break
+            logger.debug(
+                "[WebSocketAgentServerClient] 队列已清空并移除: request_id=%s 清理消息数=%d",
+                rid,
+                drained_count,
+            )
+            # 4. 异步延迟清理已取消标记（给 AgentServer 一点时间发送残余消息）
+            asyncio.create_task(self._delayed_cleanup_cancelled_request_id(rid))
+
+    async def _delayed_cleanup_cancelled_request_id(self, rid: str) -> None:
+        """延迟清理已取消的 request_id 标记.
+
+        等待一段时间后清理，确保 AgentServer 的残余消息能够被静默丢弃而不打印日志。
+        """
+        # 等待足够时间让 AgentServer 的残余消息被接收和丢弃
+        await asyncio.sleep(2.0)  # 2秒应该足够
+        async with self._queue_lock:
+            self._cancelled_request_ids.discard(rid)
+            logger.debug(
+                "[WebSocketAgentServerClient] 已取消标记已清理: request_id=%s",
+                rid,
+            )
 
 
 # ---------------------------------------------------------------------------
