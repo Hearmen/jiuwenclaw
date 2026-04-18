@@ -400,6 +400,13 @@ export function useWebSocket(options: UseWebSocketOptions): UseWebSocketReturn {
   // 切换模式
   const switchMode = useCallback(
     async (sessionId: string, mode: AgentMode) => {
+      if (sessionId && sessionId !== 'new') {
+        try {
+          await interrupt(sessionId, 'cancel');
+        } catch {
+          // 忽略中断错误，继续切换模式
+        }
+      }
       setProcessing(false);
       setThinking(false);
       setMode(mode);
@@ -407,7 +414,7 @@ export function useWebSocket(options: UseWebSocketOptions): UseWebSocketReturn {
         updateSession(sessionId, { mode });
       }
     },
-    [setMode, updateSession, setProcessing, setThinking]
+    [setMode, updateSession, setProcessing, setThinking, interrupt]
   );
 
   // 发送用户回答

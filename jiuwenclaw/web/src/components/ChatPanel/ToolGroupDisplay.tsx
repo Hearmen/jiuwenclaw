@@ -34,7 +34,7 @@ function ToolDetailModal({ execution, onClose }: ToolDetailModalProps) {
   const { toolCall, result, status } = execution;
   const isTimeout = status === 'timeout';
   const isError = status === 'error';
-  const isSuccess = status === 'completed';
+  const isSuccess = status === 'completed' && !(result && result.result && result.result.includes('success=False'));
 
   
   // ESC 键关闭
@@ -84,9 +84,7 @@ function ToolDetailModal({ execution, onClose }: ToolDetailModalProps) {
                   <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
                 </svg>
               ) : isError ? (
-                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2}>
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
-                </svg>
+                '❌'
               ) : isTimeout ? (
                 <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2}>
                   <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v4m0 4h.01M12 3C7.029 3 3 7.029 3 12s4.029 9 9 9 9-4.029 9-9-4.029-9-9-9z" />
@@ -174,14 +172,18 @@ function ToolDetailModal({ execution, onClose }: ToolDetailModalProps) {
             <div>
               <div
                 className="flex items-center gap-2 mb-3"
-                style={{ color: result.success ? 'var(--ok)' : 'var(--danger)' }}
+                style={{ color: result.success && !(result.result && result.result.includes('success=False')) ? 'var(--ok)' : 'var(--danger)' }}
               >
-                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2}>
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
-                </svg>
+                {result.success && !(result.result && result.result.includes('success=False')) ? (
+                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+                  </svg>
+                ) : (
+                  '❌'
+                )}
                 <span className="text-sm font-semibold">
                   {t('chatUi.toolResult.result')}
-                  {!result.success && (
+                  {(!result.success || (result.result && result.result.includes('success=False'))) && (
                     <span
                       className="ml-2 px-2 py-0.5 rounded text-xs font-medium"
                       style={{
@@ -202,7 +204,7 @@ function ToolDetailModal({ execution, onClose }: ToolDetailModalProps) {
                   lineHeight: '1.5',
                   backgroundColor: 'var(--bg-elevated)',
                   border: '1px solid var(--border)',
-                  color: result.success ? 'var(--text)' : 'var(--danger)',
+                  color: result.success && !(result.result && result.result.includes('success=False')) ? 'var(--text)' : 'var(--danger)',
                   wordBreak: 'break-word',
                 }}
               >
