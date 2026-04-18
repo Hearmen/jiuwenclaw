@@ -98,7 +98,7 @@ def test_member_skill_state_inherits_marketplaces_and_rebuilds_installed_skills(
                     "add": lambda self, card: None,
                 },
             )(),
-            "card": type("_Card", (), {"name": "member"})(),
+            "card": type("_Card", (), {"id": "member_a", "name": "member"})(),
             "add_rail": lambda self, rail: None,
         },
     )()

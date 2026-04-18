@@ -9,6 +9,7 @@ import json
 import logging
 import shutil
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any, Callable
 
 from jiuwenclaw.agentserver.team.bootstrap import configure_agent_teams_home
@@ -72,6 +73,75 @@ class TeamManager:
             return [], []
 
     @staticmethod
+    def _register_member_runtime_tools(
+        agent: DeepAgent,
+        *,
+        session_id: str,
+        request_id: str | None,
+        channel_id: str | None,
+        request_metadata: dict[str, Any] | None,
+    ) -> None:
+        from jiuwenclaw.config import get_config
+        from jiuwenclaw.agentserver.deep_agent.cron_runtime import CronRuntimeBridge
+        from jiuwenclaw.agentserver.tools.send_file_to_user import SendFileToolkit
+        from openjiuwen.core.runner import Runner
+
+        agent_id = getattr(getattr(agent, "card", None), "id", None)
+        cron_runtime = CronRuntimeBridge()
+        cron_context = SimpleNamespace(
+            tool_scope=f"team_member_{agent_id or 'unknown'}",
+            channel_id=channel_id or "web",
+            session_id=session_id,
+            metadata=request_metadata,
+            mode="team",
+        )
+
+        try:
+            cron_tools = cron_runtime.build_tools(context=cron_context, agent_id=agent_id)
+            for cron_tool in cron_tools:
+                if not Runner.resource_mgr.get_tool(cron_tool.card.id):
+                    Runner.resource_mgr.add_tool(cron_tool)
+                agent.ability_manager.add(cron_tool.card)
+            logger.info("[TeamManager] Registered %d cron tools for member agent=%s", len(cron_tools), agent_id)
+        except Exception as exc:
+            logger.warning("[TeamManager] cron tool registration failed for member agent=%s: %s", agent_id, exc)
+
+        if not request_id or not channel_id:
+            logger.info("[TeamManager] SendFileToolkit skipped: missing request_id or channel_id")
+            return
+
+        try:
+            config = get_config()
+            send_file_enabled = (
+                config.get("channels", {})
+                .get(str(channel_id), {})
+                .get("send_file_allowed", False)
+            )
+            if not send_file_enabled:
+                logger.info(
+                    "[TeamManager] SendFileToolkit skipped: send_file_allowed=False for channel=%s",
+                    channel_id,
+                )
+                return
+
+            for existing in list(agent.ability_manager.list() or []):
+                if getattr(existing, "name", "").startswith("send_file_to_user"):
+                    agent.ability_manager.remove(existing.name)
+
+            send_file_toolkit = SendFileToolkit(
+                request_id=request_id,
+                session_id=session_id,
+                channel_id=channel_id,
+                metadata=request_metadata,
+            )
+            for sf_tool in send_file_toolkit.get_tools():
+                Runner.resource_mgr.add_tool(sf_tool)
+                agent.ability_manager.add(sf_tool.card)
+            logger.info("[TeamManager] SendFileToolkit registered for channel=%s", channel_id)
+        except Exception as exc:
+            logger.warning("[TeamManager] SendFileToolkit registration failed: %s", exc)
+
+    @staticmethod
     def _build_agent_customizer(
         spec: TeamAgentSpec,
         deep_agent: DeepAgent,
@@ -85,9 +155,7 @@ class TeamManager:
         )
         from jiuwenclaw.agentserver.skill_manager import SkillManager
         from jiuwenclaw.agentserver.extensions.rail_manager import get_rail_manager
-        from jiuwenclaw.agentserver.tools.send_file_to_user import SendFileToolkit
         from jiuwenclaw.utils import get_agent_skills_dir
-        from openjiuwen.core.runner import Runner
 
         global_skills_dir = get_agent_skills_dir()
         global_skills_state_path = global_skills_dir / "skills_state.json"
@@ -330,41 +398,13 @@ class TeamManager:
                 except Exception as exc:
                     logger.warning("[TeamManager] add rail %s failed: %s", rail_name, exc)
 
-            if request_id and channel_id:
-                try:
-                    from jiuwenclaw.agentserver.config import get_config
-                    config = get_config()
-                    send_file_enabled = (
-                        config.get("channels", {})
-                        .get(str(channel_id), {})
-                        .get("send_file_allowed", False)
-                    )
-                    if send_file_enabled:
-                        sf_toolkit = SendFileToolkit(
-                            request_id=request_id,
-                            session_id=session_id,
-                            channel_id=channel_id,
-                            metadata=request_metadata,
-                        )
-                        existing_ability_ids = {card.id for card in agent.ability_manager.list() or []}
-                        for tool in sf_toolkit.get_tools():
-                            if not Runner.resource_mgr.get_tool(tool.card.id):
-                                Runner.resource_mgr.add_tool(tool)
-                            if tool.card.id not in existing_ability_ids:
-                                agent.ability_manager.add(tool.card)
-                                existing_ability_ids.add(tool.card.id)
-                            else:
-                                logger.debug("[TeamManager] SendFile tool '%s' already exists, skipped", tool.card.name)
-                        logger.info("[TeamManager] SendFileToolkit registered for channel=%s", channel_id)
-                    else:
-                        logger.info(
-                            "[TeamManager] SendFileToolkit skipped: send_file_allowed=False for channel=%s",
-                            channel_id,
-                        )
-                except Exception as exc:
-                    logger.warning("[TeamManager] SendFileToolkit registration failed: %s", exc)
-            else:
-                logger.info("[TeamManager] SendFileToolkit skipped: missing request_id or channel_id")
+            TeamManager._register_member_runtime_tools(
+                agent,
+                session_id=session_id,
+                request_id=request_id,
+                channel_id=channel_id,
+                request_metadata=request_metadata,
+            )
 
         return customizer
 
