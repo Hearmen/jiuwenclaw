@@ -17,7 +17,6 @@ import { createPlanCommand } from "./builtins/plan.js";
 import { createResumeCommand } from "./builtins/resume.js";
 import { createSessionCommand } from "./builtins/session.js";
 import { createSkillsCommand } from "./builtins/skills.js";
-import { createSwitchCommand } from "./builtins/switch.js";
 import { createThemeCommand } from "./builtins/theme.js";
 
 export function createBuiltinCommands(): SlashCommand[] {
@@ -34,7 +33,6 @@ export function createBuiltinCommands(): SlashCommand[] {
     createExitCommand(),
     createModelCommand(),
     createModeCommand(),
-    createSwitchCommand(),
     createPlanCommand(),
     createResumeCommand(),
     createSessionCommand(),

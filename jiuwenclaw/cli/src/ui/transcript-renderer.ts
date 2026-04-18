@@ -30,7 +30,7 @@ export function buildTranscriptLines(
 ): string[] {
   const { entries: displayEntries, latestThinkingId } = selectTranscriptEntries(snapshot);
 
-  const allLines: string[] = [...buildWelcomeLines(width, snapshot.connectionStatus)];
+  const allLines: string[] = [...buildWelcomeLines(width, snapshot.connectionStatus, snapshot.modelInfo, snapshot.mode)];
   const showPendingInput =
     typeof pendingInput === "string" &&
     pendingInput.length > 0 &&

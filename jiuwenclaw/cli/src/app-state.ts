@@ -65,6 +65,7 @@ export interface AppSnapshot {
   teamMessageEvents: TeamMessageEvent[];
   evolutionStatus: "idle" | "running";
   contextCompression: ContextCompressionStats | null;
+  modelInfo: { provider: string; model: string; version: string };
 }
 
 export class CliPiAppState {
@@ -108,6 +109,11 @@ export class CliPiAppState {
   private historyRequestToken = 0;
   private unlistenStatus: (() => void) | null = null;
   private unlistenFrames: (() => void) | null = null;
+  private modelInfo: { provider: string; model: string; version: string } = {
+    provider: "",
+    model: "",
+    version: "",
+  };
   private readonly eventDelegate: AppEventDelegate = {
     getConnectionStatus: () => this.connectionStatus,
     getSessionId: () => this.sessionId,
@@ -180,9 +186,12 @@ export class CliPiAppState {
   }
 
   start(): void {
-    this.unlistenStatus = this.wsClient.onStatusChange((status) => {
+    this.unlistenStatus = this.wsClient.onStatusChange(async (status) => {
       this.connectionStatus = status;
       this.emitChange();
+      if (status === "connected") {
+        await this.fetchModelInfo();
+      }
     });
 
     this.unlistenFrames = this.wsClient.onFrame((frame) => {
@@ -210,6 +219,23 @@ export class CliPiAppState {
     this.unlistenFrames?.();
     this.unlistenFrames = null;
     this.wsClient.disconnect();
+  }
+
+  private async fetchModelInfo(): Promise<void> {
+    try {
+      const payload = await this.request("config.get", {});
+      if (payload && typeof payload === "object") {
+        const config = payload as Record<string, unknown>;
+        this.modelInfo = {
+          provider: String(config.model_provider ?? ""),
+          model: String(config.model ?? ""),
+          version: String(config.app_version ?? ""),
+        };
+        this.emitChange();
+      }
+    } catch {
+      // ignore error, use defaults
+    }
   }
 
   onChange(listener: () => void): () => void {
@@ -256,6 +282,7 @@ export class CliPiAppState {
       teamMessageEvents: [...this.teamMessageEvents],
       evolutionStatus: this.evolutionStatus,
       contextCompression: this.contextCompression ? { ...this.contextCompression } : null,
+      modelInfo: this.modelInfo,
     };
   }
 
