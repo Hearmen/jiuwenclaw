@@ -17,6 +17,7 @@ import type { CliPiAppState } from "../app-state.js";
 import { CommandService, parseSlashCommand } from "../core/commands/CommandService.js";
 import { addError, addInfo } from "../core/commands/helpers.js";
 import type { SessionListPayload, SessionMeta } from "../core/commands/builtins/resume.js";
+import type { ModelListPayload } from "../core/commands/builtins/model.js";
 import { handleAppScreenKeyInput } from "./keymap.js";
 import { buildAppScreenLines } from "./screen-layout.js";
 import {
@@ -53,6 +54,12 @@ type ResumeSessionListState = {
   list: SelectList;
   sessions: SessionMeta[];
   total: number;
+};
+
+type ModelListState = {
+  list: SelectList;
+  models: string[];
+  current: string;
 };
 
 const IMAGE_MIME_TYPES: Record<string, string> = {
@@ -449,6 +456,7 @@ export class AppScreen implements Component, Focusable {
   private pendingQuestionAnswers = new Map<number, string>();
   private questionList: SelectList | null = null;
   private resumeSessionList: ResumeSessionListState | null = null;
+  private modelList: ModelListState | null = null;
   private showTodos = true;
   private showTeamPanel = false;
   private selectedTeamMemberId: string | null = null;
@@ -608,6 +616,12 @@ export class AppScreen implements Component, Focusable {
       return;
     }
 
+    if (!snapshot.pendingQuestion && this.modelList !== null) {
+      this.modelList.list.handleInput(data);
+      this.tui.requestRender();
+      return;
+    }
+
     if (!snapshot.pendingQuestion && this.showTeamPanel) {
       if (matchesKey(data, "left")) {
         this.viewedTeamMemberId = null;
@@ -673,6 +687,7 @@ export class AppScreen implements Component, Focusable {
     const composerPreviewLines: string[] = [];
     const questionLines = [
       ...this.buildResumeSessionListLines(width),
+      ...this.buildModelListLines(width),
       ...this.buildPendingQuestionLines(snapshot, width),
     ];
     return buildAppScreenLines(snapshot, {
@@ -722,6 +737,17 @@ export class AppScreen implements Component, Focusable {
         await this.openResumeSessionList();
         return;
       }
+      if (/^\/model\s*$/.test(text)) {
+        this.editor.addToHistory(text);
+        this.editor.setText("");
+        this.composerAttachments = [];
+        await this.openModelList();
+        return;
+      }
+      await this.commands.execute(text, {
+        ...this.state.getCommandContext(),
+        exitApp: this.exit,
+      });
       this.beginPendingSubmittedInput(text, snapshot);
       this.editor.addToHistory(text);
       this.editor.setText("");
@@ -925,6 +951,83 @@ export class AppScreen implements Component, Focusable {
       ),
       ...this.resumeSessionList.list.render(width),
       padToWidth(palette.text.dim("↑/↓ choose · Enter resume · Esc cancel"), width),
+    ];
+  }
+
+  async openModelList(): Promise<void> {
+    const snapshot = this.state.getSnapshot();
+    try {
+      const payload = await this.state.request<ModelListPayload>("command.model", {});
+      const models = payload.available_models ?? [];
+      const current = payload.current ?? "unknown";
+      if (models.length === 0) {
+        this.modelList = null;
+        this.state.addItem(addInfo(snapshot.sessionId, "No models configured", "m"));
+        return;
+      }
+
+      const items = models.map((m, i) => {
+        const isCurrent = m === current;
+        return {
+          label: `${i + 1}. ${m}${isCurrent ? " (current)" : ""}`,
+          value: m,
+        };
+      });
+      const list = new SelectList(items, Math.min(Math.max(items.length, 1), 8), selectListTheme, {
+        minPrimaryColumnWidth: 24,
+        maxPrimaryColumnWidth: 42,
+      });
+      list.onSelect = (item) => {
+        void this.handleModelSelection(item.value);
+      };
+      list.onCancel = () => {
+        this.modelList = null;
+        this.tui.requestRender();
+      };
+      this.modelList = { list, models, current };
+      this.tui.requestRender();
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      this.modelList = null;
+      this.state.addItem(addError(snapshot.sessionId, `Failed to load models: ${message}`));
+    }
+  }
+
+  private async handleModelSelection(modelName: string): Promise<void> {
+    if (!modelName) {
+      return;
+    }
+    this.modelList = null;
+    try {
+      const payload = await this.state.request<{
+        current?: string;
+        requested?: string;
+        applied?: boolean;
+      }>("command.model", { model: modelName });
+      const nextModel = payload.current ?? modelName;
+      this.state.clearEntries();
+      this.state.addItem(
+        addInfo(this.state.getSnapshot().sessionId, `Switched model to: ${nextModel}`, "m"),
+      );
+      this.tui.requestRender();
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      this.state.addItem(addError(this.state.getSnapshot().sessionId, `Failed to switch model: ${message}`));
+      this.tui.requestRender();
+    }
+  }
+
+  private buildModelListLines(width: number): string[] {
+    if (!this.modelList) {
+      return [];
+    }
+    return [
+      padToWidth(
+        palette.status.warning(`Available models (${this.modelList.models.length} total)`),
+        width,
+      ),
+      ...this.modelList.list.render(width),
+      padToWidth(palette.text.dim("↑/↓ choose · Enter switch · Esc cancel"), width),
     ];
   }
 

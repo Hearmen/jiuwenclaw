@@ -16,6 +16,9 @@ from jiuwenclaw.config import (
     get_config_raw,
     update_context_engine_enabled_in_config,
     update_permissions_enabled_in_config,
+    get_model_names,
+    get_model_config,
+    add_or_update_model_in_config,
 )
 from jiuwenclaw.gateway.route_binding import GatewayRouteBinding
 from jiuwenclaw.version import __version__
@@ -30,7 +33,6 @@ CLI_FORWARD_REQ_METHODS = frozenset(
         "command.chrome",
         "command.compact",
         "command.diff",
-        "command.model",
         "command.resume",
         "command.session",
         "chat.send",
@@ -73,7 +75,6 @@ CLI_FORWARD_NO_LOCAL_HANDLER_METHODS = frozenset(
         "command.chrome",
         "command.compact",
         "command.diff",
-        "command.model",
         "command.resume",
         "command.session",
         "browser.start",
@@ -208,6 +209,29 @@ def _persist_env_updates(updates: dict[str, str]) -> None:
             f.writelines(new_lines)
     except OSError as e:
         logger.warning("[cli config.set] 写回 .env 失败: %s", e)
+
+
+def _load_env_from_file() -> dict[str, str]:
+    """从 .env 文件读取环境变量值（不从当前 os.environ 读取）。"""
+    from jiuwenclaw.utils import get_env_file
+
+    env_path = get_env_file()
+    result = {}
+    if not env_path.is_file():
+        return result
+    try:
+        with open(env_path, "r", encoding="utf-8") as f:
+            for line in f:
+                stripped = line.strip()
+                if not stripped or stripped.startswith("#"):
+                    continue
+                if "=" in stripped:
+                    key, _, val = stripped.partition("=")
+                    val = val.strip('"').strip("'")
+                    result[key] = val
+    except OSError:
+        pass
+    return result
 
 
 def register_cli_handlers(bind: CliHandlersBindParams) -> None:
@@ -460,6 +484,306 @@ def register_cli_handlers(bind: CliHandlersBindParams) -> None:
                 payload["page_idx"] = params.get("page_idx")
         await channel.send_response(ws, req_id, ok=True, payload=payload)
 
+    async def _command_model(ws, req_id, params, session_id):
+        import time
+        from jiuwenclaw.e2a.gateway_normalize import e2a_from_agent_fields
+        from jiuwenclaw.schema.message import ReqMethod
+
+        if not isinstance(params, dict):
+            params = {}
+        action = params.get("action")
+        model_name = params.get("model")
+
+        real_client = (
+            agent_client.get("value")
+            if isinstance(agent_client, dict)
+            else agent_client
+        )
+        if real_client is None:
+            await channel.send_response(
+                ws, req_id, ok=False, error="agent client not available"
+            )
+            return
+
+        if action == "add_model":
+            target = str(params.get("target", "")).strip()
+            configs = params.get("config", {})
+            if not target:
+                await channel.send_response(
+                    ws, req_id, ok=False, error="Target model name (target) is required"
+                )
+                return
+            client_cfg = {}
+            key_map = {
+                "model": "model_name",
+                "provider": "client_provider",
+                "api_key": "api_key",
+                "api_base": "api_base",
+                "url": "api_base",
+                "base_url": "api_base",
+                "timeout": "timeout",
+                "verify_ssl": "verify_ssl",
+                "ssl_cert": "ssl_cert",
+            }
+            for k, v in configs.items():
+                mapped_k = key_map.get(k.lower(), k)
+                client_cfg[mapped_k] = v
+            if "verify_ssl" not in client_cfg:
+                client_cfg["verify_ssl"] = False
+            if "timeout" not in client_cfg:
+                client_cfg["timeout"] = 1800
+            model_cfg_obj = configs.get("model_config_obj", {})
+            if not model_cfg_obj:
+                model_cfg_obj = {"temperature": 0.95}
+            try:
+                add_or_update_model_in_config(
+                    target,
+                    {
+                        "model_client_config": client_cfg,
+                        "model_config_obj": model_cfg_obj,
+                    },
+                )
+                logger.info(
+                    "[cli command.model] 新增模型: name=%s, client_cfg=%s, model_config_obj=%s",
+                    target,
+                    client_cfg,
+                    model_cfg_obj,
+                )
+            except Exception as e:
+                await channel.send_response(ws, req_id, ok=False, error=str(e))
+                return
+            env = e2a_from_agent_fields(
+                request_id=req_id,
+                channel_id="cli",
+                session_id=session_id,
+                req_method=ReqMethod.COMMAND_MODEL,
+                params={"action": "add_model", "target": target, "config": configs},
+                is_stream=False,
+                timestamp=time.time(),
+            )
+            resp = await real_client.send_request(env)
+            await channel.send_response(
+                ws,
+                req_id,
+                ok=resp.ok,
+                payload=resp.payload if resp.ok else None,
+                error=resp.error if not resp.ok else None,
+            )
+            return
+
+        if not model_name or not str(model_name).strip():
+            names = get_model_names()
+            logger.info(
+                "[cli command.model] 列出模型: names=%s, current=%s",
+                names,
+                os.getenv("MODEL_NAME", "unknown"),
+            )
+            env = e2a_from_agent_fields(
+                request_id=req_id,
+                channel_id="cli",
+                session_id=session_id,
+                req_method=ReqMethod.COMMAND_MODEL,
+                params={},
+                is_stream=False,
+                timestamp=time.time(),
+            )
+            resp = await real_client.send_request(env)
+            payload = resp.payload if resp.ok else {}
+            payload["available_models"] = names
+            payload["current"] = os.getenv("MODEL_NAME", "unknown")
+            await channel.send_response(ws, req_id, ok=True, payload=payload)
+            return
+
+        target = str(model_name).strip()
+        logger.info("[cli command.model] 切换模型: target=%s", target)
+        if target not in get_model_names():
+            logger.warning(
+                "[cli command.model] 模型不存在: %s, 可用: %s",
+                target,
+                get_model_names(),
+            )
+            await channel.send_response(
+                ws,
+                req_id,
+                ok=False,
+                error=f"Model '{target}' not found. Available: {', '.join(get_model_names())}",
+            )
+            return
+
+        env_from_file = _load_env_from_file()
+        raw_model_cfg = get_model_config(target)
+        logger.info("[cli command.model] 模型 '%s' 原始配置: %s", target, raw_model_cfg)
+        if not raw_model_cfg:
+            await channel.send_response(
+                ws, req_id, ok=False, error=f"Model '{target}' config not found"
+            )
+            return
+        raw_client_cfg = raw_model_cfg.get("model_client_config", {})
+        raw_model_config_obj = raw_model_cfg.get("model_config_obj", {})
+        if not raw_client_cfg:
+            await channel.send_response(
+                ws,
+                req_id,
+                ok=False,
+                error=f"Model '{target}' has no model_client_config",
+            )
+            return
+
+        import re as _re
+
+        pattern = _re.compile(r"\$\{([^:}]+)(?::-([^}]*))?\}")
+        resolved_cfg = {}
+        unresolved_env_vars = {}
+        for key, raw_val in raw_client_cfg.items():
+            if not isinstance(raw_val, str):
+                resolved_cfg[key] = raw_val
+                continue
+
+            def _replace(match):
+                var_name = match.group(1)
+                default = match.group(2)
+                if var_name in env_from_file:
+                    return env_from_file[var_name]
+                if default is not None:
+                    return default
+                unresolved_env_vars[var_name] = True
+                return ""
+
+            resolved_cfg[key] = pattern.sub(_replace, raw_val)
+
+        logger.info("[cli command.model] 解析后的配置: %s", resolved_cfg)
+
+        required_keys = {
+            "api_base": "API_BASE",
+            "api_key": "API_KEY",
+            "model_name": "MODEL_NAME",
+            "client_provider": "MODEL_PROVIDER",
+        }
+        missing = []
+        for yaml_key, env_key in required_keys.items():
+            val = resolved_cfg.get(yaml_key, "")
+            if not val:
+                is_env_ref = (
+                    yaml_key in raw_client_cfg
+                    and isinstance(raw_client_cfg[yaml_key], str)
+                    and raw_client_cfg[yaml_key].startswith("${")
+                )
+                if is_env_ref:
+                    env_var_in_raw = raw_client_cfg[yaml_key]
+                    var_names_in_val = _re.findall(
+                        r"\$\{([^:}]+)(?::-([^}]*))?\}", env_var_in_raw
+                    )
+                    for vn, vd in var_names_in_val:
+                        env_file_val = env_from_file.get(vn, "")
+                        if not env_file_val and (vd is None or vd == ""):
+                            missing.append(f"{yaml_key} (env var {vn} not set)")
+                else:
+                    missing.append(yaml_key)
+        if missing:
+            logger.error("[cli command.model] 必要配置缺失: %s, 无法切换", missing)
+            await channel.send_response(
+                ws,
+                req_id,
+                ok=False,
+                error=(
+                    f"Model '{target}' missing required config: {', '.join(missing)}. "
+                    "Please set the corresponding environment variables."
+                ),
+            )
+            return
+
+        switch_env_map = {
+            "model_name": "MODEL_NAME",
+            "client_provider": "MODEL_PROVIDER",
+            "api_key": "API_KEY",
+            "api_base": "API_BASE",
+        }
+        env_updates = {}
+        for yaml_key, env_key in switch_env_map.items():
+            if yaml_key in resolved_cfg and resolved_cfg[yaml_key]:
+                env_updates[env_key] = str(resolved_cfg[yaml_key])
+        if not env_updates:
+            await channel.send_response(ws, req_id, ok=False, error="No valid config to switch")
+            return
+
+        logger.info(
+            "[cli command.model] 写入环境变量: %s",
+            {k: (v if k != "API_KEY" else "***") for k, v in env_updates.items()},
+        )
+
+        env = e2a_from_agent_fields(
+            request_id=req_id,
+            channel_id="cli",
+            session_id=session_id,
+            req_method=ReqMethod.COMMAND_MODEL,
+            params={
+                "action": "switch_model",
+                "model": target,
+                "env_updates": env_updates,
+            },
+            is_stream=False,
+            timestamp=time.time(),
+        )
+        resp = await real_client.send_request(env)
+
+        if resp.ok:
+            for k, v in env_updates.items():
+                os.environ[k] = v
+            _persist_env_updates(env_updates)
+            try:
+                config_templates = {
+                    "api_base": "${API_BASE}",
+                    "api_key": "${API_KEY}",
+                    "model_name": "${MODEL_NAME}",
+                    "client_provider": "${MODEL_PROVIDER}",
+                }
+                config_templates["verify_ssl"] = resolved_cfg.get("verify_ssl", False)
+                if "timeout" in resolved_cfg:
+                    config_templates["timeout"] = resolved_cfg["timeout"]
+                add_or_update_model_in_config(
+                    "default",
+                    {"model_client_config": config_templates, "model_config_obj": raw_model_config_obj},
+                )
+                logger.info("[cli command.model] 已重置 models.default 为环境变量引用")
+            except Exception as e:
+                logger.warning("[cli command.model] 更新 config.yaml 失败: %s", e)
+            if on_config_saved:
+                config_payload = get_config()
+                try:
+                    callback_result = on_config_saved(
+                        set(env_updates.keys()),
+                        env_updates=dict(env_updates),
+                        config_payload=config_payload,
+                    )
+                    if inspect.isawaitable(callback_result):
+                        await callback_result
+                except Exception as e:
+                    logger.warning("[cli model.switch] on_config_saved failed: %s", e)
+            logger.info(
+                "[cli command.model] 切换完成: current=%s, requested=%s",
+                env_updates.get("MODEL_NAME", target),
+                target,
+            )
+            await channel.send_response(
+                ws,
+                req_id,
+                ok=True,
+                payload={
+                    "current": env_updates.get("MODEL_NAME", target),
+                    "requested": target,
+                    "type": "switched",
+                    "applied": True,
+                },
+            )
+        else:
+            logger.error("[cli command.model] agentserver 切换失败: %s", resp.error)
+            await channel.send_response(
+                ws,
+                req_id,
+                ok=False,
+                error=resp.error or "Model switch failed on agent server",
+            )
+
     channel.register_local_handler(path, "config.get", _config_get)
     channel.register_local_handler(path, "config.set", _config_set)
     channel.register_local_handler(path, "session.list", _session_list)
@@ -470,6 +794,7 @@ def register_cli_handlers(bind: CliHandlersBindParams) -> None:
     channel.register_local_handler(path, "chat.interrupt", _chat_interrupt)
     channel.register_local_handler(path, "chat.user_answer", _chat_user_answer)
     channel.register_local_handler(path, "history.get", _history_get)
+    channel.register_local_handler(path, "command.model", _command_model)
 
 
 def build_cli_route_binding(bind: CliRouteBindParams) -> GatewayRouteBinding:

@@ -688,3 +688,35 @@ def migrate_config_from_template(
         return True
 
     return False
+
+
+# ---------- 模型配置管理 ----------
+def get_model_names() -> list[str]:
+    """获取 models 下定义的模型名称列表。"""
+    data = _load_yaml_round_trip(_CONFIG_YAML_PATH)
+    models = data.get("models", {})
+    return list(models.keys()) if models else []
+
+
+def add_or_update_model_in_config(name: str, model_config: dict[str, Any]) -> None:
+    """新增或更新一个模型配置，写入 config.yaml 的 models.<name> 节点。"""
+    data = _load_yaml_round_trip(_CONFIG_YAML_PATH)
+    if "models" not in data:
+        data["models"] = {}
+    if name not in data["models"]:
+        data["models"][name] = model_config
+    else:
+        existing = data["models"][name]
+        for k, v in model_config.items():
+            if v is None and k in existing:
+                del existing[k]
+            else:
+                existing[k] = v
+    _dump_yaml_round_trip(_CONFIG_YAML_PATH, data)
+
+
+def get_model_config(name: str) -> dict[str, Any] | None:
+    """获取指定模型的原始配置（不解析环境变量）。"""
+    data = _load_yaml_round_trip(_CONFIG_YAML_PATH)
+    models = data.get("models", {})
+    return models.get(name) if name in models else None

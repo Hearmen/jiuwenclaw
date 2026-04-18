@@ -8,6 +8,7 @@ import logging
 import asyncio
 import json
 import math
+import os
 from pathlib import Path
 from typing import Any, ClassVar
 
@@ -775,19 +776,73 @@ class AgentWebSocketServer:
     async def _handle_command_model(self, ws: Any, request: AgentRequest, send_lock: asyncio.Lock) -> None:
         try:
             params = request.params or {}
-            requested = params.get("model")
-            current = requested if isinstance(requested, str) and requested.strip() else "default-model"
-            resp = AgentResponse(
-                request_id=request.request_id,
-                channel_id=request.channel_id,
-                ok=True,
-                payload={
-                    "current": current,
-                    "requested": requested if isinstance(requested, str) and requested.strip() else None,
-                    "applied": bool(isinstance(requested, str) and requested.strip()),
-                    "available": ["default-model", "planner-model", "coder-model"],
-                },
-            )
+            action = params.get("action")
+
+            if action == "add_model":
+                target = str(params.get("target", "")).strip()
+                logger.info("[command.model] add_model: target=%s", target)
+                resp = AgentResponse(
+                    request_id=request.request_id,
+                    channel_id=request.channel_id,
+                    ok=True,
+                    payload={"type": "model_added", "name": target},
+                )
+
+            elif action == "switch_model":
+                target = str(params.get("model", "")).strip()
+                env_updates = params.get("env_updates", {})
+                logger.info(
+                    "[command.model] switch_model: target=%s, env_updates=%s",
+                    target,
+                    {k: (v if k != "API_KEY" else "***") for k, v in env_updates.items()},
+                )
+
+                if not env_updates:
+                    resp = AgentResponse(
+                        request_id=request.request_id,
+                        channel_id=request.channel_id,
+                        ok=False,
+                        payload={"error": "No env_updates provided"},
+                    )
+                else:
+                    for k, v in env_updates.items():
+                        os.environ[k] = v
+                    logger.info("[command.model] os.environ 已更新, MODEL_NAME=%s", os.getenv("MODEL_NAME", "unknown"))
+
+                    try:
+                        from jiuwenclaw.agentserver.memory.config import clear_config_cache
+                        clear_config_cache()
+                        logger.info("[command.model] config cache 已清除")
+                    except Exception as e:
+                        logger.debug("[command.model] clear_config_cache skipped: %s", e)
+
+                    try:
+                        await self._agent_manager.reload_agents_config(None, env_updates)
+                        logger.info("[command.model] agent config 已重载")
+                    except Exception as e:
+                        logger.debug("[command.model] reload_agents_config skipped: %s", e)
+
+                    resp = AgentResponse(
+                        request_id=request.request_id,
+                        channel_id=request.channel_id,
+                        ok=True,
+                        payload={
+                            "current": os.getenv("MODEL_NAME", "unknown"),
+                            "requested": target,
+                            "type": "switched",
+                            "applied": True,
+                        },
+                    )
+                    logger.info("[command.model] 切换完成: current=%s", os.getenv("MODEL_NAME", "unknown"))
+
+            else:
+                resp = AgentResponse(
+                    request_id=request.request_id,
+                    channel_id=request.channel_id,
+                    ok=True,
+                    payload={"current": os.getenv("MODEL_NAME", "unknown"), "available": ["default-model"]},
+                )
+
         except Exception as e:  # noqa: BLE001
             logger.exception("[AgentWebSocketServer] command.model failed: %s", e)
             resp = AgentResponse(
