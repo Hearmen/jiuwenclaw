@@ -3,6 +3,7 @@
 import os
 import re
 import sys
+import uuid
 from pathlib import Path
 from typing import Any
 
@@ -296,6 +297,262 @@ def update_permissions_deny_guidance_in_config(msg: str) -> None:
         data["permissions"] = {}
     data["permissions"]["deny_guidance_message"] = msg
     _dump_yaml_round_trip(_CONFIG_YAML_PATH, data)
+
+
+# ---------- Web UI：permissions.tools / rules / approval_overrides ----------
+
+_VALID_PERM_LEVEL = frozenset({"allow", "ask", "deny"})
+_VALID_RULE_SEVERITY = frozenset({"LOW", "MEDIUM", "HIGH", "CRITICAL"})
+_RULE_MUTABLE_KEYS = frozenset({"tools", "pattern", "severity", "action", "description", "match_type"})
+
+
+def get_permissions_tools() -> dict[str, Any]:
+    """返回 ``permissions.tools``（原始结构，可能含 legacy dict）。"""
+    cfg = get_config() or {}
+    tools = (cfg.get("permissions") or {}).get("tools")
+    if not isinstance(tools, dict):
+        return {"tools": {}}
+    return {"tools": dict(tools)}
+
+
+def replace_permissions_tools_in_config(tools: Any) -> None:
+    """整表替换 ``permissions.tools``；值仅允许 ``allow|ask|deny``（或 legacy ``{\"*\": level}``）。"""
+    normalized = _validate_tools_map(tools)
+    data = _load_yaml_round_trip(_CONFIG_YAML_PATH)
+    if "permissions" not in data:
+        data["permissions"] = {}
+    data["permissions"]["tools"] = normalized
+    _dump_yaml_round_trip(_CONFIG_YAML_PATH, data)
+
+
+def update_permissions_tool_in_config(tool_name: str, level: Any) -> dict[str, Any]:
+    """合并单条工具级别到 ``permissions.tools`` 并写回 YAML。
+
+    Args:
+        tool_name: 工具名（如 ``mcp_exec_command``），与 ``permissions.tools`` 键一致。
+        level: ``allow`` / ``ask`` / ``deny`` 字符串，或 legacy ``{\"*\": level}``。
+
+    Returns:
+        ``{\"tools\": {...}}`` 更新后的完整 tools 映射（便于前端刷新）。
+    """
+    name = str(tool_name).strip()
+    if not name:
+        raise ValueError("tool name must be non-empty")
+    piece = _validate_tools_map({name: level})
+    data = _load_yaml_round_trip(_CONFIG_YAML_PATH)
+    if "permissions" not in data:
+        data["permissions"] = {}
+    existing = data["permissions"].get("tools")
+    if not isinstance(existing, dict):
+        existing = {}
+    merged = {str(k): v for k, v in existing.items()}
+    merged[name] = piece[name]
+    data["permissions"]["tools"] = merged
+    _dump_yaml_round_trip(_CONFIG_YAML_PATH, data)
+    return {"tools": dict(merged)}
+
+
+def delete_permissions_tool_in_config(tool_name: str) -> bool:
+    """从 ``permissions.tools`` 中删除一个键；不存在则返回 False。"""
+    name = str(tool_name).strip()
+    if not name:
+        raise ValueError("tool name must be non-empty")
+    data = _load_yaml_round_trip(_CONFIG_YAML_PATH)
+    if "permissions" not in data:
+        return False
+    tools = data["permissions"].get("tools")
+    if not isinstance(tools, dict):
+        return False
+    key_to_drop = None
+    for k in tools:
+        if str(k).strip() == name:
+            key_to_drop = k
+            break
+    if key_to_drop is None:
+        return False
+    new_tools = {k: v for k, v in tools.items() if k != key_to_drop}
+    data["permissions"]["tools"] = new_tools
+    _dump_yaml_round_trip(_CONFIG_YAML_PATH, data)
+    return True
+
+
+def _validate_tools_map(tools: Any) -> dict[str, str]:
+    if not isinstance(tools, dict):
+        raise ValueError("tools must be an object")
+    out: dict[str, str] = {}
+    for k, v in tools.items():
+        name = str(k).strip()
+        if not name:
+            raise ValueError("tool name must be non-empty")
+        if isinstance(v, dict) and isinstance(v.get("*"), str):
+            level = str(v["*"]).strip().lower()
+        elif isinstance(v, str):
+            level = v.strip().lower()
+        else:
+            raise ValueError(f"tools[{name!r}]: value must be allow|ask|deny or object {{'*': level}}")
+        if level not in _VALID_PERM_LEVEL:
+            raise ValueError(f"tools[{name!r}]: invalid level {level!r}")
+        out[name] = level
+    return out
+
+
+def get_permissions_rules() -> dict[str, Any]:
+    """返回 ``permissions.rules`` 列表（仅 dict 项）。"""
+    cfg = get_config() or {}
+    rules = (cfg.get("permissions") or {}).get("rules")
+    if not isinstance(rules, list):
+        return {"rules": []}
+    return {"rules": [r for r in rules if isinstance(r, dict)]}
+
+
+def get_permissions_approval_overrides() -> dict[str, Any]:
+    """返回 ``permissions.approval_overrides`` 列表（仅 dict 项）。"""
+    cfg = get_config() or {}
+    raw = (cfg.get("permissions") or {}).get("approval_overrides")
+    if not isinstance(raw, list):
+        return {"approval_overrides": []}
+    return {"approval_overrides": [x for x in raw if isinstance(x, dict)]}
+
+
+def create_permissions_rule_in_config(rule: dict[str, Any]) -> dict[str, Any]:
+    """追加一条 ``permissions.rules`` 项，返回落盘后的规则（含 ``id``）。"""
+    if not isinstance(rule, dict):
+        raise ValueError("rule must be an object")
+    rid = str(rule.get("id") or "").strip() or f"ui_rule_{uuid.uuid4().hex[:12]}"
+    stored: dict[str, Any] = {"id": rid}
+    for key in _RULE_MUTABLE_KEYS:
+        if key in rule and rule[key] is not None:
+            stored[key] = rule[key]
+    if "tools" not in stored or "pattern" not in stored:
+        raise ValueError("tools and pattern are required")
+    stored["tools"] = _normalize_rule_tools(stored["tools"])
+    stored["pattern"] = str(stored["pattern"]).strip()
+    if not stored["tools"]:
+        raise ValueError("tools must be a non-empty list")
+    if not stored["pattern"]:
+        raise ValueError("pattern must be non-empty")
+    _normalize_rule_severity_action(stored)
+
+    data = _load_yaml_round_trip(_CONFIG_YAML_PATH)
+    if "permissions" not in data:
+        data["permissions"] = {}
+    rules = data["permissions"].get("rules")
+    if not isinstance(rules, list):
+        rules = []
+    if any(isinstance(r, dict) and str(r.get("id") or "").strip() == rid for r in rules):
+        raise ValueError(f"rule id already exists: {rid}")
+    rules.append(stored)
+    data["permissions"]["rules"] = rules
+    _dump_yaml_round_trip(_CONFIG_YAML_PATH, data)
+    return stored
+
+
+def update_permissions_rule_in_config(rule_id: str, patch: dict[str, Any]) -> dict[str, Any]:
+    """按 ``id`` 合并更新一条 rule。"""
+    rid = str(rule_id or "").strip()
+    if not rid:
+        raise ValueError("id is required")
+    if not isinstance(patch, dict):
+        raise ValueError("patch must be an object")
+
+    data = _load_yaml_round_trip(_CONFIG_YAML_PATH)
+    if "permissions" not in data:
+        data["permissions"] = {}
+    rules = data["permissions"].get("rules")
+    if not isinstance(rules, list):
+        rules = []
+    idx: int | None = None
+    for i, r in enumerate(rules):
+        if isinstance(r, dict) and str(r.get("id") or "").strip() == rid:
+            idx = i
+            break
+    if idx is None:
+        raise ValueError(f"rule not found: {rid}")
+
+    merged: dict[str, Any] = dict(rules[idx])
+    for k, v in patch.items():
+        if k == "id":
+            continue
+        if k not in _RULE_MUTABLE_KEYS:
+            continue
+        if v is None:
+            merged.pop(k, None)
+        else:
+            merged[k] = v
+    merged["id"] = rid
+    if "tools" in merged:
+        merged["tools"] = _normalize_rule_tools(merged["tools"])
+    if "pattern" in merged:
+        merged["pattern"] = str(merged["pattern"]).strip()
+    if not merged.get("tools"):
+        raise ValueError("tools must be a non-empty list")
+    if not merged.get("pattern"):
+        raise ValueError("pattern must be non-empty")
+    _normalize_rule_severity_action(merged)
+    rules[idx] = merged
+    data["permissions"]["rules"] = rules
+    _dump_yaml_round_trip(_CONFIG_YAML_PATH, data)
+    return merged
+
+
+def delete_permissions_rule_in_config(rule_id: str) -> bool:
+    """删除 ``permissions.rules`` 中指定 ``id``；若未找到返回 False。"""
+    rid = str(rule_id or "").strip()
+    if not rid:
+        raise ValueError("id is required")
+    data = _load_yaml_round_trip(_CONFIG_YAML_PATH)
+    if "permissions" not in data:
+        return False
+    rules = data["permissions"].get("rules")
+    if not isinstance(rules, list):
+        return False
+    new_rules = [r for r in rules if not (isinstance(r, dict) and str(r.get("id") or "").strip() == rid)]
+    if len(new_rules) == len(rules):
+        return False
+    data["permissions"]["rules"] = new_rules
+    _dump_yaml_round_trip(_CONFIG_YAML_PATH, data)
+    return True
+
+
+def delete_permissions_approval_override_in_config(override_id: str) -> bool:
+    """按 ``id`` 删除 ``approval_overrides`` 中一项；若未找到返回 False。"""
+    oid = str(override_id or "").strip()
+    if not oid:
+        raise ValueError("id is required")
+    data = _load_yaml_round_trip(_CONFIG_YAML_PATH)
+    if "permissions" not in data:
+        return False
+    ov = data["permissions"].get("approval_overrides")
+    if not isinstance(ov, list):
+        return False
+    new_ov = [x for x in ov if not (isinstance(x, dict) and str(x.get("id") or "").strip() == oid)]
+    if len(new_ov) == len(ov):
+        return False
+    data["permissions"]["approval_overrides"] = new_ov
+    _dump_yaml_round_trip(_CONFIG_YAML_PATH, data)
+    return True
+
+
+def _normalize_rule_tools(raw: Any) -> list[str]:
+    if isinstance(raw, str):
+        s = raw.strip()
+        return [s] if s else []
+    if isinstance(raw, list):
+        return [str(x).strip() for x in raw if isinstance(x, str) and str(x).strip()]
+    raise ValueError("tools must be a string or array of strings")
+
+
+def _normalize_rule_severity_action(rule: dict[str, Any]) -> None:
+    if "severity" in rule:
+        sev = str(rule["severity"]).strip().upper()
+        if sev not in _VALID_RULE_SEVERITY:
+            raise ValueError(f"invalid severity {sev!r}")
+        rule["severity"] = sev
+    if "action" in rule:
+        act = str(rule["action"]).strip().lower()
+        if act not in _VALID_PERM_LEVEL:
+            raise ValueError(f"invalid action {act!r}")
+        rule["action"] = act
 
 
 def update_memory_forbidden_enabled_in_config(value: bool) -> None:

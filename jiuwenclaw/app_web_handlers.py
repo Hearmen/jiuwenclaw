@@ -1616,9 +1616,12 @@ def _register_web_handlers(bind: WebHandlersBindParams) -> None:
     channel.register_method("cron.job.preview", _cron_job_preview)
     channel.register_method("cron.job.run_now", _cron_job_run_now)
 
-    # 数字分身 — permissions.owner_scopes WebSocket API
+    # 数字分身 — permissions.owner_scopes：仅 Web 网关直连 config（不经 E2A / config_rpc）。
+    # 其余 permissions.*（tools / rules / approval_overrides）走 _forward_permissions_to_agent。
+
     async def _permissions_owner_scopes_get(ws, req_id, params, session_id):
         from jiuwenclaw.config import get_permissions_owner_scopes
+
         try:
             payload = get_permissions_owner_scopes()
             await channel.send_response(ws, req_id, ok=True, payload=payload)
@@ -1629,6 +1632,7 @@ def _register_web_handlers(bind: WebHandlersBindParams) -> None:
     async def _permissions_owner_scopes_set(ws, req_id, params, session_id):
         from jiuwenclaw.config import update_permissions_owner_scopes_in_config
         from jiuwenclaw.agentserver.permissions.core import get_permission_engine
+
         if not isinstance(params, dict):
             await channel.send_response(ws, req_id, ok=False, error="params must be object", code="BAD_REQUEST")
             return
@@ -1636,7 +1640,6 @@ def _register_web_handlers(bind: WebHandlersBindParams) -> None:
             owner_scopes = params.get("owner_scopes", {})
             deny_guidance = params.get("deny_guidance_message")
             update_permissions_owner_scopes_in_config(owner_scopes, deny_guidance)
-            # 热更新 permission engine
             try:
                 perm_cfg = get_config().get("permissions", {})
                 get_permission_engine().update_config(perm_cfg)
@@ -1646,6 +1649,91 @@ def _register_web_handlers(bind: WebHandlersBindParams) -> None:
         except Exception as e:
             logger.exception("[permissions.owner_scopes.set] %s", e)
             await channel.send_response(ws, req_id, ok=False, error=str(e), code="INTERNAL_ERROR")
+
+    channel.register_method("permissions.owner_scopes.get", _permissions_owner_scopes_get)
+    channel.register_method("permissions.owner_scopes.set", _permissions_owner_scopes_set)
+
+    async def _forward_permissions_to_agent(ws, req_id, params, session_id, *, req_method):
+        """permissions.*：优先经 E2A 转发到 AgentServer；Agent 未就绪时本地执行（与 config_rpc 同源）。"""
+        from jiuwenclaw.e2a.gateway_normalize import e2a_from_agent_fields
+        from jiuwenclaw.schema.agent import AgentRequest
+        from jiuwenclaw.schema.message import ReqMethod
+
+        if not isinstance(req_method, ReqMethod):
+            await channel.send_response(ws, req_id, ok=False, error="invalid req_method", code="INTERNAL_ERROR")
+            return
+
+        synthetic = AgentRequest(
+            request_id=str(req_id) if req_id else "",
+            channel_id="",
+            session_id=session_id,
+            req_method=req_method,
+            params=dict(params) if isinstance(params, dict) else {},
+        )
+
+        ac = _resolve(agent_client)
+        if ac is None or not getattr(ac, "server_ready", False):
+            from jiuwenclaw.agentserver.permissions.config_rpc import dispatch_permissions_config_request
+
+            resp = dispatch_permissions_config_request(synthetic)
+            if not resp.ok:
+                pl = resp.payload if isinstance(resp.payload, dict) else {}
+                await channel.send_response(
+                    ws,
+                    req_id,
+                    ok=False,
+                    error=str(pl.get("error") or "request failed"),
+                    code=str(pl.get("code") or "BAD_REQUEST"),
+                )
+                return
+            out = resp.payload if isinstance(resp.payload, dict) else {}
+            await channel.send_response(ws, req_id, ok=True, payload=out)
+            return
+
+        env = e2a_from_agent_fields(
+            request_id=str(req_id) if req_id else "",
+            channel_id="",
+            session_id=session_id,
+            req_method=req_method,
+            params=dict(params) if isinstance(params, dict) else {},
+        )
+        try:
+            resp = await ac.send_request(env)
+        except Exception as e:
+            logger.exception("[permissions] forward to agent failed: %s", e)
+            await channel.send_response(ws, req_id, ok=False, error=str(e), code="INTERNAL_ERROR")
+            return
+        if not resp.ok:
+            pl = resp.payload if isinstance(resp.payload, dict) else {}
+            await channel.send_response(
+                ws,
+                req_id,
+                ok=False,
+                error=str(pl.get("error") or "request failed"),
+                code=str(pl.get("code") or "BAD_REQUEST"),
+            )
+            return
+        out = resp.payload if isinstance(resp.payload, dict) else {}
+        await channel.send_response(ws, req_id, ok=True, payload=out)
+
+    from jiuwenclaw.schema.message import ReqMethod as _PermReq
+
+    def _register_perm(method_name: str, rm: Any) -> None:
+        async def _handler(ws, req_id, params, session_id):
+            await _forward_permissions_to_agent(ws, req_id, params, session_id, req_method=rm)
+
+        channel.register_method(method_name, _handler)
+
+    _register_perm("permissions.tools.get", _PermReq.PERMISSIONS_TOOLS_GET)
+    _register_perm("permissions.tools.set", _PermReq.PERMISSIONS_TOOLS_SET)
+    _register_perm("permissions.tools.update", _PermReq.PERMISSIONS_TOOLS_UPDATE)
+    _register_perm("permissions.tools.delete", _PermReq.PERMISSIONS_TOOLS_DELETE)
+    _register_perm("permissions.rules.get", _PermReq.PERMISSIONS_RULES_GET)
+    _register_perm("permissions.rules.create", _PermReq.PERMISSIONS_RULES_CREATE)
+    _register_perm("permissions.rules.update", _PermReq.PERMISSIONS_RULES_UPDATE)
+    _register_perm("permissions.rules.delete", _PermReq.PERMISSIONS_RULES_DELETE)
+    _register_perm("permissions.approval_overrides.get", _PermReq.PERMISSIONS_APPROVAL_OVERRIDES_GET)
+    _register_perm("permissions.approval_overrides.delete", _PermReq.PERMISSIONS_APPROVAL_OVERRIDES_DELETE)
 
     async def _memory_forbidden_get(ws, req_id, params, session_id):
         try:
@@ -1668,7 +1756,5 @@ def _register_web_handlers(bind: WebHandlersBindParams) -> None:
             logger.exception("[memory.forbidden.set] %s", e)
             await channel.send_response(ws, req_id, ok=False, error=str(e), code="INTERNAL_ERROR")
 
-    channel.register_method("permissions.owner_scopes.get", _permissions_owner_scopes_get)
-    channel.register_method("permissions.owner_scopes.set", _permissions_owner_scopes_set)
     channel.register_method("memory.forbidden.get", _memory_forbidden_get)
     channel.register_method("memory.forbidden.set", _memory_forbidden_set)

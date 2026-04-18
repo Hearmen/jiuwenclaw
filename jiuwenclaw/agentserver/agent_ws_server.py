@@ -32,6 +32,7 @@ from jiuwenclaw.agentserver.extensions import get_rail_manager
 from jiuwenclaw.agentserver.permissions.patterns import persist_cli_trusted_directory
 from jiuwenclaw.schema.hooks_context import AgentServerChatHookContext
 from jiuwenclaw.agentserver.agent_manager import AgentManager, ACP_DEFAULT_CAPABILITIES
+from jiuwenclaw.agentserver.permissions.config_rpc import get_permissions_config_req_methods
 
 
 logger = logging.getLogger(__name__)
@@ -302,6 +303,9 @@ class AgentWebSocketServer:
             if request.req_method == ReqMethod.SESSION_LIST:
                 await self._handle_session_list(ws, request, send_lock)
                 return
+            if request.req_method in get_permissions_config_req_methods():
+                await self._handle_permissions_config(ws, request, send_lock)
+                return
             if request.req_method == ReqMethod.HISTORY_GET:
                 if request.is_stream:
                     await self._handle_history_get_stream(ws, request, send_lock)
@@ -550,6 +554,15 @@ class AgentWebSocketServer:
             payload={"sessions": sessions},
             metadata=request.metadata,
         )
+        wire = encode_agent_response_for_wire(resp, response_id=request.request_id)
+        async with send_lock:
+            await ws.send(json.dumps(wire, ensure_ascii=False))
+
+    async def _handle_permissions_config(self, ws: Any, request: AgentRequest, send_lock: asyncio.Lock) -> None:
+        """处理 permissions.* E2A 请求（与 Web ``register_method`` 同名 method）。"""
+        from jiuwenclaw.agentserver.permissions.config_rpc import dispatch_permissions_config_request
+
+        resp = dispatch_permissions_config_request(request)
         wire = encode_agent_response_for_wire(resp, response_id=request.request_id)
         async with send_lock:
             await ws.send(json.dumps(wire, ensure_ascii=False))

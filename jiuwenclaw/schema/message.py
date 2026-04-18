@@ -77,6 +77,18 @@ class ReqMethod(Enum):
     HEARTBEAT_GET_CONF = "heartbeat.get_conf"
     HEARTBEAT_SET_CONF = "heartbeat.set_conf"
 
+    # 安全防护 permissions（与 Web ``register_method`` 同名，经 E2A → AgentServer 处理；owner_scopes 仅走 Web 直连）
+    PERMISSIONS_TOOLS_GET = "permissions.tools.get"
+    PERMISSIONS_TOOLS_SET = "permissions.tools.set"
+    PERMISSIONS_TOOLS_UPDATE = "permissions.tools.update"
+    PERMISSIONS_TOOLS_DELETE = "permissions.tools.delete"
+    PERMISSIONS_RULES_GET = "permissions.rules.get"
+    PERMISSIONS_RULES_CREATE = "permissions.rules.create"
+    PERMISSIONS_RULES_UPDATE = "permissions.rules.update"
+    PERMISSIONS_RULES_DELETE = "permissions.rules.delete"
+    PERMISSIONS_APPROVAL_OVERRIDES_GET = "permissions.approval_overrides.get"
+    PERMISSIONS_APPROVAL_OVERRIDES_DELETE = "permissions.approval_overrides.delete"
+
     CHANNEL_FEISHU_GET_CONF = "channel.feishu.get_conf"
     CHANNEL_FEISHU_SET_CONF = "channel.feishu.set_conf"
 
