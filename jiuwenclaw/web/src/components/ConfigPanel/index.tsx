@@ -1,6 +1,7 @@
 import { useEffect, useLayoutEffect, useMemo, useState, type ReactNode } from "react";
 import { useTranslation } from 'react-i18next';
 import { useChatStore } from '../../stores';
+import { PermissionsToolsEditor } from "./PermissionsToolsEditor";
 
 interface ConfigPanelProps {
   config: Record<string, unknown> | null;
@@ -795,6 +796,11 @@ export function ConfigPanel({
                   initialExpandGroupTag != null && group.tag === initialExpandGroupTag
                 }
                 t={t}
+                afterTable={
+                  group.tag === "permissions" ? (
+                    <PermissionsToolsEditor isConnected={isConnected} />
+                  ) : null
+                }
               />
             ))}
           </div>
