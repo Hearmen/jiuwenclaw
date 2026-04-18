@@ -13,6 +13,8 @@ export interface ScreenLayoutOptions {
   questionLines: string[];
   editorLines: string[];
   composerPreviewLines: string[];
+  pendingInput?: string;
+  pendingInputBaseline?: number;
   showFullThinking: boolean;
   showToolDetails: boolean;
   showShortcutHelp: boolean;
@@ -161,6 +163,8 @@ export function buildAppScreenLines(snapshot: AppSnapshot, options: ScreenLayout
     options.showFullThinking,
     options.showToolDetails,
     options.animationPhase,
+    options.pendingInput,
+    options.pendingInputBaseline,
   );
   const todoLines = options.showTodos ? renderTodoList(snapshot.todos, options.width) : [];
   const teamStatusLines =

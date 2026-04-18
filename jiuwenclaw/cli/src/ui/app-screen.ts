@@ -459,6 +459,9 @@ export class AppScreen implements Component, Focusable {
   private animationTimer: ReturnType<typeof setInterval> | null = null;
   private animationPhase = 0;
   private runningStartedAtMs: number | null = null;
+  private pendingSubmittedInput: string | null = null;
+  private pendingSubmittedBaseline = 0;
+  private pendingSubmittedSessionId: string | null = null;
 
   constructor(
     private readonly tui: TUI,
@@ -677,6 +680,8 @@ export class AppScreen implements Component, Focusable {
       questionLines,
       editorLines,
       composerPreviewLines,
+      pendingInput: this.pendingSubmittedInput ?? undefined,
+      pendingInputBaseline: this.pendingSubmittedInput ? this.pendingSubmittedBaseline : undefined,
       showFullThinking: snapshot.transcriptMode === "detailed",
       showToolDetails: snapshot.transcriptMode === "detailed",
       showShortcutHelp: false,
@@ -717,19 +722,26 @@ export class AppScreen implements Component, Focusable {
         await this.openResumeSessionList();
         return;
       }
-      await this.commands.execute(text, {
-        ...this.state.getCommandContext(),
-        exitApp: this.exit,
-      });
+      this.beginPendingSubmittedInput(text, snapshot);
       this.editor.addToHistory(text);
       this.editor.setText("");
       this.composerAttachments = [];
+      try {
+        await this.commands.execute(text, {
+          ...this.state.getCommandContext(),
+          exitApp: this.exit,
+        });
+      } finally {
+        this.clearPendingSubmittedInput();
+      }
       return;
     }
 
     if (snapshot.isProcessing || snapshot.isPaused) {
+      this.beginPendingSubmittedInput(text, snapshot);
       const requestId = this.state.supplement(content);
       if (!requestId) {
+        this.clearPendingSubmittedInput();
         this.state.addItem({
           kind: "error",
           id: `offline-${Date.now()}`,
@@ -745,8 +757,10 @@ export class AppScreen implements Component, Focusable {
       return;
     }
 
+    this.beginPendingSubmittedInput(text, snapshot);
     const requestId = this.state.sendMessage(content);
     if (!requestId) {
+      this.clearPendingSubmittedInput();
       this.state.addItem({
         kind: "error",
         id: `offline-${Date.now()}`,
@@ -764,6 +778,13 @@ export class AppScreen implements Component, Focusable {
 
   private handleStateChange(): void {
     const snapshot = this.state.getSnapshot();
+    if (
+      this.pendingSubmittedInput &&
+      (snapshot.sessionId !== this.pendingSubmittedSessionId ||
+        snapshot.entries.length !== this.pendingSubmittedBaseline)
+    ) {
+      this.clearPendingSubmittedInput(false);
+    }
     const questionId = snapshot.pendingQuestion?.requestId ?? null;
     if (questionId && questionId !== this.activeQuestionId) {
       this.activeQuestionId = questionId;
@@ -791,6 +812,25 @@ export class AppScreen implements Component, Focusable {
     this.syncTeamPanelSelection(snapshot);
     this.syncAnimationLoop(snapshot);
     this.tui.requestRender();
+  }
+
+  private beginPendingSubmittedInput(
+    text: string,
+    snapshot: ReturnType<CliPiAppState["getSnapshot"]>,
+  ): void {
+    this.pendingSubmittedInput = text;
+    this.pendingSubmittedBaseline = snapshot.entries.length;
+    this.pendingSubmittedSessionId = snapshot.sessionId;
+    this.tui.requestRender();
+  }
+
+  private clearPendingSubmittedInput(requestRender = true): void {
+    this.pendingSubmittedInput = null;
+    this.pendingSubmittedBaseline = 0;
+    this.pendingSubmittedSessionId = null;
+    if (requestRender) {
+      this.tui.requestRender();
+    }
   }
 
   private syncTeamPanelSelection(snapshot: ReturnType<CliPiAppState["getSnapshot"]>): void {
