@@ -14,7 +14,6 @@ from openjiuwen.core.foundation.tool import ToolCard
 from openjiuwen.harness.rails.filesystem_rail import FileSystemRail
 from openjiuwen.harness.rails.heartbeat_rail import HeartbeatRail
 from openjiuwen.harness.rails.security_rail import SecurityRail
-from openjiuwen.harness.rails.skill_use_rail import SkillUseRail
 from openjiuwen.harness.rails.task_planning_rail import TaskPlanningRail
 
 from jiuwenclaw.agentserver.deep_agent.rails.avatar_rail import AvatarPromptRail
@@ -33,7 +32,6 @@ RAIL_WHITELIST = frozenset({
     "HeartbeatRail",
     "AvatarPromptRail",
     "FileSystemRail",
-    "SkillUseRail",
 })
 
 TOOL_WHITELIST = frozenset({
@@ -80,7 +78,7 @@ def build_member_rails(
     """为 Team 成员创建 rails 列表.
 
     Args:
-        skills_dir: 成员 workspace 下的 skills 目录路径
+        skills_dir: 兼容保留参数，当前不参与 skill rail 构造
         language: 语言设置
         channel: 渠道设置（使用真实 channel_id）
         agent_name: 成员名称
@@ -116,26 +114,6 @@ def build_member_rails(
         logger.info("[TeamRuntime] FileSystemRail created")
     except Exception as exc:
         logger.warning("[TeamRuntime] FileSystemRail failed: %s", exc)
-
-    try:
-        rail = SkillUseRail(
-            skills_dir=skills_dir,
-            skill_mode="all",
-        )
-        rails_list.append(rail)
-        logger.info("[TeamRuntime] SkillUseRail created: %s", skills_dir)
-        
-        try:
-            loaded_skills = getattr(rail, '_skills', None)
-            if loaded_skills is not None:
-                logger.info("[TeamRuntime] SkillUseRail loaded %d skills: %s", 
-                           len(loaded_skills), list(loaded_skills.keys()) if isinstance(loaded_skills, dict) else loaded_skills)
-            else:
-                logger.info("[TeamRuntime] SkillUseRail skills not directly accessible, checking via manager...")
-        except Exception:
-            logger.info("[TeamRuntime] Cannot inspect loaded skills from SkillUseRail")
-    except Exception as exc:
-        logger.warning("[TeamRuntime] SkillUseRail failed: %s", exc)
 
     try:
         rail = JiuClawStreamEventRail()

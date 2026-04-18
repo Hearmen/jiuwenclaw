@@ -246,32 +246,16 @@ class TeamManager:
             role: str | None = None,
         ) -> None:
             logger.info(
-                "[TeamManager] customizer called: channel=%s member_name=%s role=%s agent_id=%s",
+                "[TeamManager] customizer called: channel=%s member_name=%s role=%s",
                 resolved_channel,
                 member_name,
                 role,
-                id(agent),
             )
-            logger.info("[TeamManager] main agent id: %s", id(deep_agent))
-
-            # 调试：打印 agent 的 workspace 信息
             agent_ws = agent.deep_config.workspace if agent.deep_config else None
             if agent_ws:
-                logger.info(
-                    "[TeamManager] agent workspace.root_path=%s, stable_base=%s",
-                    agent_ws.root_path,
-                    getattr(agent_ws, "stable_base", "N/A"),
-                )
+                logger.debug("[TeamManager] member workspace.root_path=%s", agent_ws.root_path)
             else:
                 logger.warning("[TeamManager] agent deep_config.workspace is None")
-
-            # 复用主 agent 的 sys_operation
-            main_sys_operation = deep_agent.deep_config.sys_operation if deep_agent.deep_config else None
-            if main_sys_operation and agent.deep_config:
-                agent.deep_config.sys_operation = main_sys_operation
-                logger.info("[TeamManager] Reused main agent's sys_operation for team member")
-            elif not main_sys_operation:
-                logger.warning("[TeamManager] Main agent's sys_operation is None, member will use its own")
 
             inheritable_cards = filter_inheritable_ability_cards(deep_agent)
             existing_ability_ids = {card.id for card in agent.ability_manager.list() or []}
@@ -296,21 +280,12 @@ class TeamManager:
 
                 try:
                     member_skills_dir.mkdir(parents=True, exist_ok=True)
-                    logger.info(
-                        "[TeamManager] member_skills_dir=%s selected_skills=%s",
-                        member_skills_dir,
-                        selected_skills if skills_configured else "ALL",
-                    )
                     copy_member_skills(
                         member_skills_dir,
                         skills_configured=skills_configured,
                         selected_skills=selected_skills,
                     )
                     write_member_skill_state(member_skills_dir)
-                    skills_after_copy = sorted(
-                        path.name for path in member_skills_dir.iterdir() if path.is_dir()
-                    )
-                    logger.info("[TeamManager] Skills in member workspace: %s", skills_after_copy)
                 except Exception as exc:
                     logger.warning("[TeamManager] skill copy failed: %s", exc)
 
@@ -390,8 +365,6 @@ class TeamManager:
                     logger.warning("[TeamManager] SendFileToolkit registration failed: %s", exc)
             else:
                 logger.info("[TeamManager] SendFileToolkit skipped: missing request_id or channel_id")
-
-            logger.info("[TeamManager] Agent customizer completed")
 
         return customizer
 

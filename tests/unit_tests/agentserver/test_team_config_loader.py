@@ -167,6 +167,52 @@ def test_load_team_spec_dict_preserves_explicit_empty_skills(monkeypatch, tmp_pa
     assert spec["agents"]["reviewer"]["skills"] == []
 
 
+def test_load_team_spec_dict_expands_missing_skills_to_all_global_skills(monkeypatch, tmp_path):
+    """Missing skills config should expand to the current global skill snapshot."""
+    global_skills_dir = tmp_path / "skills"
+    (global_skills_dir / "skill-a").mkdir(parents=True)
+    (global_skills_dir / "skill-a" / "SKILL.md").write_text("# skill-a", encoding="utf-8")
+    (global_skills_dir / "skill-b").mkdir(parents=True)
+    (global_skills_dir / "skill-b" / "SKILL.md").write_text("# skill-b", encoding="utf-8")
+    (global_skills_dir / "_internal").mkdir(parents=True)
+
+    config = {
+        "models": {
+            "default": {
+                "model_client_config": {
+                    "model_name": "gpt-all",
+                    "client_provider": "openai",
+                },
+                "model_config_obj": {},
+            }
+        },
+        "team": {
+            "agents": {
+                "leader": {},
+                "writer": {},
+            }
+        },
+    }
+
+    monkeypatch.setattr(
+        "jiuwenclaw.agentserver.team.config_loader.get_config",
+        lambda: config,
+    )
+    monkeypatch.setattr(
+        "jiuwenclaw.agentserver.team.config_loader.get_agent_teams_home",
+        lambda: tmp_path / ".agent_teams",
+    )
+    monkeypatch.setattr(
+        "jiuwenclaw.agentserver.team.config_loader.get_agent_skills_dir",
+        lambda: global_skills_dir,
+    )
+
+    spec = load_team_spec_dict("session-4")
+
+    assert spec["agents"]["leader"]["skills"] == ["skill-a", "skill-b"]
+    assert spec["agents"]["writer"]["skills"] == ["skill-a", "skill-b"]
+
+
 def test_resolve_team_sqlite_db_path_defaults_to_agent_teams_home(monkeypatch, tmp_path):
     """Missing connection_string should fall back to openjiuwen agent-teams team.db."""
     config = {
