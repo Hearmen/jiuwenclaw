@@ -63,3 +63,14 @@ if [[ ! -d "$DIST_OUTPUT" ]]; then
 fi
 echo "[build] 完成! wheel 包位于: $DIST_OUTPUT"
 ls -la dist/*.whl 2>/dev/null || true
+
+# 3. 构建 TUI wheel
+if ! command -v bun &>/dev/null; then
+    echo "[build] 跳过 TUI 构建: 未找到 bun 命令" >&2
+    echo "完成bun安装: curl -fsSL https://bun.sh/install | bash  # 针对 macOS、Linux 和 WSL" >&2
+else
+    echo "[build] 正在构建TUI的 wheel包..."
+    cd "$PROJECT_ROOT"
+    python scripts/build_python_packages.py --target all --clean --install-js-deps
+    echo "[build] TUI的 wheel 包构建完成"
+fi

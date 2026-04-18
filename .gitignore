@@ -26,6 +26,7 @@ jiuwenclaw/web/logs/
 jiuwenclaw/web/cd
 jiuwenclaw/web/tsc
 jiuwenclaw/web/openjiuwen-web@0.1.0
+jiuwenclaw/cli/bun.lock
 *.tsbuildinfo
 npm-debug.log*
 yarn-debug.log*
@@ -67,3 +68,6 @@ jiuwenclaw/agentserver/tools/browser-move/screenshots
 
 jiuwenclaw/workspace/.whatsapp-auth/
 jiuwenclaw/resources/agent/workspace/
+jiuwenclaw/resources/tui/bin/
+packages/jiuwenclaw-tui/jiuwenclaw_tui/resources/tui/bin/
+packages/jiuwenclaw-tui/jiuwenclaw_tui/resources/tui-bin/

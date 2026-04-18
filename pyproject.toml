@@ -42,6 +42,7 @@ dependencies = [
 [project.optional-dependencies]
 desktop = ["pywebview>=5.4"]
 dev = ["pyinstaller>=6.0.0", "pywebview>=5.4"]
+tui = ["jiuwenclaw-tui==0.1.9"]
 shell-ast = [
     "tree-sitter>=0.25.0,<0.26.0",
     "tree-sitter-bash>=0.25.0,<0.26.0",
@@ -75,6 +76,8 @@ include-package-data = true
 [tool.setuptools.packages.find]
 where = ["."]
 include = ["jiuwenclaw*"]
+exclude = ["jiuwenclaw.cli*", "jiuwenclaw.web*"]
+namespaces = false
 
 [tool.setuptools.package-data]
 "*" = ["LICENSE"]
@@ -89,6 +92,9 @@ jiuwenclaw = [
 
 [tool.setuptools.exclude-package-data]
 jiuwenclaw = ["web/node_modules/**", "web/node_modules/*"]
+
+[tool.uv.sources]
+jiuwenclaw-tui = { path = "./packages/jiuwenclaw-tui" }
 
 [dependency-groups]
 # Testing (keep in sync with optional-dependencies.test)
