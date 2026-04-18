@@ -1382,7 +1382,11 @@ class MessageHandler(ABC):
 
     @staticmethod
     def _is_evolution_approval_request_id(request_id: Any) -> bool:
-        return isinstance(request_id, str) and request_id.startswith("skill_evolve_approve_")
+        # Support skill evolution (skill_evolve_*) and new skill creation (skill_create*)
+        return isinstance(request_id, str) and (
+            request_id.startswith("skill_evolve_") or
+            request_id.startswith("skill_create_")
+        )
 
     def _queue_supplement_input(
         self,

@@ -11,7 +11,6 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
-import uuid
 from contextvars import ContextVar, Token
 from dataclasses import dataclass
 from typing import Any, AsyncIterator, Callable, List, Tuple
@@ -53,12 +52,7 @@ from openjiuwen.harness.rails.lsp_rail import LspRail
 from openjiuwen.harness.rails.context_engineering_rail import ContextEngineeringRail
 from openjiuwen.harness.rails.filesystem_rail import FileSystemRail
 from openjiuwen.harness.rails.heartbeat_rail import HeartbeatRail
-from openjiuwen.agent_evolving.online.schema import (
-    EvolutionContext,
-    EvolutionRecord,
-    EvolutionTarget,
-)
-from openjiuwen.agent_evolving.online.signal_detector import SignalDetector
+from openjiuwen.agent_evolving.signal import SignalDetector
 from openjiuwen.harness.rails.memory_rail import MemoryRail
 from openjiuwen.harness.rails.coding_memory_rail import CodingMemoryRail
 from openjiuwen.harness.subagents.browser_agent import build_browser_agent_config
@@ -326,7 +320,6 @@ class JiuWenClawDeepAdapter:
         self._heartbeat_rail: HeartbeatRail | None = None
         self._skill_evolution_rail: SkillEvolutionRail | None = None
         self._subagent_rail: SubagentRail | None = None
-        self._pending_evolution_data: dict[str, dict] = {}
         self._permission_rail: Any = None
         self._avatar_rail: Any = None
         self._tool_cards = None
@@ -2107,8 +2100,10 @@ class JiuWenClawDeepAdapter:
         request_id = request.params.get("request_id", "") if isinstance(request.params, dict) else ""
         answers = request.params.get("answers", []) if isinstance(request.params, dict) else []
         resolved = False
-        if request_id.startswith("skill_evolve_approve_"):
+        if request_id.startswith("skill_evolve_"):
             resolved = await self._handle_evolution_approval(request_id, answers)
+        elif request_id.startswith("skill_create_"):
+            resolved = await self._handle_skill_create_approval(request_id, answers)
 
         return AgentResponse(
             request_id=request.request_id,
@@ -2139,37 +2134,66 @@ class JiuWenClawDeepAdapter:
         return None
 
     async def _handle_evolution_approval(self, request_id: str, answers: list) -> bool:
-        """Persist approved evolution records from the cached _evolution_data."""
-        evo_data = self._pending_evolution_data.pop(request_id, None)
-        if evo_data is None or self._skill_evolution_rail is None:
+        """Handle evolution approval via SkillEvolutionRail.on_approve/on_reject.
+
+        Uses the optimizer path: calls rail.on_approve() for accepted records
+        which will flush to store and solidify, or rail.on_reject() to discard.
+        """
+        rail = self._skill_evolution_rail
+        if rail is None:
+            logger.warning("[JiuWenClaw] evolution approval failed: no SkillEvolutionRail")
             return False
 
-        skill_name = evo_data.get("skill_name", "")
-        raw_records = evo_data.get("records", [])
-        kept = 0
-        for i, raw in enumerate(raw_records):
-            accept = (
-                    i < len(answers)
-                    and isinstance(answers[i], dict)
-                    and "接收" in answers[i].get("selected_options", [])
-            )
-            if accept:
-                record = EvolutionRecord.from_dict(raw)
-                await self._skill_evolution_rail.store.append_record(skill_name, record)
-                kept += 1
-
-        logger.info(
-            "[JiuWenClaw] evolution approval resolved: request_id=%s kept=%d/%d skill=%s",
-            request_id, kept, len(raw_records), skill_name,
+        # Determine if user accepted (any answer contains "接收")
+        accepted = any(
+            isinstance(ans, dict) and "接收" in ans.get("selected_options", [])
+            for ans in answers
         )
+
+        if accepted:
+            await rail.on_approve(request_id)
+            logger.info("[JiuWenClaw] evolution approval accepted: request_id=%s", request_id)
+        else:
+            await rail.on_reject(request_id)
+            logger.info("[JiuWenClaw] evolution approval rejected: request_id=%s", request_id)
+
+        return True
+
+    async def _handle_skill_create_approval(self, request_id: str, answers: list) -> bool:
+        """Handle approval for new Skill creation proposals.
+
+        Uses the optimizer path: calls rail.on_approve_new_skill() for accepted
+        proposals which will create the skill, or rail.on_reject_new_skill() to discard.
+        """
+        rail = self._skill_evolution_rail
+        if rail is None:
+            logger.warning("[JiuWenClaw] skill create approval failed: no SkillEvolutionRail")
+            return False
+
+        # Determine if user accepted (any answer contains "Create")
+        accepted = any(
+            isinstance(ans, dict) and "Create" in ans.get("selected_options", [])
+            for ans in answers
+        )
+
+        if accepted:
+            await rail.on_approve_new_skill(request_id)
+            logger.info("[JiuWenClaw] skill create accepted: request_id=%s", request_id)
+        else:
+            await rail.on_reject_new_skill(request_id)
+            logger.info("[JiuWenClaw] skill create rejected: request_id=%s", request_id)
+
         return True
 
     # ------------------------------------------------------------------
-    # /evolve & /solidify command handlers (new online module)
+    # /evolve, /evolve_list, /evolve_simplify & /solidify command handlers
     # ------------------------------------------------------------------
 
     async def _handle_evolve_command(self, query: str, session_id: str) -> dict[str, Any]:
-        """/evolve [list | <skill_name>] handler using the new online evolution module.
+        """/evolve [list | <skill_name>] handler using the optimizer path.
+
+        Uses SkillEvolutionRail.generate_and_emit_experience to stage records
+        in memory and emit approval events.
 
         Returns a result dict.  When evolution records are generated the dict
         includes an ``approval_chunks`` list so the caller can forward the
@@ -2237,17 +2261,11 @@ class JiuWenClawDeepAdapter:
                 "result_type": "answer",
             }
 
-        # 3) Generate experience records
-        context = EvolutionContext(
-            skill_name=skill_name,
-            signals=attributed,
-            skill_content=await store.read_skill_content(skill_name),
-            messages=parsed_messages,
-            existing_desc_records=await store.get_pending_records(skill_name, EvolutionTarget.DESCRIPTION),
-            existing_body_records=await store.get_pending_records(skill_name, EvolutionTarget.BODY),
-        )
+        # 3) Generate experience records and emit approval event
         try:
-            records = await rail.evolver.generate_skill_experience(context)
+            has_records = await rail.generate_and_emit_experience(
+                skill_name, attributed, parsed_messages
+            )
         except Exception as exc:
             logger.warning("[JiuWenClaw] evolve generate failed (skill=%s): %s", skill_name, exc)
             return {
@@ -2255,46 +2273,35 @@ class JiuWenClawDeepAdapter:
                 "result_type": "error",
             }
 
-        if not records:
+        if not has_records:
             return {
                 "output": "当前对话未发现明确的演进信号（无工具执行失败、无用户纠正）。\n",
                 "result_type": "answer",
             }
 
-        # 4) Build approval event (do NOT persist yet)
-        request_id = f"skill_evolve_approve_{uuid.uuid4().hex[:8]}"
-        questions = []
-        for record in records:
-            content_preview = record.change.content[:1000]
-            section = record.change.section
-            target_tag = record.change.target.value
-            questions.append({
-                "question": (
-                    f"**Skill '{skill_name}' 演进生成了新经验：**\n\n"
-                    f"- **目标**: {target_tag}\n"
-                    f"- **章节**: {section}\n\n"
-                    f"{content_preview}"
-                ),
-                "header": "技能演进审批",
-                "options": [
-                    {"label": "接收", "description": "保留此演进经验"},
-                    {"label": "拒绝", "description": "丢弃此演进经验"},
-                ],
-                "multi_select": False,
-            })
+        # 5) Drain the buffered approval event
+        events = rail.drain_pending_approval_events()
+        if not events:
+            return {
+                "output": "演进经验生成失败：无法创建审批事件。",
+                "result_type": "error",
+            }
 
-        self._pending_evolution_data[request_id] = {
-            "skill_name": skill_name,
-            "records": [r.to_dict() for r in records],
-        }
+        # 6) Build response with approval chunks
+        event = events[0]
+        payload = event.payload or {}
+        request_id = payload.get("request_id", "")
+        questions = payload.get("questions", [])
 
+        # Build summary from questions
         summaries = "\n".join(
-            f"  {i + 1}. **[{r.change.section}]** {r.change.content[:200]}"
-            for i, r in enumerate(records)
+            f"  {i + 1}. {q.get('question', '')[:200]}"
+            for i, q in enumerate(questions)
         )
+
         return {
             "output": (
-                f"已为 Skill '{skill_name}' 生成 {len(records)} 条演进经验，请审批：\n"
+                f"已为 Skill '{skill_name}' 生成 {len(questions)} 条演进经验，请审批：\n"
                 f"{summaries}"
             ),
             "result_type": "answer",
@@ -2346,6 +2353,139 @@ class JiuWenClawDeepAdapter:
             msg = f"已将 {count} 条演进经验固化到 Skill '{skill_name}' 的 SKILL.md。"
         return {"output": msg, "result_type": "answer"}
 
+    async def _handle_evolve_list_command(self, query: str) -> dict[str, Any]:
+        """/evolve_list <skill_name> [--sort score] — show experiences with scores."""
+        rail = self._skill_evolution_rail
+        assert rail is not None
+        store = rail.store
+
+        parts = query.split()
+        skill_name = parts[1] if len(parts) > 1 else ""
+        if not skill_name or skill_name.startswith("--"):
+            return {
+                "output": "请指定 Skill 名称：`/evolve_list <skill_name>`",
+                "result_type": "error",
+            }
+
+        if not store.skill_exists(skill_name):
+            available = "、".join(store.list_skill_names()) or "（无可用 Skill）"
+            return {
+                "output": f"未找到 Skill '{skill_name}'。当前可用：{available}",
+                "result_type": "error",
+            }
+
+        records = await store.get_records_by_score(skill_name)
+        if not records:
+            return {
+                "output": f"Skill '{skill_name}' 暂无演进经验。",
+                "result_type": "answer",
+            }
+
+        avg_score = sum(r.score for r in records) / len(records)
+
+        lines = [
+            f"📊 Skill \"{skill_name}\" — 经验库摘要\n",
+            f"共 {len(records)} 条经验 | 平均分：{avg_score:.2f}\n",
+            " #  │ Score │ Used    │ Effect  │ Section          │ Content (preview)",
+            "────┼───────┼─────────┼─────────┼──────────────────┼──────────────────────────",
+        ]
+        for i, r in enumerate(records, 1):
+            stats = r.usage_stats
+            if stats:
+                used_str = (
+                    f"{stats.times_used}/{stats.times_presented}"
+                    if stats.times_presented
+                    else "0/0"
+                )
+                effect_str = f"+{stats.times_positive}/-{stats.times_negative}"
+            else:
+                used_str = "0/0"
+                effect_str = "+0/-0"
+            preview = r.change.content.split("\n")[0][:40]
+            lines.append(
+                f" {i:<2} │ {r.score:.2f}  │ {used_str:<7} │ {effect_str:<7} │ {r.change.section:<16} │ {preview}"
+            )
+
+        lines.append(f"\n提示：使用 /evolve_simplify {skill_name} 执行智能整理")
+        return {
+            "output": "\n".join(lines),
+            "result_type": "answer",
+        }
+
+    async def _handle_evolve_simplify_command(self, query: str) -> dict[str, Any]:
+        """/evolve_simplify <skill_name> [--dry-run] — LLM-based experience cleanup."""
+        rail = self._skill_evolution_rail
+        assert rail is not None
+        store = rail.store
+        scorer = rail.scorer
+
+        parts = query.split()
+        skill_name = parts[1] if len(parts) > 1 else ""
+        dry_run = "--dry-run" in parts
+
+        if not skill_name or skill_name.startswith("--"):
+            return {
+                "output": "请指定 Skill 名称：`/evolve_simplify <skill_name> [--dry-run]`",
+                "result_type": "error",
+            }
+
+        if not store.skill_exists(skill_name):
+            available = "、".join(store.list_skill_names()) or "（无可用 Skill）"
+            return {
+                "output": f"未找到 Skill '{skill_name}'。当前可用：{available}",
+                "result_type": "error",
+            }
+
+        records = await store.get_records_by_score(skill_name)
+        if not records:
+            return {
+                "output": f"Skill '{skill_name}' 暂无演进经验，无需整理。",
+                "result_type": "answer",
+            }
+
+        skill_summary = await store.read_skill_content(skill_name)
+        try:
+            actions = await scorer.simplify(skill_name, skill_summary, records)
+        except Exception as exc:
+            logger.warning("[JiuWenClaw] evolve_simplify failed: %s", exc)
+            return {
+                "output": f"智能整理分析失败：{exc}",
+                "result_type": "error",
+            }
+
+        if not actions:
+            return {
+                "output": f"Skill '{skill_name}' 经验库状态良好，无需整理。",
+                "result_type": "answer",
+            }
+
+        summary_lines = []
+        for action in actions:
+            op = action.get("action", "KEEP")
+            ids = action.get("target_ids", [])
+            reason = action.get("reason", "")
+            summary_lines.append(f"- **{op}** {', '.join(ids)}: {reason}")
+
+        if dry_run:
+            return {
+                "output": (
+                    f"**Skill '{skill_name}' 整理预览（dry-run，未执行）：**\n\n"
+                    + "\n".join(summary_lines)
+                ),
+                "result_type": "answer",
+            }
+
+        result_text = await scorer.execute_simplify_actions(
+            store, skill_name, actions
+        )
+        return {
+            "output": (
+                f"**Skill '{skill_name}' 整理完成：** {result_text}\n\n"
+                f"**操作详情：**\n" + "\n".join(summary_lines)
+            ),
+            "result_type": "answer",
+        }
+
     def _ensure_evolution_rail_for_slash(self, mode: str) -> str | None:
         """Check evolution availability for slash commands; lazily init rail if needed.
 
@@ -2364,7 +2504,7 @@ class JiuWenClawDeepAdapter:
     async def _handle_slash_command(
             self, query: str, session_id: str = "default", mode: str = "agent.plan",
     ) -> dict[str, Any] | None:
-        """Intercept /evolve and /solidify before agent invocation.
+        """Intercept slash commands before agent invocation.
 
         Returns result dict if handled, None to proceed normally.
         The dict may contain an ``approval_chunks`` list that the caller
@@ -2377,6 +2517,18 @@ class JiuWenClawDeepAdapter:
             if err:
                 return {"output": err, "result_type": "error"}
             return await self._handle_solidify_command(stripped)
+
+        if stripped.startswith("/evolve_simplify"):
+            err = self._ensure_evolution_rail_for_slash(mode)
+            if err:
+                return {"output": err, "result_type": "error"}
+            return await self._handle_evolve_simplify_command(stripped)
+
+        if stripped.startswith("/evolve_list"):
+            err = self._ensure_evolution_rail_for_slash(mode)
+            if err:
+                return {"output": err, "result_type": "error"}
+            return await self._handle_evolve_list_command(stripped)
 
         if stripped.startswith("/evolve"):
             err = self._ensure_evolution_rail_for_slash(mode)
@@ -2755,13 +2907,6 @@ class JiuWenClawDeepAdapter:
                     accumulated_reasoning = ""
                 parsed = self._parse_stream_chunk(chunk)
                 if parsed is not None:
-                    if (
-                            parsed.get("event_type") == "chat.ask_user_question"
-                            and isinstance(parsed.get("_evolution_data"), dict)
-                    ):
-                        evo_req_id = parsed.get("request_id", "")
-                        if evo_req_id.startswith("skill_evolve_approve_"):
-                            self._pending_evolution_data[evo_req_id] = parsed.pop("_evolution_data")
                     yield AgentResponseChunk(
                         request_id=rid,
                         channel_id=cid,
@@ -2790,13 +2935,6 @@ class JiuWenClawDeepAdapter:
                 for evt in self._skill_evolution_rail.drain_pending_approval_events():
                     parsed = self._parse_stream_chunk(evt)
                     if parsed is not None:
-                        if (
-                                parsed.get("event_type") == "chat.ask_user_question"
-                                and isinstance(parsed.get("_evolution_data"), dict)
-                        ):
-                            evo_req_id = parsed.get("request_id", "")
-                            if evo_req_id.startswith("skill_evolve_approve_"):
-                                self._pending_evolution_data[evo_req_id] = parsed.pop("_evolution_data")
                         yield AgentResponseChunk(
                             request_id=rid,
                             channel_id=cid,
