@@ -16,9 +16,11 @@ import type { CliPiAppState } from "../app-state.js";
 import {
   extractAttachmentsFromText,
   extractFilePathsFromPaste,
+  findAttachmentTokenAtCursor,
   formatAttachmentMention,
   isImageAttachment,
   isSupportedAttachment,
+  syncComposerImageTokens,
 } from "../core/attachments.js";
 import { CommandService, parseSlashCommand } from "../core/commands/CommandService.js";
 import { addError, addInfo } from "../core/commands/helpers.js";
@@ -345,6 +347,8 @@ export class AppScreen implements Component, Focusable {
   private pendingSubmittedInput: string | null = null;
   private pendingSubmittedBaseline = 0;
   private pendingSubmittedSessionId: string | null = null;
+  /** Image attachments keyed by composer `@path` tokens (e.g. cached base64 for terminal preview). */
+  private composerAttachments: FileAttachment[] = [];
 
   constructor(
     private readonly tui: TUI,
@@ -625,7 +629,6 @@ export class AppScreen implements Component, Focusable {
       return;
     }
 
-    const content = this.composeOutgoingMessage(text);
     if (!content) return;
 
     const snapshot = this.state.getSnapshot();
@@ -935,6 +938,9 @@ export class AppScreen implements Component, Focusable {
     return {
       content: text.replace(/[ \t]{2,}/g, " ").replace(/[ \t]+\n/g, "\n").trim(),
       attachments: this.collectComposerAttachments(text),
+    };
+  }
+
   private buildConfigEditorLines(width: number): string[] {
     if (!this.configEditorState) {
       return [];
@@ -1239,9 +1245,16 @@ export class AppScreen implements Component, Focusable {
 
     this.syncingComposerInput = true;
     this.editor.setText(nextText);
-    const editorState = this.editor as unknown as {
-      state?: { cursorLine: number; cursorCol: number };
+    const ed = this.editor as unknown as {
+      state: { cursorLine: number };
+      setCursorCol: (col: number) => void;
     };
+    ed.state.cursorLine = cursor.line;
+    ed.setCursorCol(nextCol);
+    this.syncingComposerInput = false;
+    this.syncComposerAttachmentsFromEditor();
+    this.tui.requestRender();
+    return true;
   }
 
   private collectComposerAttachments(text: string): FileAttachment[] {
@@ -1264,6 +1277,10 @@ export class AppScreen implements Component, Focusable {
     } catch {
       return false;
     }
+  }
+
+  private isComposerImageFile(path: string): boolean {
+    return this.isAcceptedAttachment(path) && isImageAttachment(path);
   }
 
   /** Handle pasted/dragged content - detects file paths and converts to @path references. */

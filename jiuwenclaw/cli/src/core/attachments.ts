@@ -160,3 +160,45 @@ export function extractFilePathsFromPaste(
 
   return paths;
 }
+
+/** Same `@path` token pattern as `AT_MENTION_RE`, for single-line cursor lookups. */
+const AT_MENTION_PER_LINE_RE = /(^|[\t ])@(?:"([^"]+)"|([^\s]+))/g;
+
+export function findAttachmentTokenAtCursor(
+  line: string,
+  col: number,
+): { start: number; end: number } | null {
+  for (const match of line.matchAll(AT_MENTION_PER_LINE_RE)) {
+    const startIdx = match.index ?? 0;
+    const endIdx = startIdx + match[0].length;
+    if (col > startIdx && col <= endIdx) {
+      return { start: startIdx, end: endIdx };
+    }
+  }
+  return null;
+}
+
+/**
+ * Reconciles image `@mentions` in composer text with a sidecar list (e.g. base64 previews).
+ * Drops entries no longer present in text and preserves `content` for paths still referenced.
+ */
+export function syncComposerImageTokens(
+  text: string,
+  previous: readonly FileAttachment[],
+  isImagePath: (path: string) => boolean,
+): { normalizedText: string; attachments: FileAttachment[] } {
+  const extracted = extractAttachmentsFromText(text, {
+    classifyAttachment: (path) => (isImagePath(path) ? "image" : null),
+  });
+
+  const prevByPath = new Map(previous.map((a) => [a.path, a]));
+  const attachments: FileAttachment[] = extracted.map(({ resolvedPath: _r, ...rest }) => {
+    const prev = prevByPath.get(rest.path);
+    if (prev?.content) {
+      return { ...rest, content: prev.content };
+    }
+    return rest;
+  });
+
+  return { normalizedText: text, attachments };
+}
