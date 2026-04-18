@@ -174,21 +174,23 @@ class AgentManager:
 
     async def reload_agents_config(self, config, env) -> None:
         """reload agent config"""
-        for channel_id, agent in self.agents.items():
-            await agent.reload_agent_config(
-                config_base=config,
-                env_overrides=env,
-            )
+        for channel_id, agents in self.agents.items():
+            for _, agent in agents.items():
+                await agent.reload_agent_config(
+                    config_base=config,
+                    env_overrides=env,
+                )
             logger.info(f"channel {channel_id} reload agent config success.")
 
     async def cleanup(self) -> None:
         """清理所有 agent 实例."""
-        for key in list(self.agents.keys()):
-            if hasattr(self.agents[key], "cleanup"):
-                try:
-                    await self.agents[key].cleanup()
-                except Exception as e:
-                    logger.warning("[AgentManager] Agent cleanup failed: %s", e)
+        for key, agents in self.agents.items():
+            for _, agent in agents.items():
+                if hasattr(agent, "cleanup"):
+                    try:
+                        await agent.cleanup()
+                    except Exception as e:
+                        logger.warning("[AgentManager] Agent cleanup failed: %s", e)
             del self.agents[key]
         self._client_capabilities_by_channel.clear()
         logger.info("[AgentManager] All agents cleaned up")
