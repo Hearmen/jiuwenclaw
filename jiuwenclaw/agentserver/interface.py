@@ -709,6 +709,11 @@ class JiuWenClaw:
             is_complete=True,
         )
 
+    # ---------- 实例获取 ----------
+
+    def get_instance(self):
+        return self._adapter._instance
+
     # ---------- 资源清理 ----------
 
     async def cleanup(self) -> None:

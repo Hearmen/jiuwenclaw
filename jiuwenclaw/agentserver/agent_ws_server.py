@@ -428,6 +428,11 @@ class AgentWebSocketServer:
 
         mode = request.params.get("mode", "agent.plan").split(".")[0]
         agent = await self._agent_manager.get_agent(channel_id=channel_id, mode=mode)
+        if mode == "code":
+            sub_mode = request.params.get("mode", "agent.plan").split(".")[1]
+            from openjiuwen.core.single_agent import create_agent_session
+            session = create_agent_session(session_id=request.session_id)
+            agent.get_instance().switch_mode(session=session, mode=sub_mode)
         if agent is None:
             raise ValueError("Failed to get agent")
 
@@ -450,6 +455,12 @@ class AgentWebSocketServer:
         agent = await self._agent_manager.get_agent(channel_id=channel_id, mode=mode)
         if agent is None:
             raise ValueError("Failed to get agent")
+
+        if mode == "code":
+            sub_mode = request.params.get("mode", "agent.plan").split(".")[1]
+            from openjiuwen.core.single_agent import create_agent_session
+            session = create_agent_session(session_id=request.session_id)
+            agent.get_instance().switch_mode(session=session, mode=sub_mode)
 
         chunk_count = 0
         # 心跳控制：当有真实 chunk 发送时重置，空闲时发送心跳

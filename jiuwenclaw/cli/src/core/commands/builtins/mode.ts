@@ -2,13 +2,21 @@ import { makeItem } from "../helpers.js";
 import { CommandKind, type SlashCommand } from "../types.js";
 
 export function createModeCommand(): SlashCommand {
-  const directModes = ["agent.plan", "agent.fast", "code.plan", "code.normal", "team"] as const;
+  const directModes = [
+    "agent",
+    "code",
+    "agent.plan",
+    "agent.fast",
+    "code.plan",
+    "code.normal",
+    "team",
+  ] as const;
   const modeAlias: Record<
     string,
     "agent.plan" | "agent.fast" | "code.plan" | "code.normal" | "team"
   > = {
     plan: "agent.plan",
-    agent: "agent.fast",
+    agent: "agent.plan",
     code: "code.normal",
     "agent.plan": "agent.plan",
     "agent.fast": "agent.fast",
@@ -20,8 +28,8 @@ export function createModeCommand(): SlashCommand {
   return {
     name: "mode",
     description: "Switch chat mode",
-    usage: "/mode <agent.plan|agent.fast|code.plan|code.normal|team>",
-    example: "/mode agent.plan",
+    usage: "/mode <agent|code|agent.plan|agent.fast|code.plan|code.normal|team>",
+    example: "/mode agent",
     kind: CommandKind.BUILT_IN,
     takesArgs: true,
     completion: async () => [...directModes],
@@ -33,13 +41,13 @@ export function createModeCommand(): SlashCommand {
           makeItem(
             ctx.sessionId,
             "error",
-            "usage: /mode <agent.plan|agent.fast|code.plan|code.normal|team>",
+            "usage: /mode <agent|code|agent.plan|agent.fast|code.plan|code.normal|team>",
           ),
         );
         return;
       }
       try {
-        await ctx.request("mode.set", { mode: requestedMode });
+        await ctx.request("mode.set", { mode: nextMode });
       } catch {
         // Some backends still accept mode only on chat.send.
       }
