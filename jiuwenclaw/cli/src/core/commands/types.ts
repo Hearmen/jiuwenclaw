@@ -19,6 +19,7 @@ export interface CommandContext {
   request: <T = Record<string, unknown>>(
     method: string,
     params: Record<string, unknown>,
+    timeoutMs?: number,
   ) => Promise<T>;
   sendMessage: (
     content: string,

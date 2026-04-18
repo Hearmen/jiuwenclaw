@@ -293,15 +293,16 @@ export class CliPiAppState {
     return id;
   };
 
-  readonly request = async <T = Record<string, unknown>>(
+readonly request = async <T = Record<string, unknown>>(
     method: string,
     params: Record<string, unknown>,
+    timeoutMs?: number,
   ): Promise<T> => {
     const id = `tui_${Date.now().toString(16)}_${Math.random().toString(36).slice(2, 6)}`;
     const response = await this.wsClient.request(id, method, {
       ...params,
       session_id: params.session_id ?? this.sessionId,
-    });
+    }, timeoutMs ?? 30000);
     return response.payload as T;
   };
 
