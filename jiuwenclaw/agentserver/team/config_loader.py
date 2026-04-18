@@ -190,19 +190,10 @@ def _build_predefined_members(team_raw: dict[str, Any]) -> list[dict[str, Any]]:
             logger.warning("[TeamConfigLoader] skipped predefined member without member_name: %s", item)
             continue
 
-        member_spec = {
-            "member_name": member_name,
-            "display_name": item.get("display_name", member_name),
-            "persona": item.get("persona") or "",
-        }
-
-        role_type = item.get("role_type")
-        if role_type:
-            member_spec["role_type"] = role_type
-
-        prompt_hint = item.get("prompt_hint")
-        if prompt_hint:
-            member_spec["prompt_hint"] = prompt_hint
+        member_spec = deepcopy(item)
+        member_spec["member_name"] = member_name
+        member_spec.setdefault("display_name", member_name)
+        member_spec["persona"] = member_spec.get("persona") or ""
 
         predefined_members.append(member_spec)
 
@@ -219,30 +210,23 @@ def load_team_spec_dict(session_id: str) -> dict[str, Any]:
         team_raw = {}
 
     agents = _build_agents_config(team_raw, config_base)
-    spec_dict: dict[str, Any] = {
-        "team_name": f"{team_raw.get('team_name', 'team')}_{session_id}",
-        "lifecycle": team_raw.get("lifecycle", "persistent"),
-        "teammate_mode": team_raw.get("teammate_mode", "build_mode"),
-        "spawn_mode": team_raw.get("spawn_mode", "inprocess"),
-        "leader": _build_leader_spec(team_raw),
-        "agents": agents,
-    }
+    spec_dict = deepcopy(team_raw)
+    spec_dict["team_name"] = f"{team_raw.get('team_name', 'team')}_{session_id}"
+    spec_dict["lifecycle"] = team_raw.get("lifecycle", "persistent")
+    spec_dict["teammate_mode"] = team_raw.get("teammate_mode", "build_mode")
+    spec_dict["spawn_mode"] = team_raw.get("spawn_mode", "inprocess")
+    spec_dict["leader"] = _build_leader_spec(team_raw)
+    spec_dict["agents"] = agents
 
     predefined_members = _build_predefined_members(team_raw)
     if predefined_members:
         spec_dict["predefined_members"] = predefined_members
-
-    transport_raw = team_raw.get("transport", {})
-    if transport_raw:
-        spec_dict["transport"] = deepcopy(transport_raw)
+    elif "predefined_members" in spec_dict:
+        spec_dict.pop("predefined_members", None)
 
     storage_raw = team_raw.get("storage", {})
     if storage_raw:
         spec_dict["storage"] = _resolve_storage_config(storage_raw)
-
-    workspace_raw = team_raw.get("workspace", {})
-    if workspace_raw:
-        spec_dict["workspace"] = deepcopy(workspace_raw)
 
     logger.info(
         "[TeamConfigLoader] team config loaded: team_name=%s, lifecycle=%s, agents=%s, predefined_members=%s",

@@ -49,6 +49,8 @@ def test_load_team_spec_dict_supports_member_specific_agents(monkeypatch, tmp_pa
                     "member_name": "analyst",
                     "display_name": "Data Analyst",
                     "persona": "Analyze data",
+                    "prompt_hint": "Focus on trends",
+                    "toolkits": ["sql", "python"],
                 }
             ],
             "storage": {
@@ -56,6 +58,10 @@ def test_load_team_spec_dict_supports_member_specific_agents(monkeypatch, tmp_pa
                 "params": {
                     "connection_string": "team.db",
                 },
+            },
+            "planning": {
+                "enabled": True,
+                "max_parallel_tasks": 3,
             },
         },
     }
@@ -77,8 +83,14 @@ def test_load_team_spec_dict_supports_member_specific_agents(monkeypatch, tmp_pa
     assert spec["leader"]["persona"] == "Lead the team"
     assert spec["predefined_members"][0]["member_name"] == "analyst"
     assert spec["predefined_members"][0]["display_name"] == "Data Analyst"
+    assert spec["predefined_members"][0]["prompt_hint"] == "Focus on trends"
+    assert spec["predefined_members"][0]["toolkits"] == ["sql", "python"]
     assert spec["workspace"]["enabled"] is True
     assert spec["workspace"]["artifact_dirs"] == ["artifacts/reports"]
+    assert spec["planning"] == {
+        "enabled": True,
+        "max_parallel_tasks": 3,
+    }
     assert spec["agents"]["analyst"]["skills"] == ["skill-a", "skill-b"]
     assert spec["agents"]["analyst"]["model"]["model_request_config"]["model"] == "gpt-test"
     assert spec["agents"]["analyst"]["workspace"] == {"stable_base": True}
@@ -236,3 +248,45 @@ def test_resolve_team_sqlite_db_path_defaults_to_agent_teams_home(monkeypatch, t
     db_path = resolve_team_sqlite_db_path()
 
     assert db_path == Path(tmp_path / ".agent_teams" / "team.db")
+
+
+def test_load_team_spec_dict_preserves_arbitrary_team_top_level_fields(monkeypatch, tmp_path):
+    """Unknown team-level fields should be preserved in the final spec dict."""
+    config = {
+        "models": {
+            "default": {
+                "model_client_config": {
+                    "model_name": "gpt-custom",
+                    "client_provider": "openai",
+                },
+                "model_config_obj": {},
+            }
+        },
+        "team": {
+            "agents": {
+                "leader": {},
+            },
+            "runtime_flags": {
+                "enable_observer": True,
+                "retry_limit": 5,
+            },
+            "custom_labels": ["a", "b"],
+        },
+    }
+
+    monkeypatch.setattr(
+        "jiuwenclaw.agentserver.team.config_loader.get_config",
+        lambda: config,
+    )
+    monkeypatch.setattr(
+        "jiuwenclaw.agentserver.team.config_loader.get_agent_teams_home",
+        lambda: tmp_path / ".agent_teams",
+    )
+
+    spec = load_team_spec_dict("session-custom")
+
+    assert spec["runtime_flags"] == {
+        "enable_observer": True,
+        "retry_limit": 5,
+    }
+    assert spec["custom_labels"] == ["a", "b"]

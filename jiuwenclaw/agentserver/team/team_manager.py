@@ -432,9 +432,9 @@ class TeamManager:
             spec,
             deep_agent,
             session_id,
-            request_id,
-            channel_id,
-            request_metadata,
+            request_id=request_id,
+            channel_id=channel_id,
+            request_metadata=request_metadata,
         )
 
         logger.info("[TeamManager] TeamAgentSpec ready: team_name=%s", spec.team_name)
