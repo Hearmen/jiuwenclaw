@@ -288,9 +288,9 @@ export function ToolExecutionItem({ execution }: { execution: ToolExecution }) {
   const hasResult = !!result;
   const isTimeout = status === 'timeout';
   const isError = status === 'error';
-  const isSuccess = status === 'completed';
+  const isSuccess = status === 'completed' && !(result && result.result && result.result.includes('success=False'));
   const resultSummary = result
-    ? (result.summary || `${result.success ? t('chatUi.toolResult.success') : t('chatUi.toolResult.failed')}`)
+    ? (result.summary || (isSuccess ? t('chatUi.toolResult.success') : '❌'))
     : '';
 
   return (

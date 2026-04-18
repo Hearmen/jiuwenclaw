@@ -110,7 +110,7 @@ export function normalizeToolResultPayload(payload: UnknownPayload): NormalizedT
   const summary =
     typeof toolResultPayload.summary === 'string'
       ? toolResultPayload.summary
-      : undefined;
+      : success ? undefined : '❌';
 
   return {
     toolName,
