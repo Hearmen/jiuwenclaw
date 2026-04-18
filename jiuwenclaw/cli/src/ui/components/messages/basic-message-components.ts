@@ -10,3 +10,4 @@ export {
   InfoMessageComponent,
   SystemMessageComponent,
 } from "./meta-components.js";
+export { DiffComponent } from "./diff-component.js";

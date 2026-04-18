@@ -136,12 +136,8 @@ async def test_handle_command_diff_returns_summary_payload(server, fake_ws):
         {
             "response_id": "req-diff",
             "payload": {
-                "summary": "Workspace diff preview",
-                "items": [
-                    {"label": "files_changed", "value": "3"},
-                    {"label": "insertions", "value": "24"},
-                    {"label": "deletions", "value": "7"},
-                ],
+                "type": "list",
+                "turns": [],
             },
             "ok": True,
         }

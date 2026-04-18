@@ -747,21 +747,29 @@ class AgentWebSocketServer:
             await ws.send(json.dumps(wire, ensure_ascii=False))
 
     async def _handle_command_diff(self, ws: Any, request: AgentRequest, send_lock: asyncio.Lock) -> None:
+        from jiuwenclaw.agentserver.diff_service import get_diff_service
+
         try:
+            session_id = request.session_id or "default"
+            diff_service = get_diff_service()
+            turns = diff_service.get_turn_diffs(session_id)
+
+            logger.info(
+                "[AgentWebSocketServer] command.diff response: session_id=%s turns=%s",
+                session_id,
+                turns,
+            )
+
             resp = AgentResponse(
                 request_id=request.request_id,
                 channel_id=request.channel_id,
                 ok=True,
                 payload={
-                    "summary": "Workspace diff preview",
-                    "items": [
-                        {"label": "files_changed", "value": "3"},
-                        {"label": "insertions", "value": "24"},
-                        {"label": "deletions", "value": "7"},
-                    ],
+                    "type": "list",
+                    "turns": turns,
                 },
             )
-        except Exception as e:  # noqa: BLE001
+        except Exception as e:
             logger.exception("[AgentWebSocketServer] command.diff failed: %s", e)
             resp = AgentResponse(
                 request_id=request.request_id,

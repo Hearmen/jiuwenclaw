@@ -1,6 +1,7 @@
 import type { HistoryItem } from "../../../core/types.js";
 import {
   AssistantMessageComponent,
+  DiffComponent,
   ErrorMessageComponent,
   InfoMessageComponent,
   SystemMessageComponent,
@@ -70,6 +71,11 @@ export function renderDetailedEntry(
     case "info":
       return {
         lines: new InfoMessageComponent(entry).render(width),
+        gapAfter: shouldGapAfterEntry(entry, false),
+      };
+    case "diff":
+      return {
+        lines: new DiffComponent(entry).render(width),
         gapAfter: shouldGapAfterEntry(entry, false),
       };
   }

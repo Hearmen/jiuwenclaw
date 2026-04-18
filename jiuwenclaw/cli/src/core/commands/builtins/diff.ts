@@ -1,5 +1,11 @@
-import { addError, addInfo } from "../helpers.js";
+import { addError, addDiff } from "../helpers.js";
 import { CommandKind, type SlashCommand } from "../types.js";
+import type { TurnDiff } from "../../types.js";
+
+interface DiffPayload {
+  type: "list";
+  turns: TurnDiff[];
+}
 
 export function createDiffCommand(): SlashCommand {
   return {
@@ -10,16 +16,13 @@ export function createDiffCommand(): SlashCommand {
     kind: CommandKind.BUILT_IN,
     action: async (ctx) => {
       try {
-        const payload = await ctx.request<{
-          summary?: string;
-          items?: Array<{ label: string; value?: string }>;
-        }>("command.diff", {});
+        const payload = await ctx.request<DiffPayload>("command.diff", {});
+        const turns = payload.turns || [];
+        const summary = turns.length > 0
+          ? `Found ${turns.length} turn(s) with file changes`
+          : "No file changes in this session";
         ctx.addItem(
-          addInfo(ctx.sessionId, payload.summary || "Workspace diff summary", "d", {
-            view: "kv",
-            title: "Diff",
-            items: payload.items ?? [],
-          }),
+          addDiff(ctx.sessionId, summary, { turns }),
         );
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);

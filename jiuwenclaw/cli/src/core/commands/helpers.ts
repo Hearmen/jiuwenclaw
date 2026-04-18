@@ -1,4 +1,4 @@
-import type { HistoryItem } from "../types.js";
+import type { HistoryItem, DiffMeta } from "../types.js";
 
 function now(): string {
   return new Date().toISOString();
@@ -28,6 +28,15 @@ export function addInfo(
 
 export function addError(sessionId: string, content: string): HistoryItem {
   return makeItem(sessionId, "error", content);
+}
+
+export function addDiff(
+  sessionId: string,
+  content: string,
+  meta: DiffMeta,
+): HistoryItem {
+  const id = `diff-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
+  return { kind: "diff", id, sessionId, content, meta, at: now() };
 }
 
 export function parseArgs(raw: string): string[] {

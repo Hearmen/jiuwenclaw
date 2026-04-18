@@ -2,6 +2,8 @@ import type { HistoryItem } from "../../../core/types.js";
 import {
   CompactAssistantMessageComponent,
   CompactMessageComponent,
+  DiffComponent,
+  InfoMessageComponent,
   UserMessageComponent,
 } from "./basic-message-components.js";
 import { CollapsedToolGroupMessageComponent, ToolGroupMessageComponent } from "../tools/index.js";
@@ -42,6 +44,16 @@ export function renderCompactEntry(
           false,
           options.animationPhase,
         ).render(width),
+        gapAfter: shouldGapAfterEntry(entry, true),
+      };
+    case "info":
+      return {
+        lines: new InfoMessageComponent(entry).render(width),
+        gapAfter: shouldGapAfterEntry(entry, true),
+      };
+    case "diff":
+      return {
+        lines: new DiffComponent(entry).render(width),
         gapAfter: shouldGapAfterEntry(entry, true),
       };
     default:

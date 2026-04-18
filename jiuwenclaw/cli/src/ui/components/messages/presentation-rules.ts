@@ -32,6 +32,7 @@ export function shouldGapAfterEntry(entry: HistoryItem, compact: boolean): boole
       return !compact;
     case "system":
     case "info":
+    case "diff":
       return false;
   }
 }

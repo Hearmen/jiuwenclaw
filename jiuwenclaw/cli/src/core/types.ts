@@ -122,6 +122,39 @@ export interface TeamMessageEvent {
   timestamp: number;
 }
 
+export interface Hunk {
+  oldStart: number;
+  oldLines: number;
+  newStart: number;
+  newLines: number;
+  lines: string[];
+}
+
+export interface FileDiff {
+  filePath: string;
+  hunks: Hunk[];
+  isNewFile: boolean;
+  linesAdded: number;
+  linesRemoved: number;
+  lastEditTime?: string;
+}
+
+export interface TurnDiff {
+  turnIndex: number;
+  userPromptPreview: string;
+  timestamp: string;
+  files: Record<string, FileDiff>;
+  stats: {
+    filesChanged: number;
+    linesAdded: number;
+    linesRemoved: number;
+  };
+}
+
+export interface DiffMeta {
+  turns: TurnDiff[];
+}
+
 export type HistoryItem =
   | { kind: "user"; id: string; sessionId: string; content: string; at: string }
   | {
@@ -177,5 +210,13 @@ export type HistoryItem =
       icon?: string;
       meta?: InfoMeta;
       mediaItems?: MediaItem[];
+      at: string;
+    }
+  | {
+      kind: "diff";
+      id: string;
+      sessionId: string;
+      content: string;
+      meta: DiffMeta;
       at: string;
     };
