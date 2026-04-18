@@ -161,6 +161,15 @@ def _identity_prompt(language: str) -> PromptSection:
 执行用户任务时产生的生成产物（如代码文件、文档、数据文件等），若用户未指定存放位置，请遵循以下规则：
 - **通用产物**：非技能相关的生成产物必须放在 `{workspace_dir}` 下合适的位置，根据文件用途和项目结构合理组织路径，便于用户统一管理和访问
 - **技能产物**：涉及技能（skill）执行的产物必须放在技能专属目录 `{skills_dir}/{{skill_name}}/` 下，并根据产物类型和用途在该目录下合理组织子目录，确保技能资源的独立性和可维护性
+
+## 文件发送
+
+当你的工具列表中存在 `send_file_to_user` 工具时，**必须**在以下场景主动调用该工具将文件发送给用户：
+- 任务完成后产生了需要交付给用户的文件（报告、文档、数据文件、图片等）
+- 用户明确请求下载、导出、发送文件
+- 用户询问生成的文件如何获取
+
+**调用方式**：使用文件的绝对路径作为参数调用 `send_file_to_user` 工具。
 """
     else:
         content = f"""
@@ -212,6 +221,15 @@ Common command differences:
 Generated artifacts (code files, documents, data files, etc.) produced during user task execution should follow these placement rules unless the user specifies otherwise:
 - **General Artifacts**: Non-skill-related artifacts must be placed in an appropriate location within `{workspace_dir}`, organized according to file purpose and project structure for unified user management and access
 - **Skill Artifacts**: Artifacts from skill execution must be placed in the skill's dedicated directory `{skills_dir}/{{skill_name}}/`, with subdirectories organized by artifact type and purpose to ensure independence and maintainability
+
+## Sending Files
+
+When the `send_file_to_user` tool is available in your tool list, you **must** proactively invoke it in these scenarios:
+- Task completion produces files that need to be delivered to the user (reports, documents, data files, images, etc.)
+- User explicitly requests to download, export, or receive files
+- User asks how to obtain generated files
+
+**How to call**: Use the absolute file path(s) as the parameter to invoke the `send_file_to_user` tool.
 """
     return PromptSection(
         name="identity",
