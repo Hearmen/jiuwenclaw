@@ -9,7 +9,11 @@ import shutil
 from dataclasses import dataclass
 from typing import Any
 
-from openjiuwen.core.foundation.llm import ProviderType
+from openjiuwen.core.foundation.llm import Model, ProviderType
+from openjiuwen.core.foundation.llm.schema.config import (
+    ModelClientConfig,
+    ModelRequestConfig,
+)
 
 from jiuwenclaw.config import (
     get_config,
@@ -20,10 +24,12 @@ from jiuwenclaw.config import (
     get_model_config,
     add_or_update_model_in_config,
 )
+from jiuwenclaw.jiuwen_core_patch import apply_openai_model_client_patch
 from jiuwenclaw.gateway.route_binding import GatewayRouteBinding
 from jiuwenclaw.version import __version__
 
 logger = logging.getLogger(__name__)
+apply_openai_model_client_patch()
 
 # ── 需要转发到 Agent 的方法集合 ──────────────────────────────
 
@@ -155,6 +161,16 @@ _CLI_CONFIG_SET_ENV_MAP = {
 }
 
 _CLI_CONFIG_YAML_KEYS = frozenset({"context_engine_enabled", "permissions_enabled"})
+
+
+def _normalize_provider_value(value: str) -> str:
+    normalized = value.strip()
+    if not normalized:
+        return normalized
+
+    available_model_providers = [provider.value for provider in ProviderType]
+    lookup = {provider.lower(): provider for provider in available_model_providers}
+    return lookup.get(normalized.lower(), normalized)
 
 
 
@@ -290,6 +306,9 @@ def register_cli_handlers(bind: CliHandlersBindParams) -> None:
             if param_key not in params:
                 continue
             val = params[param_key]
+            if param_key.endswith("_provider") and val:
+                val = _normalize_provider_value(str(val))
+                params[param_key] = val
             if (
                 param_key.endswith("_provider")
                 and val
@@ -352,6 +371,114 @@ def register_cli_handlers(bind: CliHandlersBindParams) -> None:
             payload={
                 "updated": updated_param_keys,
                 "applied_without_restart": applied_without_restart,
+            },
+        )
+
+    async def _config_validate_model(ws, req_id, params, session_id):
+        if not isinstance(params, dict):
+            await channel.send_response(
+                ws, req_id, ok=False, error="params must be object", code="BAD_REQUEST"
+            )
+            return
+
+        api_base = str(params.get("api_base") or "").strip()
+        api_key = str(params.get("api_key") or "").strip()
+        model = str(params.get("model") or "").strip()
+        model_provider = _normalize_provider_value(str(params.get("model_provider") or ""))
+        verify_ssl = bool(params.get("verify_ssl", False))
+
+        if not all([api_base, api_key, model, model_provider]):
+            await channel.send_response(
+                ws,
+                req_id,
+                ok=False,
+                error="api_base, api_key, model, and model_provider are required",
+                code="BAD_REQUEST",
+            )
+            return
+
+        available_model_providers = [provider.value for provider in ProviderType]
+        if model_provider not in available_model_providers:
+            await channel.send_response(
+                ws,
+                req_id,
+                ok=False,
+                error=f"Model provider must be one of: {available_model_providers}",
+                code="BAD_REQUEST",
+            )
+            return
+
+        if api_base.endswith("/chat/completions"):
+            api_base = api_base.rsplit("/chat/completions", 1)[0]
+        api_base = api_base.rstrip("/")
+
+        model_request_config = ModelRequestConfig(model=model, temperature=0)
+        model_client_config = ModelClientConfig(
+            client_id="config-validate",
+            client_provider=model_provider,
+            api_key=api_key,
+            api_base=api_base,
+            timeout=25.0,
+            max_retries=0,
+            verify_ssl=verify_ssl,
+        )
+        llm = Model(
+            model_config=model_request_config,
+            model_client_config=model_client_config,
+        )
+
+        async def _probe(max_tokens: int):
+            return await llm.invoke(
+                [{"role": "user", "content": "Hi"}],
+                max_tokens=max_tokens,
+                temperature=0,
+            )
+
+        try:
+            try:
+                response = await _probe(1)
+            except Exception as first_exc:  # noqa: BLE001
+                logger.info(
+                    "[cli config.validate_model] max_tokens=1 failed, retrying with 16: %s",
+                    first_exc,
+                )
+                response = await _probe(16)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("[cli config.validate_model] LLM probe failed: %s", exc)
+            await channel.send_response(
+                ws,
+                req_id,
+                ok=False,
+                error=str(exc).strip() or "LLM request failed",
+                code="LLM_ERROR",
+            )
+            return
+
+        if hasattr(response, "content"):
+            content = response.content
+        elif isinstance(response, dict):
+            content = response.get("content", "")
+        else:
+            content = str(response)
+
+        if not (isinstance(content, str) and content.strip()):
+            await channel.send_response(
+                ws,
+                req_id,
+                ok=False,
+                error="Empty response from model",
+                code="LLM_ERROR",
+            )
+            return
+
+        await channel.send_response(
+            ws,
+            req_id,
+            ok=True,
+            payload={
+                "provider": model_provider,
+                "model": model,
+                "response": content.strip(),
             },
         )
 
@@ -786,6 +913,7 @@ def register_cli_handlers(bind: CliHandlersBindParams) -> None:
 
     channel.register_local_handler(path, "config.get", _config_get)
     channel.register_local_handler(path, "config.set", _config_set)
+    channel.register_local_handler(path, "config.validate_model", _config_validate_model)
     channel.register_local_handler(path, "session.list", _session_list)
     channel.register_local_handler(path, "session.create", _session_create)
     channel.register_local_handler(path, "session.delete", _session_delete)

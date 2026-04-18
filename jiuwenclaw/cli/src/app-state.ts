@@ -16,9 +16,10 @@ import {
   handleIncomingFrame,
   type AppEventDelegate,
   type PendingQuestion,
+  type PendingQuestionItem,
   type UserAnswer,
 } from "./core/event-handlers.js";
-import { isEventFrame, type EventFrame } from "./core/protocol.js";
+import { isEventFrame, type EventFrame, type FileAttachment } from "./core/protocol.js";
 import {
   StreamingState,
   type ContextCompressionStats,
@@ -80,6 +81,13 @@ export class CliPiAppState {
   private collapsedToolGroupIds = new Set<string>();
   private streamingState: StreamingState = StreamingState.Idle;
   private pendingQuestion: PendingQuestion | null = null;
+  private localPendingQuestion:
+    | {
+        requestId: string;
+        resolve: (answers: UserAnswer[]) => void;
+        reject: (error: Error) => void;
+      }
+    | null = null;
   private lastError: string | null = null;
   private activeSubtasks = new Map<string, SubtaskState>();
   private todos: TodoItem[] = [];
@@ -185,6 +193,10 @@ export class CliPiAppState {
   }
 
   stop(): void {
+    if (this.localPendingQuestion) {
+      this.localPendingQuestion.reject(new Error("app stopped while awaiting input"));
+      this.localPendingQuestion = null;
+    }
     if (this.historyFlushTimer) {
       clearTimeout(this.historyFlushTimer);
       this.historyFlushTimer = null;
@@ -253,6 +265,7 @@ export class CliPiAppState {
     return {
       sendEventOnly: this.sendEventOnly,
       request: this.request,
+      askQuestions: this.askQuestions,
       sendMessage: this.sendMessage,
       sessionId: snapshot.sessionId,
       entries: snapshot.entries,
@@ -288,7 +301,7 @@ export class CliPiAppState {
       type: "req",
       id,
       method,
-      params: { ...params, session_id: params.session_id ?? this.sessionId },
+      params: { ...params, session_id: (params.session_id as string | undefined) ?? this.sessionId },
     });
     return id;
   };
@@ -318,6 +331,10 @@ readonly request = async <T = Record<string, unknown>>(
   };
 
   readonly clearEntries = (): void => {
+    if (this.localPendingQuestion) {
+      this.localPendingQuestion.reject(new Error("input flow was interrupted"));
+      this.localPendingQuestion = null;
+    }
     this.entries = [];
     this.pendingQuestion = null;
     this.lastError = null;
@@ -414,11 +431,17 @@ readonly request = async <T = Record<string, unknown>>(
 
   readonly sendMessage = (
     content: string,
+    attachments?: FileAttachment[],
     modeOverride?: "agent.plan" | "agent.fast" | "code.plan" | "code.normal" | "team",
   ): string | null => {
     if (this.connectionStatus !== "connected") return null;
     const mode = modeOverride ?? this.mode;
-    const requestId = this.sendEventOnly("chat.send", { content, query: content, mode });
+    const requestId = this.sendEventOnly("chat.send", {
+      content,
+      query: content,
+      mode,
+      ...(attachments?.length ? { attachments } : {}),
+    });
     this.lastError = null;
     this.entries = [
       ...this.entries,
@@ -435,13 +458,14 @@ readonly request = async <T = Record<string, unknown>>(
     return requestId;
   };
 
-  supplement(content: string): string | null {
+  supplement(content: string, attachments?: FileAttachment[]): string | null {
     if (this.connectionStatus !== "connected") return null;
     const trimmed = content.trim();
     if (!trimmed) return null;
     const requestId = this.sendEventOnly("chat.interrupt", {
       intent: "supplement",
       new_input: trimmed,
+      ...(attachments?.length ? { attachments } : {}),
     });
     this.lastError = null;
     this.entries = [
@@ -469,6 +493,18 @@ readonly request = async <T = Record<string, unknown>>(
 
   submitQuestionAnswers(answers: UserAnswer[]): void {
     if (!this.pendingQuestion) return;
+    if (
+      this.localPendingQuestion &&
+      this.pendingQuestion.requestId === this.localPendingQuestion.requestId
+    ) {
+      const resolver = this.localPendingQuestion;
+      this.localPendingQuestion = null;
+      this.pendingQuestion = null;
+      this.streamingState = StreamingState.Idle;
+      resolver.resolve(answers);
+      this.emitChange();
+      return;
+    }
     if (this.pendingQuestion.source === "permission_interrupt") {
       this.sendEventOnly("chat.send", {
         query: "",
@@ -489,6 +525,31 @@ readonly request = async <T = Record<string, unknown>>(
   answerQuestion(answer: string): void {
     this.submitQuestionAnswers([{ selected_options: [answer], custom_input: answer }]);
   }
+
+  readonly askQuestions = (
+    questions: PendingQuestionItem[],
+    source = "local_command",
+  ): Promise<UserAnswer[]> => {
+    if (questions.length === 0) {
+      return Promise.resolve([]);
+    }
+    if (this.pendingQuestion || this.localPendingQuestion) {
+      return Promise.reject(new Error("another question is already active"));
+    }
+
+    const requestId = `local_${Date.now().toString(16)}_${Math.random().toString(36).slice(2, 6)}`;
+    this.pendingQuestion = {
+      requestId,
+      source,
+      questions,
+    };
+    this.streamingState = StreamingState.Idle;
+    this.emitChange();
+
+    return new Promise<UserAnswer[]>((resolve, reject) => {
+      this.localPendingQuestion = { requestId, resolve, reject };
+    });
+  };
 
   readonly restoreHistory = async (targetSessionId: string): Promise<void> => {
     this.historyRequestToken += 1;

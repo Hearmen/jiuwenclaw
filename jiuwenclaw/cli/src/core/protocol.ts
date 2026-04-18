@@ -1,8 +1,22 @@
+export interface FileAttachment {
+  readonly type: "file" | "image";
+  readonly path: string;
+  readonly filename: string;
+  readonly mimeType?: string;
+  readonly content?: string; // base64 for images
+}
+
 export interface ReqFrame {
   readonly type: "req";
   readonly id: string;
   readonly method: string;
-  readonly params: Record<string, unknown>;
+  readonly params: Record<string, unknown> & {
+    content?: string;
+    mode?: string;
+    query?: string;
+    session_id?: string;
+    attachments?: FileAttachment[];
+  };
 }
 
 export interface ResFrame {

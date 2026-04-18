@@ -10,6 +10,7 @@ import { createDiffCommand } from "./builtins/diff.js";
 import { createExitCommand } from "./builtins/exit.js";
 import { createHelpCommand } from "./builtins/help.js";
 import { createHotkeyCommand } from "./builtins/hotkey.js";
+import { createInitCommand } from "./builtins/init.js";
 import { createModelCommand } from "./builtins/model.js";
 import { createModeCommand } from "./builtins/mode.js";
 import { createPlanCommand } from "./builtins/plan.js";
@@ -24,6 +25,7 @@ export function createBuiltinCommands(): SlashCommand[] {
     createHelpCommand(() => commands),
     createAddDirCommand(),
     createClearCommand(),
+    createInitCommand(),
     createColorCommand(),
     createCompactCommand(),
     createConfigCommand(),

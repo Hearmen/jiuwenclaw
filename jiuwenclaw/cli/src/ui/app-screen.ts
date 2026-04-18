@@ -11,13 +11,20 @@ import {
   matchesKey,
 } from "@mariozechner/pi-tui";
 import { statSync } from "node:fs";
-import { basename, extname, resolve } from "node:path";
 import { spawnSync } from "node:child_process";
 import type { CliPiAppState } from "../app-state.js";
+import {
+  extractAttachmentsFromText,
+  extractFilePathsFromPaste,
+  formatAttachmentMention,
+  isImageAttachment,
+  isSupportedAttachment,
+} from "../core/attachments.js";
 import { CommandService, parseSlashCommand } from "../core/commands/CommandService.js";
 import { addError, addInfo } from "../core/commands/helpers.js";
-import type { SessionListPayload, SessionMeta } from "../core/commands/builtins/resume.js";
+import type { FileAttachment } from "../core/protocol.js";
 import type { ModelListPayload } from "../core/commands/builtins/model.js";
+import type { SessionListPayload, SessionMeta } from "../core/commands/builtins/resume.js";
 import { handleAppScreenKeyInput } from "./keymap.js";
 import { buildAppScreenLines } from "./screen-layout.js";
 import {
@@ -29,7 +36,6 @@ import { padToWidth } from "./rendering/text.js";
 import { editorTheme, palette, selectListTheme } from "./theme.js";
 
 const END_CURSOR = "\x1b[7m \x1b[0m";
-const COMPOSER_ATTACHMENT_TOKEN_RE = /\[Image #(\d+)\]/g;
 const PERMISSION_TOOL_RE = /工具\s+`([^`]+)`\s+需要授权/;
 const PERMISSION_RISK_RE = /安全风险评估：\**\s*([^\s*]+)?\s*\**([^*\n]+?风险)\**/m;
 const PERMISSION_QUOTE_RE = /^>\s*(.+)$/gm;
@@ -41,13 +47,6 @@ type PermissionSummary = {
   reason?: string;
   command?: string;
   description?: string;
-};
-
-type ComposerAttachment = {
-  id: string;
-  kind: "image";
-  path: string;
-  filename: string;
 };
 
 type ResumeSessionListState = {
@@ -62,14 +61,6 @@ type ModelListState = {
   current: string;
 };
 
-const IMAGE_MIME_TYPES: Record<string, string> = {
-  ".png": "image/png",
-  ".jpg": "image/jpeg",
-  ".jpeg": "image/jpeg",
-  ".gif": "image/gif",
-  ".webp": "image/webp",
-};
-
 function resolveFdBinary(): string | null {
   for (const candidate of ["fd", "fdfind"]) {
     const result = spawnSync(candidate, ["--version"], {
@@ -81,141 +72,6 @@ function resolveFdBinary(): string | null {
     }
   }
   return null;
-}
-
-function normalizeComposerPath(raw: string): string | null {
-  const trimmed = raw
-    .trim()
-    .replace(/^@/, "")
-    .replace(/^"(.*)"$/, "$1");
-  if (!trimmed) return null;
-  if (trimmed.startsWith("file://")) {
-    try {
-      return decodeURIComponent(trimmed.slice("file://".length));
-    } catch {
-      return trimmed.slice("file://".length);
-    }
-  }
-  return trimmed;
-}
-
-function looksLikeImagePath(path: string): boolean {
-  return extname(path).toLowerCase() in IMAGE_MIME_TYPES;
-}
-
-function expandUserPath(path: string): string {
-  if (path === "~") {
-    return process.env.HOME ?? path;
-  }
-  if (path.startsWith("~/")) {
-    return resolve(process.env.HOME ?? "~", path.slice(2));
-  }
-  return resolve(process.cwd(), path);
-}
-
-function formatComposerAttachmentPath(path: string): string {
-  return /\s/.test(path) ? `@"${path}"` : `@${path}`;
-}
-
-function composerAttachmentToken(index: number): string {
-  return `[Image #${index}] `;
-}
-
-function findAttachmentTokenAtCursor(
-  line: string,
-  cursorCol: number,
-): { start: number; end: number } | null {
-  for (const match of line.matchAll(COMPOSER_ATTACHMENT_TOKEN_RE)) {
-    const start = match.index ?? -1;
-    if (start < 0) continue;
-    const end = start + match[0].length;
-    if (cursorCol > start && cursorCol <= end) {
-      return { start, end };
-    }
-  }
-  return null;
-}
-
-function syncComposerImageTokens(
-  text: string,
-  existingAttachments: ComposerAttachment[],
-  shouldConsume: (path: string) => boolean,
-): { normalizedText: string; attachments: ComposerAttachment[] } {
-  let attachments = [...existingAttachments];
-  let working = text;
-
-  const findOrAddAttachment = (resolvedPath: string): number => {
-    const existingIndex = attachments.findIndex((attachment) => attachment.path === resolvedPath);
-    if (existingIndex >= 0) {
-      return existingIndex + 1;
-    }
-    attachments.push({
-      id: `attachment-${Date.now().toString(16)}-${attachments.length}`,
-      kind: "image",
-      path: resolvedPath,
-      filename: basename(resolvedPath),
-    });
-    return attachments.length;
-  };
-
-  const consume = (rawPath: string): string | null => {
-    const normalized = normalizeComposerPath(rawPath);
-    if (!normalized) return null;
-    const resolved = expandUserPath(normalized);
-    if (!shouldConsume(resolved)) return null;
-    return composerAttachmentToken(findOrAddAttachment(resolved));
-  };
-
-  working = working.replace(/(^|[\t ])@(?:"([^"]+)"|([^\s]+))/gm, (full, prefix, quoted, plain) => {
-    const replacement = consume(quoted ?? plain ?? "");
-    return replacement ? `${prefix}${replacement}` : full;
-  });
-
-  working = working.replace(
-    /(^|[\t ])((?:file:\/\/[^\s]+|(?:~\/|\.{1,2}\/|\/)[^\s"'`]+\.(?:png|jpe?g|gif|webp)))(?=$|[\t ])/gim,
-    (full, prefix, rawPath) => {
-      const replacement = consume(rawPath ?? "");
-      return replacement ? `${prefix}${replacement}` : full;
-    },
-  );
-
-  const tokenMatches = [...working.matchAll(/\[Image #(\d+)\]/g)];
-  const nextAttachments: ComposerAttachment[] = [];
-  for (const match of tokenMatches) {
-    const tokenIndex = Number.parseInt(match[1] ?? "", 10);
-    if (!Number.isFinite(tokenIndex) || tokenIndex < 1) {
-      continue;
-    }
-    const attachment = attachments[tokenIndex - 1];
-    if (attachment) {
-      nextAttachments.push(attachment);
-    }
-  }
-  attachments = nextAttachments;
-
-  let tokenOrdinal = 0;
-  working = working.replace(/\[Image #(\d+)\]\s*/g, () => {
-    tokenOrdinal += 1;
-    return composerAttachmentToken(tokenOrdinal);
-  });
-
-  const normalizedText = working
-    .replace(/[ \t]+\n/g, "\n")
-    .replace(/\n[ \t]+/g, "\n")
-    .replace(/[ \t]{2,}/g, " ");
-
-  return { normalizedText, attachments };
-}
-
-function expandComposerImageTokens(text: string, attachments: ComposerAttachment[]): string {
-  return text.replace(/\[Image #(\d+)\]\s*/g, (_full, rawIndex: string) => {
-    const index = Number.parseInt(rawIndex, 10);
-    if (!Number.isFinite(index) || index < 1) {
-      return "";
-    }
-    const attachment = attachments[index - 1];
-    return attachment ? `${formatComposerAttachmentPath(attachment.path)} ` : "";
-  });
 }
 
 function isPermissionRequest(source: string | undefined, questionText: string): boolean {
@@ -450,8 +306,6 @@ export class AppScreen implements Component, Focusable {
   private activeQuestionId: string | null = null;
   private activeQuestionIndex = 0;
   private draftBeforeQuestion = "";
-  private draftAttachmentsBeforeQuestion: ComposerAttachment[] = [];
-  private composerAttachments: ComposerAttachment[] = [];
   private syncingComposerInput = false;
   private pendingQuestionAnswers = new Map<number, string>();
   private questionList: SelectList | null = null;
@@ -485,7 +339,6 @@ export class AppScreen implements Component, Focusable {
     );
     this.editor.setAutocompleteProvider(this.composerAutocompleteProvider);
     this.editor.onChange = () => {
-      this.syncComposerAttachmentsFromEditor();
       this.tui.requestRender();
     };
     this.editor.onSubmit = (value) => {
@@ -651,21 +504,15 @@ export class AppScreen implements Component, Focusable {
       return;
     }
 
-    if (
-      !snapshot.pendingQuestion &&
-      this.editor.getText().length === 0 &&
-      this.composerAttachments.length > 0
-    ) {
-      if (matchesKey(data, "backspace")) {
-        this.composerAttachments = this.composerAttachments.slice(0, -1);
-        this.tui.requestRender();
-        return;
-      }
-    }
-
-    if (!snapshot.pendingQuestion && matchesKey(data, "backspace")) {
-      if (this.deleteComposerAttachmentTokenBackwards()) {
-        this.tui.requestRender();
+    // Detect pasted file paths (drag-and-drop) in the terminal
+    // When files are dragged in, they arrive as a pasted string.
+    // Windows/PowerShell may not send bracketed paste markers,
+    // so we detect file paths in any multi-character input.
+    if (!snapshot.pendingQuestion && data.length > 4) {
+      const pastedContent = data.replace(/\x1b\[200~/, "").replace(/\x1b\[201~/, "");
+      const filePaths = extractFilePathsFromPaste(pastedContent);
+      if (filePaths.length > 0) {
+        this.handleDroppedFiles(filePaths);
         return;
       }
     }
@@ -681,9 +528,7 @@ export class AppScreen implements Component, Focusable {
     this.editor.borderColor = snapshot.pendingQuestion
       ? palette.border.question
       : palette.border.panel;
-    const editorLines = this.applyComposerTokenHighlight(
-      this.applySlashCommandHint(this.editor.render(width), width),
-    );
+    const editorLines = this.applySlashCommandHint(this.editor.render(width), width);
     const composerPreviewLines: string[] = [];
     const questionLines = [
       ...this.buildResumeSessionListLines(width),
@@ -715,17 +560,16 @@ export class AppScreen implements Component, Focusable {
 
   private async handleSubmit(raw: string): Promise<void> {
     const text = raw.trim();
-    const content = this.composeOutgoingMessage(text);
-    if (!content) return;
+    if (!text) return;
+
+    const { content, attachments } = this.buildOutgoingMessage(text);
 
     const snapshot = this.state.getSnapshot();
     if (snapshot.pendingQuestion) {
       if (this.questionList === null) {
         this.state.answerQuestion(text);
       }
-      this.editor.addToHistory(text);
       this.editor.setText("");
-      this.composerAttachments = [];
       return;
     }
 
@@ -733,21 +577,18 @@ export class AppScreen implements Component, Focusable {
       if (/^\/(?:resume|continue)\s*$/.test(text)) {
         this.editor.addToHistory(text);
         this.editor.setText("");
-        this.composerAttachments = [];
         await this.openResumeSessionList();
         return;
       }
       if (/^\/model\s*$/.test(text)) {
         this.editor.addToHistory(text);
         this.editor.setText("");
-        this.composerAttachments = [];
         await this.openModelList();
         return;
       }
       this.beginPendingSubmittedInput(text, snapshot);
       this.editor.addToHistory(text);
       this.editor.setText("");
-      this.composerAttachments = [];
       try {
         await this.commands.execute(text, {
           ...this.state.getCommandContext(),
@@ -761,7 +602,7 @@ export class AppScreen implements Component, Focusable {
 
     if (snapshot.isProcessing || snapshot.isPaused) {
       this.beginPendingSubmittedInput(text, snapshot);
-      const requestId = this.state.supplement(content);
+      const requestId = this.state.supplement(content, attachments);
       if (!requestId) {
         this.clearPendingSubmittedInput();
         this.state.addItem({
@@ -775,12 +616,11 @@ export class AppScreen implements Component, Focusable {
       }
       this.editor.addToHistory(text);
       this.editor.setText("");
-      this.composerAttachments = [];
       return;
     }
 
     this.beginPendingSubmittedInput(text, snapshot);
-    const requestId = this.state.sendMessage(content);
+    const requestId = this.state.sendMessage(content, attachments);
     if (!requestId) {
       this.clearPendingSubmittedInput();
       this.state.addItem({
@@ -795,7 +635,6 @@ export class AppScreen implements Component, Focusable {
 
     this.editor.addToHistory(text);
     this.editor.setText("");
-    this.composerAttachments = [];
   }
 
   private handleStateChange(): void {
@@ -813,9 +652,7 @@ export class AppScreen implements Component, Focusable {
       this.activeQuestionIndex = 0;
       this.pendingQuestionAnswers.clear();
       this.draftBeforeQuestion = this.editor.getText();
-      this.draftAttachmentsBeforeQuestion = [...this.composerAttachments];
       this.editor.setText("");
-      this.composerAttachments = [];
       this.syncQuestionList(snapshot);
     } else if (questionId && this.activeQuestionId) {
       this.syncQuestionList(snapshot);
@@ -828,8 +665,6 @@ export class AppScreen implements Component, Focusable {
         this.editor.setText(this.draftBeforeQuestion);
       }
       this.draftBeforeQuestion = "";
-      this.composerAttachments = [...this.draftAttachmentsBeforeQuestion];
-      this.draftAttachmentsBeforeQuestion = [];
     }
     this.syncTeamPanelSelection(snapshot);
     this.syncAnimationLoop(snapshot);
@@ -1008,7 +843,9 @@ export class AppScreen implements Component, Focusable {
       this.tui.requestRender();
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      this.state.addItem(addError(this.state.getSnapshot().sessionId, `Failed to switch model: ${message}`));
+      this.state.addItem(
+        addError(this.state.getSnapshot().sessionId, `Failed to switch model: ${message}`),
+      );
       this.tui.requestRender();
     }
   }
@@ -1023,73 +860,25 @@ export class AppScreen implements Component, Focusable {
         width,
       ),
       ...this.modelList.list.render(width),
-      padToWidth(palette.text.dim("↑/↓ choose · Enter switch · Esc cancel"), width),
+      padToWidth(palette.text.dim("choose model · Enter switch · Esc cancel"), width),
     ];
   }
 
-  private syncComposerAttachmentsFromEditor(): void {
-    if (this.syncingComposerInput) {
-      return;
-    }
-
-    const originalText = this.editor.getText();
-    const { normalizedText, attachments } = syncComposerImageTokens(
-      originalText,
-      this.composerAttachments,
-      (path) => this.isComposerImageFile(path),
-    );
-
-    this.composerAttachments = attachments;
-
-    if (normalizedText !== originalText) {
-      this.syncingComposerInput = true;
-      this.editor.setText(normalizedText);
-      this.syncingComposerInput = false;
-    }
-  }
-
-  private deleteComposerAttachmentTokenBackwards(): boolean {
-    const cursor = this.editor.getCursor();
-    const lines = this.editor.getLines();
-    const currentLine = lines[cursor.line] ?? "";
-    const tokenRange = findAttachmentTokenAtCursor(currentLine, cursor.col);
-    if (!tokenRange) {
-      return false;
-    }
-
-    const nextLine =
-      `${currentLine.slice(0, tokenRange.start)}${currentLine.slice(tokenRange.end)}`.replace(
-        / {2,}/g,
-        " ",
-      );
-    const nextLines = [...lines];
-    nextLines[cursor.line] = nextLine;
-    const nextText = nextLines.join("\n");
-    const nextCol = Math.min(tokenRange.start, nextLine.length);
-
-    this.syncingComposerInput = true;
-    this.editor.setText(nextText);
-    const editorState = this.editor as unknown as {
-      state?: { cursorLine: number; cursorCol: number };
+  private buildOutgoingMessage(text: string): { content: string; attachments: FileAttachment[] } {
+    return {
+      content: text.replace(/[ \t]{2,}/g, " ").replace(/[ \t]+\n/g, "\n").trim(),
+      attachments: this.collectComposerAttachments(text),
     };
-    if (editorState.state) {
-      editorState.state.cursorLine = cursor.line;
-      editorState.state.cursorCol = nextCol;
-    }
-    this.syncingComposerInput = false;
-    this.syncComposerAttachmentsFromEditor();
-    return true;
   }
 
-  private composeOutgoingMessage(text: string): string {
-    return expandComposerImageTokens(text, this.composerAttachments)
-      .replace(/[ \t]{2,}/g, " ")
-      .replace(/[ \t]+\n/g, "\n")
-      .trim();
+  private collectComposerAttachments(text: string): FileAttachment[] {
+    return extractAttachmentsFromText(text, {
+      classifyAttachment: (path) => (this.isAcceptedAttachment(path) ? (isImageAttachment(path) ? "image" : "file") : null),
+    }).map(({ resolvedPath, ...attachment }) => attachment);
   }
 
-  private isComposerImageFile(path: string): boolean {
-    if (!looksLikeImagePath(path)) {
+  private isAcceptedAttachment(path: string): boolean {
+    if (!isSupportedAttachment(path)) {
       return false;
     }
 
@@ -1102,6 +891,23 @@ export class AppScreen implements Component, Focusable {
     } catch {
       return false;
     }
+  }
+
+  /** Handle pasted/dragged content - detects file paths and converts to @path references. */
+  private handleDroppedFiles(filePaths: string[]): void {
+    const insertText = filePaths
+      .filter((path) => this.isAcceptedAttachment(path))
+      .map((path) => formatAttachmentMention(path))
+      .join(" ");
+
+    if (!insertText) return;
+
+    const currentText = this.editor.getText();
+    const newText = currentText ? `${currentText}\n${insertText}` : insertText;
+    this.syncingComposerInput = true;
+    this.editor.setText(newText);
+    this.syncingComposerInput = false;
+    this.tui.requestRender();
   }
 
   private syncAnimationLoop(snapshot: ReturnType<CliPiAppState["getSnapshot"]>): void {
@@ -1162,12 +968,6 @@ export class AppScreen implements Component, Focusable {
     const nextLines = [...editorLines];
     nextLines[contentIndex] = hintedLine;
     return nextLines;
-  }
-
-  private applyComposerTokenHighlight(editorLines: string[]): string[] {
-    return editorLines.map((line) =>
-      line.replace(COMPOSER_ATTACHMENT_TOKEN_RE, (token) => palette.text.info(token)),
-    );
   }
 
   private getInlineSlashCommandHint(): string | null {

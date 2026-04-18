@@ -1,5 +1,7 @@
 import type { HistoryItem } from "../types.js";
 import type { AccentColorName, ThemeName } from "../../ui/theme.js";
+import type { PendingQuestionItem, UserAnswer } from "../event-handlers.js";
+import type { FileAttachment } from "../protocol.js";
 
 export type ConnectionStatus = "idle" | "connecting" | "connected" | "reconnecting" | "auth_failed";
 
@@ -21,8 +23,10 @@ export interface CommandContext {
     params: Record<string, unknown>,
     timeoutMs?: number,
   ) => Promise<T>;
+  askQuestions: (questions: PendingQuestionItem[], source?: string) => Promise<UserAnswer[]>;
   sendMessage: (
     content: string,
+    attachments?: FileAttachment[],
     mode?: "agent.plan" | "agent.fast" | "code.plan" | "code.normal" | "team",
   ) => string | null;
   sessionId: string;

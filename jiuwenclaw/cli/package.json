@@ -13,6 +13,7 @@
     "build": "tsc",
     "build:bun": "npm run clean && bun build src/index.ts --target=node --outdir dist --format=esm --sourcemap && tsc --emitDeclarationOnly",
     "typecheck": "tsc --noEmit",
+    "test": "node --experimental-strip-types tests/run-tests.ts",
     "lint": "oxlint --deny-warnings src",
     "format": "oxfmt --write src package.json tsconfig.json",
     "format:check": "oxfmt --check src package.json tsconfig.json",

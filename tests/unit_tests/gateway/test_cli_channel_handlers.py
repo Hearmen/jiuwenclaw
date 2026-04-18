@@ -48,6 +48,7 @@ async def test_register_cli_handlers_registers_local_methods():
 
     cli_handlers = server.local_handlers["/tui"]
     assert "config.get" in cli_handlers
+    assert "config.validate_model" in cli_handlers
     assert "session.list" in cli_handlers
     assert "chat.send" in cli_handlers
     assert "chat.resume" in cli_handlers
@@ -80,5 +81,57 @@ def test_build_cli_route_binding_creates_route_and_install_hook():
 
     cli_handlers = server.local_handlers["/tui"]
     assert "config.get" in cli_handlers
+    assert "config.validate_model" in cli_handlers
     assert "session.list" in cli_handlers
     assert "chat.send" in cli_handlers
+
+
+@pytest.mark.asyncio
+async def test_config_validate_model_handler_uses_local_probe(monkeypatch):
+    server = FakeGatewayServer()
+
+    register_cli_handlers(
+        CliHandlersBindParams(
+            channel=server,
+            agent_client=None,
+            message_handler=None,
+            on_config_saved=None,
+            path="/tui",
+        )
+    )
+
+    cli_handlers = server.local_handlers["/tui"]
+
+    class FakeModel:
+        def __init__(self, *args, **kwargs):
+            self.args = args
+            self.kwargs = kwargs
+
+        async def invoke(self, *args, **kwargs):
+            return {"content": "hello"}
+
+    monkeypatch.setattr("jiuwenclaw.channel.cli_channel.Model", FakeModel)
+
+    await cli_handlers["config.validate_model"](
+        object(),
+        "req-validate",
+        {
+            "model_provider": "openai",
+            "model": "gpt-4.1",
+            "api_base": "https://api.openai.com/v1",
+            "api_key": "secret",
+        },
+        "sess-1",
+    )
+
+    assert server.responses[-1] == {
+        "id": "req-validate",
+        "ok": True,
+        "payload": {
+            "provider": "OpenAI",
+            "model": "gpt-4.1",
+            "response": "hello",
+        },
+        "error": None,
+        "code": None,
+    }

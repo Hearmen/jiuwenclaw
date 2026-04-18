@@ -48,7 +48,7 @@ export function createPlanCommand(): SlashCommand {
         return;
       }
 
-      const requestId = ctx.sendMessage(value, target);
+      const requestId = ctx.sendMessage(value, undefined, target);
       if (!requestId) {
         ctx.addItem(
           addInfo(ctx.sessionId, "offline: waiting for reconnect before sending plan request", "p"),

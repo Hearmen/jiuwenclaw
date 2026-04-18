@@ -24,6 +24,7 @@ from jiuwenclaw.schema.agent import AgentResponse, AgentResponseChunk
 logger = logging.getLogger(__name__)
 _STREAM_TRAILING_MESSAGE_GRACE_SECONDS = 0.7
 _UNARY_REQUEST_TIMEOUT_SECONDS = 60.0
+_WS_MAX_SIZE = 8 * 2**20
 
 
 def _wire_request_id_key(request_id: Any) -> str:
@@ -145,6 +146,7 @@ class WebSocketAgentServerClient(AgentServerClient):
             ping_interval=self._ping_interval,
             ping_timeout=self._ping_timeout,
             close_timeout=5.0,
+            max_size=_WS_MAX_SIZE,
         )
         logger.info("[WebSocketAgentServerClient] 已连接: %s", uri)
 
