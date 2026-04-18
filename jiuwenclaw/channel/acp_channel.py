@@ -12,6 +12,12 @@ from dataclasses import dataclass, field
 from typing import Any, Callable
 
 from jiuwenclaw.channel.base import BaseChannel, RobotMessageRouter
+from jiuwenclaw.e2a.acp.protocol import (
+    build_acp_initialize_result,
+    build_acp_prompt_result,
+    build_acp_session_list_result,
+    build_acp_session_new_result,
+)
 from jiuwenclaw.e2a.acp.session_updates import (
     build_acp_final_text_update,
     build_acp_session_update,
@@ -29,12 +35,10 @@ from jiuwenclaw.e2a.constants import (
     E2A_SOURCE_PROTOCOL_E2A,
 )
 from jiuwenclaw.e2a.models import E2AEnvelope, E2AProvenance, E2AResponse, utc_now_iso
-from jiuwenclaw.schema.message import EventType, Message, ReqMethod
-from jiuwenclaw.version import __version__
+from jiuwenclaw.schema.message import EventType, Message, Mode, ReqMethod
 
 logger = logging.getLogger(__name__)
 
-_ACP_PROTOCOL_VERSION = 1
 _ACP_STDOUT = getattr(sys, "__stdout__", sys.stdout)
 _STDIN_EOF_GRACE_SECONDS = 5.0
 _PROMPT_IDLE_FINALIZE_SECONDS = 3.0
@@ -57,10 +61,596 @@ class _AcpRequestContext:
     method: str | None
     response_mode: str = "e2a"
     session_id: str | None = None
+    user_message_id: str | None = None
     assistant_message_id: str | None = None
+    assistant_text: str | None = None
     thought_message_id: str | None = None
+    thought_text: str | None = None
+    tool_call_cache: dict[str, dict[str, Any]] = field(default_factory=dict)
+    pending_stop_reason: str | None = None
+    saw_chat_final: bool = False
+    saw_processing_idle: bool = False
     sequence: int = 0
     idle_finalize_task: asyncio.Task | None = None
+
+
+@dataclass
+class AcpGatewayRequestContext:
+    jsonrpc_id: str | int | None
+    session_id: str
+    user_message_id: str | None = None
+    assistant_message_id: str | None = None
+    assistant_text: str | None = None
+    thought_message_id: str | None = None
+    thought_text: str | None = None
+    tool_call_cache: dict[str, dict[str, Any]] = field(default_factory=dict)
+    pending_stop_reason: str | None = None
+    saw_chat_final: bool = False
+    saw_processing_idle: bool = False
+    client_ws: Any | None = None
+    idle_finalize_task: asyncio.Task | None = None
+
+
+def _cancel_idle_finalize_task(ctx: Any) -> None:
+    task = getattr(ctx, "idle_finalize_task", None)
+    if task is not None:
+        task.cancel()
+        ctx.idle_finalize_task = None
+
+
+def _mark_stream_activity(ctx: Any) -> None:
+    setattr(ctx, "saw_processing_idle", False)
+    _cancel_idle_finalize_task(ctx)
+
+
+def _should_wait_for_final_text_before_end_turn(ctx: Any) -> bool:
+    if bool(getattr(ctx, "saw_chat_final", False)):
+        return False
+    return bool(
+        getattr(ctx, "assistant_text", None)
+        or getattr(ctx, "assistant_message_id", None)
+    )
+
+
+class AcpGatewayBridge:
+    """Reusable ACP JSON-RPC bridge for Gateway websocket routes."""
+
+    def __init__(
+        self,
+        on_message_cb: Callable[[Message], Any] | None,
+        *,
+        bind_session_client: Callable[[str, Any], None] | None = None,
+        channel_id: str = "acp",
+        idle_finalize_seconds: float | Callable[[], float] | None = None,
+    ) -> None:
+        self._on_message_cb = on_message_cb
+        self._bind_session_client = bind_session_client
+        self._channel_id = str(channel_id or "acp").strip() or "acp"
+        self._idle_finalize_seconds = idle_finalize_seconds
+        self._request_ctx_by_request_id: dict[str, AcpGatewayRequestContext] = {}
+        self._active_prompt_request_by_session: dict[str, str] = {}
+        self._known_sessions: set[str] = set()
+        self._pending_client_rpc_count_by_session: dict[str, int] = {}
+        # value: (session_id, ws, created_at)
+        self._pending_client_rpc_session_by_id: dict[str, tuple[str, Any, float]] = {}
+
+    @property
+    def request_contexts(self) -> list[AcpGatewayRequestContext]:
+        """Return a snapshot list of all pending gateway request contexts."""
+        return list(self._request_ctx_by_request_id.values())
+
+    async def inbound_intercept(self, ws: Any, data: dict[str, Any]) -> bool:
+        """Intercept ACP JSON-RPC responses from the IDE client."""
+        if not (
+            isinstance(data, dict)
+            and str(data.get("jsonrpc") or "").strip() == "2.0"
+            and str(data.get("id") or "").strip() != ""
+            and ("result" in data or "error" in data)
+        ):
+            return False
+
+        from jiuwenclaw.e2a.adapters import build_acp_tool_response_message
+
+        jsonrpc_id = str(data.get("id") or "").strip()
+        pending = self._pending_client_rpc_session_by_id.pop(jsonrpc_id, None)
+        session_id = ""
+        if isinstance(pending, tuple) and len(pending) >= 2:
+            session_id = str(pending[0] or "").strip()
+
+        if not jsonrpc_id or not session_id:
+            logger.info(
+                "[ACP] ignoring unknown/late client rpc response: jsonrpc_id=%s session_id=%s",
+                jsonrpc_id,
+                session_id,
+            )
+            await ws.send(
+                json.dumps(
+                    {
+                        "type": "res",
+                        "id": jsonrpc_id,
+                        "ok": True,
+                        "payload": {
+                            "accepted": False,
+                            "ignored": True,
+                            "reason": "unknown_or_late_response",
+                        },
+                    },
+                    ensure_ascii=False,
+                )
+            )
+            return True
+
+        msg = build_acp_tool_response_message(
+            jsonrpc_id=jsonrpc_id,
+            response_data=data,
+            session_id=session_id,
+            channel_id=self._channel_id,
+        )
+        await self._dispatch_message(msg)
+        if session_id:
+            await self._resolve_pending_client_rpc(session_id)
+        return True
+
+    async def outbound_intercept(self, msg: Message, ws: Any) -> bool:
+        """Intercept ACP output_request events and relay them as raw JSON-RPC."""
+        if (
+            msg.type == "event"
+            and isinstance(msg.payload, dict)
+            and str(msg.payload.get("event_type") or "").strip() == "acp.output_request"
+        ):
+            raw_jsonrpc = msg.payload.get("jsonrpc")
+            if not isinstance(raw_jsonrpc, dict):
+                logger.warning(
+                    "[ACP] outbound_intercept: invalid jsonrpc payload (not dict), dropping frame"
+                )
+                return True
+            jsonrpc_id = str(raw_jsonrpc.get("id") or "").strip()
+            session_id = str(msg.session_id or "").strip()
+            if not jsonrpc_id or not session_id:
+                logger.warning(
+                    "[ACP] outbound_intercept: missing jsonrpc_id=%r or session_id=%r, "
+                    "forwarding without pending registration",
+                    jsonrpc_id,
+                    session_id,
+                )
+            else:
+                self._pending_client_rpc_session_by_id[jsonrpc_id] = (session_id, ws, time.time())
+                await self._register_pending_client_rpc(session_id)
+            await self._sweep_stale_pending()
+            await ws.send(json.dumps(raw_jsonrpc, ensure_ascii=False))
+            return True
+        return False
+
+    def cleanup(self, ws: Any) -> None:
+        """Clean up pending client RPC entries associated with a disconnected ws."""
+        stale = [
+            jsonrpc_id
+            for jsonrpc_id, entry in self._pending_client_rpc_session_by_id.items()
+            if len(entry) >= 2 and entry[1] is ws
+        ]
+        for jsonrpc_id in stale:
+            entry = self._pending_client_rpc_session_by_id.pop(jsonrpc_id, None)
+            if isinstance(entry, tuple) and len(entry) >= 1:
+                self._decrease_pending_client_rpc_count(str(entry[0] or "").strip())
+
+    async def handle_jsonrpc_request(self, ws: Any, data: dict[str, Any]) -> bool:
+        if not self.is_jsonrpc_request(data):
+            return False
+
+        rpc_id = data.get("id")
+        method = str(data.get("method") or "").strip()
+        params = data.get("params") if isinstance(data.get("params"), dict) else {}
+        try:
+            if method == "initialize":
+                await self._send_raw_jsonrpc_result(ws, rpc_id, build_acp_initialize_result())
+                return True
+            if method == "session/new":
+                session_id = str(params.get("sessionId") or f"acp_{uuid.uuid4().hex[:12]}").strip()
+                self._bind_session(ws, session_id)
+                await self._send_raw_jsonrpc_result(ws, rpc_id, build_acp_session_new_result(session_id))
+                return True
+            if method == "session/prompt":
+                session_id = str(params.get("sessionId") or "").strip()
+                if not session_id:
+                    raise ValueError("sessionId is required")
+                text = self.extract_prompt_text(params)
+                if not text:
+                    raise ValueError("prompt is required")
+
+                request_id = f"acp_{uuid.uuid4().hex[:12]}"
+                self._bind_session(ws, session_id)
+                self._request_ctx_by_request_id[request_id] = AcpGatewayRequestContext(
+                    jsonrpc_id=rpc_id,
+                    session_id=session_id,
+                    user_message_id=str(params.get("messageId") or "").strip() or None,
+                    client_ws=ws,
+                )
+                self._active_prompt_request_by_session[session_id] = request_id
+                await self._dispatch_message(
+                    Message(
+                        id=request_id,
+                        type="req",
+                        channel_id=self._channel_id,
+                        session_id=session_id,
+                        params={
+                            **dict(params),
+                            "content": text,
+                            "query": text,
+                            "session_id": session_id,
+                        },
+                        timestamp=time.time(),
+                        ok=True,
+                        req_method=ReqMethod.CHAT_SEND,
+                        mode=Mode.AGENT_PLAN,
+                        metadata={"acp": {"jsonrpc_id": rpc_id, "method": method}},
+                    )
+                )
+                return True
+            if method == "session/cancel":
+                session_id = str(params.get("sessionId") or "").strip()
+                if session_id:
+                    request_id = self._active_prompt_request_by_session.pop(session_id, None)
+                    if request_id is not None:
+                        ctx = self._request_ctx_by_request_id.pop(request_id, None)
+                        if ctx is not None:
+                            await self._send_raw_jsonrpc_result(
+                                ws,
+                                ctx.jsonrpc_id,
+                                build_acp_prompt_result(
+                                    stop_reason="cancelled",
+                                    user_message_id=ctx.user_message_id,
+                                ),
+                            )
+                await self._send_raw_jsonrpc_result(ws, rpc_id, None)
+                return True
+            if method == "session/list":
+                await self._send_raw_jsonrpc_result(
+                    ws,
+                    rpc_id,
+                    build_acp_session_list_result(sorted(self._known_sessions)),
+                )
+                return True
+            if method == "session/load":
+                await self._send_raw_jsonrpc_error(
+                    ws,
+                    rpc_id,
+                    -32601,
+                    "Method not supported by agent capabilities: session/load",
+                )
+                return True
+            await self._send_raw_jsonrpc_error(ws, rpc_id, -32601, f"Method not found: {method}")
+        except ValueError as exc:
+            await self._send_raw_jsonrpc_error(ws, rpc_id, -32602, str(exc))
+        except Exception as exc:  # noqa: BLE001
+            logger.exception("Gateway ACP JSON-RPC handler failed: method=%s", method)
+            await self._send_raw_jsonrpc_error(ws, rpc_id, -32603, str(exc))
+        return True
+
+    async def send_message(self, msg: Message, ws: Any) -> bool:
+        ctx = self._request_ctx_by_request_id.get(str(getattr(msg, "id", "")))
+        payload = dict(getattr(msg, "payload", None) or {})
+        session_id = str(getattr(msg, "session_id", None) or "")
+
+        if ctx is None:
+            return False
+
+        if msg.type == "event" and msg.event_type == EventType.CHAT_DELTA:
+            update = build_acp_session_update(msg, payload, ctx)
+            if update is None:
+                return True
+            _mark_stream_activity(ctx)
+            await self._send_raw_jsonrpc_notification(
+                ws,
+                "session/update",
+                {"sessionId": session_id or ctx.session_id, "update": update},
+            )
+            usage_update = build_acp_usage_update(payload)
+            if usage_update is not None:
+                await self._send_raw_jsonrpc_notification(
+                    ws,
+                    "session/update",
+                    {"sessionId": session_id or ctx.session_id, "update": usage_update},
+                )
+            return True
+
+        if msg.type == "event" and msg.event_type in (
+            EventType.CHAT_REASONING,
+            EventType.CHAT_TOOL_CALL,
+            EventType.CHAT_TOOL_UPDATE,
+            EventType.CHAT_TOOL_RESULT,
+            EventType.TODO_UPDATED,
+            EventType.CHAT_SUBTASK_UPDATE,
+        ):
+            update = build_acp_session_update(msg, payload, ctx)
+            if update is None:
+                return True
+            _mark_stream_activity(ctx)
+            await self._send_raw_jsonrpc_notification(
+                ws,
+                "session/update",
+                {"sessionId": session_id or ctx.session_id, "update": update},
+            )
+            return True
+
+        if msg.type == "event" and msg.event_type == EventType.CHAT_FINAL:
+            ctx.saw_chat_final = True
+            update = build_acp_final_text_update(payload, ctx)
+            if update is not None:
+                await self._send_raw_jsonrpc_notification(
+                    ws,
+                    "session/update",
+                    {"sessionId": session_id or ctx.session_id, "update": update},
+                )
+            usage_update = build_acp_usage_update(payload)
+            if usage_update is not None:
+                await self._send_raw_jsonrpc_notification(
+                    ws,
+                    "session/update",
+                    {"sessionId": session_id or ctx.session_id, "update": usage_update},
+                )
+            if ctx.saw_processing_idle:
+                if self._session_has_pending_client_rpcs(session_id or ctx.session_id):
+                    ctx.pending_stop_reason = "end_turn"
+                    return True
+                _cancel_idle_finalize_task(ctx)
+                await self._send_raw_jsonrpc_result(
+                    ws,
+                    ctx.jsonrpc_id,
+                    build_acp_prompt_result(
+                        stop_reason="end_turn",
+                        user_message_id=ctx.user_message_id,
+                    ),
+                )
+                self._clear_request_context(str(msg.id), ctx.session_id)
+                return True
+            _cancel_idle_finalize_task(ctx)
+            return True
+
+        if msg.type == "event" and msg.event_type == EventType.CHAT_ERROR:
+            _cancel_idle_finalize_task(ctx)
+            await self._send_raw_jsonrpc_error(
+                ws,
+                ctx.jsonrpc_id,
+                -32603,
+                str(payload.get("error") or payload.get("content") or "Agent error"),
+            )
+            self._clear_request_context(str(msg.id), ctx.session_id)
+            return True
+
+        if msg.type == "event" and msg.event_type == EventType.CHAT_PROCESSING_STATUS:
+            update = build_acp_session_update(msg, payload, ctx)
+            if update is not None:
+                await self._send_raw_jsonrpc_notification(
+                    ws,
+                    "session/update",
+                    {"sessionId": session_id or ctx.session_id, "update": update},
+                )
+                if payload.get("is_processing") is False:
+                    ctx.saw_processing_idle = True
+                    if self._session_has_pending_client_rpcs(session_id or ctx.session_id):
+                        ctx.pending_stop_reason = "end_turn"
+                        return True
+                    if _should_wait_for_final_text_before_end_turn(ctx):
+                        self._schedule_idle_finalize(str(msg.id), ctx, ws)
+                        return True
+                    _cancel_idle_finalize_task(ctx)
+                    await self._send_raw_jsonrpc_result(
+                        ws,
+                        ctx.jsonrpc_id,
+                        build_acp_prompt_result(
+                            stop_reason="end_turn",
+                            user_message_id=ctx.user_message_id,
+                        ),
+                    )
+                    self._clear_request_context(str(msg.id), ctx.session_id)
+                    return True
+                if payload.get("is_processing") is True:
+                    ctx.saw_processing_idle = False
+                    _cancel_idle_finalize_task(ctx)
+            return True
+
+        return False
+
+    @staticmethod
+    def is_jsonrpc_request(data: Any) -> bool:
+        return (
+            isinstance(data, dict)
+            and data.get("jsonrpc") == "2.0"
+            and isinstance(data.get("method"), str)
+        )
+
+    @staticmethod
+    def extract_prompt_text(params: dict[str, Any]) -> str:
+        prompt = params.get("prompt")
+        if isinstance(prompt, list):
+            texts: list[str] = []
+            for item in prompt:
+                if isinstance(item, dict) and item.get("type") == "text":
+                    text = item.get("text")
+                    if isinstance(text, str) and text:
+                        texts.append(text)
+            if texts:
+                return "\n".join(texts)
+        for key in ("text", "content", "query"):
+            value = params.get(key)
+            if isinstance(value, str) and value.strip():
+                return value.strip()
+        return ""
+
+    async def _dispatch_message(self, msg: Message) -> bool:
+        if self._on_message_cb is None:
+            return False
+        result = self._on_message_cb(msg)
+        if asyncio.iscoroutine(result):
+            result = await result
+        return bool(result)
+
+    def _bind_session(self, ws: Any, session_id: str) -> None:
+        sid = str(session_id or "").strip()
+        if not sid:
+            return
+        self._known_sessions.add(sid)
+        if self._bind_session_client is not None:
+            self._bind_session_client(sid, ws)
+
+    async def _register_pending_client_rpc(self, session_id: str | None) -> None:
+        sid = str(session_id or "").strip()
+        if not sid:
+            return
+        self._pending_client_rpc_count_by_session[sid] = (
+            self._pending_client_rpc_count_by_session.get(sid, 0) + 1
+        )
+        for ctx in self._request_ctx_by_request_id.values():
+            if str(ctx.session_id or "") == sid:
+                task = ctx.idle_finalize_task
+                if task is not None:
+                    task.cancel()
+                    ctx.idle_finalize_task = None
+
+    async def _resolve_pending_client_rpc(self, session_id: str | None) -> None:
+        sid = str(session_id or "").strip()
+        if not sid:
+            return
+        self._decrease_pending_client_rpc_count(sid)
+        await self._maybe_finalize_deferred_prompts(sid)
+
+    def _decrease_pending_client_rpc_count(self, session_id: str | None) -> None:
+        sid = str(session_id or "").strip()
+        if not sid:
+            return
+        current = self._pending_client_rpc_count_by_session.get(sid, 0)
+        if current <= 1:
+            self._pending_client_rpc_count_by_session.pop(sid, None)
+        else:
+            self._pending_client_rpc_count_by_session[sid] = current - 1
+
+    def _session_has_pending_client_rpcs(self, session_id: str | None) -> bool:
+        sid = str(session_id or "").strip()
+        if not sid:
+            return False
+        return self._pending_client_rpc_count_by_session.get(sid, 0) > 0
+
+    async def _maybe_finalize_deferred_prompts(self, session_id: str | None) -> None:
+        sid = str(session_id or "").strip()
+        if not sid or self._session_has_pending_client_rpcs(sid):
+            return
+
+        matched_ids: list[str] = []
+        for request_id, ctx in self._request_ctx_by_request_id.items():
+            if str(ctx.session_id or "") != sid:
+                continue
+            if not str(ctx.pending_stop_reason or "").strip():
+                continue
+            matched_ids.append(request_id)
+        for request_id in matched_ids:
+            ctx = self._request_ctx_by_request_id.get(request_id)
+            if ctx is None:
+                continue
+            stop_reason = str(ctx.pending_stop_reason or "").strip()
+            if not stop_reason:
+                continue
+            ctx.pending_stop_reason = None
+            ws = ctx.client_ws
+            if ws is None or bool(getattr(ws, "closed", False)):
+                continue
+            if _should_wait_for_final_text_before_end_turn(ctx):
+                self._schedule_idle_finalize(request_id, ctx, ws)
+                continue
+            _cancel_idle_finalize_task(ctx)
+            await self._send_raw_jsonrpc_result(
+                ws,
+                ctx.jsonrpc_id,
+                build_acp_prompt_result(
+                    stop_reason=stop_reason,
+                    user_message_id=ctx.user_message_id,
+                ),
+            )
+            self._clear_request_context(request_id, sid)
+
+    def _clear_request_context(self, request_id: str, session_id: str) -> None:
+        ctx = self._request_ctx_by_request_id.pop(request_id, None)
+        if ctx is not None and ctx.idle_finalize_task is not None:
+            ctx.idle_finalize_task.cancel()
+            ctx.idle_finalize_task = None
+        if self._active_prompt_request_by_session.get(session_id) == request_id:
+            self._active_prompt_request_by_session.pop(session_id, None)
+
+    def _schedule_idle_finalize(self, request_id: str, ctx: AcpGatewayRequestContext, ws: Any) -> None:
+        task = ctx.idle_finalize_task
+        if task is not None:
+            task.cancel()
+        ctx.idle_finalize_task = asyncio.create_task(
+            self._idle_finalize_after_timeout(request_id, ws),
+            name=f"gateway-acp-idle-finalize-{request_id}",
+        )
+
+    async def _idle_finalize_after_timeout(self, request_id: str, ws: Any) -> None:
+        current_task = asyncio.current_task()
+        try:
+            await asyncio.sleep(self._get_idle_finalize_seconds())
+            ctx = self._request_ctx_by_request_id.get(request_id)
+            if ctx is None or ctx.idle_finalize_task is not current_task:
+                return
+            if self._session_has_pending_client_rpcs(ctx.session_id):
+                ctx.pending_stop_reason = "end_turn"
+                ctx.idle_finalize_task = None
+                return
+            await self._send_raw_jsonrpc_result(
+                ws,
+                ctx.jsonrpc_id,
+                build_acp_prompt_result(
+                    stop_reason="end_turn",
+                    user_message_id=ctx.user_message_id,
+                ),
+            )
+            self._clear_request_context(request_id, ctx.session_id)
+        except asyncio.CancelledError:
+            return
+
+    def _get_idle_finalize_seconds(self) -> float:
+        value = self._idle_finalize_seconds
+        if callable(value):
+            try:
+                value = value()
+            except Exception:  # noqa: BLE001
+                logger.debug("[ACP] idle finalize seconds getter failed", exc_info=True)
+                value = None
+        if isinstance(value, (int, float)):
+            return float(value)
+        return _PROMPT_IDLE_FINALIZE_SECONDS
+
+    async def _sweep_stale_pending(self) -> None:
+        now = time.time()
+        stale = [
+            (jsonrpc_id, str(entry[0] or "").strip())
+            for jsonrpc_id, entry in self._pending_client_rpc_session_by_id.items()
+            if len(entry) >= 3 and (now - entry[2]) > _ACP_PENDING_RPC_TIMEOUT_SECONDS
+        ]
+        for jsonrpc_id, session_id in stale:
+            self._pending_client_rpc_session_by_id.pop(jsonrpc_id, None)
+            logger.info("[ACP] pending RPC entry expired: jsonrpc_id=%s", jsonrpc_id)
+            await self._resolve_pending_client_rpc(session_id)
+
+    @staticmethod
+    async def _send_raw_jsonrpc_result(ws: Any, rpc_id: str | int | None, result: Any) -> None:
+        await ws.send(json.dumps({"jsonrpc": "2.0", "id": rpc_id, "result": result}, ensure_ascii=False))
+
+    @staticmethod
+    async def _send_raw_jsonrpc_error(ws: Any, rpc_id: str | int | None, code: int, message: str) -> None:
+        await ws.send(
+            json.dumps(
+                {
+                    "jsonrpc": "2.0",
+                    "id": rpc_id,
+                    "error": {"code": code, "message": message},
+                },
+                ensure_ascii=False,
+            )
+        )
+
+    @staticmethod
+    async def _send_raw_jsonrpc_notification(ws: Any, method: str, params: dict[str, Any]) -> None:
+        await ws.send(json.dumps({"jsonrpc": "2.0", "method": method, "params": params}, ensure_ascii=False))
 
 
 class AcpChannel(BaseChannel):
@@ -89,6 +679,7 @@ class AcpChannel(BaseChannel):
         self._request_ctx: dict[str, _AcpRequestContext] = {}
         self._session_ctx: dict[str, dict[str, Any]] = {}
         self._active_prompt_request_by_session: dict[str, str] = {}
+        self._known_sessions: set[str] = set()
         # value: (session_id, created_at)
         self._pending_client_rpc_session_by_id: dict[str, tuple[str, float]] = {}
 
@@ -150,17 +741,22 @@ class AcpChannel(BaseChannel):
         self._pending_client_rpc_session_by_id.clear()
         await self._close_gateway_connection()
 
-    def _sweep_stale_pending(self) -> None:
+    async def _sweep_stale_pending(self) -> None:
         """移除超时的 pending RPC 条目，防止永久堆积。"""
         now = time.time()
         stale = [
-            jsonrpc_id
+            (jsonrpc_id, str(entry[0] or "").strip())
             for jsonrpc_id, entry in self._pending_client_rpc_session_by_id.items()
             if isinstance(entry, tuple) and len(entry) >= 2 and (now - entry[1]) > _ACP_PENDING_RPC_TIMEOUT_SECONDS
         ]
-        for jsonrpc_id in stale:
+        affected_sessions: set[str] = set()
+        for jsonrpc_id, session_id in stale:
             self._pending_client_rpc_session_by_id.pop(jsonrpc_id, None)
             logger.info("[ACP] pending RPC entry expired: jsonrpc_id=%s", jsonrpc_id)
+            if session_id:
+                affected_sessions.add(session_id)
+        for session_id in affected_sessions:
+            await self._maybe_finalize_deferred_prompts(session_id)
 
     async def send(self, msg: Message) -> None:
         ctx = self._request_ctx.get(str(msg.id))
@@ -210,6 +806,12 @@ class AcpChannel(BaseChannel):
 
         pending = self._pending_client_rpc_session_by_id.pop(jsonrpc_id, None)
         session_id = pending[0] if isinstance(pending, tuple) else None
+        if not session_id:
+            logger.info(
+                "[ACP] ignoring unknown/late stdio jsonrpc response: jsonrpc_id=%s",
+                jsonrpc_id,
+            )
+            return
         msg = build_acp_tool_response_message(
             jsonrpc_id=jsonrpc_id,
             response_data=data,
@@ -217,6 +819,8 @@ class AcpChannel(BaseChannel):
             channel_id=self.channel_id,
         )
         await self._dispatch_message(msg)
+        if session_id:
+            await self._maybe_finalize_deferred_prompts(session_id)
 
     def _parse_envelope(self, data: dict[str, Any]) -> E2AEnvelope:
         env = E2AEnvelope.from_dict(dict(data))
@@ -455,10 +1059,17 @@ class AcpChannel(BaseChannel):
                 await self._handle_jsonrpc_session_cancel(rpc_id, params)
                 return
             if method == "session/list":
-                await self._write_jsonrpc_result(rpc_id, {"sessions": []})
+                await self._write_jsonrpc_result(
+                    rpc_id,
+                    build_acp_session_list_result(sorted(self._known_sessions)),
+                )
                 return
             if method == "session/load":
-                await self._write_jsonrpc_result(rpc_id, None)
+                await self._write_jsonrpc_error(
+                    rpc_id,
+                    -32601,
+                    "Method not supported by agent capabilities: session/load",
+                )
                 return
             await self._write_jsonrpc_error(rpc_id, -32601, f"Method not found: {method}")
         except ValueError as exc:
@@ -486,36 +1097,7 @@ class AcpChannel(BaseChannel):
             logger.debug("[ACP] failed to forward initialize to gateway", exc_info=True)
 
     def _initialize_result(self) -> dict[str, Any]:
-        return {
-            "protocolVersion": _ACP_PROTOCOL_VERSION,
-            "agentInfo": {
-                "name": "jiuwenclaw",
-                "title": "JiuwenClaw",
-                "version": __version__,
-            },
-            "agentCapabilities": {
-                "loadSession": False,
-                "promptCapabilities": {
-                    "image": False,
-                    "audio": False,
-                    "embeddedContext": False,
-                },
-                "sessionCapabilities": {
-                    "list": {},
-                },
-                "fs": {
-                    "readTextFile": True,
-                    "writeTextFile": True,
-                },
-                "terminal": {
-                    "create": True,
-                    "output": True,
-                    "waitForExit": True,
-                    "release": True,
-                },
-            },
-            "authMethods": [],
-        }
+        return build_acp_initialize_result()
 
     async def _handle_jsonrpc_session_new(
         self,
@@ -523,12 +1105,11 @@ class AcpChannel(BaseChannel):
         params: dict[str, Any],
     ) -> None:
         session_id = str(params.get("sessionId") or f"acp_{uuid.uuid4().hex[:12]}").strip()
+        self._known_sessions.add(session_id)
         self._session_ctx[session_id] = dict(params)
         await self._write_jsonrpc_result(
             rpc_id,
-            {
-                "sessionId": session_id,
-            },
+            build_acp_session_new_result(session_id),
         )
 
     async def _handle_jsonrpc_session_prompt(
@@ -539,6 +1120,7 @@ class AcpChannel(BaseChannel):
         session_id = str(params.get("sessionId") or "").strip()
         if not session_id:
             raise ValueError("sessionId is required")
+        self._known_sessions.add(session_id)
 
         rpc_params = dict(params)
         prompt = rpc_params.get("prompt")
@@ -569,6 +1151,7 @@ class AcpChannel(BaseChannel):
             method=env.method,
             response_mode="jsonrpc",
             session_id=session_id,
+            user_message_id=str(rpc_params.get("messageId") or "").strip() or None,
         )
         self._active_prompt_request_by_session[session_id] = msg.id
         await self._dispatch_message(msg)
@@ -629,6 +1212,54 @@ class AcpChannel(BaseChannel):
             except asyncio.CancelledError:
                 pass
 
+    def _session_has_pending_client_rpcs(self, session_id: str | None) -> bool:
+        sid = str(session_id or "").strip()
+        if not sid:
+            return False
+        return any(
+            isinstance(entry, tuple) and len(entry) >= 1 and str(entry[0] or "").strip() == sid
+            for entry in self._pending_client_rpc_session_by_id.values()
+        )
+
+    def _collect_finalizable_request_ids(self, session_id: str) -> list[str]:
+        result = []
+        for request_id, ctx in self._request_ctx.items():
+            if ctx.response_mode != "jsonrpc":
+                continue
+            if str(ctx.session_id or "") != session_id:
+                continue
+            if not str(ctx.pending_stop_reason or "").strip():
+                continue
+            result.append(request_id)
+        return result
+
+    async def _maybe_finalize_deferred_prompts(self, session_id: str | None) -> None:
+        sid = str(session_id or "").strip()
+        if not sid or self._session_has_pending_client_rpcs(sid):
+            return
+
+        matched_ids = self._collect_finalizable_request_ids(sid)
+        for request_id in matched_ids:
+            ctx = self._request_ctx.get(request_id)
+            if ctx is None:
+                continue
+            stop_reason = str(ctx.pending_stop_reason or "").strip()
+            if not stop_reason:
+                continue
+            ctx.pending_stop_reason = None
+            if _should_wait_for_final_text_before_end_turn(ctx):
+                self._schedule_idle_finalize(request_id, ctx)
+                continue
+            _cancel_idle_finalize_task(ctx)
+            await self._write_jsonrpc_result(
+                ctx.jsonrpc_id,
+                build_acp_prompt_result(
+                    stop_reason=stop_reason,
+                    user_message_id=ctx.user_message_id,
+                ),
+            )
+            await self._clear_request_context(request_id)
+
     def _schedule_idle_finalize(self, request_id: str, ctx: _AcpRequestContext) -> None:
         task = ctx.idle_finalize_task
         if task is not None:
@@ -650,11 +1281,16 @@ class AcpChannel(BaseChannel):
             # to prevent a superseded task from finalizing after being replaced.
             if ctx.idle_finalize_task is not current_task:
                 return
+            if self._session_has_pending_client_rpcs(ctx.session_id):
+                ctx.pending_stop_reason = "end_turn"
+                ctx.idle_finalize_task = None
+                return
             await self._write_jsonrpc_result(
                 ctx.jsonrpc_id,
-                {
-                    "stopReason": "end_turn",
-                },
+                build_acp_prompt_result(
+                    stop_reason="end_turn",
+                    user_message_id=ctx.user_message_id,
+                ),
             )
             await self._clear_request_context(str(request_id))
         except asyncio.CancelledError:
@@ -672,9 +1308,10 @@ class AcpChannel(BaseChannel):
                 continue
             await self._write_jsonrpc_result(
                 ctx.jsonrpc_id,
-                {
-                    "stopReason": stop_reason,
-                },
+                build_acp_prompt_result(
+                    stop_reason=stop_reason,
+                    user_message_id=ctx.user_message_id,
+                ),
             )
             await self._clear_request_context(request_id)
 
@@ -693,6 +1330,7 @@ class AcpChannel(BaseChannel):
             update = self._build_acp_session_update(msg, payload, ctx)
             if update is None:
                 return False
+            _mark_stream_activity(ctx)
             await self._write_acp_session_update(session_id, update)
             # 如果 CHAT_DELTA 携带 usage，也发送 usage_update
             usage_update = build_acp_usage_update(payload)
@@ -701,36 +1339,47 @@ class AcpChannel(BaseChannel):
             return False
 
         if msg.type == "event" and msg.event_type in (
+            EventType.CHAT_REASONING,
             EventType.CHAT_TOOL_CALL,
+            EventType.CHAT_TOOL_UPDATE,
             EventType.CHAT_TOOL_RESULT,
+            EventType.TODO_UPDATED,
             EventType.CHAT_SUBTASK_UPDATE,
         ):
             update = self._build_acp_session_update(msg, payload, ctx)
             if update is None:
                 return False
-            task = ctx.idle_finalize_task
-            if task is not None:
-                task.cancel()
-                ctx.idle_finalize_task = None
+            _mark_stream_activity(ctx)
             await self._write_acp_session_update(session_id, update)
             return False
 
         if msg.type == "event" and msg.event_type == EventType.CHAT_FINAL:
             # ACP fallback: defer end_turn until processing stops.
+            ctx.saw_chat_final = True
             update = build_acp_final_text_update(payload, ctx)
             if update is not None:
                 await self._write_acp_session_update(session_id, update)
             usage_update = build_acp_usage_update(payload)
             if usage_update is not None:
                 await self._write_acp_session_update(session_id, usage_update)
-            self._schedule_idle_finalize(str(msg.id), ctx)
+            if ctx.saw_processing_idle:
+                if self._session_has_pending_client_rpcs(session_id):
+                    ctx.pending_stop_reason = "end_turn"
+                    return False
+                _cancel_idle_finalize_task(ctx)
+                await self._write_jsonrpc_result(
+                    ctx.jsonrpc_id,
+                    build_acp_prompt_result(
+                        stop_reason="end_turn",
+                        user_message_id=ctx.user_message_id,
+                    ),
+                )
+                return True
+            _cancel_idle_finalize_task(ctx)
             return False
 
         if msg.type == "event" and msg.event_type == EventType.CHAT_ERROR:
-            task = ctx.idle_finalize_task
-            if task is not None:
-                task.cancel()
-                ctx.idle_finalize_task = None
+            _cancel_idle_finalize_task(ctx)
             await self._write_jsonrpc_error(
                 ctx.jsonrpc_id,
                 -32603,
@@ -739,15 +1388,13 @@ class AcpChannel(BaseChannel):
             return True
 
         if msg.type == "event" and msg.event_type == EventType.CHAT_INTERRUPT_RESULT:
-            task = ctx.idle_finalize_task
-            if task is not None:
-                task.cancel()
-                ctx.idle_finalize_task = None
+            _cancel_idle_finalize_task(ctx)
             await self._write_jsonrpc_result(
                 ctx.jsonrpc_id,
-                {
-                    "stopReason": "cancelled",
-                },
+                build_acp_prompt_result(
+                    stop_reason="cancelled",
+                    user_message_id=ctx.user_message_id,
+                ),
             )
             return True
 
@@ -757,32 +1404,38 @@ class AcpChannel(BaseChannel):
                 if update is not None:
                     await self._write_acp_session_update(session_id, update)
                 if payload.get("is_processing") is False:
-                    task = ctx.idle_finalize_task
-                    if task is not None:
-                        task.cancel()
-                        ctx.idle_finalize_task = None
+                    ctx.saw_processing_idle = True
+                    if self._session_has_pending_client_rpcs(session_id):
+                        ctx.pending_stop_reason = "end_turn"
+                        return False
+                    if _should_wait_for_final_text_before_end_turn(ctx):
+                        self._schedule_idle_finalize(str(msg.id), ctx)
+                        return False
+                    _cancel_idle_finalize_task(ctx)
                     await self._write_jsonrpc_result(
                         ctx.jsonrpc_id,
-                        {
-                            "stopReason": "end_turn",
-                        },
+                        build_acp_prompt_result(
+                            stop_reason="end_turn",
+                            user_message_id=ctx.user_message_id,
+                        ),
                     )
                     return True
+                if payload.get("is_processing") is True:
+                    ctx.saw_processing_idle = False
+                    _cancel_idle_finalize_task(ctx)
                 return False
             return False
 
         if msg.type == "res" and msg.ok:
             if payload.get("accepted") is True:
                 return False
-            task = ctx.idle_finalize_task
-            if task is not None:
-                task.cancel()
-                ctx.idle_finalize_task = None
+            _cancel_idle_finalize_task(ctx)
             await self._write_jsonrpc_result(
                 ctx.jsonrpc_id,
-                {
-                    "stopReason": "end_turn",
-                },
+                build_acp_prompt_result(
+                    stop_reason="end_turn",
+                    user_message_id=ctx.user_message_id,
+                ),
             )
             return True
 
@@ -1006,8 +1659,15 @@ class AcpChannel(BaseChannel):
         params = data.get("params") if isinstance(data.get("params"), dict) else {}
         session_id = str(params.get("sessionId") or params.get("session_id") or "").strip()
         if jsonrpc_id and session_id:
+            self._known_sessions.add(session_id)
             self._pending_client_rpc_session_by_id[jsonrpc_id] = (session_id, time.time())
-        self._sweep_stale_pending()
+            for ctx in self._request_ctx.values():
+                if ctx.response_mode == "jsonrpc" and str(ctx.session_id or "") == session_id:
+                    task = ctx.idle_finalize_task
+                    if task is not None:
+                        task.cancel()
+                        ctx.idle_finalize_task = None
+        await self._sweep_stale_pending()
         _ACP_STDOUT.buffer.write((json.dumps(data, ensure_ascii=False) + "\n").encode("utf-8"))
         _ACP_STDOUT.buffer.flush()
 
@@ -1067,10 +1727,6 @@ class AcpChannel(BaseChannel):
         for item in EventType:
             if item.value == event_name:
                 return item
-        # ACP 兜底：AgentServer 会发送 chat.reasoning 事件，但 EventType 枚举中没有
-        # 这里将其映射为 CHAT_DELTA，让后续处理能正确识别
-        if event_name == "chat.reasoning":
-            return EventType.CHAT_DELTA
         return None
 
 

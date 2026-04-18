@@ -8,6 +8,8 @@ import logging
 import uuid
 from typing import Any, TYPE_CHECKING
 
+from jiuwenclaw.e2a.acp.protocol import build_acp_initialize_result
+
 if TYPE_CHECKING:
     from jiuwenclaw.agentserver.interface import JiuWenClaw
 
@@ -15,18 +17,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-ACP_DEFAULT_CAPABILITIES: dict[str, Any] = {
-    "protocolVersion": "0.1.0",
-    "serverInfo": {
-        "name": "JiuWenClaw",
-        "version": "1.0.0",
-    },
-    "capabilities": {
-        "tools": True,
-        "resources": True,
-        "streaming": True,
-    },
-}
+ACP_DEFAULT_CAPABILITIES: dict[str, Any] = build_acp_initialize_result()
 
 
 def _build_acp_agent_config(extra_config: dict[str, Any] | None = None) -> dict[str, Any]:

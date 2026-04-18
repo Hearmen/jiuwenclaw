@@ -526,7 +526,7 @@ class TestCodingMemoryRailBeforeModelCall:
         """Test read-only mode content."""
         coding_rail.init(mock_agent)
         
-        with open(os.path.join(temp_memory_dir, "MEMORY.md"), "w") as f:
+        with open(os.path.join(temp_memory_dir, "MEMORY.md"), "w", encoding="utf-8") as f:
             f.write("- [Test](test.md) — Test description")
         
         inputs = MockInvokeInputs(is_cron=True)
@@ -547,7 +547,7 @@ class TestCodingMemoryRailBeforeModelCall:
         """Test that memory index is included."""
         coding_rail.init(mock_agent)
         
-        with open(os.path.join(temp_memory_dir, "MEMORY.md"), "w") as f:
+        with open(os.path.join(temp_memory_dir, "MEMORY.md"), "w", encoding="utf-8") as f:
             f.write("- [Test](test.md) — Test description")
         
         ctx = MockContext()
@@ -571,7 +571,7 @@ class TestCodingMemoryRailIntegration:
         coding_rail.init(mock_agent)
 
         os.makedirs(temp_memory_dir, exist_ok=True)
-        with open(os.path.join(temp_memory_dir, "python.md"), "w") as f:
+        with open(os.path.join(temp_memory_dir, "python.md"), "w", encoding="utf-8") as f:
             f.write(
                 "---\n"
                 "name: Python Guide\n"
@@ -580,7 +580,7 @@ class TestCodingMemoryRailIntegration:
                 "---\n\n"
                 "Python content"
             )
-        with open(os.path.join(temp_memory_dir, "MEMORY.md"), "w") as f:
+        with open(os.path.join(temp_memory_dir, "MEMORY.md"), "w", encoding="utf-8") as f:
             f.write("- [Python Guide](python.md) — Python programming guide")
         
         inputs = MockInvokeInputs(messages=[{"role": "user", "content": "Tell me about Python"}])

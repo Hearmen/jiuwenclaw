@@ -1,12 +1,15 @@
 import asyncio
 import json
+import types
 
 import pytest
 
 from jiuwenclaw.agentserver import agent_ws_server as agent_ws_server_module
 from jiuwenclaw.agentserver.agent_manager import ACP_DEFAULT_CAPABILITIES
+from jiuwenclaw.agentserver.tools import acp_output_tools
 from jiuwenclaw.agentserver.tools.acp_output_tools import AcpOutputRequest, get_acp_output_manager
 from jiuwenclaw.agentserver.deep_agent import interface_deep as interface_deep_module
+from jiuwenclaw.agentserver.stream_utils import parse_stream_chunk
 from jiuwenclaw.agentserver.deep_agent.interface_deep import _build_context_engineering_rail
 from jiuwenclaw.e2a.gateway_normalize import e2a_from_agent_fields
 from jiuwenclaw.schema.agent import AgentRequest
@@ -84,6 +87,28 @@ def _reset_acp_output_manager():
     yield
     mgr.reset_state()
     mgr.set_send_push_callback(None)
+
+
+def test_interface_deep_parse_stream_chunk_preserves_tool_update():
+    parsed = parse_stream_chunk(
+        types.SimpleNamespace(
+            type="tool_update",
+            payload={
+                "tool_update": {
+                    "tool_call_id": "call-1",
+                    "tool_name": "read_file",
+                    "status": "in_progress",
+                }
+            },
+        )
+    )
+
+    assert parsed == {
+        "event_type": "chat.tool_update",
+        "tool_call_id": "call-1",
+        "tool_name": "read_file",
+        "status": "in_progress",
+    }
 
 
 @pytest.mark.asyncio
@@ -278,6 +303,47 @@ async def test_handle_acp_tool_response_completes_pending_future(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_handle_acp_tool_response_unknown_id_is_soft_ignored(monkeypatch):
+    server = AgentWebSocketServerHarness()
+    fake_ws = FakeWebSocket()
+
+    monkeypatch.setattr(
+        agent_ws_server_module,
+        "encode_agent_response_for_wire",
+        fake_encode_agent_response_for_wire,
+    )
+
+    request = AgentRequest(
+        request_id="req-acp-tool-response-unknown",
+        channel_id="acp",
+        req_method=ReqMethod.ACP_TOOL_RESPONSE,
+        params={
+            "jsonrpc_id": "unknown-42",
+            "response": {
+                "jsonrpc": "2.0",
+                "id": "unknown-42",
+                "result": {"content": "late"},
+            },
+        },
+    )
+
+    await server.handle_acp_tool_response_for_test(fake_ws, request, asyncio.Lock())
+
+    assert fake_ws.sent == [
+        {
+            "response_id": "req-acp-tool-response-unknown",
+            "payload": {
+                "accepted": False,
+                "ignored": True,
+                "reason": "unknown_or_late_response",
+                "jsonrpc_id": "unknown-42",
+            },
+            "ok": True,
+        }
+    ]
+
+
+@pytest.mark.asyncio
 async def test_handle_message_uses_ws_scoped_acp_client_capabilities(monkeypatch):
     ws_a = FakeWebSocket()
     ws_b = FakeWebSocket()
@@ -328,6 +394,78 @@ async def test_handle_message_uses_ws_scoped_acp_client_capabilities(monkeypatch
     await server.handle_message_for_test(ws_b, json.dumps(env.to_dict(), ensure_ascii=False), asyncio.Lock())
 
     assert captured[id(ws_b)]["acp_client_capabilities"] == {"terminal": {"create": True}}
+
+
+@pytest.mark.asyncio
+async def test_wait_for_terminal_exit_returns_soft_timeout(monkeypatch):
+    mgr = get_acp_output_manager()
+    captured: dict[str, object] = {}
+
+    async def _fake_send_jsonrpc_request(
+        method,
+        params,
+        *,
+        channel_id="acp",
+        session_id=None,
+        timeout=0.0,
+    ):
+        captured["method"] = method
+        captured["params"] = params
+        captured["channel_id"] = channel_id
+        captured["session_id"] = session_id
+        captured["timeout"] = timeout
+        raise asyncio.TimeoutError
+
+    monkeypatch.setattr(mgr, "send_jsonrpc_request", _fake_send_jsonrpc_request)
+    monkeypatch.setattr(acp_output_tools, "_ACP_WAIT_FOR_EXIT_TIMEOUT_SECONDS", 123.0)
+
+    result = await acp_output_tools.wait_for_terminal_exit("term-soft-timeout", session_id="sess-soft")
+
+    assert captured == {
+        "method": "terminal/wait_for_exit",
+        "params": {"terminalId": "term-soft-timeout"},
+        "channel_id": "acp",
+        "session_id": "sess-soft",
+        "timeout": 123.0,
+    }
+    assert result == {
+        "exitCode": None,
+        "signal": None,
+        "timedOut": True,
+        "running": True,
+        "shouldRetry": True,
+    }
+
+
+@pytest.mark.asyncio
+async def test_wait_for_terminal_exit_completed_result_sets_should_retry_false(monkeypatch):
+    mgr = get_acp_output_manager()
+
+    async def _fake_send_jsonrpc_request(
+        method,
+        params,
+        *,
+        channel_id="acp",
+        session_id=None,
+        timeout=0.0,
+    ):
+        return {
+            "jsonrpc": "2.0",
+            "id": "ok-1",
+            "result": {"exitCode": 0, "signal": None},
+        }
+
+    monkeypatch.setattr(mgr, "send_jsonrpc_request", _fake_send_jsonrpc_request)
+
+    result = await acp_output_tools.wait_for_terminal_exit("term-done", session_id="sess-done")
+
+    assert result == {
+        "exitCode": 0,
+        "signal": None,
+        "timedOut": False,
+        "running": False,
+        "shouldRetry": False,
+    }
 
 
 def test_build_context_engineering_rail_uses_summary_offloader_config(monkeypatch):

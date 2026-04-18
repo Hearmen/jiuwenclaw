@@ -449,8 +449,6 @@ class AgentWebSocketServer:
 
     async def _handle_stream(self, ws: Any, request: AgentRequest, send_lock: asyncio.Lock) -> None:
         """流式处理：调用 process_message_stream，逐条发送 E2AResponse 线 JSON。"""
-        from jiuwenclaw.schema.message import ReqMethod
-
         channel_id = request.channel_id or "default"
         mode = request.params.get("mode", "agent.plan").split(".")[0]
         agent = await self._agent_manager.get_agent(channel_id=channel_id, mode=mode)
@@ -1346,11 +1344,21 @@ class AgentWebSocketServer:
                 payload={"accepted": True},
             )
         else:
+            logger.info(
+                "[AgentServer] ignore unknown/late acp tool response: jsonrpc_id=%s request_id=%s",
+                jsonrpc_id,
+                request.request_id,
+            )
             resp = AgentResponse(
                 request_id=request.request_id,
                 channel_id=request.channel_id,
-                ok=False,
-                payload={"error": f"unknown acp tool response id: {jsonrpc_id}"},
+                ok=True,
+                payload={
+                    "accepted": False,
+                    "ignored": True,
+                    "reason": "unknown_or_late_response",
+                    "jsonrpc_id": jsonrpc_id,
+                },
             )
 
         wire = encode_agent_response_for_wire(resp, response_id=request.request_id)

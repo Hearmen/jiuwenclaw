@@ -36,6 +36,12 @@ from jiuwenclaw.utils import logger
 _TODO_TOOL_NAMES = frozenset(["todo_create", "todo_list", "todo_modify"])
 
 
+def _structured_tool_result_payload(result: Any) -> Any | None:
+    if isinstance(result, (dict, list)):
+        return result
+    return None
+
+
 class JiuClawStreamEventRail(DeepAgentRail):
     """Emit frontend stream events and enforce pause/abort checkpoints.
 
@@ -110,6 +116,7 @@ class JiuClawStreamEventRail(DeepAgentRail):
         if session is not None and isinstance(ctx.inputs, ToolCallInputs):
             tc = ctx.inputs.tool_call
             await self._emit_tool_call(session, tc)
+            await self._emit_tool_update(session, tc, status="in_progress")
 
     # ------------------------------------------------------------------
     # after_tool_call: emit tool_result + todo.updated
@@ -161,21 +168,45 @@ class JiuClawStreamEventRail(DeepAgentRail):
     @staticmethod
     async def _emit_tool_result(session: Session, tool_call: Any, result: Any) -> None:
         try:
+            raw_output = _structured_tool_result_payload(result)
+            tool_result_payload = {
+                "tool_name": getattr(tool_call, "name", "") if tool_call else "",
+                "tool_call_id": getattr(tool_call, "id", "") if tool_call else "",
+                "result": str(result)[:1000] if result is not None else "",
+            }
+            if raw_output is not None:
+                tool_result_payload["raw_output"] = raw_output
             await session.write_stream(
                 OutputSchema(
                     type="tool_result",
                     index=0,
                     payload={
-                        "tool_result": {
-                            "tool_name": getattr(tool_call, "name", "") if tool_call else "",
-                            "tool_call_id": getattr(tool_call, "id", "") if tool_call else "",
-                            "result": str(result)[:1000] if result is not None else "",
-                        }
+                        "tool_result": tool_result_payload
                     },
                 )
             )
         except Exception:
             logger.debug("tool_result emit failed", exc_info=True)
+
+    @staticmethod
+    async def _emit_tool_update(session: Session, tool_call: Any, *, status: str) -> None:
+        try:
+            await session.write_stream(
+                OutputSchema(
+                    type="tool_update",
+                    index=0,
+                    payload={
+                        "tool_update": {
+                            "tool_name": getattr(tool_call, "name", "") if tool_call else "",
+                            "tool_call_id": getattr(tool_call, "id", "") if tool_call else "",
+                            "arguments": getattr(tool_call, "arguments", {}) if tool_call else {},
+                            "status": str(status or "").strip() or "in_progress",
+                        }
+                    },
+                )
+            )
+        except Exception:
+            logger.debug("tool_update emit failed", exc_info=True)
 
     async def _emit_todo_updated(
         self, agent: BaseAgent, session: Session, session_id: str

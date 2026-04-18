@@ -57,6 +57,18 @@ class AcpChannelHarness(AcpChannel):
     async def send_jsonrpc_message_for_test(self, msg, ctx):
         return await self._send_jsonrpc_message(msg, ctx)
 
+    def set_request_context_for_test(self, request_id, ctx):
+        self._request_ctx[request_id] = ctx
+
+    def set_active_prompt_request_for_test(self, session_id: str, request_id: str):
+        self._active_prompt_request_by_session[session_id] = request_id
+
+    async def handle_jsonrpc_response_for_test(self, data):
+        await self._handle_jsonrpc_response(data)
+
+    def has_request_context_for_test(self, request_id: str) -> bool:
+        return request_id in self._request_ctx
+
 
 def json_line(payload):
     return json.dumps(payload, ensure_ascii=False)
@@ -175,11 +187,72 @@ async def test_jsonrpc_initialize_and_session_new(monkeypatch):
     agent_info = init_result.get("agentInfo")
     assert isinstance(agent_info, dict)
     assert agent_info.get("name") == "jiuwenclaw"
+    capabilities = init_result.get("agentCapabilities")
+    assert isinstance(capabilities, dict)
+    assert capabilities.get("loadSession") is False
+    assert capabilities.get("sessionCapabilities") == {"list": {}}
+    assert capabilities.get("mcpCapabilities") == {"http": False, "sse": False}
+    assert "fs" not in capabilities
+    assert "terminal" not in capabilities
 
     new_result = responses[1].get("result")
     assert isinstance(new_result, dict)
     assert responses[1].get("id") == 2
     assert new_result.get("sessionId") == "sess-1"
+    assert new_result.get("configOptions") == []
+
+
+@pytest.mark.asyncio
+async def test_jsonrpc_session_list_returns_known_sessions(monkeypatch):
+    fake_stdin = FakeStdin(
+        [
+            json_line({"jsonrpc": "2.0", "id": 10, "method": "session/new", "params": {"sessionId": "sess-1"}}),
+            json_line({"jsonrpc": "2.0", "id": 11, "method": "session/list", "params": {}}),
+        ]
+    )
+    fake_stdout = FakeStdout()
+    channel = AcpChannelHarness(AcpChannelConfig(enabled=True), DummyBus())
+
+    monkeypatch.setattr("sys.stdin", fake_stdin)
+    monkeypatch.setattr("sys.stdout", fake_stdout)
+    monkeypatch.setattr("jiuwenclaw.channel.acp_channel._ACP_STDOUT", fake_stdout)
+
+    await channel.start()
+
+    responses = fake_stdout.buffer.json_lines()
+    assert responses[1] == {
+        "jsonrpc": "2.0",
+        "id": 11,
+        "result": {"sessions": [{"sessionId": "sess-1"}]},
+    }
+
+
+@pytest.mark.asyncio
+async def test_jsonrpc_session_load_is_rejected_when_capability_is_disabled(monkeypatch):
+    fake_stdin = FakeStdin(
+        [
+            json_line({"jsonrpc": "2.0", "id": 21, "method": "session/load", "params": {"sessionId": "sess-1"}}),
+        ]
+    )
+    fake_stdout = FakeStdout()
+    channel = AcpChannelHarness(AcpChannelConfig(enabled=True), DummyBus())
+
+    monkeypatch.setattr("sys.stdin", fake_stdin)
+    monkeypatch.setattr("sys.stdout", fake_stdout)
+    monkeypatch.setattr("jiuwenclaw.channel.acp_channel._ACP_STDOUT", fake_stdout)
+
+    await channel.start()
+
+    assert fake_stdout.buffer.json_lines() == [
+        {
+            "jsonrpc": "2.0",
+            "id": 21,
+            "error": {
+                "code": -32601,
+                "message": "Method not supported by agent capabilities: session/load",
+            },
+        }
+    ]
 
 
 @pytest.mark.asyncio
@@ -288,6 +361,72 @@ async def test_jsonrpc_session_prompt_emits_updates_and_final_result(monkeypatch
     assert isinstance(result, dict)
     assert responses[3].get("id") == 3
     assert result.get("stopReason") == "end_turn"
+
+
+@pytest.mark.asyncio
+async def test_jsonrpc_session_prompt_echoes_user_message_id_in_result(monkeypatch):
+    fake_stdin = FakeStdin(
+        [
+            json_line(
+                {
+                    "jsonrpc": "2.0",
+                    "id": 303,
+                    "method": "session/prompt",
+                    "params": {
+                        "sessionId": "sess-user-message-id",
+                        "messageId": "user-msg-1",
+                        "text": "hello",
+                    },
+                }
+            )
+        ]
+    )
+    fake_stdout = FakeStdout()
+    channel = AcpChannel(AcpChannelConfig(enabled=True), DummyBus())
+
+    monkeypatch.setattr("sys.stdin", fake_stdin)
+    monkeypatch.setattr("sys.stdout", fake_stdout)
+    monkeypatch.setattr("jiuwenclaw.channel.acp_channel._ACP_STDOUT", fake_stdout)
+
+    async def _on_message(msg):
+        await channel.send(
+            Message(
+                id=msg.id,
+                type="event",
+                channel_id="acp",
+                session_id=msg.session_id,
+                params={},
+                timestamp=time.time(),
+                ok=True,
+                payload={"content": "final answer"},
+                event_type=EventType.CHAT_FINAL,
+            )
+        )
+        await channel.send(
+            Message(
+                id=msg.id,
+                type="event",
+                channel_id="acp",
+                session_id=msg.session_id,
+                params={},
+                timestamp=time.time(),
+                ok=True,
+                payload={"is_processing": False},
+                event_type=EventType.CHAT_PROCESSING_STATUS,
+            )
+        )
+    channel.on_message(_on_message)
+    await channel.start()
+
+    responses = fake_stdout.buffer.json_lines()
+    assert responses[-1] == {
+        "jsonrpc": "2.0",
+        "id": 303,
+        "result": {
+            "stopReason": "end_turn",
+            "userMessageId": "user-msg-1",
+        },
+    }
 
 
 @pytest.mark.asyncio
@@ -530,7 +669,7 @@ async def test_jsonrpc_session_prompt_merges_session_context(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_jsonrpc_session_prompt_auto_finalizes_after_idle_after_chat_final(monkeypatch):
+async def test_jsonrpc_session_prompt_does_not_end_turn_from_chat_final_before_late_tool_result(monkeypatch):
     fake_stdin = FakeStdin(
         [
             json_line(
@@ -569,22 +708,66 @@ async def test_jsonrpc_session_prompt_auto_finalizes_after_idle_after_chat_final
                 event_type=EventType.CHAT_FINAL,
             )
         )
+        await channel.send(
+            Message(
+                id=msg.id,
+                type="event",
+                channel_id="acp",
+                session_id=msg.session_id,
+                params={},
+                timestamp=time.time(),
+                ok=True,
+                payload={
+                    "tool_name": "write_text_file",
+                    "tool_call_id": "tool-call-late-2",
+                    "result": "index.html written",
+                },
+                event_type=EventType.CHAT_TOOL_RESULT,
+            )
+        )
+        await channel.send(
+            Message(
+                id=msg.id,
+                type="event",
+                channel_id="acp",
+                session_id=msg.session_id,
+                params={},
+                timestamp=time.time(),
+                ok=True,
+                payload={"is_processing": False},
+                event_type=EventType.CHAT_PROCESSING_STATUS,
+            )
+        )
 
     channel.on_message(_on_message)
     await channel.start()
 
     responses = fake_stdout.buffer.json_lines()
-    assert len(responses) == 2
+    assert len(responses) == 4
     # 第一个响应是 agent_message_chunk
     assert responses[0].get("method") == "session/update"
     message_chunk = responses[0].get("params")
     assert isinstance(message_chunk, dict)
     assert message_chunk.get("update").get("sessionUpdate") == "agent_message_chunk"
     
-    # 第二个响应是 idle finalize 触发的 end_turn
-    result = responses[1].get("result")
+    # 第二个响应是晚到的 tool result update
+    assert responses[1]["params"]["update"] == {
+        "sessionUpdate": "tool_call_update",
+        "toolCallId": "tool-call-late-2",
+        "toolName": "write_text_file",
+        "title": "Editing files",
+        "kind": "edit",
+        "status": "completed",
+        "result": "index.html written",
+        "content": [{"type": "content", "content": {"type": "text", "text": "index.html written"}}],
+    }
+    assert responses[2]["params"]["update"] == {
+        "sessionUpdate": "session_info_update",
+        "status": "idle",
+    }
+    result = responses[3].get("result")
     assert isinstance(result, dict)
-    assert responses[1].get("id") == 12
+    assert responses[3].get("id") == 12
     assert result.get("stopReason") == "end_turn"
 
 
@@ -745,6 +928,242 @@ async def test_jsonrpc_response_is_forwarded_as_acp_tool_response(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_jsonrpc_response_without_pending_mapping_is_ignored(monkeypatch):
+    fake_stdin = FakeStdin(
+        [
+            json_line(
+                {
+                    "jsonrpc": "2.0",
+                    "id": "tool-missing",
+                    "result": {"content": "late"},
+                }
+            )
+        ]
+    )
+    fake_stdout = FakeStdout()
+    channel = AcpChannelHarness(AcpChannelConfig(enabled=True), DummyBus())
+    seen = []
+
+    monkeypatch.setattr("sys.stdin", fake_stdin)
+    monkeypatch.setattr("sys.stdout", fake_stdout)
+    monkeypatch.setattr("jiuwenclaw.channel.acp_channel._ACP_STDOUT", fake_stdout)
+
+    async def _on_message(msg):
+        seen.append(msg)
+
+    channel.on_message(_on_message)
+    await channel.start()
+
+    assert seen == []
+    assert fake_stdout.buffer.json_lines() == []
+
+
+@pytest.mark.asyncio
+async def test_processing_idle_defers_end_turn_until_pending_client_rpc_resolves(monkeypatch):
+    fake_stdout = FakeStdout()
+    channel = AcpChannelHarness(AcpChannelConfig(enabled=True), DummyBus())
+    seen = []
+    request_id = "req-pending-client-rpc"
+    session_id = "sess-pending-client-rpc"
+    ctx = types.SimpleNamespace(
+        jsonrpc_id=501,
+        method="session/prompt",
+        response_mode="jsonrpc",
+        session_id=session_id,
+        user_message_id="user-msg-pending",
+        assistant_message_id=None,
+        thought_message_id=None,
+        tool_call_cache={},
+        pending_stop_reason=None,
+        sequence=0,
+        idle_finalize_task=None,
+    )
+
+    channel.set_request_context_for_test(request_id, ctx)
+    channel.set_pending_client_rpc_session_for_test("tool-pending-1", session_id)
+
+    monkeypatch.setattr("sys.stdout", fake_stdout)
+    monkeypatch.setattr("jiuwenclaw.channel.acp_channel._ACP_STDOUT", fake_stdout)
+
+    async def _on_message(msg):
+        seen.append(msg)
+
+    channel.on_message(_on_message)
+
+    is_final = await channel.send_jsonrpc_message_for_test(
+        Message(
+            id=request_id,
+            type="event",
+            channel_id="acp",
+            session_id=session_id,
+            params={},
+            timestamp=time.time(),
+            ok=True,
+            payload={"is_processing": False},
+            event_type=EventType.CHAT_PROCESSING_STATUS,
+        ),
+        ctx,
+    )
+
+    assert is_final is False
+    assert ctx.pending_stop_reason == "end_turn"
+    assert fake_stdout.buffer.json_lines() == [
+        {
+            "jsonrpc": "2.0",
+            "method": "session/update",
+            "params": {
+                "sessionId": session_id,
+                "update": {
+                    "sessionUpdate": "session_info_update",
+                    "status": "idle",
+                },
+            },
+        }
+    ]
+
+    await channel.handle_jsonrpc_response_for_test(
+        {
+            "jsonrpc": "2.0",
+            "id": "tool-pending-1",
+            "result": {"ok": True},
+        }
+    )
+
+    responses = fake_stdout.buffer.json_lines()
+    assert responses[-1] == {
+        "jsonrpc": "2.0",
+        "id": 501,
+        "result": {
+            "stopReason": "end_turn",
+            "userMessageId": "user-msg-pending",
+        },
+    }
+    assert channel.has_request_context_for_test(request_id) is False
+    assert len(seen) == 1
+    assert seen[0].req_method == ReqMethod.ACP_TOOL_RESPONSE
+    assert seen[0].session_id == session_id
+
+
+@pytest.mark.asyncio
+async def test_processing_idle_waits_for_late_chat_final_and_only_emits_missing_suffix(monkeypatch):
+    fake_stdout = FakeStdout()
+    channel = AcpChannelHarness(AcpChannelConfig(enabled=True), DummyBus())
+    request_id = "req-late-final"
+    session_id = "sess-late-final"
+    ctx = types.SimpleNamespace(
+        jsonrpc_id=551,
+        method="session/prompt",
+        response_mode="jsonrpc",
+        session_id=session_id,
+        user_message_id=None,
+        assistant_message_id=None,
+        assistant_text=None,
+        thought_message_id=None,
+        thought_text=None,
+        tool_call_cache={},
+        pending_stop_reason=None,
+        saw_chat_final=False,
+        saw_processing_idle=False,
+        sequence=0,
+        idle_finalize_task=None,
+    )
+
+    monkeypatch.setattr("sys.stdout", fake_stdout)
+    monkeypatch.setattr("jiuwenclaw.channel.acp_channel._ACP_STDOUT", fake_stdout)
+
+    first_is_final = await channel.send_jsonrpc_message_for_test(
+        Message(
+            id=request_id,
+            type="event",
+            channel_id="acp",
+            session_id=session_id,
+            params={},
+            timestamp=time.time(),
+            ok=True,
+            payload={"content": "partial"},
+            event_type=EventType.CHAT_DELTA,
+        ),
+        ctx,
+    )
+    second_is_final = await channel.send_jsonrpc_message_for_test(
+        Message(
+            id=request_id,
+            type="event",
+            channel_id="acp",
+            session_id=session_id,
+            params={},
+            timestamp=time.time(),
+            ok=True,
+            payload={"is_processing": False},
+            event_type=EventType.CHAT_PROCESSING_STATUS,
+        ),
+        ctx,
+    )
+    third_is_final = await channel.send_jsonrpc_message_for_test(
+        Message(
+            id=request_id,
+            type="event",
+            channel_id="acp",
+            session_id=session_id,
+            params={},
+            timestamp=time.time(),
+            ok=True,
+            payload={"content": "partial final answer"},
+            event_type=EventType.CHAT_FINAL,
+        ),
+        ctx,
+    )
+
+    assert first_is_final is False
+    assert second_is_final is False
+    assert third_is_final is True
+
+    responses = fake_stdout.buffer.json_lines()
+    assert responses == [
+        {
+            "jsonrpc": "2.0",
+            "method": "session/update",
+            "params": {
+                "sessionId": session_id,
+                "update": {
+                    "sessionUpdate": "agent_message_chunk",
+                    "messageId": ctx.assistant_message_id,
+                    "content": {"type": "text", "text": "partial"},
+                },
+            },
+        },
+        {
+            "jsonrpc": "2.0",
+            "method": "session/update",
+            "params": {
+                "sessionId": session_id,
+                "update": {
+                    "sessionUpdate": "session_info_update",
+                    "status": "idle",
+                },
+            },
+        },
+        {
+            "jsonrpc": "2.0",
+            "method": "session/update",
+            "params": {
+                "sessionId": session_id,
+                "update": {
+                    "sessionUpdate": "agent_message_chunk",
+                    "messageId": ctx.assistant_message_id,
+                    "content": {"type": "text", "text": " final answer"},
+                },
+            },
+        },
+        {
+            "jsonrpc": "2.0",
+            "id": 551,
+            "result": {"stopReason": "end_turn"},
+        },
+    ]
+
+
+@pytest.mark.asyncio
 async def test_gateway_jsonrpc_request_is_written_to_stdout(monkeypatch):
     fake_stdout = FakeStdout()
     channel = AcpChannelHarness(AcpChannelConfig(enabled=True), DummyBus())
@@ -771,6 +1190,51 @@ async def test_gateway_jsonrpc_request_is_written_to_stdout(monkeypatch):
         }
     ]
     assert channel.get_pending_client_rpc_session_for_test("tool-2") == "sess-tool"
+
+
+@pytest.mark.asyncio
+async def test_gateway_jsonrpc_request_only_writes_raw_jsonrpc_for_active_prompt(monkeypatch):
+    fake_stdout = FakeStdout()
+    channel = AcpChannelHarness(AcpChannelConfig(enabled=True), DummyBus())
+    request_id = "req-visible-pending-rpc"
+    session_id = "sess-visible-pending-rpc"
+    ctx = types.SimpleNamespace(
+        jsonrpc_id=777,
+        method="session/prompt",
+        response_mode="jsonrpc",
+        session_id=session_id,
+        user_message_id="user-msg-visible-rpc",
+        assistant_message_id=None,
+        thought_message_id=None,
+        tool_call_cache={},
+        pending_stop_reason=None,
+        sequence=0,
+        idle_finalize_task=None,
+    )
+    channel.set_request_context_for_test(request_id, ctx)
+    channel.set_active_prompt_request_for_test(session_id, request_id)
+
+    monkeypatch.setattr("sys.stdout", fake_stdout)
+    monkeypatch.setattr("jiuwenclaw.channel.acp_channel._ACP_STDOUT", fake_stdout)
+
+    await channel.handle_gateway_frame_for_test(
+        {
+            "jsonrpc": "2.0",
+            "id": "tool-3",
+            "method": "fs/read_text_file",
+            "params": {"path": "workspace/demo.txt", "sessionId": session_id},
+        }
+    )
+
+    responses = fake_stdout.buffer.json_lines()
+    assert responses == [
+        {
+            "jsonrpc": "2.0",
+            "id": "tool-3",
+            "method": "fs/read_text_file",
+            "params": {"path": "workspace/demo.txt", "sessionId": session_id},
+        }
+    ]
 
 
 @pytest.mark.asyncio
@@ -859,6 +1323,12 @@ async def test_jsonrpc_session_prompt_emits_tool_call_update(monkeypatch):
             "name": "read_file",
             "arguments": {"path": "demo.txt"},
         },
+        "toolCallId": "tool-call-1",
+        "title": "Reading demo.txt",
+        "kind": "read",
+        "status": "pending",
+        "rawInput": {"path": "demo.txt"},
+        "locations": [{"path": "demo.txt"}],
     }
     
     message_chunk = responses[1]["params"]["update"]
@@ -952,7 +1422,11 @@ async def test_jsonrpc_session_prompt_emits_tool_result_update(monkeypatch):
         "sessionUpdate": "tool_call_update",
         "toolCallId": "tool-call-2",
         "toolName": "read_file",
+        "title": "Reading data",
+        "kind": "read",
+        "status": "completed",
         "result": "file contents",
+        "content": [{"type": "content", "content": {"type": "text", "text": "file contents"}}],
     }
     
     message_chunk = responses[1]["params"]["update"]
@@ -963,6 +1437,110 @@ async def test_jsonrpc_session_prompt_emits_tool_result_update(monkeypatch):
     assert idle_update["status"] == "idle"
     
     assert responses[3]["result"]["stopReason"] == "end_turn"
+
+
+@pytest.mark.asyncio
+async def test_jsonrpc_session_prompt_emits_tool_in_progress_update(monkeypatch):
+    fake_stdin = FakeStdin(
+        [
+            json_line(
+                {
+                    "jsonrpc": "2.0",
+                    "id": 311,
+                    "method": "session/prompt",
+                    "params": {
+                        "sessionId": "sess-tool-progress",
+                        "prompt": [{"type": "text", "text": "hello"}],
+                    },
+                }
+            )
+        ]
+    )
+    fake_stdout = FakeStdout()
+    channel = AcpChannel(AcpChannelConfig(enabled=True), DummyBus())
+
+    monkeypatch.setattr("sys.stdin", fake_stdin)
+    monkeypatch.setattr("sys.stdout", fake_stdout)
+    monkeypatch.setattr("jiuwenclaw.channel.acp_channel._ACP_STDOUT", fake_stdout)
+
+    async def _on_message(msg):
+        await channel.send(
+            Message(
+                id=msg.id,
+                type="event",
+                channel_id="acp",
+                session_id=msg.session_id,
+                params={},
+                timestamp=time.time(),
+                ok=True,
+                payload={
+                    "tool_call": {
+                        "name": "read_file",
+                        "arguments": {"path": "demo.txt"},
+                        "tool_call_id": "tool-call-progress-1",
+                    }
+                },
+                event_type=EventType.CHAT_TOOL_CALL,
+            )
+        )
+        await channel.send(
+            Message(
+                id=msg.id,
+                type="event",
+                channel_id="acp",
+                session_id=msg.session_id,
+                params={},
+                timestamp=time.time(),
+                ok=True,
+                payload={
+                    "tool_call_id": "tool-call-progress-1",
+                    "status": "in_progress",
+                },
+                event_type=EventType.CHAT_TOOL_UPDATE,
+            )
+        )
+        await channel.send(
+            Message(
+                id=msg.id,
+                type="event",
+                channel_id="acp",
+                session_id=msg.session_id,
+                params={},
+                timestamp=time.time(),
+                ok=True,
+                payload={"is_processing": False},
+                event_type=EventType.CHAT_PROCESSING_STATUS,
+            )
+        )
+
+    channel.on_message(_on_message)
+    await channel.start()
+
+    responses = fake_stdout.buffer.json_lines()
+    assert responses[0]["params"]["update"] == {
+        "sessionUpdate": "tool_call",
+        "toolCall": {
+            "id": "tool-call-progress-1",
+            "name": "read_file",
+            "arguments": {"path": "demo.txt"},
+        },
+        "toolCallId": "tool-call-progress-1",
+        "title": "Reading demo.txt",
+        "kind": "read",
+        "status": "pending",
+        "rawInput": {"path": "demo.txt"},
+        "locations": [{"path": "demo.txt"}],
+    }
+    assert responses[1]["params"]["update"] == {
+        "sessionUpdate": "tool_call_update",
+        "toolCallId": "tool-call-progress-1",
+        "toolName": "read_file",
+        "title": "Reading demo.txt",
+        "kind": "read",
+        "status": "in_progress",
+        "rawInput": {"path": "demo.txt"},
+        "locations": [{"path": "demo.txt"}],
+    }
 
 
 @pytest.mark.asyncio
@@ -1312,3 +1890,244 @@ async def test_tool_events_cancel_idle_finalize_instead_of_scheduling(monkeypatc
     assert is_final is False
     assert ctx.idle_finalize_task is None
     assert sentinel_task.cancelled()
+
+
+@pytest.mark.asyncio
+async def test_jsonrpc_session_prompt_emits_direct_reasoning_update(monkeypatch):
+    fake_stdin = FakeStdin(
+        [
+            json_line(
+                {
+                    "jsonrpc": "2.0",
+                    "id": 37,
+                    "method": "session/prompt",
+                    "params": {
+                        "sessionId": "sess-reasoning-direct",
+                        "prompt": [{"type": "text", "text": "hello"}],
+                    },
+                }
+            )
+        ]
+    )
+    fake_stdout = FakeStdout()
+    channel = AcpChannel(AcpChannelConfig(enabled=True), DummyBus())
+
+    monkeypatch.setattr("sys.stdin", fake_stdin)
+    monkeypatch.setattr("sys.stdout", fake_stdout)
+    monkeypatch.setattr("jiuwenclaw.channel.acp_channel._ACP_STDOUT", fake_stdout)
+
+    async def _on_message(msg):
+        await channel.send(
+            Message(
+                id=msg.id,
+                type="event",
+                channel_id="acp",
+                session_id=msg.session_id,
+                params={},
+                timestamp=time.time(),
+                ok=True,
+                payload={"content": "reasoning step", "event_type": "chat.reasoning"},
+                event_type=EventType.CHAT_REASONING,
+            )
+        )
+        await channel.send(
+            Message(
+                id=msg.id,
+                type="event",
+                channel_id="acp",
+                session_id=msg.session_id,
+                params={},
+                timestamp=time.time(),
+                ok=True,
+                payload={"is_processing": False},
+                event_type=EventType.CHAT_PROCESSING_STATUS,
+            )
+        )
+
+    channel.on_message(_on_message)
+    await channel.start()
+
+    responses = fake_stdout.buffer.json_lines()
+    assert len(responses) == 3
+    assert responses[0]["params"]["update"]["sessionUpdate"] == "agent_thought_chunk"
+    assert responses[0]["params"]["update"]["content"] == {
+        "type": "text",
+        "text": "reasoning step",
+    }
+    assert responses[1]["params"]["update"] == {
+        "sessionUpdate": "session_info_update",
+        "status": "idle",
+    }
+    assert responses[2]["result"] == {"stopReason": "end_turn"}
+
+
+@pytest.mark.asyncio
+async def test_jsonrpc_session_prompt_emits_todo_update(monkeypatch):
+    fake_stdin = FakeStdin(
+        [
+            json_line(
+                {
+                    "jsonrpc": "2.0",
+                    "id": 38,
+                    "method": "session/prompt",
+                    "params": {
+                        "sessionId": "sess-todo-update",
+                        "prompt": [{"type": "text", "text": "hello"}],
+                    },
+                }
+            )
+        ]
+    )
+    fake_stdout = FakeStdout()
+    channel = AcpChannel(AcpChannelConfig(enabled=True), DummyBus())
+
+    monkeypatch.setattr("sys.stdin", fake_stdin)
+    monkeypatch.setattr("sys.stdout", fake_stdout)
+    monkeypatch.setattr("jiuwenclaw.channel.acp_channel._ACP_STDOUT", fake_stdout)
+
+    async def _on_message(msg):
+        await channel.send(
+            Message(
+                id=msg.id,
+                type="event",
+                channel_id="acp",
+                session_id=msg.session_id,
+                params={},
+                timestamp=time.time(),
+                ok=True,
+                payload={
+                    "todos": [
+                        {
+                            "id": "todo-1",
+                            "content": "Implement ACP todo update",
+                            "activeForm": "Implementing ACP todo update",
+                            "status": "in_progress",
+                            "createdAt": "2026-04-16T00:00:00Z",
+                            "updatedAt": "2026-04-16T00:05:00Z",
+                        }
+                    ]
+                },
+                event_type=EventType.TODO_UPDATED,
+            )
+        )
+        await channel.send(
+            Message(
+                id=msg.id,
+                type="event",
+                channel_id="acp",
+                session_id=msg.session_id,
+                params={},
+                timestamp=time.time(),
+                ok=True,
+                payload={"is_processing": False},
+                event_type=EventType.CHAT_PROCESSING_STATUS,
+            )
+        )
+
+    channel.on_message(_on_message)
+    await channel.start()
+
+    responses = fake_stdout.buffer.json_lines()
+    assert len(responses) == 3
+    assert responses[0]["params"]["update"] == {
+        "sessionUpdate": "todo_update",
+        "todos": [
+            {
+                "id": "todo-1",
+                "content": "Implement ACP todo update",
+                "activeForm": "Implementing ACP todo update",
+                "status": "in_progress",
+                "createdAt": "2026-04-16T00:00:00Z",
+                "updatedAt": "2026-04-16T00:05:00Z",
+            }
+        ],
+    }
+    assert responses[1]["params"]["update"] == {
+        "sessionUpdate": "session_info_update",
+        "status": "idle",
+    }
+    assert responses[2]["result"] == {"stopReason": "end_turn"}
+
+
+@pytest.mark.asyncio
+async def test_reasoning_and_todo_events_cancel_idle_finalize(monkeypatch):
+    import asyncio
+
+    async def _assert_event_cancels_idle_finalize(message: Message, jsonrpc_id: int) -> None:
+        fake_stdout = FakeStdout()
+        channel = AcpChannelHarness(AcpChannelConfig(enabled=True), DummyBus())
+        sentinel_future = asyncio.get_event_loop().create_future()
+        sentinel_task = asyncio.ensure_future(sentinel_future)
+        ctx = types.SimpleNamespace(
+            jsonrpc_id=jsonrpc_id,
+            method="session/prompt",
+            response_mode="jsonrpc",
+            session_id="sess-idle-cancel",
+            assistant_message_id=None,
+            thought_message_id=None,
+            sequence=0,
+            idle_finalize_task=sentinel_task,
+        )
+
+        monkeypatch.setattr("sys.stdout", fake_stdout)
+        monkeypatch.setattr("jiuwenclaw.channel.acp_channel._ACP_STDOUT", fake_stdout)
+
+        is_final = await channel.send_jsonrpc_message_for_test(message, ctx)
+
+        assert is_final is False
+        assert ctx.idle_finalize_task is None
+        assert sentinel_task.cancelled()
+
+    await _assert_event_cancels_idle_finalize(
+        Message(
+            id="req-reasoning-delta-idle",
+            type="event",
+            channel_id="acp",
+            session_id="sess-idle-cancel",
+            params={},
+            timestamp=time.time(),
+            ok=True,
+            payload={"content": "reasoning", "source_chunk_type": "llm_reasoning"},
+            event_type=EventType.CHAT_DELTA,
+        ),
+        39,
+    )
+    await _assert_event_cancels_idle_finalize(
+        Message(
+            id="req-reasoning-idle",
+            type="event",
+            channel_id="acp",
+            session_id="sess-idle-cancel",
+            params={},
+            timestamp=time.time(),
+            ok=True,
+            payload={"content": "reasoning", "event_type": "chat.reasoning"},
+            event_type=EventType.CHAT_REASONING,
+        ),
+        40,
+    )
+    await _assert_event_cancels_idle_finalize(
+        Message(
+            id="req-todo-idle",
+            type="event",
+            channel_id="acp",
+            session_id="sess-idle-cancel",
+            params={},
+            timestamp=time.time(),
+            ok=True,
+            payload={
+                "todos": [
+                    {
+                        "id": "todo-2",
+                        "content": "Keep session alive",
+                        "activeForm": "Keeping session alive",
+                        "status": "pending",
+                        "createdAt": "2026-04-16T00:00:00Z",
+                        "updatedAt": "2026-04-16T00:05:00Z",
+                    }
+                ]
+            },
+            event_type=EventType.TODO_UPDATED,
+        ),
+        41,
+    )

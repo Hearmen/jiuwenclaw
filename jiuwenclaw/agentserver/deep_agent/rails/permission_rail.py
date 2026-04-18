@@ -28,6 +28,7 @@ from jiuwenclaw.agentserver.permissions.checker import (
     collect_permission_rail_tool_names,
 )
 from jiuwenclaw.agentserver.permissions import PermissionLevel, PermissionResult
+from jiuwenclaw.e2a.acp_tool_updates import build_acp_tool_descriptor
 from jiuwenclaw.utils import logger
 
 
@@ -515,17 +516,21 @@ class PermissionInterruptRail(ConfirmInterruptRail):
         tool_name = tool_call.name if tool_call else ""
         tool_args = self._parse_tool_args(tool_call)
         tool_call_id = str(getattr(tool_call, "id", "") or f"permission_{tool_name or 'tool'}").strip()
-
-        title = f"Approve `{tool_name}`"
+        descriptor = build_acp_tool_descriptor(
+            tool_name,
+            tool_args,
+            tool_call_id=tool_call_id,
+            status="pending",
+            kind=self._tool_kind_for_permission(tool_name),
+        )
+        title = str(descriptor.get("title") or f"Approve `{tool_name}`")
         if result.reason:
             title = f"{title}: {result.reason}"
 
         request: dict[str, Any] = {
             "toolCall": {
-                "toolCallId": tool_call_id,
+                **descriptor,
                 "title": title,
-                "kind": self._tool_kind_for_permission(tool_name),
-                "status": "pending",
             },
             "options": [
                 {
@@ -545,8 +550,6 @@ class PermissionInterruptRail(ConfirmInterruptRail):
                 },
             ],
         }
-        if tool_args:
-            request["toolCall"]["rawInput"] = tool_args
         return request
 
     async def _request_acp_permission(

@@ -109,6 +109,7 @@ ACP_SESSION_UPDATE_KINDS: tuple[str, ...] = (
     "agent_thought_chunk",
     "tool_call",
     "tool_call_update",
+    "todo_update",
     "plan",
     "available_commands_update",
     "current_mode_update",

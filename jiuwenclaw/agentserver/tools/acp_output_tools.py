@@ -9,6 +9,7 @@ from __future__ import annotations
 import asyncio
 import inspect
 import logging
+import os
 import uuid
 from dataclasses import dataclass
 from typing import Any, List, TYPE_CHECKING
@@ -28,11 +29,17 @@ from jiuwenclaw.e2a.models import (
 )
 
 if TYPE_CHECKING:
-    from openjiuwen.core.foundation.tool import Tool, ToolCard, LocalFunction
+    from openjiuwen.core.foundation.tool import Tool
 
 logger = logging.getLogger(__name__)
 
 _ACP_REQUEST_TIMEOUT_SECONDS = 30.0
+try:
+    _ACP_WAIT_FOR_EXIT_TIMEOUT_SECONDS = float(
+        os.getenv("ACP_WAIT_FOR_EXIT_TIMEOUT_SECONDS", "30")
+    )
+except ValueError:
+    _ACP_WAIT_FOR_EXIT_TIMEOUT_SECONDS = 30.0
 
 
 @dataclass
@@ -367,9 +374,26 @@ async def wait_for_terminal_exit(
     mgr = get_acp_output_manager()
     params = {"terminalId": terminal_id}
 
-    response = await mgr.send_jsonrpc_request(
-        "terminal/wait_for_exit", params, session_id=session_id
-    )
+    try:
+        response = await mgr.send_jsonrpc_request(
+            "terminal/wait_for_exit",
+            params,
+            session_id=session_id,
+            timeout=_ACP_WAIT_FOR_EXIT_TIMEOUT_SECONDS,
+        )
+    except asyncio.TimeoutError:
+        logger.info(
+            "[AcpOutput] wait_for_terminal_exit soft-timeout: terminal_id=%s timeout=%.1fs",
+            terminal_id,
+            _ACP_WAIT_FOR_EXIT_TIMEOUT_SECONDS,
+        )
+        return {
+            "exitCode": None,
+            "signal": None,
+            "timedOut": True,
+            "running": True,
+            "shouldRetry": True,
+        }
 
     if "error" in response:
         err = response["error"]
@@ -380,7 +404,16 @@ async def wait_for_terminal_exit(
             data=err.get("data"),
         )
 
-    return response.get("result", {})
+    result = dict(response.get("result", {}) or {})
+    # Normalize terminal wait result so callers can deterministically decide
+    # whether they should poll again.
+    result.setdefault("timedOut", False)
+    if "running" not in result and (
+        result.get("exitCode") is not None or result.get("signal") is not None
+    ):
+        result["running"] = False
+    result["shouldRetry"] = bool(result.get("timedOut")) or bool(result.get("running"))
+    return result
 
 
 async def release_terminal(
@@ -415,7 +448,7 @@ async def release_terminal(
 
 def get_tools(session_id: str = "", request_id: str = "") -> List["Tool"]:
     """返回 ACP 输出工具列表，用于注册到 Agent。"""
-    from openjiuwen.core.foundation.tool import Tool, ToolCard, LocalFunction
+    from openjiuwen.core.foundation.tool import ToolCard, LocalFunction
 
     def make_tool(
         name: str,
@@ -523,7 +556,10 @@ def get_tools(session_id: str = "", request_id: str = "") -> List["Tool"]:
         ),
         make_tool(
             name="wait_for_terminal_exit",
-            description="等待终端命令执行完成。",
+            description=(
+                "等待终端命令执行完成。若返回 timedOut=true / running=true / shouldRetry=true，"
+                "表示任务仍在执行中，应继续使用同一个 terminal_id 再次调用本工具轮询。"
+            ),
             input_params={
                 "type": "object",
                 "properties": {

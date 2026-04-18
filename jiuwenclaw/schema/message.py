@@ -122,6 +122,7 @@ class EventType(Enum):
     CHAT_MEDIA = "chat.media"
     CHAT_FILE = "chat.file"
     CHAT_TOOL_CALL = "chat.tool_call"
+    CHAT_TOOL_UPDATE = "chat.tool_update"
     CHAT_TOOL_RESULT = "chat.tool_result"
     CONTEXT_COMPRESSED = "context.compressed"
     TODO_UPDATED = "todo.updated"

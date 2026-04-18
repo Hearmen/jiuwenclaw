@@ -97,7 +97,6 @@ from jiuwenclaw.agentserver.memory.config import (clear_config_cache, get_memory
                                                   is_proactive_memory)
 from jiuwenclaw.agentserver.permissions.checker import TOOL_PERMISSION_CHANNEL_ID
 from jiuwenclaw.agentserver.skill_manager import SkillManager
-from jiuwenclaw.agentserver.stream_utils import parse_stream_chunk
 from jiuwenclaw.agentserver.tools.multimodal_config import (
     apply_audio_model_config_from_yaml,
     apply_video_model_config_from_yaml,
@@ -2940,6 +2939,21 @@ class JiuWenClawDeepAdapter:
                     )
                     return {"event_type": "chat.tool_call", "tool_call": tool_info}
 
+                if chunk_type == "tool_update":
+                    if isinstance(payload, dict):
+                        update_info = payload.get("tool_update", payload)
+                        update_payload = (
+                            dict(update_info)
+                            if isinstance(update_info, dict)
+                            else {"content": str(update_info)}
+                        )
+                    else:
+                        update_payload = {"content": str(payload)}
+                    return {
+                        "event_type": "chat.tool_update",
+                        **update_payload,
+                    }
+
                 if chunk_type == "tool_result":
                     if isinstance(payload, dict):
                         result_info = payload.get("tool_result", payload)
@@ -2957,6 +2971,11 @@ class JiuWenClawDeepAdapter:
                                     result_info.get("tool_call_id")
                                     or result_info.get("toolCallId")
                             )
+                            raw_output = result_info.get("raw_output")
+                            if raw_output is None:
+                                raw_output = result_info.get("rawOutput")
+                            if raw_output is not None:
+                                result_payload["raw_output"] = raw_output
                     else:
                         result_payload = {"result": str(payload)}
                     return {
