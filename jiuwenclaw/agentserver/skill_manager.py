@@ -2095,7 +2095,7 @@ class SkillManager:
 
     def _get_marketplaces(self) -> list[dict]:
         marketplaces = self._state.get("marketplaces", [])
-        normalized = self._normalize_marketplaces(marketplaces)
+        normalized = self.normalize_marketplaces(marketplaces)
         # 仅当结构发生变化时写回，避免每次读取都触盘。
         if normalized != marketplaces:
             self._state["marketplaces"] = normalized
@@ -2104,7 +2104,7 @@ class SkillManager:
 
     def _add_marketplace(self, marketplace: dict) -> None:
         self._state.setdefault("marketplaces", []).append(marketplace)
-        self._state["marketplaces"] = self._normalize_marketplaces(
+        self._state["marketplaces"] = self.normalize_marketplaces(
             self._state.get("marketplaces", [])
         )
         self._save_state()
@@ -2114,12 +2114,12 @@ class SkillManager:
         kept = [m for m in marketplaces if m.get("name") != name]
         if len(kept) == len(marketplaces):
             return False
-        self._state["marketplaces"] = self._normalize_marketplaces(kept)
+        self._state["marketplaces"] = self.normalize_marketplaces(kept)
         self._save_state()
         return True
 
     def _set_marketplace_enabled(self, name: str, enabled: bool) -> bool:
-        marketplaces = self._normalize_marketplaces(self._state.get("marketplaces", []))
+        marketplaces = self.normalize_marketplaces(self._state.get("marketplaces", []))
         updated = False
         for marketplace in marketplaces:
             if marketplace.get("name") == name:
@@ -2134,7 +2134,7 @@ class SkillManager:
     def _set_marketplace_last_updated(self, name: str) -> bool:
         from datetime import datetime, timezone
 
-        marketplaces = self._normalize_marketplaces(self._state.get("marketplaces", []))
+        marketplaces = self.normalize_marketplaces(self._state.get("marketplaces", []))
         updated = False
         for marketplace in marketplaces:
             if marketplace.get("name") == name:
@@ -2147,7 +2147,7 @@ class SkillManager:
         return updated
 
     @staticmethod
-    def _normalize_marketplaces(raw_marketplaces: Any) -> list[dict]:
+    def normalize_marketplaces(raw_marketplaces: Any) -> list[dict]:
         normalized: list[dict] = []
         if not isinstance(raw_marketplaces, list):
             return normalized
@@ -2170,7 +2170,7 @@ class SkillManager:
         state.setdefault("marketplaces", [])
         state.setdefault("installed_plugins", [])
         state.setdefault("local_skills", [])
-        state["marketplaces"] = self._normalize_marketplaces(state.get("marketplaces"))
+        state["marketplaces"] = self.normalize_marketplaces(state.get("marketplaces"))
 
     def _get_installed_plugins(self) -> list[dict]:
         return self._state.get("installed_plugins", [])

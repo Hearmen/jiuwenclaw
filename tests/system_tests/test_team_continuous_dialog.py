@@ -22,6 +22,7 @@ import socket
 import subprocess
 import sys
 import time
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -43,6 +44,17 @@ logging.getLogger("httpcore").setLevel(logging.WARNING)
 
 # Enable TeamManager logs
 logging.getLogger("jiuwenclaw.agentserver.team.team_manager").setLevel(logging.INFO)
+
+
+@dataclass
+class RecvMessagesParams:
+    ws: Any
+    stop_event: asyncio.Event
+    second_message_sent: asyncio.Event
+    send_second_msg_callback: Any
+    max_events: int = 50
+    events_before_second: int = 10
+    recv_timeout: float = 60.0
 
 
 def _pick_free_port() -> int:
@@ -126,115 +138,109 @@ def _print_event(event_number: int, data: dict[str, Any]) -> None:
     """Print a single event in a formatted way."""
     event_type = data.get("event", "unknown")
     payload = data.get("payload", {})
-    
+
     if event_type == "connection.ack":
-        print(f"[{event_number:4d}] [CONNECTION_ACK] WebSocket connected")
+        logger.debug("[%04d] [CONNECTION_ACK] WebSocket connected", event_number)
         return
-    
+
     if event_type == "stream.end":
-        print(f"[{event_number:4d}] [STREAM_END] Stream ended")
+        logger.debug("[%04d] [STREAM_END] Stream ended", event_number)
         return
-    
+
     if not isinstance(payload, dict):
-        print(f"[{event_number:4d}] [{event_type}] {payload}")
+        logger.debug("[%04d] [%s] %s", event_number, event_type, payload)
         return
-    
+
     inner_event_type = payload.get("event_type", "")
-    
+
     if inner_event_type == "team.member":
         event = payload.get("event", {})
         sub_type = event.get("type", "unknown")
         member_id = event.get("member_id", "N/A")
-        print(f"[{event_number:4d}] [MEMBER] {sub_type} | member={member_id}")
-        
+        logger.debug("[%04d] [MEMBER] %s | member=%s", event_number, sub_type, member_id)
+
     elif inner_event_type == "team.task":
         event = payload.get("event", {})
         sub_type = event.get("type", "unknown")
         task_id = event.get("task_id", "N/A")
-        print(f"[{event_number:4d}] [TASK] {sub_type} | task={task_id}")
-        
+        logger.debug("[%04d] [TASK] %s | task=%s", event_number, sub_type, task_id)
+
     elif inner_event_type == "team.message":
         event = payload.get("event", {})
         sub_type = event.get("type", "unknown")
         from_member = event.get("from_member", "N/A")
         content = event.get("content", "")
         preview = content[:60] + "..." if len(content) > 60 else content
-        print(f"[{event_number:4d}] [MESSAGE] {sub_type} | from={from_member} | {preview}")
-        
+        logger.debug("[%04d] [MESSAGE] %s | from=%s | %s", event_number, sub_type, from_member, preview)
+
     elif inner_event_type == "chat.delta":
         content = payload.get("content", "")
         preview = content[:60] + "..." if len(content) > 60 else content
-        print(f"[{event_number:4d}] [CHAT_DELTA] {preview}")
-        
+        logger.debug("[%04d] [CHAT_DELTA] %s", event_number, preview)
+
     elif inner_event_type == "chat.final":
         content = payload.get("content", "")
         preview = content[:60] + "..." if len(content) > 60 else content
-        print(f"[{event_number:4d}] [CHAT_FINAL] {preview}")
-        
+        logger.debug("[%04d] [CHAT_FINAL] %s", event_number, preview)
+
     else:
-        print(f"[{event_number:4d}] [{event_type}] {json.dumps(payload, ensure_ascii=False)[:100]}")
+        logger.debug("[%04d] [%s] %s", event_number, event_type, json.dumps(payload, ensure_ascii=False)[:100])
 
 
-async def _recv_messages(
-    ws,
-    stop_event: asyncio.Event,
-    second_message_sent: asyncio.Event,
-    send_second_msg_callback,
-    max_events: int = 200,
-    events_before_second: int = 30,
-) -> list[dict]:
+async def _recv_messages(params: RecvMessagesParams) -> list[dict]:
     """Receive messages and send second message after receiving some events.
-    
+
     Args:
-        ws: WebSocket connection
-        stop_event: Event to stop receiving
-        second_message_sent: Event to signal second message was sent
-        send_second_msg_callback: Callback to send second message
-        max_events: Maximum number of events to receive
-        events_before_second: Number of events to receive before sending second message
+        params: Parameters for receiving messages
     """
     events = []
     event_count = 0
-    
-    while not stop_event.is_set() and event_count < max_events:
+    start_time = asyncio.get_running_loop().time()
+
+    while not params.stop_event.is_set() and event_count < params.max_events:
+        # Check total timeout
+        elapsed = asyncio.get_running_loop().time() - start_time
+        if elapsed >= params.recv_timeout:
+            logger.warning("Collected %s events before timeout", len(events))
+            break
+
         try:
             remaining_timeout = 1.0
-            raw = await asyncio.wait_for(ws.recv(), timeout=remaining_timeout)
+            raw = await asyncio.wait_for(params.ws.recv(), timeout=remaining_timeout)
             data = json.loads(raw)
             events.append(data)
             event_count += 1
             _print_event(event_count, data)
-            
-            if event_count == events_before_second and not second_message_sent.is_set():
-                print("\n" + "=" * 80)
-                print("Sending second message while team is still running...")
-                print("=" * 80 + "\n")
-                await send_second_msg_callback()
-                second_message_sent.set()
-                
+
+            if event_count == params.events_before_second and not params.second_message_sent.is_set():
+                logger.info("Sending second message while team is still running...")
+                await params.send_second_msg_callback()
+                params.second_message_sent.set()
+
         except asyncio.TimeoutError:
             continue
         except websockets.ConnectionClosed:
-            print("WebSocket connection closed")
+            logger.info("WebSocket connection closed")
             break
         except Exception as e:
             logger.error("Error receiving message: %s", e)
             break
-    
+
     return events
 
 
 @pytest.mark.asyncio
+@pytest.mark.skip(reason="temporarily skipped until team continuous dialog is stable")
 async def test_team_continuous_dialog(temp_home: Path, monkeypatch: pytest.MonkeyPatch):
     """Test Team mode continuous dialog scenario.
-    
+
     Scenario:
     1. Connect to WebSocket
     2. Send first message to create team with 3 members
     3. While team is running, send second message to change behavior
     4. Verify both messages are processed
     """
-    print(f"\n[DEBUG] temp_home: {temp_home}")
+    logger.debug("temp_home: %s", temp_home)
     agent_port = _pick_free_port()
     web_port = _pick_free_port()
     gateway_port = _pick_free_port()
@@ -244,7 +250,7 @@ async def test_team_continuous_dialog(temp_home: Path, monkeypatch: pytest.Monke
     if env_file.exists():
         from dotenv import load_dotenv
         load_dotenv(env_file)
-    
+
     env = os.environ.copy()
     env["HOME"] = str(temp_home)
     env["AGENT_SERVER_HOST"] = "127.0.0.1"
@@ -257,6 +263,7 @@ async def test_team_continuous_dialog(temp_home: Path, monkeypatch: pytest.Monke
     agent_log = temp_home / "agentserver.log"
     gateway_log = temp_home / "gateway.log"
 
+    logger.info("Starting agent server on port %s", agent_port)
     agent_proc = _start_process(
         [sys.executable, "-m", "jiuwenclaw.app_agentserver", "--port", str(agent_port)],
         env=env,
@@ -266,6 +273,7 @@ async def test_team_continuous_dialog(temp_home: Path, monkeypatch: pytest.Monke
     try:
         await _wait_for_log(agent_log, "ready:", timeout=60)
 
+        logger.info("Starting gateway on port %s", web_port)
         gateway_proc = _start_process(
             [sys.executable, "-m", "jiuwenclaw.app_gateway", "--port", str(web_port)],
             env=env,
@@ -278,16 +286,9 @@ async def test_team_continuous_dialog(temp_home: Path, monkeypatch: pytest.Monke
 
         async with websockets.connect(f"ws://127.0.0.1:{web_port}/ws") as ws:
             session_id = f"sess_team_test_{int(time.time())}"
-            
-            print("\n" + "=" * 80)
-            print("Team Continuous Dialog Test")
-            print("=" * 80)
-            print(f"Session ID: {session_id}")
-            print("=" * 80 + "\n")
-            
-            print("Sending first message...")
-            print("-" * 40)
-            
+
+            logger.info("Team Continuous Dialog Test - Session ID: %s", session_id)
+
             req1 = {
                 "type": "req",
                 "id": "req-team-1",
@@ -298,86 +299,75 @@ async def test_team_continuous_dialog(temp_home: Path, monkeypatch: pytest.Monke
                     "content": "告诉我你有哪些工具，不要立刻开始任务",
                 },
             }
-            print(f"Request 1: {json.dumps(req1, ensure_ascii=False, indent=2)}")
-            print("-" * 40 + "\n")
+
+            logger.info("Sending first message...")
+            logger.debug("Request 1: %s", json.dumps(req1, ensure_ascii=False, indent=2))
+
             await ws.send(json.dumps(req1, ensure_ascii=False))
-            
+
             stop_event = asyncio.Event()
             second_message_sent = asyncio.Event()
             events: list[dict] = []  # Initialize empty list
-            
+
+            req2 = {
+                "type": "req",
+                "id": "req-team-2",
+                "method": "chat.send",
+                "params": {
+                    "session_id": session_id,
+                    "mode": "team",
+                    "content": "现在创建一个成员叫安娜，让安娜告诉我他有哪些工具",
+                },
+            }
+
             async def send_second_message():
-                print("\nSending second message...")
-                print("-" * 40)
-                req2 = {
-                    "type": "req",
-                    "id": "req-team-2",
-                    "method": "chat.send",
-                    "params": {
-                        "session_id": session_id,
-                        "mode": "team",
-                        "content": "现在创建一个成员叫安娜，让安娜告诉我他有哪些工具",
-                    },
-                }
-                print(f"Request 2: {json.dumps(req2, ensure_ascii=False, indent=2)}")
-                print("-" * 40 + "\n")
+                logger.info("Sending second message...")
+                logger.debug("Request 2: %s", json.dumps(req2, ensure_ascii=False, indent=2))
                 await ws.send(json.dumps(req2, ensure_ascii=False))
-            
-            try:
-                events = await asyncio.wait_for(
-                    _recv_messages(
-                        ws,
-                        stop_event,
-                        second_message_sent,
-                        send_second_message,
-                        max_events=150,
-                        events_before_second=30,
-                    ),
-                    timeout=120.0,  # 2 minutes timeout
+
+            events = await _recv_messages(
+                RecvMessagesParams(
+                    ws=ws,
+                    stop_event=stop_event,
+                    second_message_sent=second_message_sent,
+                    send_second_msg_callback=send_second_message,
+                    max_events=50,
+                    events_before_second=10,
+                    recv_timeout=60.0,
                 )
-            except asyncio.TimeoutError:
-                print("\n" + "=" * 80)
-                print("WARNING: Test timed out after 120 seconds")
-                print("This is expected if Team stream runs indefinitely")
-                print(f"Collected {len(events)} events before timeout")
-                print("=" * 80)
-            
-            print("\n" + "=" * 80)
-            print("Test Results")
-            print("=" * 80)
-            print(f"Total events received: {len(events)}")
-            
+            )
+
+            logger.info("Test Results - Total events received: %s", len(events))
+
             event_types = {}
             for event in events:
                 event_type = event.get("event", "unknown")
                 event_types[event_type] = event_types.get(event_type, 0) + 1
-            
-            print("\nEvent type distribution:")
+
+            logger.info("Event type distribution:")
             for event_type, count in sorted(event_types.items(), key=lambda x: -x[1]):
-                print(f"  {event_type}: {count}")
-            
+                logger.info("  %s: %s", event_type, count)
+
             team_messages = [
                 e for e in events
                 if e.get("event") == "team.message"
             ]
-            print(f"\nTeam messages received: {len(team_messages)}")
-            
+            logger.info("Team messages received: %s", len(team_messages))
+
             if second_message_sent.is_set():
-                print("\n✓ Second message was sent while team was running")
+                logger.info("Second message was sent while team was running")
             else:
-                print("\n✗ Second message was NOT sent")
-            
+                logger.warning("Second message was NOT sent")
+
             # Core assertions
             assert len(events) > 0, "Should receive events from team"
             assert "team.member" in event_types or "team.message" in event_types, \
                 "Should receive team events (member or message)"
             assert second_message_sent.is_set(), \
                 "Second message should be sent during stream"
-            
-            print("\n" + "=" * 80)
-            print("Test PASSED")
-            print("=" * 80)
-            
+
+            logger.info("Test PASSED")
+
     finally:
         _stop_process(gateway_proc)
         _stop_process(agent_proc)

@@ -12,14 +12,14 @@ from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, Callable
 
-from jiuwenclaw.agentserver.team.bootstrap import configure_agent_teams_home
-
-configure_agent_teams_home()
-
 from openjiuwen.agent_teams.agent.team_agent import TeamAgent
 from openjiuwen.agent_teams.schema.blueprint import TeamAgentSpec
 from openjiuwen.agent_teams.spawn.context import reset_session_id, set_session_id
 from openjiuwen.harness import DeepAgent
+
+from jiuwenclaw.agentserver.team.bootstrap import configure_agent_teams_home
+
+configure_agent_teams_home()
 
 from jiuwenclaw.agentserver.team.config_loader import (
     load_team_spec_dict,
@@ -73,7 +73,7 @@ class TeamManager:
             return [], []
 
     @staticmethod
-    def _register_member_runtime_tools(
+    def register_member_runtime_tools(
         agent: DeepAgent,
         *,
         session_id: str,
@@ -142,13 +142,14 @@ class TeamManager:
             logger.warning("[TeamManager] SendFileToolkit registration failed: %s", exc)
 
     @staticmethod
-    def _build_agent_customizer(
+    def build_agent_customizer(
         spec: TeamAgentSpec,
         deep_agent: DeepAgent,
         session_id: str,
-        request_id: str | None,
-        channel_id: str | None,
-        request_metadata: dict[str, Any] | None,
+        *,
+        request_id: str | None = None,
+        channel_id: str | None = None,
+        request_metadata: dict[str, Any] | None = None,
     ) -> Callable[..., None]:
         from jiuwenclaw.agentserver.deep_agent.rails.team_member_skill_toolkit_rail import (
             MemberSkillToolkitRail,
@@ -236,8 +237,9 @@ class TeamManager:
                 except Exception as exc:
                     logger.warning("[TeamManager] failed to load global skills_state.json: %s", exc)
 
-            skill_manager = SkillManager(workspace_dir=str(member_skills_dir.parent))
-            state["marketplaces"] = skill_manager._normalize_marketplaces(state.get("marketplaces"))
+            state["marketplaces"] = SkillManager.normalize_marketplaces(
+                state.get("marketplaces")
+            )
 
             actual_skill_names = sorted(
                 path.name
@@ -398,7 +400,7 @@ class TeamManager:
                 except Exception as exc:
                     logger.warning("[TeamManager] add rail %s failed: %s", rail_name, exc)
 
-            TeamManager._register_member_runtime_tools(
+            TeamManager.register_member_runtime_tools(
                 agent,
                 session_id=session_id,
                 request_id=request_id,
@@ -426,7 +428,7 @@ class TeamManager:
                 cleared_tables,
             )
 
-        spec.agent_customizer = self._build_agent_customizer(
+        spec.agent_customizer = self.build_agent_customizer(
             spec,
             deep_agent,
             session_id,

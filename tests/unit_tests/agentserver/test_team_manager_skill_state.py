@@ -2,6 +2,7 @@
 
 """Unit tests for team member skill state generation."""
 
+import json
 from pathlib import Path
 
 from openjiuwen.agent_teams.schema.blueprint import TeamAgentSpec
@@ -64,7 +65,7 @@ def test_member_skill_state_inherits_marketplaces_and_rebuilds_installed_skills(
             },
         }
     )
-    customizer = TeamManager._build_agent_customizer(
+    customizer = TeamManager.build_agent_customizer(
         spec=spec,
         deep_agent=type(
             "_DeepAgent",
@@ -108,7 +109,7 @@ def test_member_skill_state_inherits_marketplaces_and_rebuilds_installed_skills(
     state_path = member_root / "skills" / "skills_state.json"
     assert state_path.is_file()
 
-    state = __import__("json").loads(state_path.read_text(encoding="utf-8"))
+    state = json.loads(state_path.read_text(encoding="utf-8"))
     assert state["marketplaces"] == [
         {"name": "demo", "url": "https://example.com/demo.git", "enabled": True}
     ]

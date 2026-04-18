@@ -202,7 +202,8 @@ def get_default_model_name(config: dict[str, Any] | None = None) -> str:
         try:
             from jiuwenclaw.agentserver.config import get_config
             config = get_config()
-        except Exception:
+        except Exception as exc:
+            logger.warning("[TeamRuntime] Failed to load config for default model: %s", exc)
             return "gpt-4"
 
     try:
@@ -211,7 +212,7 @@ def get_default_model_name(config: dict[str, Any] | None = None) -> str:
         ).get("model_name")
         if model_name:
             return model_name
-    except Exception:
-        pass
+    except Exception as exc:
+        logger.warning("[TeamRuntime] Failed to resolve default model name: %s", exc)
 
     return "gpt-4"

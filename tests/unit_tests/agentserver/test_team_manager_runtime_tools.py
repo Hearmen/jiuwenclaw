@@ -24,7 +24,8 @@ class _FakeResourceManager:
 
 
 class _FakeCronRuntimeBridge:
-    def build_tools(self, *, context, agent_id):
+    @staticmethod
+    def build_tools(*, context, agent_id):
         _ = (context, agent_id)
         return [
             LocalFunction(
@@ -46,7 +47,8 @@ class _FakeSendFileToolkit:
         self.channel_id = channel_id
         self.metadata = metadata
 
-    def get_tools(self):
+    @staticmethod
+    def get_tools():
         return [
             LocalFunction(
                 card=ToolCard(
@@ -85,7 +87,7 @@ def test_register_member_runtime_tools_adds_cron_and_send_file(monkeypatch):
         ability_manager=AbilityManager(),
     )
 
-    TeamManager._register_member_runtime_tools(
+    TeamManager.register_member_runtime_tools(
         agent,
         session_id="sess-1",
         request_id="req-1",
