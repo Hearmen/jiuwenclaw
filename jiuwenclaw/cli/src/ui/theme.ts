@@ -120,7 +120,7 @@ const ACCENT_COLORS: Record<Exclude<AccentColorName, "default">, string> = {
   yellow: "#ca8a04",
 };
 
-let currentThemeName: ThemeName = "light";
+let currentThemeName: ThemeName = "system";
 let currentAccentColor: AccentColorName = "default";
 
 // TODO: Persist theme/accent across CLI restarts after the broader config/settings story is finalized.
@@ -134,7 +134,27 @@ function detectSystemTheme(): "light" | "dark" {
       return bg >= 0 && bg <= 6 ? "dark" : "light";
     }
   }
-  return process.env.TERM_PROGRAM === "Apple_Terminal" ? "light" : "dark";
+
+  // 2. Check Windows Terminal session indicator
+  // Windows Terminal defaults to dark theme
+  if (process.env.WT_SESSION) {
+    return "dark";
+  }
+
+  // 3. Check for common light-themed terminals
+  if (process.env.TERM_PROGRAM === "Apple_Terminal") {
+    return "light";
+  }
+
+  // 4. Windows PowerShell/CMD typically use dark backgrounds
+  // Check for Windows platform with no light terminal indicators
+  if (process.platform === "win32") {
+    // PowerShell and CMD on Windows usually have dark blue/black backgrounds
+    return "dark";
+  }
+
+  // 5. Default to dark for most modern terminals
+  return "dark";
 }
 
 function getResolvedThemeName(): "light" | "dark" {

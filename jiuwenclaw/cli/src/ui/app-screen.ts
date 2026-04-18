@@ -744,10 +744,6 @@ export class AppScreen implements Component, Focusable {
         await this.openModelList();
         return;
       }
-      await this.commands.execute(text, {
-        ...this.state.getCommandContext(),
-        exitApp: this.exit,
-      });
       this.beginPendingSubmittedInput(text, snapshot);
       this.editor.addToHistory(text);
       this.editor.setText("");

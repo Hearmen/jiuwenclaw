@@ -429,13 +429,20 @@ class AgentWebSocketServer:
 
         mode = request.params.get("mode", "agent.plan").split(".")[0]
         agent = await self._agent_manager.get_agent(channel_id=channel_id, mode=mode)
-        if mode == "code":
-            sub_mode = request.params.get("mode", "agent.plan").split(".")[1]
-            from openjiuwen.core.single_agent import create_agent_session
-            session = create_agent_session(session_id=request.session_id)
-            agent.get_instance().switch_mode(session=session, mode=sub_mode)
         if agent is None:
             raise ValueError("Failed to get agent")
+
+        # code 模式：在真实 session 上执行 switch_mode，确保 state 持久化
+        if mode == "code":
+            from openjiuwen.core.single_agent import create_agent_session
+            sub_mode = request.params.get("mode", "agent.plan").split(".")[1]
+            session = create_agent_session(session_id=request.session_id, card=agent.get_instance().card)
+            await session.pre_run(inputs=None)  # 从 checkpointer 加载历史 state
+            agent.get_instance().switch_mode(session=session, mode=sub_mode)
+            # 持久化 switch_mode 修改后的 state
+            state = agent.get_instance().load_state(session)
+            session.update_state({"deep_agent_state": state.to_session_dict()})
+            await session.post_run()  # 写入 checkpointer
 
         resp = await agent.process_message(request)
 
@@ -455,11 +462,17 @@ class AgentWebSocketServer:
         if agent is None:
             raise ValueError("Failed to get agent")
 
+        # code 模式：在真实 session 上执行 switch_mode，确保 state 持久化
         if mode == "code":
-            sub_mode = request.params.get("mode", "agent.plan").split(".")[1]
             from openjiuwen.core.single_agent import create_agent_session
-            session = create_agent_session(session_id=request.session_id)
+            sub_mode = request.params.get("mode", "agent.plan").split(".")[1]
+            session = create_agent_session(session_id=request.session_id, card=agent.get_instance().card)
+            await session.pre_run(inputs=None)  # 从 checkpointer 加载历史 state
             agent.get_instance().switch_mode(session=session, mode=sub_mode)
+            # 持久化 switch_mode 修改后的 state
+            state = agent.get_instance().load_state(session)
+            session.update_state({"deep_agent_state": state.to_session_dict()})
+            await session.post_run()  # 写入 checkpointer
 
         chunk_count = 0
         # 心跳控制：当有真实 chunk 发送时重置，空闲时发送心跳
