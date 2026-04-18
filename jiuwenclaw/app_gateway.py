@@ -856,7 +856,15 @@ async def _run(
                     "env": dict(env_updates or {}),
                 },
             )
-            await client.send_request(reload_env)
+            reload_resp = await client.send_request(reload_env)
+            if not getattr(reload_resp, "ok", False):
+                err_payload = getattr(reload_resp, "payload", None) or {}
+                err_msg = (
+                    err_payload.get("error")
+                    if isinstance(err_payload, dict)
+                    else err_payload
+                )
+                raise RuntimeError(f"agent.reload_config rejected: {err_msg}")
 
             if updated_env_keys and (browser_runtime_keys & set(updated_env_keys)):
                 restart_env = e2a_from_agent_fields(

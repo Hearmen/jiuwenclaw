@@ -10,6 +10,14 @@ import { CollapsedToolGroupMessageComponent, ToolGroupMessageComponent } from ".
 import type { MessageRenderOptions, RenderedHistoryEntry } from "./types.js";
 import { shouldExpandCompactToolGroup, shouldGapAfterEntry } from "./presentation-rules.js";
 
+function shouldRenderInfoExpanded(entry: Extract<HistoryItem, { kind: "info" }>): boolean {
+  if (entry.mediaItems?.length) return true;
+  const meta = entry.meta;
+  if (!meta) return false;
+  if (meta.view) return true;
+  return Boolean(meta.items && meta.items.length > 0);
+}
+
 export function renderCompactEntry(
   entry: HistoryItem,
   width: number,

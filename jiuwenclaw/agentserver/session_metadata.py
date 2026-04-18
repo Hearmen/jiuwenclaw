@@ -40,12 +40,17 @@ def _metadata_file(session_id: str) -> Path:
 
 
 def _read_metadata(session_id: str) -> dict[str, Any]:
-    """读取会话元数据(优先从内存缓存读取,避免异步写入未落盘时读到陈旧数据)"""
+    """读取会话元数据(优先从内存缓存读取,避免异步写入未落盘时读到陈旧数据)
+
+    读路径不应产生副作用：即便 session 目录不存在，也不触发 mkdir，
+    否则会导致仅查询(session.rename 无 title 参数时)隐式创建空 session 目录，
+    污染 session.list 结果。
+    """
     with _CACHE_LOCK:
         cached = _METADATA_CACHE.get(session_id)
         if cached is not None:
             return cached.copy()
-    fpath = _metadata_file(session_id)
+    fpath = get_agent_sessions_dir() / session_id / "metadata.json"
     if not fpath.exists():
         return {}
     try:
@@ -141,11 +146,19 @@ def update_session_metadata(
     channel_id: str | None = None,
     user_id: str | None = None,
     title: str | None = None,
+    clear_title: bool = False,
     increment_message_count: bool = False,
     user_content: str | None = None,
     channel_metadata: dict[str, Any] | None = None,
 ) -> None:
-    """更新会话元数据(异步写入,不阻塞调用方)"""
+    """更新会话元数据(异步写入,不阻塞调用方)
+
+    title 语义(保持历史防御契约)：
+      - title=None  → 不修改（默认）
+      - title="x"   → 设置为 "x"
+      - title=""    → 忽略（防御意外空值覆盖已有标题）
+      - 若需显式清除标题，请设置 clear_title=True
+    """
     metadata = _read_metadata(session_id)
 
     if not metadata:
@@ -172,8 +185,10 @@ def update_session_metadata(
             metadata["channel_id"] = channel_id
         if user_id is not None:
             metadata["user_id"] = user_id
-        # 仅当传入非空 title 时才更新（防止空字符串覆盖已有标题）
-        if title:
+        # 显式清除优先级高于 title 入参
+        if clear_title:
+            metadata["title"] = ""
+        elif title:
             metadata["title"] = title
         if increment_message_count:
             metadata["message_count"] = metadata.get("message_count", 0) + 1

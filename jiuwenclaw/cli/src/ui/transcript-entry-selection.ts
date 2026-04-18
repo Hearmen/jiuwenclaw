@@ -36,17 +36,20 @@ export function selectTranscriptEntries(snapshot: AppSnapshot): SelectedTranscri
       : buildTranscriptEntries(snapshot.entries, snapshot.toolExecutions);
 
   if (snapshot.transcriptFoldMode === "all") {
+    // 「all」折叠工具链噪声时仍需保留 info：含 /config、/help、/fold 等本地指令反馈，否则界面会像无任何输出。
     entries = entries.filter(
       (entry) =>
         entry.kind === "user" ||
         entry.kind === "assistant" ||
         entry.kind === "thinking" ||
-        entry.kind === "error",
+        entry.kind === "error" ||
+        entry.kind === "info",
     );
   } else if (snapshot.transcriptFoldMode === "thinking") {
     entries = entries.filter((entry) => entry.kind !== "thinking");
   } else if (snapshot.transcriptFoldMode === "tools") {
-    entries = entries.filter((entry) => entry.kind !== "system" && entry.kind !== "info");
+    // 仅折叠 system；info 含 /config、/help 等反馈，隐藏会导致用户误以为命令无响应。
+    entries = entries.filter((entry) => entry.kind !== "system");
   }
 
   entries = entries

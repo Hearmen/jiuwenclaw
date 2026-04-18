@@ -443,23 +443,25 @@ def _register_web_handlers(bind: WebHandlersBindParams) -> None:
             await _clear_agent_config_cache(_resolve(agent_client))
             logger.info("[config.set] 已更新 config.yaml: %s", yaml_updated)
 
-        if env_updates or yaml_updated:
-            if on_config_saved:
-                config_payload = get_config()
-                callback_result = on_config_saved(
-                    set(env_updates.keys()) | set(yaml_updated),
-                    env_updates=dict(env_updates),
-                    config_payload=config_payload,
-                )
-                if inspect.isawaitable(callback_result):
-                    callback_result = await callback_result
-                applied_without_restart = bool(callback_result)
-
         updated_param_keys = [k for k, e in _CONFIG_SET_ENV_MAP.items() if e in env_updates] + yaml_updated
         await channel.send_response(
             ws, req_id, ok=True,
             payload={"updated": updated_param_keys, "applied_without_restart": applied_without_restart},
         )
+
+        if env_updates or yaml_updated:
+            if on_config_saved:
+                try:
+                    config_payload = get_config()
+                    callback_result = on_config_saved(
+                        set(env_updates.keys()) | set(yaml_updated),
+                        env_updates=dict(env_updates),
+                        config_payload=config_payload,
+                    )
+                    if inspect.isawaitable(callback_result):
+                        await callback_result
+                except Exception as e:  # noqa: BLE001
+                    logger.warning("[config.set] on_config_saved failed: %s", e)
 
     async def _config_validate_model(ws, req_id, params, session_id, max_tokens_bounds=None):
         """Send a minimal chat completion (user message \"Hi\") using draft default-model fields.

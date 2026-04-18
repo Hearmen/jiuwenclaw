@@ -161,9 +161,12 @@ def update_channel_subsection_in_config(
 
 
 def update_preferred_language_in_config(lang: str) -> None:
-    """只更新顶层 preferred_language 并写回。"""
+    """只更新顶层 preferred_language 并写回。非法值回退为 zh，与 set_preferred_language_in_config_file 一致。"""
+    normalized = str(lang or "zh").strip().lower()
+    if normalized not in ("zh", "en"):
+        normalized = "zh"
     data = _load_yaml_round_trip(_CONFIG_YAML_PATH)
-    data["preferred_language"] = lang
+    data["preferred_language"] = normalized
     _dump_yaml_round_trip(_CONFIG_YAML_PATH, data)
 
 

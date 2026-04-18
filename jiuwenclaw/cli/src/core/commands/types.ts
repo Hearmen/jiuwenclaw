@@ -2,6 +2,7 @@ import type { HistoryItem } from "../types.js";
 import type { AccentColorName, ThemeName } from "../../ui/theme.js";
 import type { PendingQuestionItem, UserAnswer } from "../event-handlers.js";
 import type { FileAttachment } from "../protocol.js";
+import type { ConfigItemSchema } from "./builtins/config.js";
 
 export type ConnectionStatus = "idle" | "connecting" | "connected" | "reconnecting" | "auth_failed";
 
@@ -51,6 +52,12 @@ export interface CommandContext {
   collapsedToolGroupCount: number;
   collapseToolGroups: (scope: "last" | "all") => void;
   expandToolGroups: (scope: "last" | "all") => void;
+  sessionTitle: string;
+  setSessionTitle: (title: string) => void;
+  enterConfigEditor?: (
+    focusKey?: string,
+    configPayload?: Record<string, unknown> & { schema?: ConfigItemSchema[] },
+  ) => void;
 }
 
 export interface SlashCommand {

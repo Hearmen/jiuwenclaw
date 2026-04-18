@@ -188,6 +188,13 @@ class AgentManager:
                 os.environ[key] = str(env_value)
 
         for channel_id, agents in self.agents.items():
+            if not isinstance(agents, dict):
+                logger.warning(
+                    "[AgentManager] unexpected agents entry for channel %s: %r",
+                    channel_id,
+                    type(agents),
+                )
+                continue
             for _, agent in agents.items():
                 await agent.reload_agent_config(
                     config_base=config,

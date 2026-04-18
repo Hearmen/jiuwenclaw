@@ -66,6 +66,7 @@ export interface AppSnapshot {
   evolutionStatus: "idle" | "running";
   contextCompression: ContextCompressionStats | null;
   modelInfo: { provider: string; model: string; version: string };
+  sessionTitle: string;
 }
 
 export class CliPiAppState {
@@ -73,6 +74,7 @@ export class CliPiAppState {
   private entries: HistoryItem[] = [];
   private connectionStatus: ConnectionStatus = "idle";
   private sessionId: string;
+  private sessionTitle: string = "";
   private mode: "agent.plan" | "agent.fast" | "code.plan" | "code.normal" | "team" =
     "agent.plan";
   private themeName: ThemeName = getCurrentThemeName();
@@ -175,6 +177,12 @@ export class CliPiAppState {
     },
     safeRestoreHistory: (sessionId) => {
       this.safeRestoreHistory(sessionId);
+    },
+    setSessionTitle: (title) => {
+      this.setSessionTitle(title);
+    },
+    safeFetchSessionTitle: (sessionId) => {
+      this.safeFetchSessionTitle(sessionId);
     },
   };
 
@@ -283,6 +291,7 @@ export class CliPiAppState {
       evolutionStatus: this.evolutionStatus,
       contextCompression: this.contextCompression ? { ...this.contextCompression } : null,
       modelInfo: this.modelInfo,
+      sessionTitle: this.sessionTitle,
     };
   }
 
@@ -319,6 +328,9 @@ export class CliPiAppState {
         .length,
       collapseToolGroups: this.collapseToolGroups,
       expandToolGroups: this.expandToolGroups,
+      sessionTitle: snapshot.sessionTitle,
+      setSessionTitle: this.setSessionTitle,
+      enterConfigEditor: undefined, // AppScreen injects the real handler when executing slash commands.
     };
   }
 
@@ -349,6 +361,25 @@ readonly request = async <T = Record<string, unknown>>(
   readonly updateSession = (newId: string): void => {
     this.sessionId = newId;
     this.emitChange();
+  };
+
+  readonly setSessionTitle = (title: string): void => {
+    this.sessionTitle = title;
+    this.emitChange();
+  };
+
+  readonly safeFetchSessionTitle = (sessionId: string): void => {
+    void (async () => {
+      try {
+        const meta = await this.request<{ session_id: string; title: string }>(
+          "session.rename",
+          { session_id: sessionId },
+        );
+        this.setSessionTitle(meta.title || "");
+      } catch {
+        // 标题获取失败不影响核心功能
+      }
+    })();
   };
 
   readonly addItem = (item: HistoryItem): void => {

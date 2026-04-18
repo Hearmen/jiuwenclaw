@@ -26,6 +26,7 @@ export function createClearCommand(): SlashCommand {
       }
 
       ctx.updateSession(nextId);
+      ctx.setSessionTitle("");
       ctx.clearEntries();
       ctx.addItem(addInfo(nextId, `Started a fresh conversation in ${nextId}`, "i"));
       await ctx.restoreHistory(nextId);

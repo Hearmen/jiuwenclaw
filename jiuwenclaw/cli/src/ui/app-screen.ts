@@ -25,6 +25,7 @@ import { addError, addInfo } from "../core/commands/helpers.js";
 import type { FileAttachment } from "../core/protocol.js";
 import type { ModelListPayload } from "../core/commands/builtins/model.js";
 import type { SessionListPayload, SessionMeta } from "../core/commands/builtins/resume.js";
+import type { ConfigItemSchema } from "../core/commands/builtins/config.js";
 import { handleAppScreenKeyInput } from "./keymap.js";
 import { buildAppScreenLines } from "./screen-layout.js";
 import {
@@ -59,6 +60,25 @@ type ModelListState = {
   list: SelectList;
   models: string[];
   current: string;
+};
+
+type ConfigEditorPhase = "select_group" | "select_item" | "select_value" | "input_value";
+
+type ConfigEditorState = {
+  phase: ConfigEditorPhase;
+  schemaList: ConfigItemSchema[];
+  currentValues: Record<string, string>;
+  selectedGroup: string | null;
+  selectedKey: string | null;
+  list: SelectList;
+};
+
+const IMAGE_MIME_TYPES: Record<string, string> = {
+  ".png": "image/png",
+  ".jpg": "image/jpeg",
+  ".jpeg": "image/jpeg",
+  ".gif": "image/gif",
+  ".webp": "image/webp",
 };
 
 function resolveFdBinary(): string | null {
@@ -311,6 +331,7 @@ export class AppScreen implements Component, Focusable {
   private questionList: SelectList | null = null;
   private resumeSessionList: ResumeSessionListState | null = null;
   private modelList: ModelListState | null = null;
+  private configEditorState: ConfigEditorState | null = null;
   private showTodos = true;
   private showTeamPanel = false;
   private selectedTeamMemberId: string | null = null;
@@ -469,6 +490,33 @@ export class AppScreen implements Component, Focusable {
       return;
     }
 
+    if (!snapshot.pendingQuestion && this.configEditorState !== null) {
+      if (this.configEditorState.phase === "input_value") {
+        // Handle Esc to cancel input and go back to group selection
+        if (matchesKey(data, "escape")) {
+          if (this.configEditorState.selectedGroup) {
+            const groupSchemas = this.configEditorState.schemaList.filter(
+              (s) => s.group === this.configEditorState!.selectedGroup,
+            );
+            this.showConfigGroupItems(
+              this.configEditorState.selectedGroup,
+              groupSchemas,
+              this.configEditorState.currentValues,
+            );
+          } else {
+            this.configEditorState = null;
+            this.tui.requestRender();
+          }
+          return;
+        }
+        this.editor.handleInput(data);
+      } else {
+        this.configEditorState.list.handleInput(data);
+      }
+      this.tui.requestRender();
+      return;
+    }
+
     if (!snapshot.pendingQuestion && this.modelList !== null) {
       this.modelList.list.handleInput(data);
       this.tui.requestRender();
@@ -531,6 +579,7 @@ export class AppScreen implements Component, Focusable {
     const editorLines = this.applySlashCommandHint(this.editor.render(width), width);
     const composerPreviewLines: string[] = [];
     const questionLines = [
+      ...this.buildConfigEditorLines(width),
       ...this.buildResumeSessionListLines(width),
       ...this.buildModelListLines(width),
       ...this.buildPendingQuestionLines(snapshot, width),
@@ -564,6 +613,21 @@ export class AppScreen implements Component, Focusable {
 
     const { content, attachments } = this.buildOutgoingMessage(text);
 
+    // Config editor input_value phase: submit the typed value
+    if (this.configEditorState?.phase === "input_value" && this.configEditorState.selectedKey) {
+      const key = this.configEditorState.selectedKey;
+      const schema = this.configEditorState.schemaList.find((s) => s.key === key);
+      if (schema) {
+        void this.applyConfigEditorSet(key, text, schema, this.configEditorState.currentValues);
+      }
+      this.editor.setText("");
+      this.composerAttachments = [];
+      return;
+    }
+
+    const content = this.composeOutgoingMessage(text);
+    if (!content) return;
+
     const snapshot = this.state.getSnapshot();
     if (snapshot.pendingQuestion) {
       if (this.questionList === null) {
@@ -593,6 +657,9 @@ export class AppScreen implements Component, Focusable {
         await this.commands.execute(text, {
           ...this.state.getCommandContext(),
           exitApp: this.exit,
+          enterConfigEditor: (focusKey, configPayload) => {
+            this.openConfigEditor(focusKey, configPayload);
+          },
         });
       } finally {
         this.clearPendingSubmittedInput();
@@ -868,6 +935,312 @@ export class AppScreen implements Component, Focusable {
     return {
       content: text.replace(/[ \t]{2,}/g, " ").replace(/[ \t]+\n/g, "\n").trim(),
       attachments: this.collectComposerAttachments(text),
+  private buildConfigEditorLines(width: number): string[] {
+    if (!this.configEditorState) {
+      return [];
+    }
+    const state = this.configEditorState;
+    const title =
+      state.phase === "select_group"
+        ? "Configuration Editor"
+        : state.phase === "select_item"
+          ? state.selectedGroup ?? "Config"
+          : state.phase === "select_value"
+            ? `Select value for "${state.selectedKey}"`
+            : `Enter new value for "${state.selectedKey}"`;
+    const hint =
+      state.phase === "input_value"
+        ? "Enter value · Esc back"
+        : "↑/↓ choose · Enter confirm · Esc cancel";
+
+    const lines: string[] = [
+      padToWidth(palette.status.warning(title), width),
+    ];
+
+    if (
+      (state.phase === "select_value" || state.phase === "input_value") &&
+      state.selectedKey
+    ) {
+      const schema = state.schemaList.find((s) => s.key === state.selectedKey);
+      const rawVal = state.currentValues[state.selectedKey] ?? "";
+      const currentVal = schema?.sensitive
+        ? rawVal.length > 8 ? `${rawVal.slice(0, 4)}****${rawVal.slice(-4)}` : rawVal ? "***" : "(empty)"
+        : rawVal || "(empty)";
+      lines.push(padToWidth(palette.text.dim(`current: ${currentVal}`), width));
+    }
+
+    if (state.phase === "input_value") {
+      lines.push(...this.editor.render(width));
+    } else {
+      lines.push(...state.list.render(width));
+    }
+
+    lines.push(padToWidth(palette.text.dim(hint), width));
+    return lines;
+  }
+
+  private openConfigEditor(
+    focusKey?: string,
+    configPayload?: Record<string, unknown> & { schema?: ConfigItemSchema[] },
+  ): void {
+    const schemaList = configPayload?.schema ?? [];
+    if (schemaList.length === 0) {
+      this.state.addItem(addError(this.state.getSnapshot().sessionId, "No config schema available"));
+      return;
+    }
+    const currentValues: Record<string, string> = {};
+    for (const schema of schemaList) {
+      currentValues[schema.key] = String(configPayload?.[schema.key] ?? "");
+    }
+
+    if (focusKey) {
+      const schema = schemaList.find((s) => s.key === focusKey);
+      if (schema && schema.type === "select" && schema.options) {
+        // 用临时的 select_group 状态承载 schemaList/currentValues，再 showConfigValueSelect 会替换成 select_value
+        this.configEditorState = {
+          phase: "select_group",
+          schemaList,
+          currentValues,
+          selectedGroup: null,
+          selectedKey: null,
+          list: new SelectList([], 1, selectListTheme),
+        };
+        this.showConfigValueSelect(schema, currentValues);
+        return;
+      }
+    }
+
+    this.showConfigGroupSelector(schemaList, currentValues);
+  }
+
+  private showConfigGroupSelector(
+    schemaList: ConfigItemSchema[],
+    currentValues: Record<string, string>,
+  ): void {
+    const groups: Record<string, ConfigItemSchema[]> = {};
+    for (const schema of schemaList) {
+      const group = schema.group || "Other";
+      if (!groups[group]) groups[group] = [];
+      groups[group].push(schema);
+    }
+
+    const groupItems: SelectItem[] = Object.keys(groups).map((groupName) => ({
+      value: groupName,
+      label: groupName,
+      description: `${groups[groupName].length} items`,
+    }));
+    const list = new SelectList(
+      groupItems,
+      Math.min(Math.max(groupItems.length, 1), 8),
+      selectListTheme,
+      { minPrimaryColumnWidth: 24, maxPrimaryColumnWidth: 42 },
+    );
+    list.onSelect = (item) => {
+      this.showConfigGroupItems(item.value, groups[item.value], currentValues);
+    };
+    list.onCancel = () => {
+      this.configEditorState = null;
+      this.tui.requestRender();
+    };
+    this.configEditorState = {
+      phase: "select_group",
+      schemaList,
+      currentValues,
+      selectedGroup: null,
+      selectedKey: null,
+      list,
+    };
+    this.tui.requestRender();
+  }
+
+  private showConfigGroupItems(
+    groupName: string,
+    schemas: ConfigItemSchema[],
+    currentValues: Record<string, string>,
+  ): void {
+    const items: SelectItem[] = schemas.map((schema) => {
+      const val = currentValues[schema.key] ?? "";
+      const displayVal =
+        schema.type === "toggle"
+          ? val === "true" ? "Enabled" : "Disabled"
+          : schema.sensitive
+            ? val.length > 8 ? `${val.slice(0, 4)}****${val.slice(-4)}` : "***"
+            : val;
+      return {
+        value: schema.key,
+        label: `${schema.label}: ${displayVal}`,
+        description: schema.description,
+      };
+    });
+    items.push({ value: "__back__", label: "Back", description: "" });
+    const list = new SelectList(items, Math.min(Math.max(items.length, 1), 8), selectListTheme, {
+      minPrimaryColumnWidth: 24,
+      maxPrimaryColumnWidth: 42,
+    });
+    list.onSelect = (item) => {
+      if (item.value === "__back__") {
+        this.showConfigGroupSelector(this.configEditorState!.schemaList, currentValues);
+        return;
+      }
+      const schema = schemas.find((s) => s.key === item.value);
+      if (!schema) return;
+      this.handleConfigItemSelection(schema, currentValues);
+    };
+    list.onCancel = () => {
+      this.showConfigGroupSelector(this.configEditorState!.schemaList, currentValues);
+    };
+    this.configEditorState = {
+      phase: "select_item",
+      schemaList: this.configEditorState!.schemaList,
+      currentValues,
+      selectedGroup: groupName,
+      selectedKey: null,
+      list,
+    };
+    this.tui.requestRender();
+  }
+
+  private handleConfigItemSelection(
+    schema: ConfigItemSchema,
+    currentValues: Record<string, string>,
+  ): void {
+    if (schema.type === "toggle") {
+      const currentVal = currentValues[schema.key] ?? "false";
+      const newValue = currentVal === "true" ? "false" : "true";
+      void this.applyConfigEditorSet(schema.key, newValue, schema, currentValues);
+      return;
+    }
+    if (schema.type === "select" && schema.options) {
+      this.showConfigValueSelect(schema, currentValues);
+      return;
+    }
+    // string / password → input mode
+    this.editor.setText("");
+    this.configEditorState = {
+      phase: "input_value",
+      schemaList: this.configEditorState!.schemaList,
+      currentValues,
+      selectedGroup: this.configEditorState!.selectedGroup,
+      selectedKey: schema.key,
+      list: this.configEditorState!.list,
+    };
+    this.tui.requestRender();
+  }
+
+  private showConfigValueSelect(
+    schema: ConfigItemSchema,
+    currentValues: Record<string, string>,
+  ): void {
+    const currentValue = currentValues[schema.key] ?? "";
+    const items: SelectItem[] = (schema.options ?? []).map((option) => ({
+      value: option,
+      label: option,
+      description: option === currentValue ? "(current)" : undefined,
+    }));
+    const list = new SelectList(items, Math.min(Math.max(items.length, 1), 8), selectListTheme, {
+      minPrimaryColumnWidth: 24,
+      maxPrimaryColumnWidth: 42,
+    });
+    list.onSelect = (item) => {
+      void this.applyConfigEditorSet(schema.key, item.value, schema, currentValues);
+    };
+    list.onCancel = () => {
+      if (this.configEditorState?.selectedGroup) {
+        const groupSchemas = this.configEditorState.schemaList.filter(
+          (s) => s.group === this.configEditorState!.selectedGroup,
+        );
+        this.showConfigGroupItems(this.configEditorState.selectedGroup, groupSchemas, currentValues);
+      } else {
+        this.configEditorState = null;
+        this.tui.requestRender();
+      }
+    };
+    this.configEditorState = {
+      phase: "select_value",
+      schemaList: this.configEditorState!.schemaList,
+      currentValues,
+      selectedGroup: this.configEditorState?.selectedGroup ?? null,
+      selectedKey: schema.key,
+      list,
+    };
+    this.tui.requestRender();
+  }
+
+  private async applyConfigEditorSet(
+    key: string,
+    value: string,
+    schema: ConfigItemSchema,
+    currentValues: Record<string, string>,
+  ): Promise<void> {
+    try {
+      const result = await this.state.request<{
+        updated: string[];
+        applied_without_restart: boolean;
+      }>("config.set", { [key]: value });
+      currentValues[key] = value;
+      const msg = result.applied_without_restart
+        ? `✓ ${key}: ${schema.sensitive ? "***" : value} (applied)`
+        : `✓ ${key}: ${schema.sensitive ? "***" : value} (restart required)`;
+      this.state.addItem(addInfo(this.state.getSnapshot().sessionId, msg, "c"));
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      this.state.addItem(addError(this.state.getSnapshot().sessionId, `config.set failed: ${message}`));
+    }
+    if (this.configEditorState?.selectedGroup) {
+      const groupSchemas = this.configEditorState.schemaList.filter(
+        (s) => s.group === this.configEditorState!.selectedGroup,
+      );
+      this.showConfigGroupItems(this.configEditorState.selectedGroup, groupSchemas, currentValues);
+    } else {
+      this.configEditorState = null;
+      this.tui.requestRender();
+    }
+  }
+
+  private syncComposerAttachmentsFromEditor(): void {
+    if (this.syncingComposerInput) {
+      return;
+    }
+
+    const originalText = this.editor.getText();
+    const { normalizedText, attachments } = syncComposerImageTokens(
+      originalText,
+      this.composerAttachments,
+      (path) => this.isComposerImageFile(path),
+    );
+
+    this.composerAttachments = attachments;
+
+    if (normalizedText !== originalText) {
+      this.syncingComposerInput = true;
+      this.editor.setText(normalizedText);
+      this.syncingComposerInput = false;
+    }
+  }
+
+  private deleteComposerAttachmentTokenBackwards(): boolean {
+    const cursor = this.editor.getCursor();
+    const lines = this.editor.getLines();
+    const currentLine = lines[cursor.line] ?? "";
+    const tokenRange = findAttachmentTokenAtCursor(currentLine, cursor.col);
+    if (!tokenRange) {
+      return false;
+    }
+
+    const nextLine =
+      `${currentLine.slice(0, tokenRange.start)}${currentLine.slice(tokenRange.end)}`.replace(
+        / {2,}/g,
+        " ",
+      );
+    const nextLines = [...lines];
+    nextLines[cursor.line] = nextLine;
+    const nextText = nextLines.join("\n");
+    const nextCol = Math.min(tokenRange.start, nextLine.length);
+
+    this.syncingComposerInput = true;
+    this.editor.setText(nextText);
+    const editorState = this.editor as unknown as {
+      state?: { cursorLine: number; cursorCol: number };
     };
   }
 
@@ -1003,6 +1376,24 @@ export class AppScreen implements Component, Focusable {
       description: command.description,
       getArgumentCompletions: command.completion
         ? async (argumentPrefix: string): Promise<AutocompleteItem[] | null> => {
+            const trimmed = argumentPrefix.trim();
+            // pi-tui 把「第一个空格之后」整段当作 `/config` 的参数前缀去补全。
+            // 对 `/config set model deepseek`，前缀是 `set model deepseek`，补全项却是平铺的
+            // get/set/list/各 config key；若补全菜单仍打开，Enter 会先 applyCompletion 再提交，
+            // 会把整段参数替换成当前选中项（常为列表首项 `get`），看起来像「变成 /config get」且 set 未执行。
+            // 子命令名已匹配且后面还有 token 时关闭参数补全，让 Enter 直接提交当前输入。
+            if (command.subCommands?.length && trimmed.length > 0) {
+              const tokens = trimmed.split(/\s+/).filter(Boolean);
+              if (tokens.length >= 2) {
+                const head = tokens[0] ?? "";
+                const matchedSub = command.subCommands.some(
+                  (sub) => sub.name === head || sub.altNames?.includes(head),
+                );
+                if (matchedSub) {
+                  return null;
+                }
+              }
+            }
             const items = await command.completion!(this.state.getCommandContext(), argumentPrefix);
             return items.map((value) => ({
               value,

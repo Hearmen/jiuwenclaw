@@ -304,6 +304,9 @@ class AgentWebSocketServer:
             if request.req_method == ReqMethod.SESSION_LIST:
                 await self._handle_session_list(ws, request, send_lock)
                 return
+            if request.req_method == ReqMethod.SESSION_RENAME:
+                await self._handle_session_rename(ws, request, send_lock)
+                return
             if request.req_method in get_permissions_config_req_methods():
                 await self._handle_permissions_config(ws, request, send_lock)
                 return
@@ -577,6 +580,37 @@ class AgentWebSocketServer:
             payload={"sessions": sessions},
             metadata=request.metadata,
         )
+        wire = encode_agent_response_for_wire(resp, response_id=request.request_id)
+        async with send_lock:
+            await ws.send(json.dumps(wire, ensure_ascii=False))
+
+    async def _handle_session_rename(self, ws: Any, request: AgentRequest, send_lock: asyncio.Lock) -> None:
+        """处理 session.rename：与 CLI Gateway 本地回退共用 apply_session_rename。"""
+        from jiuwenclaw.agentserver.session_rename import apply_session_rename
+
+        sid = request.session_id or ""
+        ch = (request.channel_id or "").strip() or "tui"
+        ok, payload, err, code = apply_session_rename(
+            request.params,
+            sid,
+            init_channel_id=ch,
+        )
+        if ok:
+            resp = AgentResponse(
+                request_id=request.request_id,
+                channel_id=request.channel_id,
+                ok=True,
+                payload=payload or {},
+                metadata=request.metadata,
+            )
+        else:
+            resp = AgentResponse(
+                request_id=request.request_id,
+                channel_id=request.channel_id,
+                ok=False,
+                payload={"error": err or "session.rename failed", "code": code or ""},
+                metadata=request.metadata,
+            )
         wire = encode_agent_response_for_wire(resp, response_id=request.request_id)
         async with send_lock:
             await ws.send(json.dumps(wire, ensure_ascii=False))

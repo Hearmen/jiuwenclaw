@@ -6,6 +6,7 @@ import inspect
 import logging
 import os
 import shutil
+import time
 from dataclasses import dataclass
 from typing import Any
 
@@ -19,10 +20,12 @@ from jiuwenclaw.config import (
     get_config,
     get_config_raw,
     update_context_engine_enabled_in_config,
+    update_memory_forbidden_enabled_in_config,
     update_permissions_enabled_in_config,
     get_model_names,
     get_model_config,
     add_or_update_model_in_config,
+    update_preferred_language_in_config,
 )
 from jiuwenclaw.jiuwen_core_patch import apply_openai_model_client_patch
 from jiuwenclaw.gateway.route_binding import GatewayRouteBinding
@@ -160,7 +163,99 @@ _CLI_CONFIG_SET_ENV_MAP = {
     "evolution_auto_scan": "EVOLUTION_AUTO_SCAN",
 }
 
-_CLI_CONFIG_YAML_KEYS = frozenset({"context_engine_enabled", "permissions_enabled"})
+_CLI_CONFIG_YAML_SETTERS: dict[str, Any] = {
+    "context_engine_enabled": update_context_engine_enabled_in_config,
+    "permissions_enabled": update_permissions_enabled_in_config,
+    "memory_forbidden_enabled": update_memory_forbidden_enabled_in_config,
+    "preferred_language": update_preferred_language_in_config,
+}
+
+_CLI_CONFIG_YAML_KEYS = frozenset(_CLI_CONFIG_YAML_SETTERS.keys())
+
+
+_PREFERRED_LANGUAGE_OPTIONS = ("zh", "en")
+
+
+def _build_config_schema() -> list[dict]:
+    """构建配置项 Schema，供前端渲染交互界面。与 config.yaml 结构对齐。"""
+    available_providers = [p.value for p in ProviderType]
+    # 显式使用 ProviderType.OpenAI 作为默认供应商，避免依赖枚举声明顺序
+    default_provider = (
+        ProviderType.OpenAI.value
+        if hasattr(ProviderType, "OpenAI")
+        else (available_providers[0] if available_providers else "")
+    )
+    empty = ""
+    return [
+        # Model
+        {"key": "model", "label": "默认模型", "group": "Model", "type": "string",
+         "source": "env", "default": empty},
+        {"key": "model_provider", "label": "模型供应商", "group": "Model", "type": "select",
+         "options": available_providers, "source": "env", "default": default_provider},
+        {"key": "api_base", "label": "API 地址", "group": "Model", "type": "string",
+         "source": "env", "default": empty},
+        {"key": "api_key", "label": "API Key", "group": "Model", "type": "password",
+         "sensitive": True, "source": "env", "default": empty},
+        # Vision
+        {"key": "vision_model", "label": "视觉模型", "group": "Vision", "type": "string",
+         "source": "env", "default": empty},
+        {"key": "vision_provider", "label": "视觉供应商", "group": "Vision", "type": "select",
+         "options": available_providers, "source": "env", "default": default_provider},
+        {"key": "vision_api_base", "label": "视觉API地址", "group": "Vision", "type": "string",
+         "source": "env", "default": empty},
+        {"key": "vision_api_key", "label": "视觉API Key", "group": "Vision", "type": "password",
+         "sensitive": True, "source": "env", "default": empty},
+        # Video
+        {"key": "video_model", "label": "视频模型", "group": "Video", "type": "string",
+         "source": "env", "default": empty},
+        {"key": "video_provider", "label": "视频供应商", "group": "Video", "type": "select",
+         "options": available_providers, "source": "env", "default": default_provider},
+        {"key": "video_api_base", "label": "视频API地址", "group": "Video", "type": "string",
+         "source": "env", "default": empty},
+        {"key": "video_api_key", "label": "视频API Key", "group": "Video", "type": "password",
+         "sensitive": True, "source": "env", "default": empty},
+        # Audio
+        {"key": "audio_model", "label": "音频模型", "group": "Audio", "type": "string",
+         "source": "env", "default": empty},
+        {"key": "audio_provider", "label": "音频供应商", "group": "Audio", "type": "select",
+         "options": available_providers, "source": "env", "default": default_provider},
+        {"key": "audio_api_base", "label": "音频API地址", "group": "Audio", "type": "string",
+         "source": "env", "default": empty},
+        {"key": "audio_api_key", "label": "音频API Key", "group": "Audio", "type": "password",
+         "sensitive": True, "source": "env", "default": empty},
+        # Embedding
+        {"key": "embed_api_key", "label": "嵌入API Key", "group": "Embedding", "type": "password",
+         "sensitive": True, "source": "env", "default": empty},
+        {"key": "embed_api_base", "label": "嵌入API地址", "group": "Embedding", "type": "string",
+         "source": "env", "default": empty},
+        {"key": "embed_model", "label": "嵌入模型", "group": "Embedding", "type": "string",
+         "source": "env", "default": empty},
+        # Search & External
+        {"key": "jina_api_key", "label": "Jina API Key", "group": "Search & External", "type": "password",
+         "sensitive": True, "source": "env", "default": empty},
+        {"key": "serper_api_key", "label": "Serper API Key", "group": "Search & External", "type": "password",
+         "sensitive": True, "source": "env", "default": empty},
+        {"key": "perplexity_api_key", "label": "Perplexity API Key", "group": "Search & External", "type": "password",
+         "sensitive": True, "source": "env", "default": empty},
+        {"key": "github_token", "label": "GitHub Token", "group": "Search & External", "type": "password",
+         "sensitive": True, "source": "env", "default": empty},
+        # Email
+        {"key": "email_address", "label": "邮箱地址", "group": "Email", "type": "string",
+         "source": "env", "default": empty},
+        {"key": "email_token", "label": "邮箱Token", "group": "Email", "type": "password",
+         "sensitive": True, "source": "env", "default": empty},
+        # Features
+        {"key": "context_engine_enabled", "label": "上下文压缩", "group": "Features",
+         "type": "toggle", "source": "yaml", "default": "false"},
+        {"key": "permissions_enabled", "label": "权限管控", "group": "Features",
+         "type": "toggle", "source": "yaml", "default": "false"},
+        {"key": "memory_forbidden_enabled", "label": "敏感信息过滤", "group": "Features",
+         "type": "toggle", "source": "yaml", "default": "false"},
+        {"key": "preferred_language", "label": "显示语言", "group": "Features", "type": "select",
+         "options": ["zh", "en"], "source": "yaml", "default": "zh"},
+        {"key": "evolution_auto_scan", "label": "自动扫描技能", "group": "Features",
+         "type": "toggle", "source": "env", "default": "false"},
+    ]
 
 
 def _normalize_provider_value(value: str) -> str:
@@ -280,9 +375,17 @@ def register_cli_handlers(bind: CliHandlersBindParams) -> None:
             payload["permissions_enabled"] = (
                 "true" if perm_cfg.get("enabled", False) else "false"
             )
+            mem_cfg = (raw.get("memory") or {}).get("forbidden_memory_definition") or {}
+            payload["memory_forbidden_enabled"] = (
+                "true" if mem_cfg.get("enabled", False) else "false"
+            )
+            payload["preferred_language"] = raw.get("preferred_language") or "zh"
         except Exception:
             payload.setdefault("context_engine_enabled", "false")
             payload.setdefault("permissions_enabled", "false")
+            payload.setdefault("memory_forbidden_enabled", "false")
+            payload.setdefault("preferred_language", "zh")
+        payload["schema"] = _build_config_schema()
         await channel.send_response(ws, req_id, ok=True, payload=payload)
 
     async def _config_set(ws, req_id, params, session_id):
@@ -324,15 +427,30 @@ def register_cli_handlers(bind: CliHandlersBindParams) -> None:
                 return
             env_updates[env_key] = "" if val is None else str(val).strip()
 
-        for param_key in _CLI_CONFIG_YAML_KEYS:
+        for param_key, setter in _CLI_CONFIG_YAML_SETTERS.items():
             if param_key not in params:
                 continue
-            parsed = str(params[param_key]).strip().lower() in ("true", "1", "yes")
+            raw_value = str(params[param_key]).strip()
+            if param_key == "preferred_language":
+                normalized_lang = raw_value.lower()
+                if normalized_lang not in _PREFERRED_LANGUAGE_OPTIONS:
+                    await channel.send_response(
+                        ws,
+                        req_id,
+                        ok=False,
+                        error=(
+                            f"preferred_language must be one of "
+                            f"{list(_PREFERRED_LANGUAGE_OPTIONS)}"
+                        ),
+                        code="BAD_REQUEST",
+                    )
+                    return
             try:
-                if param_key == "context_engine_enabled":
-                    update_context_engine_enabled_in_config(parsed)
-                elif param_key == "permissions_enabled":
-                    update_permissions_enabled_in_config(parsed)
+                if param_key == "preferred_language":
+                    setter(raw_value)
+                else:
+                    parsed = raw_value.lower() in ("true", "1", "yes")
+                    setter(parsed)
                 yaml_updated.append(param_key)
             except Exception as e:
                 logger.warning(
@@ -341,29 +459,25 @@ def register_cli_handlers(bind: CliHandlersBindParams) -> None:
 
         for env_key, value in env_updates.items():
             os.environ[env_key] = value
-        applied_without_restart = True
+        # env 变量直接写 os.environ 立即生效；YAML 改动需要 agent 重启/热重载才生效
+        applied_without_restart = not yaml_updated
 
         if env_updates:
             _persist_env_updates(env_updates)
         if yaml_updated:
-            real_client = agent_client.get("value") if isinstance(agent_client, dict) else agent_client
+            real_client = (
+                agent_client.get("value")
+                if isinstance(agent_client, dict)
+                else agent_client
+            )
             await _clear_agent_config_cache(real_client)
-
-        if env_updates or yaml_updated:
-            if on_config_saved:
-                config_payload = get_config()
-                callback_result = on_config_saved(
-                    set(env_updates.keys()) | set(yaml_updated),
-                    env_updates=dict(env_updates),
-                    config_payload=config_payload,
-                )
-                if inspect.isawaitable(callback_result):
-                    callback_result = await callback_result
-                applied_without_restart = bool(callback_result)
 
         updated_param_keys = [
             k for k, e in _CLI_CONFIG_SET_ENV_MAP.items() if e in env_updates
         ] + yaml_updated
+
+        # 先回包再执行 on_config_saved（含 Agent 热重载），
+        # 避免 WebSocket 长时间无响应、CLI 误以为无反馈。
         await channel.send_response(
             ws,
             req_id,
@@ -373,6 +487,20 @@ def register_cli_handlers(bind: CliHandlersBindParams) -> None:
                 "applied_without_restart": applied_without_restart,
             },
         )
+
+        if env_updates or yaml_updated:
+            if on_config_saved:
+                try:
+                    config_payload = get_config()
+                    callback_result = on_config_saved(
+                        set(env_updates.keys()) | set(yaml_updated),
+                        env_updates=dict(env_updates),
+                        config_payload=config_payload,
+                    )
+                    if inspect.isawaitable(callback_result):
+                        await callback_result
+                except Exception as e:  # noqa: BLE001
+                    logger.warning("[cli config.set] on_config_saved failed: %s", e)
 
     async def _config_validate_model(ws, req_id, params, session_id):
         if not isinstance(params, dict):
@@ -483,7 +611,6 @@ def register_cli_handlers(bind: CliHandlersBindParams) -> None:
         )
 
     async def _session_list(ws, req_id, params, session_id):
-        import time
         from jiuwenclaw.e2a.gateway_normalize import e2a_from_agent_fields
         from jiuwenclaw.schema.message import ReqMethod
 
@@ -496,9 +623,15 @@ def register_cli_handlers(bind: CliHandlersBindParams) -> None:
                 limit = int(raw_limit.strip())
         limit = max(1, min(limit, 200))
 
-        real_client = agent_client.get("value") if isinstance(agent_client, dict) else agent_client
+        real_client = (
+            agent_client.get("value")
+            if isinstance(agent_client, dict)
+            else agent_client
+        )
         if real_client is None:
-            await channel.send_response(ws, req_id, ok=True, payload={"sessions": []})
+            await channel.send_response(
+                ws, req_id, ok=True, payload={"sessions": []}
+            )
             return
         env = e2a_from_agent_fields(
             request_id=req_id,
@@ -513,12 +646,19 @@ def register_cli_handlers(bind: CliHandlersBindParams) -> None:
         if not resp.ok:
             await channel.send_response(ws, req_id, ok=False, error="session.list failed")
             return
-        all_sessions = resp.payload.get("sessions", []) if isinstance(resp.payload, dict) else []
-        cli_sessions = [s for s in all_sessions if s.get("channel_id", "") == "tui"][:limit]
+        all_sessions = (
+            resp.payload.get("sessions", [])
+            if isinstance(resp.payload, dict)
+            else []
+        )
+        cli_sessions = [
+            s for s in all_sessions if s.get("channel_id", "") == "tui"
+        ][:limit]
         await channel.send_response(ws, req_id, ok=True, payload={"sessions": cli_sessions})
 
     async def _session_create(ws, req_id, params, session_id):
         from jiuwenclaw.utils import get_agent_sessions_dir
+        from jiuwenclaw.agentserver.session_metadata import init_session_metadata
 
         if not isinstance(params, dict):
             await channel.send_response(
@@ -544,6 +684,12 @@ def register_cli_handlers(bind: CliHandlersBindParams) -> None:
             )
             return
         session_dir.mkdir()
+        # 初始化元数据（与 web channel 对齐）
+        init_session_metadata(
+            session_id=target,
+            channel_id="tui",
+            title=str(params.get("title") or "").strip(),
+        )
         await channel.send_response(ws, req_id, ok=True, payload={"session_id": target})
 
     async def _session_delete(ws, req_id, params, session_id):
@@ -577,6 +723,64 @@ def register_cli_handlers(bind: CliHandlersBindParams) -> None:
             return
         shutil.rmtree(session_dir)
         await channel.send_response(ws, req_id, ok=True, payload={"session_id": target})
+
+    async def _session_rename(ws, req_id, params, session_id):
+        """优先经 E2A 转发至 AgentWebSocketServer._handle_session_rename；无 agent 或转发失败时本地回退。"""
+        from jiuwenclaw.agentserver.session_rename import apply_session_rename
+        from jiuwenclaw.e2a.gateway_normalize import e2a_from_agent_fields
+        from jiuwenclaw.schema.message import ReqMethod
+
+        real_client = (
+            agent_client.get("value")
+            if isinstance(agent_client, dict)
+            else agent_client
+        )
+        if real_client is not None:
+            try:
+                env = e2a_from_agent_fields(
+                    request_id=req_id,
+                    channel_id="tui",
+                    session_id=session_id,
+                    req_method=ReqMethod.SESSION_RENAME,
+                    params=params if isinstance(params, dict) else {},
+                    is_stream=False,
+                    timestamp=time.time(),
+                )
+                resp = await real_client.send_request(env)
+                if resp.ok:
+                    pl = resp.payload if isinstance(resp.payload, dict) else {}
+                    await channel.send_response(ws, req_id, ok=True, payload=pl)
+                    return
+                pl = resp.payload if isinstance(resp.payload, dict) else {}
+                err = pl.get("error", "session.rename failed")
+                code = pl.get("code") or None
+                if isinstance(code, str) and not code.strip():
+                    code = None
+                await channel.send_response(
+                    ws, req_id, ok=False, error=str(err), code=code
+                )
+                return
+            except Exception as e:
+                logger.warning(
+                    "[cli session.rename] forward to agent failed, fallback local: %s",
+                    e,
+                )
+
+        ok, payload, err, code = apply_session_rename(
+            params,
+            session_id,
+            init_channel_id="tui",
+        )
+        if ok:
+            await channel.send_response(ws, req_id, ok=True, payload=payload or {})
+        else:
+            await channel.send_response(
+                ws,
+                req_id,
+                ok=False,
+                error=err or "session.rename failed",
+                code=code,
+            )
 
     async def _chat_send(ws, req_id, params, session_id):
         await channel.send_response(
@@ -612,7 +816,6 @@ def register_cli_handlers(bind: CliHandlersBindParams) -> None:
         await channel.send_response(ws, req_id, ok=True, payload=payload)
 
     async def _command_model(ws, req_id, params, session_id):
-        import time
         from jiuwenclaw.e2a.gateway_normalize import e2a_from_agent_fields
         from jiuwenclaw.schema.message import ReqMethod
 
@@ -671,7 +874,8 @@ def register_cli_handlers(bind: CliHandlersBindParams) -> None:
                     },
                 )
                 logger.info(
-                    "[cli command.model] 新增模型: name=%s, client_cfg=%s, model_config_obj=%s",
+                    "[cli command.model] 新增模型: name=%s, "
+                    "client_cfg=%s, model_config_obj=%s",
                     target,
                     client_cfg,
                     model_cfg_obj,
@@ -733,7 +937,10 @@ def register_cli_handlers(bind: CliHandlersBindParams) -> None:
                 ws,
                 req_id,
                 ok=False,
-                error=f"Model '{target}' not found. Available: {', '.join(get_model_names())}",
+                error=(
+                    f"Model '{target}' not found. "
+                    f"Available: {', '.join(get_model_names())}"
+                ),
             )
             return
 
@@ -869,7 +1076,10 @@ def register_cli_handlers(bind: CliHandlersBindParams) -> None:
                     config_templates["timeout"] = resolved_cfg["timeout"]
                 add_or_update_model_in_config(
                     "default",
-                    {"model_client_config": config_templates, "model_config_obj": raw_model_config_obj},
+                    {
+                        "model_client_config": config_templates,
+                        "model_config_obj": raw_model_config_obj,
+                    },
                 )
                 logger.info("[cli command.model] 已重置 models.default 为环境变量引用")
             except Exception as e:
@@ -917,6 +1127,7 @@ def register_cli_handlers(bind: CliHandlersBindParams) -> None:
     channel.register_local_handler(path, "session.list", _session_list)
     channel.register_local_handler(path, "session.create", _session_create)
     channel.register_local_handler(path, "session.delete", _session_delete)
+    channel.register_local_handler(path, "session.rename", _session_rename)
     channel.register_local_handler(path, "chat.send", _chat_send)
     channel.register_local_handler(path, "chat.resume", _chat_resume)
     channel.register_local_handler(path, "chat.interrupt", _chat_interrupt)
