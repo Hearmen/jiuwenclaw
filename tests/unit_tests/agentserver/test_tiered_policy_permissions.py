@@ -24,6 +24,7 @@ from jiuwenclaw.agentserver.permissions.suggestions import build_shell_permissio
 from jiuwenclaw.agentserver.permissions.tiered_policy import (
     collect_builtin_permission_rail_tool_names,
     evaluate_tiered_policy,
+    matched_rule_allows_legacy_shell_operator_escalation,
     maybe_escalate_shell_operators,
     permissions_schema_is_tiered_policy,
     severity_to_decision,
@@ -169,6 +170,12 @@ def test_create_terminal_operator_chain_escalates_allow_to_ask():
         {"command": "echo ok && whoami"},
         PermissionLevel.ALLOW,
     ) == PermissionLevel.ASK
+
+
+def test_shell_subcommand_matched_rule_disables_legacy_operator_escalation():
+    assert not matched_rule_allows_legacy_shell_operator_escalation(
+        "tiered_policy:shell_subcommands:ls=>tiered_policy:rules:rules[allow_ls]"
+    )
 
 
 def test_shell_ast_fallback_keeps_simple_command(monkeypatch):
@@ -565,6 +572,53 @@ def test_evaluate_global_policy_directly_uses_tiered_policy_even_when_disabled()
     )
     assert perm == PermissionLevel.ASK
     assert "rules" in mr
+
+
+def test_evaluate_global_policy_directly_keeps_allow_for_ast_simple_subcommands(monkeypatch):
+    tiered_policy_module = importlib.import_module("jiuwenclaw.agentserver.permissions.tiered_policy")
+    monkeypatch.setattr(
+        tiered_policy_module,
+        "parse_shell_for_permission",
+        lambda _command: ShellAstParseResult(
+            kind="simple",
+            subcommands=(
+                ShellSubcommand(text="ls"),
+                ShellSubcommand(text="echo hello"),
+            ),
+            flags=ShellStructureFlags(has_compound_operators=True, has_actual_operator_nodes=True, operators=("||",)),
+            backend="test",
+        ),
+    )
+
+    engine = PermissionEngine({
+        "schema": "tiered_policy",
+        "permission_mode": "normal",
+        "defaults": {"*": "ask"},
+        "tools": {"bash": "ask"},
+        "rules": [
+            {
+                "id": "allow_ls",
+                "tools": ["bash"],
+                "pattern": "ls",
+                "severity": "LOW",
+            },
+            {
+                "id": "allow_echo",
+                "tools": ["bash"],
+                "pattern": "echo hello",
+                "severity": "LOW",
+            },
+        ],
+    })
+
+    perm, mr = engine.evaluate_global_policy_directly(
+        "bash",
+        {"command": "ls || echo hello"},
+        include_external_directory=False,
+    )
+
+    assert perm == PermissionLevel.ALLOW
+    assert mr.startswith("tiered_policy:shell_subcommands:")
 
 
 def test_owner_scope_global_level_sees_approval_overrides(tmp_path, monkeypatch):

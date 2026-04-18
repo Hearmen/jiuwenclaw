@@ -49,6 +49,7 @@ _BUILTIN_RULES_CACHE: tuple[str, float, list[dict[str, Any]]] | None = None
 
 _MR = "tiered_policy"
 _APPROVAL_OVERRIDES_PREFIX = f"{_MR}:approval_overrides"
+_SHELL_SUBCOMMANDS_PREFIX = f"{_MR}:shell_subcommands"
 
 
 @dataclass(frozen=True)
@@ -630,6 +631,15 @@ def maybe_escalate_shell_operators(
     if cmd and _SHELL_OPERATORS_RE.search(cmd):
         return PermissionLevel.ASK
     return permission
+
+
+def matched_rule_allows_legacy_shell_operator_escalation(matched_rule: str | None) -> bool:
+    """当前结果是否仍允许走旧版 shell operator escalation 兼容逻辑。"""
+    if not isinstance(matched_rule, str):
+        return True
+    if matched_rule_uses_approval_override(matched_rule):
+        return False
+    return not matched_rule.startswith(_SHELL_SUBCOMMANDS_PREFIX)
 
 
 def matched_rule_uses_approval_override(matched_rule: str | None) -> bool:

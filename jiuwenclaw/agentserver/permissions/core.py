@@ -24,6 +24,7 @@ from jiuwenclaw.agentserver.permissions.models import (
 )
 from jiuwenclaw.agentserver.permissions.tiered_policy import (
     evaluate_tiered_policy,
+    matched_rule_allows_legacy_shell_operator_escalation,
     matched_rule_uses_approval_override,
     maybe_escalate_shell_operators,
     permissions_schema_is_tiered_policy,
@@ -104,7 +105,10 @@ class PermissionEngine:
             if matched_rule == "tiered_policy:fallback(no_config)":
                 permission = None
                 matched_rule = None
-            elif not matched_rule_uses_approval_override(matched_rule):
+            elif (
+                not matched_rule_uses_approval_override(matched_rule)
+                and matched_rule_allows_legacy_shell_operator_escalation(matched_rule)
+            ):
                 permission = maybe_escalate_shell_operators(tool_name, tool_args, permission)
         else:
             permission, matched_rule = self._tool_checker.check_tool(tool_name, tool_args, channel_id)
