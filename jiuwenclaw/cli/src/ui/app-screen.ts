@@ -25,7 +25,10 @@ import {
 import { CommandService, parseSlashCommand } from "../core/commands/CommandService.js";
 import { addError, addInfo } from "../core/commands/helpers.js";
 import type { FileAttachment } from "../core/protocol.js";
-import type { ModelListPayload } from "../core/commands/builtins/model.js";
+import {
+  type ModelListPayload,
+  isReservedMultimodalModelKey,
+} from "../core/commands/builtins/model.js";
 import type { SessionListPayload, SessionMeta } from "../core/commands/builtins/resume.js";
 import type { ConfigItemSchema } from "../core/commands/builtins/config.js";
 import { buildModeAutocompleteItems } from "../core/commands/builtins/mode.js";
@@ -870,7 +873,24 @@ export class AppScreen implements Component, Focusable {
         return;
       }
 
-      const items = models.map((m, i) => {
+      const skipped = models.filter((m) => isReservedMultimodalModelKey(m));
+      const selectable = models.filter((m) => !isReservedMultimodalModelKey(m));
+      if (skipped.length > 0) {
+        this.state.addItem(
+          addInfo(
+            snapshot.sessionId,
+            "video, audio, and vision are not offered as the default chat model here (multimodal-only). To configure them, use /config edit → Vision / Audio / Video, or /config set on keys such as vision_model, audio_model, video_model.",
+            "m",
+          ),
+        );
+      }
+      if (selectable.length === 0) {
+        this.modelList = null;
+        this.state.addItem(addInfo(snapshot.sessionId, "No switchable models in list", "m"));
+        return;
+      }
+
+      const items = selectable.map((m, i) => {
         const isCurrent = m === current;
         return {
           label: `${i + 1}. ${m}${isCurrent ? " (current)" : ""}`,
@@ -888,7 +908,7 @@ export class AppScreen implements Component, Focusable {
         this.modelList = null;
         this.tui.requestRender();
       };
-      this.modelList = { list, models, current };
+      this.modelList = { list, models: selectable, current };
       this.tui.requestRender();
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
@@ -899,6 +919,17 @@ export class AppScreen implements Component, Focusable {
 
   private async handleModelSelection(modelName: string): Promise<void> {
     if (!modelName) {
+      return;
+    }
+    if (isReservedMultimodalModelKey(modelName)) {
+      this.modelList = null;
+      this.state.addItem(
+        addError(
+          this.state.getSnapshot().sessionId,
+          "Cannot select video, audio, or vision as the default chat model. Configure multimodal APIs in /config edit (Vision / Audio / Video) or /config set (e.g. vision_model, audio_model, video_model).",
+        ),
+      );
+      this.tui.requestRender();
       return;
     }
     this.modelList = null;

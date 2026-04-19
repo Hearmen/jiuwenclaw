@@ -14,6 +14,13 @@ export interface ModelListPayload {
   models?: ModelMeta[];
 }
 
+/** Reserved keys under config.yaml `models` for multimodal profiles; configure via /config, not via /model switch */
+const RESERVED_MULTIMODAL_MODEL_KEYS = new Set(["video", "audio", "vision"]);
+
+export function isReservedMultimodalModelKey(name: string): boolean {
+  return RESERVED_MULTIMODAL_MODEL_KEYS.has(name.trim().toLowerCase());
+}
+
 export function createModelCommand(): SlashCommand {
   return {
     name: "model",
@@ -84,7 +91,22 @@ export function createModelCommand(): SlashCommand {
             ctx.addItem(addInfo(ctx.sessionId, "No models configured", "m"));
             return;
           }
-          const items = models.map((m, i) => {
+          const skipped = models.filter((m) => isReservedMultimodalModelKey(m));
+          const selectable = models.filter((m) => !isReservedMultimodalModelKey(m));
+          if (skipped.length > 0) {
+            ctx.addItem(
+              addInfo(
+                ctx.sessionId,
+                "video, audio, and vision are not offered as the default chat model here (multimodal-only). To configure them, use /config edit → Vision / Audio / Video, or /config set on keys such as vision_model, audio_model, video_model.",
+                "m",
+              ),
+            );
+          }
+          if (selectable.length === 0) {
+            ctx.addItem(addInfo(ctx.sessionId, "No switchable models in list", "m"));
+            return;
+          }
+          const items = selectable.map((m, i) => {
             const isCurrent = m === current;
             return {
               label: String(i + 1),
@@ -92,11 +114,21 @@ export function createModelCommand(): SlashCommand {
             };
           });
           ctx.addItem(
-            addInfo(ctx.sessionId, `Available models (${models.length} total)`, "m", {
+            addInfo(ctx.sessionId, `Available models (${selectable.length} total)`, "m", {
               view: "list",
               title: "Switch Model",
               items,
             }),
+          );
+          return;
+        }
+
+        if (isReservedMultimodalModelKey(value)) {
+          ctx.addItem(
+            addError(
+              ctx.sessionId,
+              "Cannot use /model to select video, audio, or vision as the default chat model. Configure multimodal APIs in /config edit (Vision / Audio / Video) or /config set (e.g. vision_model, audio_model, video_model).",
+            ),
           );
           return;
         }
