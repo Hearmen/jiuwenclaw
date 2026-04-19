@@ -165,6 +165,16 @@ def _build_agents_config(team_raw: dict[str, Any], config_base: dict[str, Any]) 
     return agents
 
 
+def _build_workspace_spec(team_raw: dict[str, Any]) -> dict[str, Any] | None:
+    workspace_raw = team_raw.get("workspace")
+    if not isinstance(workspace_raw, dict) or "enabled" not in workspace_raw:
+        return None
+
+    workspace_spec = deepcopy(workspace_raw)
+    workspace_spec.setdefault("version_control", False)
+    return workspace_spec
+
+
 def _build_leader_spec(team_raw: dict[str, Any]) -> dict[str, Any]:
     leader_raw = team_raw.get("leader", {})
     return {
@@ -211,12 +221,17 @@ def load_team_spec_dict(session_id: str) -> dict[str, Any]:
 
     agents = _build_agents_config(team_raw, config_base)
     spec_dict = deepcopy(team_raw)
+
     spec_dict["team_name"] = f"{team_raw.get('team_name', 'team')}_{session_id}"
     spec_dict["lifecycle"] = team_raw.get("lifecycle", "persistent")
     spec_dict["teammate_mode"] = team_raw.get("teammate_mode", "build_mode")
     spec_dict["spawn_mode"] = team_raw.get("spawn_mode", "inprocess")
     spec_dict["leader"] = _build_leader_spec(team_raw)
     spec_dict["agents"] = agents
+
+    workspace_spec = _build_workspace_spec(team_raw)
+    if workspace_spec is not None:
+        spec_dict["workspace"] = workspace_spec
 
     predefined_members = _build_predefined_members(team_raw)
     if predefined_members:
