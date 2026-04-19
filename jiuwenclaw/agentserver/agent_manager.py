@@ -117,6 +117,15 @@ class AgentManager:
             return ACP_DEFAULT_CAPABILITIES.copy()
         return None
 
+    async def cancel_all_inflight_work(self, reason: str = "[gateway ws disconnect] ") -> None:
+        """Gateway 与 AgentServer 的 WebSocket 断开时：取消所有已创建 Agent 实例上的在途任务。"""
+        for modes in list(self.agents.values()):
+            for agent in list(modes.values()):
+                try:
+                    await agent.cancel_inflight_work(reason)
+                except Exception:
+                    logger.exception("[AgentManager] cancel_inflight_work failed")
+
     def get_client_capabilities(self, channel_id: str = "") -> dict[str, Any]:
         channel_key = str(channel_id or "").strip()
         caps = self._client_capabilities_by_channel.get(channel_key)

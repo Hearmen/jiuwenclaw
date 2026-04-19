@@ -366,23 +366,21 @@ class MessageHandler(ABC):
         if old_sid is None and not rids_cancelled:
             return
 
-        # 非流式场景不向 AgentServer 下发 cancel，避免无在途流式任务时触发不必要的中断逻辑。
-        if not bool(getattr(msg, "is_stream", False)):
-            logger.info(
-                "[MessageHandler] 跳过 AgentServer cancel（非流式）: channel_id=%s session_id=%s",
-                msg.channel_id,
-                old_sid,
-            )
+        sid_for_agent = (old_sid or "").strip()
+        if not sid_for_agent:
             return
+
+        # 即使网关侧已无活跃流式拉取任务（例如 Agent 正在执行 shell/工具），也必须通知 AgentServer，
+        # 否则仅断开 CLI WebSocket 无法停止已派发的工作。
 
         cancel_req = Message(
             id=f"interrupt_{int(time.time() * 1000):x}_{secrets.token_hex(3)}",
             type="req",
             channel_id=msg.channel_id,
-            session_id=old_sid,
+            session_id=sid_for_agent,
             params={
                 "intent": "cancel",
-                "session_id": old_sid,
+                "session_id": sid_for_agent,
             },
             timestamp=time.time(),
             ok=True,
@@ -396,6 +394,40 @@ class MessageHandler(ABC):
         agent_msg = await self._prepare_agent_dispatch_message(cancel_req)
         env_interrupt = self.message_to_e2a(agent_msg)
         await self._send_interrupt_to_agent(env_interrupt)
+
+    async def cancel_agent_sessions_on_disconnect(
+        self,
+        session_keys: list[tuple[str, str]],
+    ) -> None:
+        """TUI/WebSocket 异常断开时，取消仍绑定在该连接上的会话（与显式 chat.interrupt 对齐）。"""
+        from jiuwenclaw.schema.message import Message, ReqMethod
+
+        seen: set[str] = set()
+        for _channel_id, session_id in session_keys:
+            sid = (session_id or "").strip()
+            if not sid or sid in seen:
+                continue
+            seen.add(sid)
+            stub = Message(
+                id=f"ws_drop_{int(time.time() * 1000):x}_{secrets.token_hex(4)}",
+                type="req",
+                channel_id=_channel_id,
+                session_id=sid,
+                params={"intent": "cancel", "session_id": sid},
+                timestamp=time.time(),
+                ok=True,
+                req_method=ReqMethod.CHAT_CANCEL,
+                is_stream=False,
+            )
+            try:
+                await self._cancel_agent_work_for_session(stub, sid)
+            except Exception:
+                logger.warning(
+                    "[MessageHandler] disconnect cancel failed: channel_id=%s session_id=%s",
+                    _channel_id,
+                    sid,
+                    exc_info=True,
+                )
 
     async def _new_session_cancel_and_notice(
         self,

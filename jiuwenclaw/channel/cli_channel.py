@@ -1149,10 +1149,17 @@ def build_cli_route_binding(bind: CliRouteBindParams) -> GatewayRouteBinding:
             )
         )
 
+    async def _tui_disconnect(_ws: Any, stale_session_keys: list[tuple[str, str]]) -> None:
+        mh = bind.message_handler
+        if mh is None or not stale_session_keys:
+            return
+        await mh.cancel_agent_sessions_on_disconnect(stale_session_keys)
+
     return GatewayRouteBinding(
         path=bind.path,
         channel_id=bind.channel_id,
         forward_methods=CLI_FORWARD_REQ_METHODS,
         forward_no_local_handler_methods=CLI_FORWARD_NO_LOCAL_HANDLER_METHODS,
         install=_install,
+        disconnect_handler=_tui_disconnect,
     )

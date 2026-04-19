@@ -234,7 +234,26 @@ class AgentWebSocketServer:
             self._current_ws = None
             self._current_send_lock = None
             self._clear_ws_acp_client_capabilities(ws)
+            # Gateway 进程退出/端口关闭时，必须先取消各 session 内流式生产者（SessionManager）
+            # 并中止 DeepAgent 内层循环；否则仅等待 _handle_message 任务结束会一直阻塞到任务自然完成。
+            try:
+                await self._agent_manager.cancel_all_inflight_work(
+                    reason=f"[gateway ws closed {remote}] ",
+                )
+            except Exception:
+                logger.exception("[AgentWebSocketServer] cancel_all_inflight_work failed")
+            try:
+                from jiuwenclaw.agentserver.team import get_team_manager
+
+                await get_team_manager().cancel_all_stream_tasks(
+                    reason=f"[gateway ws closed {remote}] ",
+                )
+            except Exception:
+                logger.exception("[AgentWebSocketServer] team stream cancel failed")
             if tasks:
+                for t in list(tasks):
+                    if not t.done():
+                        t.cancel()
                 await asyncio.gather(*tasks, return_exceptions=True)
 
     async def _handle_message(self, ws: Any, raw: str | bytes, send_lock: asyncio.Lock) -> None:

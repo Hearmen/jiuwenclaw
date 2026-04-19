@@ -594,6 +594,35 @@ class TeamManager:
     def register_stream_task(self, session_id: str, task: asyncio.Task) -> None:
         self._stream_tasks[session_id] = task
 
+    async def cancel_all_stream_tasks(self, reason: str = "") -> None:
+        """Gateway 与 AgentServer 断开时取消 Team 后台 stream 协程（含 create_task 绕开 SessionManager 的任务）。"""
+        async with self._lock:
+            pending = list(self._stream_tasks.items())
+        for session_id, task in pending:
+            if task.done():
+                continue
+            logger.info(
+                "[TeamManager] %scancel stream task session_id=%s",
+                reason,
+                session_id,
+            )
+            task.cancel()
+        for session_id, task in pending:
+            if task.done():
+                continue
+            try:
+                await task
+            except asyncio.CancelledError:
+                pass
+            except Exception as exc:
+                logger.warning(
+                    "[TeamManager] stream task await after cancel failed session_id=%s: %s",
+                    session_id,
+                    exc,
+                )
+        async with self._lock:
+            self._stream_tasks.clear()
+
 
 _team_manager: TeamManager | None = None
 

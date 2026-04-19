@@ -15,4 +15,5 @@ class GatewayRouteBinding:
     inbound_interceptor: Callable[..., Awaitable[bool]] | None = None
     outbound_interceptor: Callable[..., Awaitable[bool]] | None = None
     cleanup_handler: Callable[..., Any] | None = None
+    disconnect_handler: Callable[..., Any] | None = None
     install: Callable[[Any], None] | None = None

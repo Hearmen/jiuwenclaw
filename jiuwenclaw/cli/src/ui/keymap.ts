@@ -25,7 +25,7 @@ export const APP_SCREEN_KEY_BINDINGS: readonly KeyBinding[] = [
     description: "cancel active run or arm exit",
     run: (delegate) => {
       const snapshot = delegate.getSnapshot();
-      if (snapshot.isProcessing) {
+      if (snapshot.cancellableWork) {
         delegate.cancel();
       } else {
         delegate.requestExit();

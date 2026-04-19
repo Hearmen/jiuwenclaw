@@ -2077,6 +2077,19 @@ class JiuWenClawDeepAdapter:
             metadata=request.metadata,
         )
 
+    async def abort_on_gateway_disconnect(self) -> None:
+        """Gateway 与 AgentServer 的 WebSocket 断开时：与 interrupt(cancel) 同样中止 rail 与 DeepAgent 实例。"""
+        if self._stream_event_rail is not None:
+            self._stream_event_rail.abort()
+        if self._instance is not None:
+            try:
+                await self._instance.abort()
+            except Exception as exc:
+                logger.warning(
+                    "[JiuWenClawDeepAdapter] abort_on_gateway_disconnect instance.abort failed: %s",
+                    exc,
+                )
+
     def _has_valid_model_config(self) -> bool:
         """检查是否有有效的模型配置."""
         # 检查环境变量中是否有 API_KEY

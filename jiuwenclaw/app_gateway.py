@@ -185,6 +185,7 @@ class RouteConfig:
     inbound_interceptor: Callable[..., Awaitable[bool]] | None = None
     outbound_interceptor: Callable[..., Awaitable[bool]] | None = None
     cleanup_handler: Callable[..., Any] | None = None
+    disconnect_handler: Callable[..., Any] | None = None
 
 
 @dataclass
@@ -469,10 +470,21 @@ class GatewayServer:
             stale_request_ids = [request_id for request_id, client in self._request_to_client.items() if client is ws]
             for request_id in stale_request_ids:
                 self._request_to_client.pop(request_id, None)
-            stale_session_ids = [session_id for session_id, client in self._session_to_client.items() if client is ws]
-            for session_id in stale_session_ids:
-                self._session_to_client.pop(session_id, None)
-            if route.cleanup_handler is not None:
+            stale_session_keys = [key for key, client in self._session_to_client.items() if client is ws]
+            for session_key in stale_session_keys:
+                self._session_to_client.pop(session_key, None)
+            if route.disconnect_handler is not None:
+                try:
+                    result = route.disconnect_handler(ws, stale_session_keys)
+                    if asyncio.iscoroutine(result):
+                        await result
+                except Exception:
+                    logger.warning(
+                        "GatewayServer disconnect handler failed: path=%s",
+                        request_path,
+                        exc_info=True,
+                    )
+            elif route.cleanup_handler is not None:
                 try:
                     route.cleanup_handler(ws)
                 except Exception:
@@ -657,6 +669,7 @@ def _build_route_config_map(bindings: list[GatewayRouteBinding]) -> dict[str, Ro
             inbound_interceptor=binding.inbound_interceptor,
             outbound_interceptor=binding.outbound_interceptor,
             cleanup_handler=binding.cleanup_handler,
+            disconnect_handler=binding.disconnect_handler,
         )
         for binding in bindings
     }

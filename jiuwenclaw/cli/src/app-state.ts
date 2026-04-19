@@ -1,3 +1,4 @@
+import { addInfo } from "./core/commands/helpers.js";
 import type { CommandContext } from "./core/commands/types.js";
 import {
   computeTimeoutAt,
@@ -32,6 +33,7 @@ import {
   type ToolCallDisplay,
   type ToolExecution,
 } from "./core/types.js";
+import { isTeamWorking } from "./ui/components/team-shared.js";
 import {
   getCurrentAccentColor,
   getCurrentThemeName,
@@ -58,6 +60,8 @@ export interface AppSnapshot {
   pendingQuestion: PendingQuestion | null;
   lastError: string | null;
   isProcessing: boolean;
+  /** 主会话流式进行中、等待确认，或 Team 模式下有成员处于工作中（Ctrl+C 应发 interrupt 而非预退出） */
+  cancellableWork: boolean;
   isPaused: boolean;
   activeSubtasks: SubtaskState[];
   todos: TodoItem[];
@@ -171,6 +175,9 @@ export class CliPiAppState {
     clearToolExecutionState: () => {
       this.clearToolExecutionState();
     },
+    markRunningToolsInterrupted: () => {
+      this.markRunningToolsInterrupted();
+    },
     pushHistoryEntry: (entry) => {
       this.historyEntries.push(entry);
     },
@@ -259,6 +266,19 @@ export class CliPiAppState {
     const isProcessing =
       this.streamingState === StreamingState.Responding ||
       this.streamingState === StreamingState.WaitingForConfirmation;
+    const hasRunningTools = this.toolExecutionOrder.some((id) => {
+      const ex = this.toolExecutions.get(id);
+      return ex?.tool.status === "running";
+    });
+    const hasActiveSubtasks = [...this.activeSubtasks.values()].some(
+      (s) => s.status !== "completed" && s.status !== "error",
+    );
+    const cancellableWork =
+      isProcessing ||
+      hasRunningTools ||
+      hasActiveSubtasks ||
+      this.evolutionStatus === "running" ||
+      (this.mode === "team" && isTeamWorking(this.teamMemberEvents, this.teamMessageEvents));
     return {
       connectionStatus: this.connectionStatus,
       sessionId: this.sessionId,
@@ -284,6 +304,7 @@ export class CliPiAppState {
         : null,
       lastError: this.lastError,
       isProcessing,
+      cancellableWork,
       isPaused: this.streamingState === StreamingState.Paused,
       activeSubtasks: [...this.activeSubtasks.values()].sort((a, b) => a.index - b.index),
       todos: [...this.todos],
@@ -556,8 +577,12 @@ readonly request = async <T = Record<string, unknown>>(
     return requestId;
   }
 
-  cancel(): void {
+  cancel(options?: { showNotice?: boolean }): void {
     this.sendEventOnly("chat.interrupt", { intent: "cancel" });
+    if (options?.showNotice === false) {
+      return;
+    }
+    this.addItem(addInfo(this.sessionId, "Task interrupted", "i"));
   }
 
   resume(): void {
@@ -705,6 +730,37 @@ readonly request = async <T = Record<string, unknown>>(
         this.scheduleToolTimeoutCheck();
       }
     }, delay + 10);
+  }
+
+  private markRunningToolsInterrupted(): void {
+    const nowIso = new Date().toISOString();
+    let changed = false;
+    for (const [toolCallId, execution] of this.toolExecutions) {
+      if (execution.tool.status !== "running") {
+        continue;
+      }
+      const nextTool: ToolCallDisplay = {
+        ...execution.tool,
+        status: "completed",
+        summary: execution.tool.summary?.trim() ? execution.tool.summary : "Interrupted",
+      };
+      this.toolExecutions.set(toolCallId, {
+        ...execution,
+        tool: nextTool,
+        updatedAt: nowIso,
+      });
+      this.entries = upsertToolGroupDisplay(
+        this.entries,
+        execution.sessionId,
+        execution.requestId,
+        nextTool,
+      );
+      changed = true;
+    }
+    if (changed) {
+      this.scheduleToolTimeoutCheck();
+      this.emitChange();
+    }
   }
 
   private markTimedOutExecutions(): boolean {

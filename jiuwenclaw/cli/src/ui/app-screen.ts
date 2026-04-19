@@ -409,7 +409,7 @@ export class AppScreen implements Component, Focusable {
       ? isPermissionRequest(pendingQuestion?.source, activeQuestion.question)
       : false;
 
-    if (!pendingQuestion && snapshot.isProcessing && matchesKey(data, "escape")) {
+    if (!pendingQuestion && snapshot.cancellableWork && matchesKey(data, "escape")) {
       this.state.cancel();
       return;
     }

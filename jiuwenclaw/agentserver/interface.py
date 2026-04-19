@@ -722,6 +722,20 @@ class JiuWenClaw:
 
     # ---------- 资源清理 ----------
 
+    async def cancel_inflight_work(self, log_prefix: str = "[gateway disconnect] ") -> None:
+        """Gateway 与 AgentServer 的 WebSocket 断开时调用：取消 session 流式任务并中止 adapter 内层循环。"""
+        await self._session_manager.cancel_all_session_tasks(log_prefix)
+        adapter = self._adapter
+        if adapter is None:
+            return
+        abort_fn = getattr(adapter, "abort_on_gateway_disconnect", None)
+        if not callable(abort_fn):
+            return
+        try:
+            await abort_fn()
+        except Exception:
+            logger.exception("[JiuWenClaw] adapter.abort_on_gateway_disconnect failed")
+
     async def cleanup(self) -> None:
         """清理资源，准备销毁实例.
 

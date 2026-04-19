@@ -48,15 +48,12 @@ let closed = false;
 let screen: AppScreen | null = null;
 
 async function cancelBeforeExit(): Promise<void> {
-  const snapshot = appState.getSnapshot();
-  if (!snapshot.isProcessing && !snapshot.isPaused) {
+  if (appState.getSnapshot().connectionStatus !== "connected") {
     return;
   }
-  if (snapshot.connectionStatus !== "connected") {
-    return;
-  }
-  appState.cancel();
-  await new Promise((resolve) => setTimeout(resolve, 120));
+  // 关 TUI 即请求服务端终止当前会话工作；idle 时一般为 no-op。
+  appState.cancel({ showNotice: false });
+  await new Promise((resolve) => setTimeout(resolve, 200));
 }
 
 async function closeUi(exitCode = 0): Promise<void> {

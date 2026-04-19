@@ -82,6 +82,8 @@ export interface AppEventDelegate {
     at?: string,
   ): void;
   clearToolExecutionState(): void;
+  /** 用户中断：将 running 的工具标为已结束，避免 TUI 继续转圈 */
+  markRunningToolsInterrupted(): void;
   pushHistoryEntry(entry: HistoryItem): void;
   scheduleHistoryFlush(): void;
   safeRestoreHistory(sessionId: string): void;
@@ -612,6 +614,7 @@ export function handleIncomingFrame(delegate: AppEventDelegate, frame: EventFram
         delegate.setStreamingState(StreamingState.Idle);
         delegate.getActiveSubtasks().clear();
         delegate.setEvolutionStatus("idle");
+        delegate.markRunningToolsInterrupted();
       } else if (intent === "pause") {
         delegate.setStreamingState(StreamingState.Paused);
       } else {
