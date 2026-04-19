@@ -7,6 +7,12 @@ import { createCompactCommand } from "./builtins/compact.js";
 import { createConfigCommand } from "./builtins/config.js";
 import { createCopyCommand } from "./builtins/copy.js";
 import { createDiffCommand } from "./builtins/diff.js";
+import {
+  createEvolveCommand,
+  createEvolveListCommand,
+  createEvolveSimplifyCommand,
+  createSolidifyCommand,
+} from "./builtins/evolve.js";
 import { createExitCommand } from "./builtins/exit.js";
 import { createHelpCommand } from "./builtins/help.js";
 import { createHotkeyCommand } from "./builtins/hotkey.js";
@@ -31,6 +37,10 @@ export function createBuiltinCommands(): SlashCommand[] {
     createConfigCommand(),
     createCopyCommand(),
     createDiffCommand(),
+    createEvolveCommand(),
+    createEvolveListCommand(),
+    createEvolveSimplifyCommand(),
+    createSolidifyCommand(),
     createExitCommand(),
     createModelCommand(),
     createModeCommand(),
