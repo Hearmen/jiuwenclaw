@@ -25,6 +25,7 @@ import { createRenameCommand } from "./builtins/rename.js";
 import { createSessionCommand } from "./builtins/session.js";
 import { createSkillsCommand } from "./builtins/skills.js";
 import { createThemeCommand } from "./builtins/theme.js";
+import { createWorkspaceDirCommand } from "./builtins/workspace-dir.js";
 
 export function createBuiltinCommands(): SlashCommand[] {
   const commands: SlashCommand[] = [
@@ -50,6 +51,7 @@ export function createBuiltinCommands(): SlashCommand[] {
     createSessionCommand(),
     createSkillsCommand(),
     createThemeCommand(),
+    createWorkspaceDirCommand(),
     createHotkeyCommand(),
   ];
 

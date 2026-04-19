@@ -41,6 +41,7 @@ import {
   type ThemeName,
 } from "./ui/theme.js";
 import { type ConnectionStatus, WsClient } from "./core/ws-client.js";
+import { loadTuiWorkspaceDir, saveTuiWorkspaceDir } from "./core/tui-workspace-dir-store.js";
 
 export interface AppSnapshot {
   connectionStatus: ConnectionStatus;
@@ -116,6 +117,7 @@ export class CliPiAppState {
     model: "",
     version: "",
   };
+  private workspaceDir: string = loadTuiWorkspaceDir();
   private readonly eventDelegate: AppEventDelegate = {
     getConnectionStatus: () => this.connectionStatus,
     getSessionId: () => this.sessionId,
@@ -330,17 +332,30 @@ export class CliPiAppState {
       expandToolGroups: this.expandToolGroups,
       sessionTitle: snapshot.sessionTitle,
       setSessionTitle: this.setSessionTitle,
+      getWorkspaceDir: () => this.workspaceDir,
+      setWorkspaceDir: this.setWorkspaceDir,
       enterConfigEditor: undefined, // AppScreen injects the real handler when executing slash commands.
     };
   }
 
+  readonly setWorkspaceDir = (path: string): void => {
+    this.workspaceDir = path.trim();
+    saveTuiWorkspaceDir(this.workspaceDir);
+    this.emitChange();
+  };
+
   readonly sendEventOnly = (method: string, params: Record<string, unknown>): string => {
     const id = `tui_${Date.now().toString(16)}_${Math.random().toString(36).slice(2, 6)}`;
+    const wd = this.workspaceDir.trim();
     this.wsClient.send({
       type: "req",
       id,
       method,
-      params: { ...params, session_id: (params.session_id as string | undefined) ?? this.sessionId },
+      params: {
+        ...params,
+        session_id: (params.session_id as string | undefined) ?? this.sessionId,
+        ...(wd ? { workspace_dir: wd } : {}),
+      },
     });
     return id;
   };

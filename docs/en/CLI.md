@@ -74,3 +74,24 @@ The Gateway will:
 - Stored **per channel** (`channel_id` → `mode`). All later messages on that channel use the current mode.
 - Initial value can come from `default_mode` in config; `MessageHandler` reads it on startup.
 
+---
+
+### 3. TUI: `/workspace_dir` — workspace path for outbound requests
+
+**Scope:** terminal UI (`jiuwenclaw-cli`) only; parsed locally, not by the Gateway control pipeline.
+
+**Behavior**
+
+- **`/workspace_dir`** or **`/workspace_dir get`**: show the saved workspace directory (if any).
+- **`/workspace_dir set <path>`**: save a path (spaces allowed). Example: `/workspace_dir set C:\Projects\my-app`
+- **`/workspace_dir clear`**: clear the saved value.
+- Alias: **`/workspace-dir`**.
+
+**Persistence**
+
+- Stored as a single-line file: **`~/.jiuwenclaw/tui-workspace-dir`**.
+
+**Gateway / Agent**
+
+- When a non-empty path is set, TUI includes **`workspace_dir`** in the WebSocket **`params`** for fire-and-forget requests built by `sendEventOnly` (e.g. `chat.send`), so Gateway and AgentServer can read it from `Message.params` / `AgentRequest.params`. Downstream usage depends on the agent and extensions.
+

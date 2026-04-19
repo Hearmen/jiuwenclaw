@@ -1407,6 +1407,7 @@ class JiuWenClawDeepAdapter:
         config = config_base.get('react', {}).copy()
         self._config_cache = config.copy()
         self._agent_name = self._instance_overrides.get("agent_name", config.get("agent_name", "main_agent"))
+        self._workspace_dir = self._instance_overrides.get("workspace_dir", config.get("workspace_dir", "workspace"))
 
         model = self._create_model(config_base)
         agent_card = AgentCard(name=self._agent_name, id='jiuwenclaw')

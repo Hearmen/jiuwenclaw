@@ -204,6 +204,13 @@ FIRST_BATCH_REGISTRY: tuple[SlashCommandEntry, ...] = (
         req_method="command.resume",
         notes="CLI 会话恢复；另用 session.list。IM 受控通道本阶段不解析，后续可扩展。",
     ),
+    SlashCommandEntry(
+        id="workspace_dir",
+        canonical_text="/workspace_dir [get|set <path>|clear]",
+        scope="client",
+        req_method=None,
+        notes="TUI 本地保存工作区路径；随 chat.send params.workspace_dir 发往 Gateway/AgentServer。",
+    ),
 )
 
 

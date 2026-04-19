@@ -141,7 +141,12 @@ class AgentManager:
             return session_id
         return "default"
 
-    async def get_agent(self, channel_id: str = "", mode: str = "agent") -> "JiuWenClaw | None":
+    async def get_agent(
+            self,
+            channel_id: str = "",
+            mode: str = "agent",
+            workspace_dir: str = None
+    ) -> "JiuWenClaw | None":
         """获取 Agent 实例（自动创建）.
 
         如果 agent 不存在，会自动创建（仅用于非 ACP 场景）。
@@ -149,6 +154,7 @@ class AgentManager:
         Args:
             channel_id: 通道 ID
             mode: 每个模式对应的实例
+            workspace_dir: project dir
 
         Returns:
             JiuWenClaw | None: Agent 实例
@@ -156,9 +162,12 @@ class AgentManager:
         if channel_id in self.agents and mode in self.agents[channel_id]:
             return self.agents[channel_id][mode]
         else:
-            config: dict[str, Any] | None = None
+            config = {"workspace_dir": workspace_dir} if workspace_dir else {}
             if channel_id == "acp":
-                config = _build_acp_agent_config()
+                config = {
+                    **config,
+                    **_build_acp_agent_config()
+                }
             await self._create_agent(channel_id, mode, config)
         return self.agents.get(channel_id, {}).get(mode)
 

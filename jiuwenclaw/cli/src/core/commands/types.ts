@@ -54,6 +54,8 @@ export interface CommandContext {
   expandToolGroups: (scope: "last" | "all") => void;
   sessionTitle: string;
   setSessionTitle: (title: string) => void;
+  getWorkspaceDir: () => string;
+  setWorkspaceDir: (path: string) => void;
   enterConfigEditor?: (
     focusKey?: string,
     configPayload?: Record<string, unknown> & { schema?: ConfigItemSchema[] },

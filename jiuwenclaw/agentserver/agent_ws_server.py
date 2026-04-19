@@ -431,7 +431,11 @@ class AgentWebSocketServer:
             return
 
         mode = request.params.get("mode", "agent.plan").split(".")[0]
-        agent = await self._agent_manager.get_agent(channel_id=channel_id, mode=mode)
+        agent = await self._agent_manager.get_agent(
+            channel_id=channel_id,
+            mode=mode,
+            workspace_dir=request.params.get("workspace_dir", None)
+        )
         if agent is None:
             raise ValueError("Failed to get agent")
 
@@ -461,7 +465,11 @@ class AgentWebSocketServer:
         """流式处理：调用 process_message_stream，逐条发送 E2AResponse 线 JSON。"""
         channel_id = request.channel_id or "default"
         mode = request.params.get("mode", "agent.plan").split(".")[0]
-        agent = await self._agent_manager.get_agent(channel_id=channel_id, mode=mode)
+        agent = await self._agent_manager.get_agent(
+            channel_id=channel_id,
+            mode=mode,
+            workspace_dir=request.params.get("workspace_dir", None)
+        )
         if agent is None:
             raise ValueError("Failed to get agent")
 

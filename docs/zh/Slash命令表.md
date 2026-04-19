@@ -18,6 +18,14 @@
 | `/theme` | 切换主题 |
 | `/mode` | 切换当前模式（支持一级入口与直达值；**仅 IM 通道生效**） |
 | `/config` | 修改配置（当前为 TUI 本地实现；规划改为走 Gateway 统一接口） |
+| `/workspace_dir` | 设置、查看或清空 **TUI 工作区路径**（见下方说明） |
+
+**`/workspace_dir`（TUI 工作区目录）**
+
+- **子命令**：`/workspace_dir` 或 `/workspace_dir get` 查看当前值；`/workspace_dir set <path>` 保存路径（路径可含空格）；`/workspace_dir clear` 清空。
+- **别名**：`/workspace-dir`。
+- **持久化**：写入用户目录下 `~/.jiuwenclaw/tui-workspace-dir`（单行文本）。
+- **与 Gateway 的关系**：在已保存非空路径时，TUI 通过 `sendEventOnly` 发往 Gateway 的请求 **`params` 会附带 `workspace_dir`**（与普通对话、部分中断/权限相关请求一致），供 Gateway / AgentServer 在 `Message.params` / `AgentRequest.params` 中使用；具体消费逻辑以 Agent 与扩展为准。
 
 ---
 
