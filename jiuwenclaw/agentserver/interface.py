@@ -419,6 +419,7 @@ class JiuWenClaw:
             content=query,
             timestamp=time.time(),
             channel_metadata=request.metadata,
+            mode=request.params.get("mode", "unknown"),
         )
 
         logger.info(
@@ -458,6 +459,7 @@ class JiuWenClaw:
                 event_type="chat.final",
                 content=content_str,
                 timestamp=time.time(),
+                mode=request.params.get("mode", "unknown"),
             )
 
             # cloud memory: after chat hook
@@ -515,6 +517,7 @@ class JiuWenClaw:
             content=query,
             timestamp=time.time(),
             channel_metadata=request.metadata,
+            mode=request.params.get("mode", "unknown"),
         )
 
         logger.info(
@@ -610,6 +613,7 @@ class JiuWenClaw:
                         event_type="chat.error",
                         content=str(data),
                         timestamp=time.time(),
+                        mode=request.params.get("mode", "unknown"),
                     )
                     yield AgentResponseChunk(
                         request_id=rid,
@@ -644,6 +648,7 @@ class JiuWenClaw:
                                     content=data.payload.get("content") or data.payload.get("error") or "",
                                     timestamp=time.time(),
                                     extra=extra_fields if extra_fields else None,
+                                    mode=request.params.get("mode", "unknown"),
                                 )
                             if et == "chat.final":
                                 final_answer_content = str(data.payload.get("content", ""))
@@ -673,6 +678,7 @@ class JiuWenClaw:
                                 content=data.get("content") or data.get("error") or "",
                                 timestamp=time.time(),
                                 extra=extra_fields if extra_fields else None,
+                                mode=request.params.get("mode", "unknown"),
                             )
                         if et == "chat.final":
                             final_answer_content = str(data.get("content", ""))

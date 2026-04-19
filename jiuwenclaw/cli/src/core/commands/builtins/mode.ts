@@ -1,5 +1,19 @@
+import type { AutocompleteItem } from "@mariozechner/pi-tui";
 import { makeItem } from "../helpers.js";
 import { CommandKind, type SlashCommand } from "../types.js";
+
+/** TUI `/mode` 参数补全：分组标题不可选；默认落在 agent.plan。 */
+export function buildModeAutocompleteItems(): AutocompleteItem[] {
+  return [
+    { value: "__mode_hdr_agent__", label: "agent", navigable: false },
+    { value: "agent.plan", label: "    plan", navigable: true },
+    { value: "agent.fast", label: "    fast", navigable: true },
+    { value: "__mode_hdr_code__", label: "code", navigable: false },
+    { value: "code.normal", label: "    normal", navigable: true },
+    { value: "code.plan", label: "    plan", navigable: true },
+    { value: "team", label: "team", navigable: true },
+  ];
+}
 
 export function createModeCommand(): SlashCommand {
   const directModes = [
@@ -28,7 +42,7 @@ export function createModeCommand(): SlashCommand {
   return {
     name: "mode",
     description: "Switch chat mode",
-    usage: "/mode <agent|code|agent.plan|agent.fast|code.plan|code.normal|team>",
+    usage: "/mode <agent|code|team>",
     example: "/mode agent",
     kind: CommandKind.BUILT_IN,
     takesArgs: true,
@@ -41,7 +55,7 @@ export function createModeCommand(): SlashCommand {
           makeItem(
             ctx.sessionId,
             "error",
-            "usage: /mode <agent|code|agent.plan|agent.fast|code.plan|code.normal|team>",
+            "usage: /mode <agent|code|team>",
           ),
         );
         return;

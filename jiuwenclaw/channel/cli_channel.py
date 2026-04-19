@@ -689,6 +689,7 @@ def register_cli_handlers(bind: CliHandlersBindParams) -> None:
             session_id=target,
             channel_id="tui",
             title=str(params.get("title") or "").strip(),
+            mode=params.get("mode", "unknown"),
         )
         await channel.send_response(ws, req_id, ok=True, payload={"session_id": target})
 

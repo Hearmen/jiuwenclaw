@@ -4,6 +4,7 @@ from __future__ import annotations
 import json
 import logging
 import queue
+import shutil
 import threading
 from pathlib import Path
 from typing import Any
@@ -126,6 +127,7 @@ def init_session_metadata(
     channel_id: str = "",
     user_id: str = "",
     title: str = "",
+    mode: str = "unknown",
 ) -> None:
     """初始化会话元数据(同步写,确保创建后立即可读)"""
     metadata = {
@@ -136,6 +138,7 @@ def init_session_metadata(
         "last_message_at": _current_timestamp(),
         "title": title,
         "message_count": 0,
+        "mode": mode,
     }
     _write_metadata_sync(session_id, metadata)
 
@@ -150,6 +153,7 @@ def update_session_metadata(
     increment_message_count: bool = False,
     user_content: str | None = None,
     channel_metadata: dict[str, Any] | None = None,
+    mode: str | None = None,
 ) -> None:
     """更新会话元数据(异步写入,不阻塞调用方)
 
@@ -175,6 +179,7 @@ def update_session_metadata(
             "last_message_at": _current_timestamp(),
             "title": title or auto_title,
             "message_count": 1 if increment_message_count else 0,
+            "mode": mode if mode is not None else "unknown",
         }
         # 首次创建时写入 channel_metadata
         if channel_metadata:
@@ -185,6 +190,8 @@ def update_session_metadata(
             metadata["channel_id"] = channel_id
         if user_id is not None:
             metadata["user_id"] = user_id
+        if mode is not None:
+            metadata["mode"] = mode
         # 显式清除优先级高于 title 入参
         if clear_title:
             metadata["title"] = ""
@@ -210,6 +217,40 @@ def update_session_metadata(
 def get_session_metadata(session_id: str) -> dict[str, Any]:
     """获取会话元数据"""
     return _read_metadata(session_id)
+
+
+def remove_team_mode_session_dirs_at_startup() -> None:
+    """agentserver 启动时删除 metadata.json 中 mode 为 team 的会话目录。"""
+    sessions_dir = get_agent_sessions_dir()
+    if not sessions_dir.is_dir():
+        return
+
+    removed = 0
+    for session_dir in sessions_dir.iterdir():
+        if not session_dir.is_dir():
+            continue
+        meta_path = session_dir / "metadata.json"
+        if not meta_path.is_file():
+            continue
+        try:
+            raw = json.loads(meta_path.read_text(encoding="utf-8"))
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("启动清理跳过会话 %s: 读取 metadata.json 失败: %s", session_dir.name, exc)
+            continue
+        if not isinstance(raw, dict) or raw.get("mode") != "team":
+            continue
+
+        session_id = session_dir.name
+        try:
+            shutil.rmtree(session_dir)
+            with _CACHE_LOCK:
+                _METADATA_CACHE.pop(session_id, None)
+            removed += 1
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("启动清理删除 team 会话目录失败 %s: %s", session_id, exc)
+
+    if removed:
+        logger.info("启动清理: 已删除 %d 个 team 模式会话目录", removed)
 
 
 def get_all_sessions_metadata(
@@ -245,6 +286,7 @@ def get_all_sessions_metadata(
                 "last_message_at": session_dir.stat().st_mtime,
                 "title": "",
                 "message_count": 0,
+                "mode": "unknown",
             }
 
         sessions.append(metadata)

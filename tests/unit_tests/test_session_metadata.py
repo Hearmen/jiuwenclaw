@@ -84,6 +84,7 @@ class TestInitSessionMetadata:
         assert data["user_id"] == "user_1"
         assert data["title"] == "test title"
         assert data["message_count"] == 0
+        assert data["mode"] == "unknown"
         assert isinstance(data["created_at"], float)
         assert isinstance(data["last_message_at"], float)
 
@@ -96,6 +97,7 @@ class TestInitSessionMetadata:
         assert data["channel_id"] == ""
         assert data["user_id"] == ""
         assert data["title"] == ""
+        assert data["mode"] == "unknown"
 
 
 # ===========================================================================
@@ -318,6 +320,7 @@ class TestGetAllSessionsMetadata:
         assert total == 1
         assert sessions[0]["session_id"] == "legacy_sess"
         assert sessions[0]["title"] == ""
+        assert sessions[0]["mode"] == "unknown"
         assert sessions[0]["created_at"] > 0
 
     @staticmethod

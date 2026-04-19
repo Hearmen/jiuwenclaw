@@ -49,6 +49,10 @@ async def _run(host: str, port: int) -> None:
 
     logger.info("[AgentServer] starting: ws://%s:%s", host, port)
 
+    from jiuwenclaw.agentserver.session_metadata import remove_team_mode_session_dirs_at_startup
+
+    remove_team_mode_session_dirs_at_startup()
+
     # ---------- 扩展系统初始化 ----------
     callback_framework = Runner.callback_framework
     extension_registry = ExtensionRegistry.create_instance(

@@ -702,6 +702,7 @@ def _register_web_handlers(bind: WebHandlersBindParams) -> None:
             channel_id=params.get("channel_id", ""),
             user_id=params.get("user_id", ""),
             title=params.get("title", ""),
+            mode=params.get("mode", "unknown"),
         )
 
         await channel.send_response(ws, req_id, ok=True, payload={"session_id": session_id_to_create})

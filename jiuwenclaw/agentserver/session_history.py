@@ -95,6 +95,7 @@ def append_history_record(
     event_type: str | None = None,
     extra: dict[str, Any] | None = None,
     channel_metadata: dict[str, Any] | None = None,
+    mode: str | None = None,
 ) -> None:
     """向指定 session 的 history.json 异步追加一条记录."""
     sid = (session_id or "default").strip() or "default"
@@ -136,6 +137,7 @@ def append_history_record(
             user_content=content_text if role_norm == "user" else None,
             # 传入渠道元数据,首次写入时持久化
             channel_metadata=channel_metadata,
+            mode=mode,
         )
     except Exception as exc:
         logger.warning("更新会话元数据失败: %s", exc)

@@ -19,11 +19,14 @@ const SUPPORTED_FILE_EXTENSIONS = new Set([
   "sql", "graphql", "gql",
   "tf", "hcl", "dockerfile",
   "proto", "thrift", "asm", "lua", "rb", "php", "dart",
+  // 资源管理器拖入常见类型（原白名单过窄会导致解析到路径却仍不生成 @mention）
+  "pdf", "doc", "docx", "xls", "xlsx", "ppt", "pptx", "csv", "odt", "rtf", "epub",
+  "zip", "gz", "tgz", "bz2", "7z", "rar",
 ]);
 
 const AT_MENTION_RE = /(^|[\t ])@(?:"([^"]+)"|([^\s]+))/gm;
 const PASTED_PATH_RE =
-  /"([^"\r\n]+)"|'([^'\r\n]+)'|(file:\/\/[^\s]+|[A-Za-z]:\\[^\s]+|~\/[^\s]+|\.{1,2}\/[^\s]+|\/[^\s]+)/g;
+  /"([^"\r\n]+)"|'([^'\r\n]+)'|(file:\/\/[^\s]+|[A-Za-z]:(?:\\[^\\\r\n]+)+|~\/[^\s]+|\.{1,2}\/[^\s]+|\/[^\s]+)/g;
 
 export type AttachmentKind = "image" | "file";
 

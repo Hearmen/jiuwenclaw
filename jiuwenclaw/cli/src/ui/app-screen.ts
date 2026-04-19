@@ -28,6 +28,7 @@ import type { FileAttachment } from "../core/protocol.js";
 import type { ModelListPayload } from "../core/commands/builtins/model.js";
 import type { SessionListPayload, SessionMeta } from "../core/commands/builtins/resume.js";
 import type { ConfigItemSchema } from "../core/commands/builtins/config.js";
+import { buildModeAutocompleteItems } from "../core/commands/builtins/mode.js";
 import { handleAppScreenKeyInput } from "./keymap.js";
 import { buildAppScreenLines } from "./screen-layout.js";
 import {
@@ -564,8 +565,10 @@ export class AppScreen implements Component, Focusable {
       const pastedContent = data.replace(/\x1b\[200~/, "").replace(/\x1b\[201~/, "");
       const filePaths = extractFilePathsFromPaste(pastedContent);
       if (filePaths.length > 0) {
-        this.handleDroppedFiles(filePaths);
-        return;
+        // 若解析出路径但无一通过附件校验（扩展名不在白名单等），须把原文交给编辑器，避免粘贴被吞掉
+        if (this.handleDroppedFiles(filePaths)) {
+          return;
+        }
       }
     }
 
@@ -1284,13 +1287,13 @@ export class AppScreen implements Component, Focusable {
   }
 
   /** Handle pasted/dragged content - detects file paths and converts to @path references. */
-  private handleDroppedFiles(filePaths: string[]): void {
+  private handleDroppedFiles(filePaths: string[]): boolean {
     const insertText = filePaths
       .filter((path) => this.isAcceptedAttachment(path))
       .map((path) => formatAttachmentMention(path))
       .join(" ");
 
-    if (!insertText) return;
+    if (!insertText) return false;
 
     const currentText = this.editor.getText();
     const newText = currentText ? `${currentText}\n${insertText}` : insertText;
@@ -1298,6 +1301,7 @@ export class AppScreen implements Component, Focusable {
     this.editor.setText(newText);
     this.syncingComposerInput = false;
     this.tui.requestRender();
+    return true;
   }
 
   private syncAnimationLoop(snapshot: ReturnType<CliPiAppState["getSnapshot"]>): void {
@@ -1410,6 +1414,9 @@ export class AppScreen implements Component, Focusable {
                   return null;
                 }
               }
+            }
+            if (command.name === "mode") {
+              return buildModeAutocompleteItems();
             }
             const items = await command.completion!(this.state.getCommandContext(), argumentPrefix);
             return items.map((value) => ({
