@@ -70,6 +70,12 @@ jiuwenclaw-init
 
 # 启动 JiuwenClaw
 jiuwenclaw-start
+
+# 安装 JiuwenClaw-tui
+pip install jiuwenclaw-tui
+
+# 启动 JiuwenClaw-tui
+jiuwenclaw-tui
 ```
 
 ### 💬 使用方式
@@ -141,6 +147,7 @@ jiuwenclaw-start
 | 文档                                  | 核心内容                     |
 |:------------------------------------|:-------------------------|
 | [📖 快速开始](docs/zh/Quickstart.md)             | 5分钟上手JiuwenClaw          |
+| [📖 快速开始(TUI)](docs/zh/Quickstart_tui.md)         | 5分钟上手JiuwenClaw-tui      |
 | [⚙️ 配置与工作空间](docs/zh/配置信息.md)          | 环境配置与工作区管理               |
 | [📁 工作区结构](docs/zh/智能体.md)             | workspace 目录说明，预置与动态生成内容 |
 | [🛠️ 技能系统](docs/zh/技能.md)              | 自定义技能开发指南                |

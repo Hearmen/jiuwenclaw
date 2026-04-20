@@ -80,6 +80,12 @@ jiuwenclaw-init
 
 # Start JiuwenClaw
 jiuwenclaw-start
+
+# Install JiuwenClaw-tui
+pip install jiuwenclaw-tui
+
+# Start JiuwenClaw-tui
+jiuwenclaw-tui
 ```
 
 ### 💬 How to Use
@@ -101,6 +107,7 @@ Set up heartbeat tasks with your to-do items, and JiuwenClaw will wake up on sch
 | Document                                             | Description                                              |
 | :--------------------------------------------------- | :------------------------------------------------------- |
 | [📖 Quick Start](docs/en/Quickstart.md)              | Get up and running with JiuwenClaw in 5 minutes          |
+| [📖 Quick Start(TUI)](docs/en/Quickstart_tui.md)   | Get up and running with JiuwenClaw-tui in 5 minutes      |
 | [⚙️ Configuration & Workspace](docs/en/Configuration.md) | Environment setup and workspace management               |
 | [📁 Workspace Structure](docs/en/Agent.md)           | workspace directory layout, presets, and dynamic content |
 | [🛠️ Skill System](docs/en/Skills.md)                 | Guide to developing custom skills                        |
