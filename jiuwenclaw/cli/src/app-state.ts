@@ -258,16 +258,27 @@ export class CliPiAppState {
 
   private async fetchModelInfo(): Promise<void> {
     try {
-      const payload = await this.request("config.get", {});
-      if (payload && typeof payload === "object") {
-        const config = payload as Record<string, unknown>;
-        this.modelInfo = {
-          provider: String(config.model_provider ?? ""),
-          model: String(config.model ?? ""),
-          version: String(config.app_version ?? ""),
-        };
-        this.emitChange();
-      }
+      const [configPayload, modelsPayload] = await Promise.allSettled([
+        this.request("config.get", {}),
+        this.request("models.list", {}),
+      ]);
+      const config =
+        configPayload.status === "fulfilled" && configPayload.value && typeof configPayload.value === "object"
+          ? (configPayload.value as Record<string, unknown>)
+          : {};
+      const modelsResult =
+        modelsPayload.status === "fulfilled" && modelsPayload.value && typeof modelsPayload.value === "object"
+          ? (modelsPayload.value as Record<string, unknown>)
+          : {};
+      const activeModelName = String(modelsResult.active_model ?? "").trim();
+      const models = Array.isArray(modelsResult.models) ? (modelsResult.models as Record<string, unknown>[]) : [];
+      const activeModel = activeModelName ? models.find((m) => m.model_name === activeModelName) : models[0];
+      this.modelInfo = {
+        provider: String(activeModel?.model_provider ?? config.model_provider ?? ""),
+        model: activeModelName || String(config.model ?? ""),
+        version: String(config.app_version ?? ""),
+      };
+      this.emitChange();
     } catch {
       // ignore error, use defaults
     }
@@ -359,6 +370,7 @@ export class CliPiAppState {
       connectionStatus: snapshot.connectionStatus,
       mode: snapshot.mode,
       setMode: this.setMode,
+      setModel: this.setModel,
       setThemeName: this.setThemeName,
       setAccentColor: this.setAccentColor,
       transcriptMode: snapshot.transcriptMode,
@@ -475,6 +487,14 @@ readonly request = async <T = Record<string, unknown>>(
   ): void => {
     if (this.mode !== mode) {
       this.mode = mode;
+      this.emitChange();
+    }
+  };
+
+  readonly setModel = (name: string): void => {
+    const trimmed = name.trim();
+    if (trimmed && this.modelInfo.model !== trimmed) {
+      this.modelInfo = { ...this.modelInfo, model: trimmed };
       this.emitChange();
     }
   };

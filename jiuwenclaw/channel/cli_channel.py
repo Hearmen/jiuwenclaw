@@ -19,6 +19,7 @@ from openjiuwen.core.foundation.llm.schema.config import (
 from jiuwenclaw.config import (
     get_config,
     get_config_raw,
+    get_default_models,
     resolve_env_vars,
     update_context_engine_enabled_in_config,
     update_memory_forbidden_enabled_in_config,
@@ -1197,9 +1198,34 @@ def register_cli_handlers(bind: CliHandlersBindParams) -> None:
                 error=resp.error or "Model switch failed on agent server",
             )
 
+    async def _models_list(ws, req_id, params, session_id):
+        try:
+            config = get_config()
+            models = get_default_models(config)
+            result = []
+            for entry in models:
+                mcc = entry.get("model_client_config", {})
+                mco = entry.get("model_config_obj", {})
+                result.append({
+                    "model_name": mcc.get("model_name", ""),
+                    "api_base": mcc.get("api_base", ""),
+                    "api_key": mcc.get("api_key", ""),
+                    "model_provider": mcc.get("client_provider", ""),
+                    "temperature": mco.get("temperature", 0.95),
+                })
+            active_model = result[0]["model_name"] if result else ""
+            await channel.send_response(ws, req_id, ok=True, payload={
+                "models": result,
+                "active_model": active_model,
+            })
+        except Exception as exc:
+            logger.warning("[models.list] %s", exc)
+            await channel.send_response(ws, req_id, ok=False, error=str(exc), code="INTERNAL_ERROR")
+
     channel.register_local_handler(path, "config.get", _config_get)
     channel.register_local_handler(path, "config.set", _config_set)
     channel.register_local_handler(path, "config.validate_model", _config_validate_model)
+    channel.register_local_handler(path, "models.list", _models_list)
     channel.register_local_handler(path, "session.list", _session_list)
     channel.register_local_handler(path, "session.create", _session_create)
     channel.register_local_handler(path, "session.delete", _session_delete)

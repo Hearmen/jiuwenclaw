@@ -940,6 +940,7 @@ export class AppScreen implements Component, Focusable {
         applied?: boolean;
       }>("command.model", { model: modelName });
       const nextModel = payload.current ?? modelName;
+      this.state.setModel(nextModel);
       this.state.clearEntries();
       this.state.addItem(
         addInfo(this.state.getSnapshot().sessionId, `Switched model to: ${nextModel}`, "m"),

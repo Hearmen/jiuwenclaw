@@ -43,6 +43,7 @@ export interface CommandContext {
   connectionStatus: ConnectionStatus;
   mode: "agent.plan" | "agent.fast" | "code.plan" | "code.normal" | "team";
   setMode: (mode: "agent.plan" | "agent.fast" | "code.plan" | "code.normal" | "team") => void;
+  setModel: (name: string) => void;
   setThemeName: (theme: ThemeName) => void;
   setAccentColor: (color: AccentColorName) => void;
   transcriptMode: "compact" | "detailed";

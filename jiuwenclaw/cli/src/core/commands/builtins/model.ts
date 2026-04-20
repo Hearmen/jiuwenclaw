@@ -142,6 +142,9 @@ export function createModelCommand(): SlashCommand {
         }>("command.model", { model: value });
 
         const isSwitch = !!payload.requested;
+        if (isSwitch) {
+          ctx.setModel(payload.requested ?? payload.current ?? "");
+        }
         const title = isSwitch
           ? `Switched to: ${payload.requested}`
           : "Model Configuration";
