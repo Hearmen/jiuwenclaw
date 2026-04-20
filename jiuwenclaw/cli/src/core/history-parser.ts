@@ -2,6 +2,84 @@ import { normalizeFinalContent } from "./final-content.js";
 import type { EventFrame } from "./protocol.js";
 import type { HistoryItem, InfoMeta, JsonValue, MediaItem, ToolCallDisplay } from "./types.js";
 
+/** 合并同一次流式请求内多条 assistant 片段的正文；若末条为完整 `chat.final` 且等于前文拼接则去重。 */
+export function mergeAssistantFragmentContents(parts: string[]): string {
+  const p = parts.map((x) => String(x ?? ""));
+  if (p.length === 0) {
+    return "";
+  }
+  if (p.length === 1) {
+    return p[0]!;
+  }
+  const withoutLast = p.slice(0, -1).join("");
+  const last = p[p.length - 1]!;
+  if (last === withoutLast) {
+    return last;
+  }
+  return p.join("");
+}
+
+function sameAssistantTurn(
+  a: Extract<HistoryItem, { kind: "assistant" }>,
+  b: Extract<HistoryItem, { kind: "assistant" }>,
+): boolean {
+  if (a.sessionId !== b.sessionId) {
+    return false;
+  }
+  const ar = a.requestId?.trim();
+  const br = b.requestId?.trim();
+  if (ar && br) {
+    return ar === br;
+  }
+  // history.json 中 id 常为 `{request_id}:assistant`，流式多段共用同一 id
+  if (a.id && a.id === b.id) {
+    return true;
+  }
+  return false;
+}
+
+/**
+ * 将流式恢复产生的多条 `kind: assistant`、同一次模型请求（requestId 或同源 id）的连续条目合并为一条。
+ * 覆盖网关 history.get：本地 ack 无 `payload.messages`、正文仅靠 `history.message` 事件注入的路径。
+ */
+export function coalesceAssistantHistoryEntries(entries: HistoryItem[]): HistoryItem[] {
+  const out: HistoryItem[] = [];
+  let i = 0;
+  while (i < entries.length) {
+    const e = entries[i]!;
+    if (e.kind === "assistant" && !e.mediaItems?.length && !e.streaming) {
+      const group: Extract<HistoryItem, { kind: "assistant" }>[] = [e];
+      let j = i + 1;
+      while (j < entries.length) {
+        const n = entries[j]!;
+        if (
+          n.kind === "assistant" &&
+          !n.mediaItems?.length &&
+          !n.streaming &&
+          sameAssistantTurn(e, n)
+        ) {
+          group.push(n);
+          j++;
+        } else {
+          break;
+        }
+      }
+      if (group.length === 1) {
+        out.push(e);
+      } else {
+        const last = group[group.length - 1]!;
+        const content = mergeAssistantFragmentContents(group.map((g) => g.content));
+        out.push({ ...last, content });
+      }
+      i = j;
+    } else {
+      out.push(e);
+      i++;
+    }
+  }
+  return out;
+}
+
 function asString(value: unknown): string | undefined {
   return typeof value === "string" && value.length > 0 ? value : undefined;
 }
@@ -82,6 +160,106 @@ function normalizeHistoryRole(rawRole: unknown): "user" | "assistant" | "tool" |
   if (role === "tool" || role === "tool_call" || role === "tool_result") return "tool";
   if (role === "system") return "system";
   return "assistant";
+}
+
+function historyRecordEventType(rec: Record<string, unknown>): string {
+  const et = rec.event_type ?? rec.type;
+  return typeof et === "string" ? et.trim() : "";
+}
+
+function isReasoningStreamRecord(rec: Record<string, unknown>): boolean {
+  if (historyRecordEventType(rec) === "chat.reasoning") {
+    return true;
+  }
+  const sct = rec.source_chunk_type;
+  return typeof sct === "string" && sct.trim().toLowerCase() === "llm_reasoning";
+}
+
+/**
+ * AgentServer 在流式输出时为每个 `chat.delta` 追加一条 history 记录；恢复会话时若逐条渲染，
+ * 会把正文拆成「一字/一词一行」。此处合并同一次请求内的 delta，并在已有 `chat.final` 时丢弃冗余 delta。
+ */
+export function mergeHistoryMessagesForRestore(messages: unknown[]): Record<string, unknown>[] {
+  const list: Record<string, unknown>[] = [];
+  for (const m of messages) {
+    const rec = asRecord(m);
+    if (rec) {
+      list.push(rec);
+    }
+  }
+
+  const requestIdsWithFinal = new Set<string>();
+  for (const rec of list) {
+    if (normalizeHistoryRole(rec.role) !== "assistant") {
+      continue;
+    }
+    if (historyRecordEventType(rec) !== "chat.final") {
+      continue;
+    }
+    const rid = typeof rec.request_id === "string" ? rec.request_id.trim() : "";
+    if (rid) {
+      requestIdsWithFinal.add(rid);
+    }
+  }
+
+  const filtered: Record<string, unknown>[] = [];
+  for (const rec of list) {
+    const role = normalizeHistoryRole(rec.role);
+    const et = historyRecordEventType(rec);
+    const rid = typeof rec.request_id === "string" ? rec.request_id.trim() : "";
+    if (
+      role === "assistant" &&
+      et === "chat.delta" &&
+      !isReasoningStreamRecord(rec) &&
+      rid &&
+      requestIdsWithFinal.has(rid)
+    ) {
+      continue;
+    }
+    filtered.push(rec);
+  }
+
+  const merged: Record<string, unknown>[] = [];
+  let i = 0;
+  while (i < filtered.length) {
+    const rec = filtered[i]!;
+    const role = normalizeHistoryRole(rec.role);
+    const et = historyRecordEventType(rec);
+    const rid = typeof rec.request_id === "string" ? rec.request_id.trim() : "";
+    if (role === "assistant" && et === "chat.delta" && !isReasoningStreamRecord(rec) && rid) {
+      const parts: string[] = [];
+      let j = i;
+      while (j < filtered.length) {
+        const r = filtered[j]!;
+        const rrole = normalizeHistoryRole(r.role);
+        const ret = historyRecordEventType(r);
+        const rrid = typeof r.request_id === "string" ? r.request_id.trim() : "";
+        if (
+          rrole === "assistant" &&
+          ret === "chat.delta" &&
+          !isReasoningStreamRecord(r) &&
+          rrid === rid
+        ) {
+          const c = r.content;
+          parts.push(typeof c === "string" ? c : c != null ? String(c) : "");
+          j++;
+        } else {
+          break;
+        }
+      }
+      merged.push({
+        ...rec,
+        event_type: "chat.final",
+        content: parts.join(""),
+      });
+      i = j;
+    } else {
+      merged.push(rec);
+      i++;
+    }
+  }
+
+  return merged;
 }
 
 function recordTimestampIso(record: Record<string, unknown>): string {

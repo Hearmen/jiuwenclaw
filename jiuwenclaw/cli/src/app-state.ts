@@ -8,7 +8,9 @@ import {
 } from "./core/app-state-helpers.js";
 import {
   applyToolResult,
+  coalesceAssistantHistoryEntries,
   createToolCallDisplay,
+  mergeHistoryMessagesForRestore,
   parseHistoryFrame,
 } from "./core/history-parser.js";
 import { generateSessionId } from "./core/session-state.js";
@@ -420,7 +422,11 @@ readonly request = async <T = Record<string, unknown>>(
 
   readonly addItem = (item: HistoryItem): void => {
     this.entries = [...this.entries, item];
-    this.lastError = item.kind === "error" ? item.content : this.lastError;
+    if (item.kind === "error") {
+      this.lastError = item.content;
+    } else {
+      this.lastError = null;
+    }
     this.emitChange();
   };
 
@@ -664,16 +670,14 @@ readonly request = async <T = Record<string, unknown>>(
       page_idx?: number;
     }>("history.get", { session_id: targetSessionId, page_idx: 1 });
     if (Array.isArray(payload.messages)) {
-      for (const message of payload.messages) {
-        if (!message || typeof message !== "object" || Array.isArray(message)) {
-          continue;
-        }
+      const merged = mergeHistoryMessagesForRestore(payload.messages);
+      for (const message of merged) {
         const entry = parseHistoryFrame({
           type: "event",
           event: "history.message",
           payload: {
             session_id: targetSessionId,
-            message: message as Record<string, unknown>,
+            message,
             total_pages: payload.total_pages,
             page_idx: payload.page_idx,
           },
@@ -685,11 +689,15 @@ readonly request = async <T = Record<string, unknown>>(
     }
     setTimeout(() => {
       if (requestToken !== this.historyRequestToken) return;
-      this.entries = [...this.historyEntries];
-      this.rebuildToolExecutionState();
-      this.emitChange();
+      this.applyHistoryEntriesToTranscript();
     }, 80);
   };
+
+  private applyHistoryEntriesToTranscript(): void {
+    this.entries = [...coalesceAssistantHistoryEntries(this.historyEntries)];
+    this.rebuildToolExecutionState();
+    this.emitChange();
+  }
 
   private readonly clearToolExecutionState = (): void => {
     if (this.toolTimeoutTimer) {
@@ -955,9 +963,7 @@ readonly request = async <T = Record<string, unknown>>(
     }
     this.historyFlushTimer = setTimeout(() => {
       this.historyFlushTimer = null;
-      this.entries = [...this.historyEntries];
-      this.rebuildToolExecutionState();
-      this.emitChange();
+      this.applyHistoryEntriesToTranscript();
     }, 50);
   }
 
