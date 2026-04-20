@@ -42,6 +42,7 @@ TOOL_WHITELIST = frozenset({
     "audio",
     "image_ocr",
     "visual_question_answering",
+    "generate_image",
     "audio_transcription",
     "audio_question_answering",
     "audio_metadata",
@@ -200,7 +201,7 @@ def get_default_model_name(config: dict[str, Any] | None = None) -> str:
     """
     if config is None:
         try:
-            from jiuwenclaw.agentserver.config import get_config
+            from jiuwenclaw.config import get_config
             config = get_config()
         except Exception as exc:
             logger.warning("[TeamRuntime] Failed to load config for default model: %s", exc)

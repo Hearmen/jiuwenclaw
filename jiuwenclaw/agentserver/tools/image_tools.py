@@ -3,7 +3,9 @@ import asyncio
 import base64
 import logging
 import os
+import random
 import sys
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -16,7 +18,11 @@ from openjiuwen.core.foundation.tool import McpServerConfig, tool
 from openjiuwen.core.runner import Runner
 import requests
 
-from jiuwenclaw.agentserver.tools.multimodal_config import apply_vision_model_config_from_yaml
+from jiuwenclaw.utils import get_agent_workspace_dir
+from jiuwenclaw.agentserver.tools.multimodal_config import (
+    apply_image_gen_model_config_from_yaml,
+    apply_vision_model_config_from_yaml,
+)
 
 
 logger = logging.getLogger(__name__)
@@ -87,6 +93,24 @@ def _get_vision_api_credentials():
     return k, b, m
 
 
+def _get_image_gen_api_credentials():
+    """Get image generation API credentials from environment variables.
+
+    Default provider: DashScope
+    Default api_base: https://dashscope.aliyuncs.com/api/v1
+    Default model: wanx-v1
+    """
+    k = os.environ.get("IMAGE_GEN_API_KEY") or os.environ.get("API_KEY", "")
+    b = (
+        os.environ.get("IMAGE_GEN_API_BASE")
+        or os.environ.get("API_BASE", "")
+        or "https://dashscope.aliyuncs.com/api/v1"
+    )
+    m = os.environ.get("IMAGE_GEN_MODEL_NAME") or "wanx-v1"
+    p = os.environ.get("IMAGE_GEN_PROVIDER") or "DashScope"
+    return k, b, m, p
+
+
 def _make_sandbox_error_msg() -> str:
     return (
         "The visual_question_answering tool cannot access to sandbox file, "
@@ -126,10 +150,10 @@ async def _invoke_openai_vision(src: str, q: str) -> str:
         async def _call():
             cli = OpenAI(api_key=api_key, base_url=api_base)
             r = cli.chat.completions.create(model=model, messages=msgs)
-            txt = r.choices[0].message.content
-            if not txt or not txt.strip():
-                raise Exception("Response text is None or empty")
-            return txt
+            content = r.choices[0].message.content
+            if not content or not content.strip():
+                raise Exception("Response text is empty or None")
+            return content
 
         def _on_err(tries, exc):
             return f"Visual Question Answering (Client) failed after {tries} retries: {exc}\n"
@@ -294,4 +318,163 @@ async def visual_question_answering(image_path_or_url: str, question: str) -> st
     logger.info(f"OCR results: {ocr_out}")
     logger.info(f"VQA results: {vqa_out}")
     return f"OCR results:\n{ocr_out}\n\nVQA result:\n{vqa_out}"
+
+
+async def _invoke_model_image_generation(prompt: str, size: str = "1024x1024", quality: str = "standard") -> dict:
+    """
+    Generate image using internal Model class (DashScope, etc.).
+
+    Args:
+        prompt: The text description for image generation
+        size: Image size, e.g., "256x256", "512x512", "1024x1024"
+        quality: Image quality, "standard" or "hd"
+
+    Returns:
+        dict with 'image_path' or 'error' key
+    """
+    from openjiuwen.core.foundation.llm import ModelClientConfig, Model, UserMessage, ModelRequestConfig
+
+    api_key, api_base, model, provider = _get_image_gen_api_credentials()
+    if not api_key:
+        return {"error": "[ERROR]: IMAGE_GEN_API_KEY or API_KEY is not configured for image generation."}
+
+    try:
+        model_client_config = ModelClientConfig(
+            client_id="image_gen_client",
+            client_provider=provider,
+            api_key=api_key,
+            api_base=api_base,
+            verify_ssl=False
+        )
+
+        model_config = ModelRequestConfig(
+            model=model,
+        )
+
+        model_instance = Model(
+            model_config=model_config,
+            model_client_config=model_client_config
+        )
+
+        messages = [UserMessage(content=prompt)]
+
+        async def _call():
+            return await model_instance.generate_image(messages=messages, model=model)
+
+        result = await _RetryExecutor.with_backoff(_call, max_tries=3)
+
+        output_dir = get_agent_workspace_dir()
+        timestamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
+        random_suffix = random.randint(1000, 9999)
+        output_path = output_dir / f"generated_{timestamp}_{random_suffix}.png"
+
+        # Handle ImageGenerationResponse object
+        # result is ImageGenerationResponse with images (URLs) or images_base64
+        image_url = None
+        image_base64 = None
+
+        # Handle ImageGenerationResponse object
+        if hasattr(result, 'images') and result.images and len(result.images) > 0:
+            image_url = result.images[0]
+        elif hasattr(result, 'images_base64') and result.images_base64 and len(result.images_base64) > 0:
+            image_base64 = result.images_base64[0]
+
+        if image_base64:
+            # Save base64 image to file
+            img_bytes = base64.b64decode(image_base64)
+            with open(output_path, "wb") as f:
+                f.write(img_bytes)
+
+            return {
+                "image_path": str(output_path.absolute()),
+                "revised_prompt": prompt,
+            }
+        elif image_url:
+            # Download image from URL and save locally
+            ua = (
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+                "(KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"
+            )
+            response = requests.get(image_url, headers={"User-Agent": ua})
+            response.raise_for_status()
+
+            with open(output_path, "wb") as f:
+                f.write(response.content)
+
+            return {
+                "image_path": str(output_path.absolute()),
+                "revised_prompt": prompt,
+                "original_url": image_url,
+            }
+
+        return {"error": "[ERROR]: No valid image data in response"}
+
+    except Exception as ex:
+        return {"error": f"[ERROR]: Image generation failed: {ex}"}
+
+
+@tool(
+    name="generate_image",
+    description=(
+        "Generate an image from a text description using AI image generation models. "
+        "Use this tool when the user wants to create an image based on a text prompt. "
+        "Returns the path to the saved generated image file."
+    ),
+)
+async def generate_image(
+    prompt: str,
+    size: str = "1024x1024",
+    quality: str = "standard",
+    save_dir: str | None = None,
+) -> str:
+    """
+    Generate an image from text description.
+
+    Args:
+        prompt: Text description of the image to generate
+        size: Image size, options: "256x256", "512x512", "1024x1024", "1792x1024", "1024x1792"
+        quality: Image quality, "standard" or "hd"
+        save_dir: Optional directory to save the image (defaults to "generated_images")
+
+    Returns:
+        Path to the generated image file or error message
+    """
+    from jiuwenclaw.config import get_config
+    try:
+        apply_image_gen_model_config_from_yaml(get_config())
+    except Exception:
+        logger.debug("Failed to apply image_gen model config from yaml", exc_info=True)
+
+    _, _, model, provider = _get_image_gen_api_credentials()
+    logger.info("[generate_image] using model: %s, provider: %s, size: %s, quality: %s", model, provider, size, quality)
+
+    result = await _invoke_model_image_generation(prompt, size=size, quality=quality)
+
+    if "error" in result:
+        return result["error"]
+
+    image_path = result["image_path"]
+
+    # Move to custom save directory if specified
+    if save_dir:
+        save_path = Path(save_dir)
+        save_path.mkdir(parents=True, exist_ok=True)
+        new_path = save_path / Path(image_path).name
+        Path(image_path).rename(new_path)
+        image_path = str(new_path.absolute())
+
+    revised_prompt = result.get("revised_prompt", prompt)
+    original_url = result.get("original_url", "")
+
+    response_parts = [
+        f"Image generated successfully!",
+        f"Saved to: {image_path}",
+        f"Prompt: {prompt}",
+    ]
+    if revised_prompt != prompt:
+        response_parts.append(f"Revised prompt: {revised_prompt}")
+    if original_url:
+        response_parts.append(f"Original URL: {original_url}")
+
+    return "\n".join(response_parts)
 

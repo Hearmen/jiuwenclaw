@@ -97,9 +97,8 @@ class JiuClawStreamEventRail(DeepAgentRail):
         if self._abort_requested:
             raise asyncio.CancelledError("Agent abort requested")
 
-        if not ctx.extra.get("_context_fixed") and ctx.context is not None:
+        if ctx.context is not None:
             await self._fix_incomplete_tool_context(ctx.context)
-            ctx.extra["_context_fixed"] = True
 
         await self._emit_context_compression(ctx)
 

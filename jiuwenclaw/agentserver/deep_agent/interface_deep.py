@@ -93,10 +93,12 @@ from jiuwenclaw.agentserver.permissions.checker import TOOL_PERMISSION_CHANNEL_I
 from jiuwenclaw.agentserver.skill_manager import SkillManager
 from jiuwenclaw.agentserver.tools.multimodal_config import (
     apply_audio_model_config_from_yaml,
+    apply_image_gen_model_config_from_yaml,
     apply_video_model_config_from_yaml,
     apply_vision_model_config_from_yaml,
 )
 from jiuwenclaw.agentserver.tools.video_tools import video_understanding
+from jiuwenclaw.agentserver.tools.image_tools import generate_image
 
 from jiuwenclaw.agentserver.tools import SendFileToolkit, SkillToolkit
 from jiuwenclaw.agentserver.tools.acp_output_tools import get_tools as get_acp_output_tools
@@ -302,6 +304,7 @@ class JiuWenClawDeepAdapter:
         self._vision_tools_registered: bool = False
         self._audio_tools_registered: bool = False
         self._video_tool_registered: bool = False
+        self._image_gen_tool_registered: bool = False
         self._model: Model | None = None
         self._model_client_config: ModelClientConfig | None = None
         self._model_request_config: ModelRequestConfig | None = None
@@ -327,6 +330,7 @@ class JiuWenClawDeepAdapter:
         self._vision_model_config: VisionModelConfig | None = None
         self._audio_model_config: AudioModelConfig | None = None
         self._video_model_config: bool = False
+        self._image_gen_model_config: bool = False
         self._vision_tools: list[Any] = []
         self._audio_tools: list[Any] = []
         self._instance_overrides: dict[str, Any] = {}
@@ -620,6 +624,19 @@ class JiuWenClawDeepAdapter:
             return False
         return True
 
+    @staticmethod
+    def _build_image_gen_model_config(
+            config_base: dict[str, Any],
+    ) -> bool:
+        """Build DeepAgent image generation config from service config/env mapping."""
+        apply_image_gen_model_config_from_yaml(config_base)
+        if not os.getenv("IMAGE_GEN_API_KEY"):
+            logger.info(
+                "[JiuWenClawDeepAdapter] image_gen tool skipped: incomplete config"
+            )
+            return False
+        return True
+
     def _refresh_multimodal_configs(
             self,
             config_base: dict[str, Any],
@@ -628,6 +645,7 @@ class JiuWenClawDeepAdapter:
         self._vision_model_config = self._build_vision_model_config(config_base)
         self._audio_model_config = self._build_audio_model_config(config_base)
         self._video_model_config = self._build_video_model_config(config_base)
+        self._image_gen_model_config = self._build_image_gen_model_config(config_base)
 
         for tool in self._vision_tools:
             tool.vision_model_config = self._vision_model_config
@@ -750,6 +768,14 @@ class JiuWenClawDeepAdapter:
             enabled=bool(self._video_model_config),
             create_fn=lambda: [video_understanding],
             warn_label="video tool",
+        )
+
+        _, self._image_gen_tool_registered = self._sync_tool_group(
+            current_tools=[generate_image],
+            registered=self._image_gen_tool_registered,
+            enabled=bool(self._image_gen_model_config),
+            create_fn=lambda: [generate_image],
+            warn_label="generate_image tool",
         )
 
     def _sync_paid_search_tool_for_runtime(self) -> None:
@@ -1362,6 +1388,19 @@ class JiuWenClawDeepAdapter:
             except Exception as exc:
                 logger.warning(
                     "[JiuWenClawDeepAdapter] video tool registration failed: %s",
+                    exc,
+                )
+
+        # generate_image tool: use dedicated image_gen model config
+        self._image_gen_tool_registered = False
+        if self._image_gen_model_config:
+            try:
+                Runner.resource_mgr.add_tool(generate_image)
+                tool_cards.append(generate_image.card)
+                self._image_gen_tool_registered = True
+            except Exception as exc:
+                logger.warning(
+                    "[JiuWenClawDeepAdapter] generate_image tool registration failed: %s",
                     exc,
                 )
 

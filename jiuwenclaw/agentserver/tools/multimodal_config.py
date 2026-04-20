@@ -65,6 +65,7 @@ _EMBED_MODEL_KEY_MAP = {
     "audio": "audio_model",
     "vision": "vision_model",
     "video": "video_model",
+    "image_gen": "image_gen_model",
 }
 
 
@@ -231,3 +232,35 @@ def apply_video_model_config_from_yaml(config_base: dict[str, Any] | None) -> No
         os.environ["VIDEO_MODEL_NAME"] = model_name
     if provider:
         os.environ["VIDEO_PROVIDER"] = provider
+
+
+def apply_image_gen_model_config_from_yaml(config_base: dict[str, Any] | None) -> None:
+    """
+    从 config.yaml 读取文生图模型配置并设置环境变量
+
+    配置优先级:
+    1. models.image_gen.model_config
+    2. embed.image_gen_model + embed.embed_api_key/embed_api_base
+    3. 环境变量 MODEL_NAME, API_KEY, API_BASE
+
+    Default provider: DashScope
+    Default api_base: https://dashscope.aliyuncs.com/api/v1
+    """
+    if not isinstance(config_base, dict):
+        return
+
+    mc = _get_model_config(config_base, "image_gen")
+
+    api_key = str(mc.get("api_key") or "").strip()
+    api_base = str(mc.get("api_base") or "").strip()
+    model_name = str(mc.get("model_name") or mc.get("model") or "").strip()
+    provider = str(mc.get("model_provider") or "").strip()
+
+    if api_key:
+        os.environ["IMAGE_GEN_API_KEY"] = api_key
+    if api_base:
+        os.environ["IMAGE_GEN_API_BASE"] = api_base
+    if model_name:
+        os.environ["IMAGE_GEN_MODEL_NAME"] = model_name
+    if provider:
+        os.environ["IMAGE_GEN_PROVIDER"] = provider
