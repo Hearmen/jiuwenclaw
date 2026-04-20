@@ -208,14 +208,14 @@ export function InputArea({
   );
 
   const handleNewSession = useCallback(async () => {
-    if (isListening || isInterruptible) return;
+    if (isListening || (isInterruptible && !isTeamMode)) return;
     setInputValue('');
     setPendingVoiceText('');
     if (textareaRef.current) {
       textareaRef.current.style.height = 'auto';
     }
     await onNewSession();
-  }, [isListening, isInterruptible, onNewSession, setInputValue]);
+  }, [isListening, isInterruptible, isTeamMode, onNewSession, setInputValue]);
 
   const handleModeSwitch = useCallback(async (targetMode: AgentMode) => {
     if (mode === targetMode) return;
@@ -346,12 +346,12 @@ export function InputArea({
           <button
             type="button"
             onClick={handleNewSession}
-            disabled={isListening || isInterruptible}
+            disabled={isListening || (isInterruptible && !isTeamMode)}
             className={cx(
               'chat-input-btn',
-              (isListening || isInterruptible) && 'chat-input-btn--disabled',
+              (isListening || (isInterruptible && !isTeamMode)) && 'chat-input-btn--disabled',
             )}
-            title={isListening || isInterruptible ? t('chat.newSessionDisabled') : t('chat.newSession')}
+            title={isListening || (isInterruptible && !isTeamMode) ? t('chat.newSessionDisabled') : t('chat.newSession')}
           >
             <svg className="chat-input-btn-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={1.8}>
               <path strokeLinecap="round" strokeLinejoin="round" d="M12 4.5v15m7.5-7.5h-15" />

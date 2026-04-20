@@ -247,36 +247,6 @@ function ToolDetailModal({ execution, onClose }: ToolDetailModalProps) {
             </div>
           )}
         </div>
-
-        {/* 底部状态栏 */}
-        {result && (
-          <div
-            className="px-6 py-3 flex items-center justify-between"
-            style={{
-              backgroundColor: 'var(--panel-strong)',
-              borderTop: '1px solid var(--border)',
-            }}
-          >
-            <span
-              className="text-sm"
-              style={{ color: 'var(--muted)' }}
-            >
-              {result.summary || (result.success ? t('chatUi.toolResult.success') : t('chatUi.toolResult.failed'))}
-            </span>
-            <span
-              className={clsx(
-                'px-3 py-1 rounded-full text-sm font-medium',
-                result.success ? 'success' : 'error'
-              )}
-              style={{
-                backgroundColor: result.success ? 'var(--ok-subtle)' : 'var(--danger-subtle)',
-                color: result.success ? 'var(--ok)' : 'var(--danger)',
-              }}
-            >
-              {result.success ? t('chatUi.toolResult.success') : t('chatUi.toolResult.failed')}
-            </span>
-          </div>
-        )}
       </div>
     </div>
   );
