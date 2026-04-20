@@ -482,6 +482,7 @@ function MultiModelSection({
     model_name: "", api_base: "", api_key: "", model_provider: "OpenAI",
   });
   const [localError, setLocalError] = useState<string | null>(null);
+  const [validateToast, setValidateToast] = useState<{ show: boolean; success: boolean; message: string }>({ show: false, success: true, message: "" });
 
   const handleValidate = async (model: ModelEntry) => {
     if (!onModelValidate) return;
@@ -493,10 +494,13 @@ function MultiModelSection({
         model: model.model_name, model_provider: model.model_provider,
       });
       setValidateResults((prev) => ({ ...prev, [model.model_name]: "ok" }));
+      setValidateToast({ show: true, success: true, message: t("config.validateModel.success") });
     } catch {
       setValidateResults((prev) => ({ ...prev, [model.model_name]: "err" }));
+      setValidateToast({ show: true, success: false, message: t("config.validateModel.notWorking") });
     } finally {
       setValidatingModel(null);
+      setTimeout(() => setValidateToast((prev) => ({ ...prev, show: false })), 3000);
     }
   };
 
@@ -559,6 +563,24 @@ function MultiModelSection({
           {localError}
         </div>
       )}
+      {validateToast.show && (
+        <div
+          className={`fixed top-4 left-1/2 -translate-x-1/2 z-50 px-6 py-3 rounded-xl shadow-lg flex items-center gap-3 animate-fade-in ${
+            validateToast.success ? "bg-ok-subtle border border-ok text-ok" : "bg-danger-subtle border border-danger text-danger"
+          }`}
+        >
+          {validateToast.success ? (
+            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
+            </svg>
+          ) : (
+            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+            </svg>
+          )}
+          <span className="font-medium">{validateToast.message}</span>
+        </div>
+      )}
       {models.map((model, idx) => {
         const isExpanded = expandedIdx === idx;
         const vr = validateResults[model.model_name];
@@ -578,8 +600,20 @@ function MultiModelSection({
                 {isDefault && (
                   <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-accent/15 text-accent border border-accent/30">{t("config.modelList.default")}</span>
                 )}
-                {vr === "ok" && <span className="text-[10px] text-ok">✓</span>}
-                {vr === "err" && <span className="text-[10px] text-danger">✗</span>}
+                {vr === "ok" && (
+                  <span className="w-5 h-5 rounded-full bg-ok-subtle text-ok flex items-center justify-center">
+                    <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={3}>
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
+                    </svg>
+                  </span>
+                )}
+                {vr === "err" && (
+                  <span className="w-5 h-5 rounded-full bg-danger-subtle text-danger flex items-center justify-center">
+                    <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={3}>
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+                    </svg>
+                  </span>
+                )}
               </button>
               <div className="flex items-center gap-1 ml-2">
                 {!isDefault && (
