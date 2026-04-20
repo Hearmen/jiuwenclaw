@@ -2,16 +2,16 @@ import type { AutocompleteItem } from "@mariozechner/pi-tui";
 import { makeItem } from "../helpers.js";
 import { CommandKind, type SlashCommand } from "../types.js";
 
-/** TUI `/mode` 参数补全：分组标题不可选；默认落在 agent.plan。 */
+/** TUI `/mode` 树形展示；分组行 value 为 `agent`/`code`（与 modeAlias 默认一致），不修改 pi-tui。 */
 export function buildModeAutocompleteItems(): AutocompleteItem[] {
   return [
-    { value: "__mode_hdr_agent__", label: "agent", navigable: false },
-    { value: "agent.plan", label: "    plan", navigable: true },
-    { value: "agent.fast", label: "    fast", navigable: true },
-    { value: "__mode_hdr_code__", label: "code", navigable: false },
-    { value: "code.normal", label: "    normal", navigable: true },
-    { value: "code.plan", label: "    plan", navigable: true },
-    { value: "team", label: "team", navigable: true },
+    { value: "agent", label: "agent" },
+    { value: "agent.plan", label: "    plan" },
+    { value: "agent.fast", label: "    fast" },
+    { value: "code", label: "code" },
+    { value: "code.normal", label: "    normal" },
+    { value: "code.plan", label: "    plan" },
+    { value: "team", label: "team" },
   ];
 }
 
@@ -25,6 +25,7 @@ export function createModeCommand(): SlashCommand {
     "code.normal",
     "team",
   ] as const;
+  /** 用户输入的简写 → 实际会话模式（/mode agent → agent.plan，/mode code → code.normal）。 */
   const modeAlias: Record<
     string,
     "agent.plan" | "agent.fast" | "code.plan" | "code.normal" | "team"
@@ -66,7 +67,7 @@ export function createModeCommand(): SlashCommand {
         // Some backends still accept mode only on chat.send.
       }
       ctx.setMode(nextMode);
-      ctx.addItem(makeItem(ctx.sessionId, "info", `Mode set to ${requestedMode}`, "m"));
+      ctx.addItem(makeItem(ctx.sessionId, "info", `Mode set to ${nextMode}`, "m"));
     },
   };
 }
