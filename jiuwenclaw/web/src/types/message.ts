@@ -12,6 +12,15 @@ export interface MediaItem {
   url?: string;
 }
 
+export interface UsageSummary {
+  input_tokens: number;
+  output_tokens: number;
+  total_tokens: number;
+  input_cost?: number;
+  output_cost?: number;
+  total_cost?: number;
+}
+
 export interface Message {
   id: string;
   role: MessageRole;
@@ -25,6 +34,7 @@ export interface Message {
   toolResult?: ToolResult;
   // 是否正在流式输出
   isStreaming?: boolean;
+  usageSummary?: UsageSummary;
 }
 
 export interface ToolCall {

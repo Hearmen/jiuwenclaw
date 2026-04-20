@@ -1,4 +1,4 @@
-import { Message, MessageRole, WsEvent } from '../types';
+import { Message, MessageRole, UsageSummary, WsEvent } from '../types';
 import { webClient } from '../services/webClient';
 import { normalizeFinalContent } from '../utils/finalContent';
 
@@ -10,6 +10,7 @@ const ALLOWED_ASSISTANT_EVENT_TYPES = new Set([
   'chat.final',
   'chat.tool_call',
   'chat.tool_result',
+  'chat.usage_summary',
 ]);
 
 /** 后端约定：最后一帧 `history.message` 使用 `payload.status: done`（兼容旧版 `payload.content: done`） */
@@ -26,7 +27,8 @@ export interface HistoryToolReplayItem {
 type HistoryTimelineEntry =
   | { kind: 'message'; message: Message }
   | { kind: 'tool_call'; at: string; payload: Record<string, unknown> }
-  | { kind: 'tool_result'; at: string; payload: Record<string, unknown> };
+  | { kind: 'tool_result'; at: string; payload: Record<string, unknown> }
+  | { kind: 'usage_summary'; at: string; usage: UsageSummary };
 
 interface BeginHistoryRestoreOptions {
   sessionId: string;
@@ -232,6 +234,22 @@ function parseHistoryTimelineEntry(
     return { kind: 'tool_result', at, payload };
   }
 
+  if (eventType === 'chat.usage_summary') {
+    const rawUsage = payload.usage;
+    if (isRecord(rawUsage)) {
+      const usage: UsageSummary = {
+        input_tokens: typeof rawUsage.input_tokens === 'number' ? rawUsage.input_tokens : 0,
+        output_tokens: typeof rawUsage.output_tokens === 'number' ? rawUsage.output_tokens : 0,
+        total_tokens: typeof rawUsage.total_tokens === 'number' ? rawUsage.total_tokens : 0,
+      };
+      if (typeof rawUsage.input_cost === 'number') usage.input_cost = rawUsage.input_cost;
+      if (typeof rawUsage.output_cost === 'number') usage.output_cost = rawUsage.output_cost;
+      if (typeof rawUsage.total_cost === 'number') usage.total_cost = rawUsage.total_cost;
+      return { kind: 'usage_summary', at, usage };
+    }
+    return null;
+  }
+
   return null;
 }
 
@@ -371,6 +389,13 @@ export function beginHistoryRestore(options: BeginHistoryRestoreOptions): Histor
     for (const e of entries) {
       if (e.kind === 'message') {
         messages.push(e.message);
+      } else if (e.kind === 'usage_summary') {
+        for (let i = messages.length - 1; i >= 0; i--) {
+          if (messages[i].role === 'assistant') {
+            messages[i] = { ...messages[i], usageSummary: e.usage };
+            break;
+          }
+        }
       } else {
         toolReplay.push({ kind: e.kind, at: e.at, payload: e.payload });
       }
@@ -489,6 +514,13 @@ export function fetchHistoryPage(options: FetchHistoryPageOptions): HistoryResto
     for (const e of entries) {
       if (e.kind === 'message') {
         messages.push(e.message);
+      } else if (e.kind === 'usage_summary') {
+        for (let i = messages.length - 1; i >= 0; i--) {
+          if (messages[i].role === 'assistant') {
+            messages[i] = { ...messages[i], usageSummary: e.usage };
+            break;
+          }
+        }
       } else {
         toolReplay.push({ kind: e.kind, at: e.at, payload: e.payload });
       }

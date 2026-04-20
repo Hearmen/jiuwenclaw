@@ -119,6 +119,8 @@ class EventType(Enum):
     HELLO = "hello"
     CHAT_DELTA = "chat.delta"
     CHAT_REASONING = "chat.reasoning"
+    CHAT_USAGE_METADATA = "chat.usage_metadata"
+    CHAT_USAGE_SUMMARY = "chat.usage_summary"
     CHAT_FINAL = "chat.final"
     CHAT_MEDIA = "chat.media"
     CHAT_FILE = "chat.file"

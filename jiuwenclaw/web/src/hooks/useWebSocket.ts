@@ -21,6 +21,7 @@ import {
   Session,
   ToolResult,
  	ToolCall,
+  UsageSummary,
 } from '../types';
 import { useChatStore, useTodoStore, useSessionStore } from '../stores';
 import { webClient } from '../services/webClient';
@@ -964,6 +965,32 @@ export function useWebSocket(options: UseWebSocketOptions): UseWebSocketReturn {
               timestamp: e.timestamp || Date.now(),
             });
           }
+        }
+      }),
+      webClient.on('chat.usage_summary', ({ payload }) => {
+        console.log('[usage_summary] received:', payload);
+        if (!shouldHandleSessionEvent(payload)) {
+          console.log('[usage_summary] filtered by session check');
+          return;
+        }
+        const usage = payload.usage as UsageSummary | undefined;
+        if (!usage) {
+          console.log('[usage_summary] no usage field in payload');
+          return;
+        }
+        const { currentStreamId, messages } = useChatStore.getState();
+        let targetId = currentStreamId;
+        if (!targetId) {
+          for (let i = messages.length - 1; i >= 0; i--) {
+            if (messages[i].role === 'assistant') {
+              targetId = messages[i].id;
+              break;
+            }
+          }
+        }
+        console.log('[usage_summary] targetId:', targetId, 'usage:', usage);
+        if (targetId) {
+          useChatStore.getState().setUsageSummary(targetId, usage);
         }
       }),
     ];

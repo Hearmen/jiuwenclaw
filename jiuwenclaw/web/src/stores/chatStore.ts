@@ -12,6 +12,7 @@ import {
   InterruptResultPayload,
   SubtaskUpdatePayload,
   AskUserQuestionPayload,
+  UsageSummary,
 } from '../types';
 import { useTodoStore } from './todoStore';
 
@@ -97,6 +98,8 @@ interface ChatState {
   setPendingQuestion: (question: AskUserQuestionPayload | null) => void;
   // 输入框相关
   setInputValue: (value: string) => void;
+  // Usage summary
+  setUsageSummary: (messageId: string, usage: UsageSummary) => void;
 }
 
 export const useChatStore = create<ChatState>((set, get) => ({
@@ -517,5 +520,13 @@ export const useChatStore = create<ChatState>((set, get) => ({
   
   setInputValue: (value) => {
     set({ inputValue: value });
+  },
+
+  setUsageSummary: (messageId, usage) => {
+    set((state) => ({
+      messages: state.messages.map((msg) =>
+        msg.id === messageId ? { ...msg, usageSummary: usage } : msg
+      ),
+    }));
   },
 }));

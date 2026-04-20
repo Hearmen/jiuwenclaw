@@ -392,7 +392,6 @@ class JiuWenClawDeepAdapter:
             return self._model_request_config.model or "unknown"
         return "unknown"
 
-
     @staticmethod
     def _browser_runtime_enabled() -> bool:
         """Whether browser runtime support is enabled for DeepAgent subagent wiring."""
@@ -431,7 +430,6 @@ class JiuWenClawDeepAdapter:
             if isinstance(value, str) and value.strip():
                 return value.strip()
         return ""
-
 
     @staticmethod
     def _is_subagent_enabled(subagent_cfg: Any) -> bool:
@@ -852,8 +850,8 @@ class JiuWenClawDeepAdapter:
             sandbox_type = _sandbox_config.get("type", None)
             if sandbox_url and sandbox_type:
                 gateway_config = SandboxGatewayConfig(
-                isolation=SandboxIsolationConfig(container_scope=ContainerScope.SYSTEM),
-                launcher_config=PreDeployLauncherConfig(
+                    isolation=SandboxIsolationConfig(container_scope=ContainerScope.SYSTEM),
+                    launcher_config=PreDeployLauncherConfig(
                         base_url=sandbox_url,
                         sandbox_type=sandbox_type,
                         idle_ttl_seconds=600,
@@ -1086,7 +1084,7 @@ class JiuWenClawDeepAdapter:
             rail = None
         return rail
 
-    def _build_agent_rails(self, config: dict[str, Any], config_base: dict[str, Any], *, 
+    def _build_agent_rails(self, config: dict[str, Any], config_base: dict[str, Any], *,
                            mode: str = "agent.plan") -> list[Any]:
         """Build DeepAgent rails consistently for cold start and hot reload."""
 
@@ -1267,8 +1265,8 @@ class JiuWenClawDeepAdapter:
 
         # 付费搜索工具：有任意一个付费 key 就注册
         if any(
-            os.environ.get(key)
-            for key in ("BOCHA_API_KEY", "PERPLEXITY_API_KEY", "SERPER_API_KEY", "JINA_API_KEY")
+                os.environ.get(key)
+                for key in ("BOCHA_API_KEY", "PERPLEXITY_API_KEY", "SERPER_API_KEY", "JINA_API_KEY")
         ):
             self._paid_search_tool = WebPaidSearchTool(language=self._resolve_runtime_language(), agent_id=agent_id)
             Runner.resource_mgr.add_tool(self._paid_search_tool)
@@ -1647,9 +1645,9 @@ class JiuWenClawDeepAdapter:
     async def _update_agent_mode_rails(self) -> None:
         """agent 模式：卸载 plan 专属 rails，按需注册 agent 专属 rails。"""
         for attr, label in (
-            ("_task_planning_rail", "TaskPlanningRail"),
-            ("_skill_evolution_rail", "SkillEvolutionRail"),
-            ("_subagent_rail", "SubagentRail"),
+                ("_task_planning_rail", "TaskPlanningRail"),
+                ("_skill_evolution_rail", "SkillEvolutionRail"),
+                ("_subagent_rail", "SubagentRail"),
         ):
             rail = getattr(self, attr)
             if rail is not None:
@@ -1901,15 +1899,15 @@ class JiuWenClawDeepAdapter:
         if perm_ctx is not None:
             # 判断是否为群聊数字分身模式
             is_group_digital_avatar = (
-                perm_ctx.group_digital_avatar
-                and perm_ctx.avatar_mode
+                    perm_ctx.group_digital_avatar
+                    and perm_ctx.avatar_mode
             )
 
             # 判断是否为记忆完全禁用（三个条件同时满足）
             should_disable_memory = (
-                not perm_ctx.enable_memory
-                and perm_ctx.group_digital_avatar
-                and perm_ctx.avatar_mode
+                    not perm_ctx.enable_memory
+                    and perm_ctx.group_digital_avatar
+                    and perm_ctx.avatar_mode
             )
 
             # 场景2：记忆完全禁用 - 移除所有记忆工具
@@ -2483,8 +2481,8 @@ class JiuWenClawDeepAdapter:
         if dry_run:
             return {
                 "output": (
-                    f"**Skill '{skill_name}' 整理预览（dry-run，未执行）：**\n\n"
-                    + "\n".join(summary_lines)
+                        f"**Skill '{skill_name}' 整理预览（dry-run，未执行）：**\n\n"
+                        + "\n".join(summary_lines)
                 ),
                 "result_type": "answer",
             }
@@ -2494,8 +2492,8 @@ class JiuWenClawDeepAdapter:
         )
         return {
             "output": (
-                f"**Skill '{skill_name}' 整理完成：** {result_text}\n\n"
-                f"**操作详情：**\n" + "\n".join(summary_lines)
+                    f"**Skill '{skill_name}' 整理完成：** {result_text}\n\n"
+                    f"**操作详情：**\n" + "\n".join(summary_lines)
             ),
             "result_type": "answer",
         }
@@ -2729,7 +2727,7 @@ class JiuWenClawDeepAdapter:
         # Team 模式处理
         if mode == "team":
             from jiuwenclaw.agentserver.deep_agent.team_helpers import process_team_message_stream
-            
+
             async for chunk in process_team_message_stream(request, inputs, self._instance):
                 yield chunk
             return
@@ -2767,6 +2765,14 @@ class JiuWenClawDeepAdapter:
         accumulated_reasoning = ""
         evolution_status_started = False
         evolution_status_ended = False
+        usage_accumulator = {
+            "input_tokens": 0,
+            "output_tokens": 0,
+            "total_tokens": 0,
+            "input_cost": 0.0,
+            "output_cost": 0.0,
+            "total_cost": 0.0,
+        }
 
         cron_context_tokens = self._bind_runtime_cron_context(
             channel_id=request.channel_id,
@@ -2816,6 +2822,23 @@ class JiuWenClawDeepAdapter:
                     continue
 
                 chunk_type = chunk.type
+
+                if chunk_type == "llm_usage":
+                    logger.info(f"[JiuWenClawDeepAdapter] llm_usage chunk: {chunk}")
+                    usage_meta = chunk.payload.get("usage_metadata", {}) if isinstance(chunk.payload, dict) else {}
+                    if isinstance(usage_meta, dict):
+                        for token in ("input_tokens", "output_tokens", "total_tokens"):
+                            usage_accumulator[token] += usage_meta.get(token, 0) or 0
+                        for cost in ("input_cost", "output_cost", "total_cost"):
+                            usage_accumulator[cost] += usage_meta.get(cost, 0.0) or 0.0
+                    yield AgentResponseChunk(
+                        request_id=rid,
+                        channel_id=cid,
+                        payload={"event_type": "chat.usage_metadata", "metadata": chunk.payload,
+                                 "session_id": session_id},
+                        is_complete=False,
+                    )
+                    continue
 
                 if chunk_type == "llm_reasoning":
                     content = (
@@ -2987,6 +3010,33 @@ class JiuWenClawDeepAdapter:
             TOOL_PERMISSION_CHANNEL_ID.reset(token_cid)
             cleanup_permission_context(token_perm)
             self._reset_runtime_cron_context(cron_context_tokens)
+
+        summary = {
+            "input_tokens": usage_accumulator["input_tokens"],
+            "output_tokens": usage_accumulator["output_tokens"],
+            "total_tokens": usage_accumulator["total_tokens"],
+        }
+        if usage_accumulator["input_cost"] > 0:
+            summary["input_cost"] = round(usage_accumulator["input_cost"], 6)
+        if usage_accumulator["output_cost"] > 0:
+            summary["output_cost"] = round(usage_accumulator["output_cost"], 6)
+        if usage_accumulator["total_cost"] > 0:
+            summary["total_cost"] = round(usage_accumulator["total_cost"], 6)
+
+        logger.info("[JiuWenClawDeepAdapter] llm_usage summary: request_id=%s session_id=%s usage=%s",
+                    rid, session_id, summary)
+
+        if usage_accumulator["total_tokens"] > 0:
+            yield AgentResponseChunk(
+                request_id=rid,
+                channel_id=cid,
+                payload={
+                    "event_type": "chat.usage_summary",
+                    "session_id": session_id,
+                    "usage": summary,
+                },
+                is_complete=False,
+            )
 
         yield AgentResponseChunk(
             request_id=rid,

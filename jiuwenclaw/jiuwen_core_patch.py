@@ -95,11 +95,17 @@ class PatchOpenAIModelClient(OpenAIModelClient):
         # Build usage_metadata (usually only in the last chunk)
         usage_metadata = None
         if hasattr(chunk, 'usage') and chunk.usage:
+            # Extract cost information if available
+            input_cost, output_cost, total_cost = self._extract_cost_info(chunk.usage)
+
             usage_metadata = UsageMetadata(
                 model_name=self.model_config.model_name,
                 input_tokens=getattr(chunk.usage, 'prompt_tokens', 0) or 0,
                 output_tokens=getattr(chunk.usage, 'completion_tokens', 0) or 0,
-                total_tokens=getattr(chunk.usage, 'total_tokens', 0) or 0
+                total_tokens=getattr(chunk.usage, 'total_tokens', 0) or 0,
+                input_cost=input_cost,
+                output_cost=output_cost,
+                total_cost=total_cost,
             )
 
         return AssistantMessageChunk(

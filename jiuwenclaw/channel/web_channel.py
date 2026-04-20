@@ -99,14 +99,14 @@ class WebChannel(BaseChannel):
     # ── 帧发送 API（公开给处理器使用）─────────────────────
 
     async def send_response(
-        self,
-        ws: Any,
-        req_id: str,
-        *,
-        ok: bool,
-        payload: dict[str, Any] | None = None,
-        error: str | None = None,
-        code: str | None = None,
+            self,
+            ws: Any,
+            req_id: str,
+            *,
+            ok: bool,
+            payload: dict[str, Any] | None = None,
+            error: str | None = None,
+            code: str | None = None,
     ) -> None:
         """向指定客户端发送 ``res`` 帧."""
         frame: dict[str, Any] = {
@@ -128,13 +128,13 @@ class WebChannel(BaseChannel):
             raise
 
     async def send_event(
-        self,
-        ws: Any,
-        event: str,
-        payload: dict[str, Any],
-        *,
-        seq: int | None = None,
-        stream_id: str | None = None,
+            self,
+            ws: Any,
+            event: str,
+            payload: dict[str, Any],
+            *,
+            seq: int | None = None,
+            stream_id: str | None = None,
     ) -> None:
         """向指定客户端发送 ``event`` 帧."""
         frame: dict[str, Any] = {"type": "event", "event": event, "payload": payload}
@@ -151,12 +151,12 @@ class WebChannel(BaseChannel):
             raise
 
     async def broadcast_event(
-        self,
-        event: str,
-        payload: dict[str, Any],
-        *,
-        seq: int | None = None,
-        stream_id: str | None = None,
+            self,
+            event: str,
+            payload: dict[str, Any],
+            *,
+            seq: int | None = None,
+            stream_id: str | None = None,
     ) -> None:
         """向所有已连接客户端广播 ``event`` 帧."""
         frame: dict[str, Any] = {"type": "event", "event": event, "payload": payload}
@@ -311,11 +311,12 @@ class WebChannel(BaseChannel):
         if isinstance(msg.payload, dict):
             # 对于需要传递完整结构化数据的事件类型
             if event_name in ("connection.ack", "todo.updated", "chat.tool_call", "chat.tool_result",
-                             "chat.processing_status", "chat.interrupt_result", "chat.evolution_status",
-                             "chat.error", "heartbeat.relay",
-                             "context.compressed", "chat.ask_user_question", "chat.subtask_update",
-                             "history.message",
-                             "chat.session_result") or event_name.startswith("team."):
+                              "chat.processing_status", "chat.interrupt_result", "chat.evolution_status",
+                              "chat.error", "heartbeat.relay",
+                              "context.compressed", "chat.ask_user_question", "chat.subtask_update",
+                              "history.message",
+                              "chat.session_result", "chat.usage_metadata",
+                              "chat.usage_summary") or event_name.startswith("team."):
                 # 传递完整 payload，保留所有字段
                 payload = {**msg.payload}
                 # 确保包含 session_id
