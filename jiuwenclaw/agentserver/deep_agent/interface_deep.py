@@ -130,7 +130,7 @@ from jiuwenclaw.agentserver.tools.xiaoyi_phone_tools import (
     xiaoyi_gui_agent,
     image_reading,
 )
-from jiuwenclaw.config import get_config, resolve_env_vars
+from jiuwenclaw.config import get_config, get_default_models, resolve_env_vars
 from jiuwenclaw.agentserver.extensions import get_rail_manager
 from jiuwenclaw.gateway.cron import CronTargetChannel
 from jiuwenclaw.schema.agent import AgentRequest, AgentResponse, AgentResponseChunk
@@ -339,6 +339,8 @@ class JiuWenClawDeepAdapter:
             tool_scope=f"runtime_{id(self):x}",
         )
         self._is_proactive_memory: bool | None = None
+        self._model_cache: dict[str, Model] = {}
+        self._default_model_name: str = ""
 
     def set_skill_manager(self, skill_manager: SkillManager) -> None:
         """Inject shared SkillManager from facade for tool reuse."""
@@ -780,38 +782,76 @@ class JiuWenClawDeepAdapter:
         except Exception as e:
             logger.error("[JiuWenClawDeepAdapter] fail to setup checkpoint due to: %s", e)
 
+    @staticmethod
+    def _build_model_from_entry(mcc: dict, mco: dict) -> Model:
+        """根据单个模型条目的 model_client_config / model_config_obj 构建 Model 实例。"""
+        name = mcc.get("model_name", "")
+        m_config = ModelRequestConfig(
+            model=name,
+            temperature=mco.get("temperature", 0.95),
+        )
+        mcc_fields = {k: v for k, v in mcc.items() if k != "model_name"}
+        return Model(model_client_config=ModelClientConfig(**mcc_fields), model_config=m_config)
+
+    def _build_model_cache_from_defaults(self, config: dict) -> None:
+        """从 models.defaults 列表构建模型缓存。"""
+        for entry in get_default_models(config):
+            mcc = entry.get("model_client_config") or {}
+            if not mcc.get("model_name"):
+                continue
+            self._model_cache[mcc["model_name"]] = self._build_model_from_entry(
+                mcc, entry.get("model_config_obj") or {},
+            )
+
+    def _build_model_cache_legacy(self, config: dict) -> None:
+        """回退到旧格式（models.default / react 段）构建单条目缓存。"""
+        default_model_config = config.get("models", {}).get("default", {})
+        react_config = config.get("react", {})
+
+        mcc = dict(default_model_config.get("model_client_config") or react_config.get("model_client_config") or {})
+        model_name = mcc.get("model_name") or react_config.get("model_name") or "gpt-4"
+        if "model_name" not in mcc:
+            mcc["model_name"] = model_name
+
+        mco = default_model_config.get("model_config_obj") or react_config.get("model_config_obj") or {}
+        self._model_cache[model_name] = self._build_model_from_entry(mcc, mco)
+
     def _create_model(self, config: dict) -> Model:
-        model_configs = config.get("models", {}).copy()
-        default_model_config = model_configs.get("default", {}).copy()
-        react_config = config.get("react", {}).copy()
+        self._model_cache.clear()
+        self._build_model_cache_from_defaults(config)
+        if not self._model_cache:
+            self._build_model_cache_legacy(config)
 
-        model_client_config = default_model_config.get("model_client_config") or {}
-        if not model_client_config:
-            react_model_client_config = react_config.get("model_client_config") or {}
-            model_client_config = react_model_client_config
-
-        model_name = (
-                model_client_config.get("model_name")
-                or react_config.get("model_name")
-                or "gpt-4"
-        )
-        model_config_obj = default_model_config.get("model_config_obj") or {}
-        if not model_config_obj:
-            react_model_config_obj = react_config.get("model_config_obj") or {}
-            model_config_obj = react_model_config_obj
-
-        model_config = ModelRequestConfig(
-            model=model_name,
-            temperature=model_config_obj.get("temperature", 0.95)
-        )
-        client_config = ModelClientConfig(**model_client_config)
-        self._model_client_config = client_config
-        self._model_request_config = model_config
-        self._model = Model(
-            model_client_config=client_config,
-            model_config=model_config,
-        )
+        first_name = next(iter(self._model_cache))
+        self._default_model_name = first_name
+        self._model = self._model_cache[first_name]
+        self._model_client_config = self._model.model_client_config
+        self._model_request_config = self._model.model_config
         return self._model
+
+    def _resolve_model_for_request(self, request: AgentRequest) -> Model:
+        """根据请求中的 model_name 参数查找对应模型，未匹配则回退默认模型。"""
+        requested = (request.params.get("model_name") or "").strip()
+        if requested and requested in self._model_cache:
+            return self._model_cache[requested]
+        return self._model
+
+    def _apply_model_to_react_agent(self, model: Model) -> None:
+        """将指定模型应用到 react_agent 实例（替换 _llm 和 _config 字段）。
+
+        react_agent._railed_model_call 使用 self._config.model_name 作为 model= 参数，
+        因此需要同时替换 _llm 和 _config 中的模型相关字段。
+        """
+        react_agent = getattr(self._instance, '_react_agent', None)
+        if react_agent is None:
+            return
+        if callable(getattr(react_agent, 'set_llm', None)):
+            react_agent.set_llm(model)
+        config = getattr(react_agent, '_config', None)
+        if config is not None:
+            config.model_name = model.model_config.model_name
+            config.model_client_config = model.model_client_config
+            config.model_config_obj = model.model_config
 
     @staticmethod
     def _resolve_skill_mode(config: dict[str, Any]) -> str:
@@ -2663,6 +2703,9 @@ class JiuWenClawDeepAdapter:
         )
         token_cid = TOOL_PERMISSION_CHANNEL_ID.set((request.channel_id or "").strip())
         token_perm = setup_permission_context(request)
+        # 按请求选择模型
+        resolved_model = self._resolve_model_for_request(request)
+        self._apply_model_to_react_agent(resolved_model)
         try:
             await self._update_runtime_config(
                 request.session_id,
@@ -2783,6 +2826,9 @@ class JiuWenClawDeepAdapter:
         )
         token_cid = TOOL_PERMISSION_CHANNEL_ID.set((request.channel_id or "").strip())
         token_perm = setup_permission_context(request)
+        # 按请求选择模型
+        resolved_model = self._resolve_model_for_request(request)
+        self._apply_model_to_react_agent(resolved_model)
         try:
             await self._update_runtime_config(
                 request.session_id,

@@ -29,6 +29,17 @@ export interface Session {
 export type AgentMode = 'agent.fast' | 'agent.plan' | 'team';
 export type SessionStatus = 'active' | 'paused' | 'completed' | 'interrupted';
 
+export interface ModelEntry {
+  model_name: string;
+  api_base: string;
+  api_key: string;
+  model_provider: string;
+  timeout?: number;
+  temperature?: number;
+  /** 用于原子性重命名操作，指定原模型名 */
+  original_model_name?: string;
+}
+
 export interface OffloadFileListResponse {
   session_id: string;
   files: string[];

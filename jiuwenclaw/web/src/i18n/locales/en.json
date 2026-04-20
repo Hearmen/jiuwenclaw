@@ -72,6 +72,9 @@
     "removeTask": "Remove task",
     "holdToSpeak": "Hold to speak",
     "send": "Send (Enter)",
+    "modelSelector": {
+      "tooltip": "Switch the model used for chat"
+    },
     "newSessionDisabled": "Cannot create session while processing or recording",
     "modeSwitchTitle": "Switch Mode",
     "modeSwitchConfirm": "Current session has history messages. Switching mode will create a new session. Continue?",
@@ -404,12 +407,21 @@
     "showValue": "Show value",
     "validateModel": {
       "legend": "Sends “Hi” with minimal tokens. Nothing is saved.",
-      "button": "Test Default Model",
+      "button": "Test",
       "validating": "Testing…",
       "success": "Configuration is working.",
       "notWorking": "Configuration is not working",
       "needConnection": "Connect to the server before testing.",
       "needFields": "Fill api_base, api_key, model, and model_provider first."
+    },
+    "modelList": {
+      "addModel": "Add Model",
+      "removeModel": "Remove",
+      "duplicateName": "Model name already exists",
+      "lastModelWarning": "At least one model configuration is required",
+      "untitled": "Untitled model",
+      "default": "Default",
+      "setDefault": "Set as Default"
     },
     "groups": {
       "modelDefault": { "label": "Default Model (Main Chat)", "hint": "Primary chat model service and auth" },

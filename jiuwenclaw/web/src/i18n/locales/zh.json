@@ -72,6 +72,9 @@
     "removeTask": "移除任务",
     "holdToSpeak": "按住说话",
     "send": "发送 (Enter)",
+    "modelSelector": {
+      "tooltip": "切换对话使用的模型"
+    },
     "newSessionDisabled": "处理中或录音中不可新建",
     "modeSwitchTitle": "切换模式",
     "modeSwitchConfirm": "当前会话有历史消息，切换模式将新建会话。是否继续？",
@@ -403,12 +406,21 @@
     "showValue": "显示明文",
     "validateModel": {
       "legend": "发送「Hi」极小请求，不写入配置。",
-      "button": "测试默认模型",
+      "button": "测试",
       "validating": "测试中…",
       "success": "配置有效",
       "notWorking": "配置不可用",
       "needConnection": "请先连接服务器后再测试。",
       "needFields": "请先填写 api_base、api_key、model、model_provider。"
+    },
+    "modelList": {
+      "addModel": "添加模型",
+      "removeModel": "删除",
+      "duplicateName": "模型名称已存在",
+      "lastModelWarning": "至少保留一个模型配置",
+      "untitled": "未命名模型",
+      "default": "默认",
+      "setDefault": "设为默认"
     },
     "groups": {
       "modelDefault": { "label": "默认模型（主对话）", "hint": "主对话模型服务与鉴权参数" },

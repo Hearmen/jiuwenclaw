@@ -382,6 +382,8 @@ export function InputArea({
             </button>
           )}
 
+          <ModelSelector />
+
           <button
             type="button"
             onClick={handleSubmit}
@@ -425,6 +427,40 @@ export function InputArea({
         </div>
       )}
     </div>
+  );
+}
+
+function ModelSelector() {
+  const { availableModels, selectedModelName, setSelectedModelName } = useSessionStore();
+  const { t } = useTranslation();
+
+  if (availableModels.length === 0) return null;
+
+  if (availableModels.length === 1) {
+    return (
+      <span
+        className="text-xs text-text-muted px-2 truncate max-w-[140px]"
+        title={availableModels[0].model_name}
+      >
+        {availableModels[0].model_name}
+      </span>
+    );
+  }
+
+  return (
+    <select
+      value={selectedModelName ?? ''}
+      onChange={(e) => setSelectedModelName(e.target.value)}
+      title={t('chat.modelSelector.tooltip')}
+      className="chat-model-selector"
+      data-testid="chat-model-selector"
+    >
+      {availableModels.map((m) => (
+        <option key={m.model_name} value={m.model_name}>
+          {m.model_name}
+        </option>
+      ))}
+    </select>
   );
 }
 

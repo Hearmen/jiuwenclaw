@@ -19,12 +19,14 @@ from openjiuwen.core.foundation.llm.schema.config import (
 from jiuwenclaw.config import (
     get_config,
     get_config_raw,
+    resolve_env_vars,
     update_context_engine_enabled_in_config,
     update_memory_forbidden_enabled_in_config,
     update_permissions_enabled_in_config,
     get_model_names,
     get_model_config,
     add_or_update_model_in_config,
+    update_default_models_in_config,
     update_preferred_language_in_config,
 )
 from jiuwenclaw.jiuwen_core_patch import apply_openai_model_client_patch
@@ -277,9 +279,9 @@ async def _clear_agent_config_cache(agent_client=None) -> None:
             import uuid
 
             env = e2a_from_agent_fields(
-                request_id=f"cfg-cache-clear-{uuid.uuid4().hex[:8]}",
+                request_id=f"cfg-reload-{uuid.uuid4().hex[:8]}",
                 channel_id="",
-                req_method=ReqMethod.CONFIG_CACHE_CLEAR,
+                req_method=ReqMethod.AGENT_RELOAD_CONFIG,
             )
             await agent_client.send_request(env)
         else:
@@ -856,6 +858,13 @@ def register_cli_handlers(bind: CliHandlersBindParams) -> None:
                 "verify_ssl": "verify_ssl",
                 "ssl_cert": "ssl_cert",
             }
+            # target 可能是 "model=gpt-5" 形式（前端把第一个 key=value 当作 name 参数解析）
+            if "=" in target:
+                _eq = target.index("=")
+                _k, _v = target[:_eq].strip().lower(), target[_eq + 1:].strip()
+                client_cfg[key_map.get(_k, _k)] = _v
+                if _k in ("model", "model_name"):
+                    target = _v
             for k, v in configs.items():
                 mapped_k = key_map.get(k.lower(), k)
                 client_cfg[mapped_k] = v
@@ -866,40 +875,55 @@ def register_cli_handlers(bind: CliHandlersBindParams) -> None:
             model_cfg_obj = configs.get("model_config_obj", {})
             if not model_cfg_obj:
                 model_cfg_obj = {"temperature": 0.95}
+            # target 作为 model_name 的回退：若未通过 model= 参数指定，则以 target 为准
+            if not client_cfg.get("model_name"):
+                client_cfg["model_name"] = target
+            effective_name = client_cfg["model_name"]
+
+            new_entry = {
+                "model_client_config": client_cfg,
+                "model_config_obj": model_cfg_obj,
+            }
             try:
-                add_or_update_model_in_config(
-                    target,
-                    {
-                        "model_client_config": client_cfg,
-                        "model_config_obj": model_cfg_obj,
-                    },
-                )
+                _raw = get_config_raw()
+                _raw_defs = (_raw.get("models") or {}).get("defaults")
+                if isinstance(_raw_defs, list):
+                    # 重名校验
+                    existing_names = [
+                        resolve_env_vars(str((e.get("model_client_config") or {}).get("model_name", "")))
+                        for e in _raw_defs if isinstance(e, dict)
+                    ]
+                    if effective_name in existing_names:
+                        await channel.send_response(
+                            ws, req_id, ok=False,
+                            error=f"Model '{effective_name}' already exists.",
+                        )
+                        return
+                    _raw_defs.append(new_entry)
+                    update_default_models_in_config(_raw_defs)
+                else:
+                    add_or_update_model_in_config(target, new_entry)
                 logger.info(
                     "[cli command.model] 新增模型: name=%s, "
                     "client_cfg=%s, model_config_obj=%s",
-                    target,
-                    client_cfg,
-                    model_cfg_obj,
+                    effective_name, client_cfg, model_cfg_obj,
                 )
             except Exception as e:
                 await channel.send_response(ws, req_id, ok=False, error=str(e))
                 return
-            env = e2a_from_agent_fields(
+            _reload_env = e2a_from_agent_fields(
                 request_id=req_id,
                 channel_id="cli",
                 session_id=session_id,
-                req_method=ReqMethod.COMMAND_MODEL,
-                params={"action": "add_model", "target": target, "config": configs},
+                req_method=ReqMethod.AGENT_RELOAD_CONFIG,
+                params={},
                 is_stream=False,
                 timestamp=time.time(),
             )
-            resp = await real_client.send_request(env)
+            await real_client.send_request(_reload_env)
             await channel.send_response(
-                ws,
-                req_id,
-                ok=resp.ok,
-                payload=resp.payload if resp.ok else None,
-                error=resp.error if not resp.ok else None,
+                ws, req_id, ok=True,
+                payload={"type": "model_added", "name": target},
             )
             return
 
@@ -922,7 +946,13 @@ def register_cli_handlers(bind: CliHandlersBindParams) -> None:
             resp = await real_client.send_request(env)
             payload = resp.payload if resp.ok else {}
             payload["available_models"] = names
-            payload["current"] = os.getenv("MODEL_NAME", "unknown")
+            _raw = get_config_raw()
+            _defs = (_raw.get("models") or {}).get("defaults")
+            if isinstance(_defs, list) and _defs:
+                _first_name = resolve_env_vars(str((_defs[0].get("model_client_config") or {}).get("model_name", "")))
+                payload["current"] = _first_name or os.getenv("MODEL_NAME", "unknown")
+            else:
+                payload["current"] = os.getenv("MODEL_NAME", "unknown")
             await channel.send_response(ws, req_id, ok=True, payload=payload)
             return
 
@@ -943,6 +973,51 @@ def register_cli_handlers(bind: CliHandlersBindParams) -> None:
                     f"Available: {', '.join(get_model_names())}"
                 ),
             )
+            return
+
+        _raw_cfg = get_config_raw()
+        _raw_defaults = (_raw_cfg.get("models") or {}).get("defaults")
+        if isinstance(_raw_defaults, list):
+            _target_entry = None
+            _other_entries = []
+            for _e in _raw_defaults:
+                if not isinstance(_e, dict):
+                    _other_entries.append(_e)
+                    continue
+                _ename = resolve_env_vars(str((_e.get("model_client_config") or {}).get("model_name", "")))
+                if _ename == target:
+                    _target_entry = _e
+                else:
+                    _other_entries.append(_e)
+            if _target_entry is None:
+                await channel.send_response(ws, req_id, ok=False, error=f"Model '{target}' config not found")
+                return
+            update_default_models_in_config([_target_entry] + _other_entries)
+            logger.info("[cli command.model] 新格式切换，已更新 models.defaults 首位: %s", target)
+            _reload_env = e2a_from_agent_fields(
+                request_id=req_id,
+                channel_id="cli",
+                session_id=session_id,
+                req_method=ReqMethod.AGENT_RELOAD_CONFIG,
+                params={},
+                is_stream=False,
+                timestamp=time.time(),
+            )
+            await real_client.send_request(_reload_env)
+            if on_config_saved:
+                try:
+                    _cb = on_config_saved(set(), env_updates={}, config_payload=get_config())
+                    if inspect.isawaitable(_cb):
+                        await _cb
+                except Exception as _e2:
+                    logger.warning("[cli model.switch] on_config_saved failed: %s", _e2)
+            logger.info("[cli command.model] 切换完成(新格式): current=%s", target)
+            await channel.send_response(ws, req_id, ok=True, payload={
+                "current": target,
+                "requested": target,
+                "type": "switched",
+                "applied": True,
+            })
             return
 
         env_from_file = _load_env_from_file()

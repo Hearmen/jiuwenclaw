@@ -23,6 +23,8 @@ from openjiuwen.core.foundation.llm.schema.config import ModelClientConfig, Mode
 from jiuwenclaw.config import (
     get_config,
     get_config_raw,
+    get_default_models,
+    update_default_models_in_config,
     update_heartbeat_in_config,
     update_channel_in_config,
     update_browser_in_config,
@@ -54,6 +56,21 @@ logger = logging.getLogger(__name__)
 _PROJECT_ROOT = get_root_dir()
 _ENV_FILE = get_env_file()
 load_dotenv(dotenv_path=_ENV_FILE)
+
+
+def _resolve_env_var_str(value: str) -> str:
+    """Resolve ${VAR:-default} patterns in a string using current environment."""
+    return re.sub(
+        r'\$\{([^:}]+)(?::-([^}]*))?\}',
+        lambda m: os.getenv(m.group(1), m.group(2) if m.group(2) is not None else ""),
+        value,
+    )
+
+
+def _entry_model_name(entry: dict) -> str:
+    """从模型配置条目中提取并解析 model_name。"""
+    raw = entry.get("model_client_config", {}).get("model_name", "")
+    return _resolve_env_var_str(raw)
 
 
 # 仅满足 Channel 构造所需，不入队、不路由；仅用 channel_manager + message_handler 做入站/出站
@@ -198,10 +215,11 @@ async def _clear_agent_config_cache(agent_client=None) -> None:
             from jiuwenclaw.e2a.gateway_normalize import e2a_from_agent_fields
             from jiuwenclaw.schema.message import ReqMethod
             import uuid
+
             env = e2a_from_agent_fields(
-                request_id=f"cfg-cache-clear-{uuid.uuid4().hex[:8]}",
+                request_id=f"cfg-reload-{uuid.uuid4().hex[:8]}",
                 channel_id="",
-                req_method=ReqMethod.CONFIG_CACHE_CLEAR,
+                req_method=ReqMethod.AGENT_RELOAD_CONFIG,
             )
             await agent_client.send_request(env)
         else:
@@ -579,6 +597,221 @@ def _register_web_handlers(bind: WebHandlersBindParams) -> None:
             ws, req_id, ok=True,
             payload={"ok": True, "model_provider": model_provider},
         )
+
+    # ── models.* handlers ────────────────────────────────────────
+
+    def _get_raw_model_list() -> list[dict]:
+        """从 config.yaml 原始内容读取模型列表（api_key 保持加密态）。"""
+        raw = get_config_raw()
+        raw_models = raw.get("models", {})
+        if "defaults" in raw_models and isinstance(raw_models["defaults"], list) and raw_models["defaults"]:
+            return list(raw_models["defaults"])
+        if "default" in raw_models and isinstance(raw_models["default"], dict):
+            return [dict(raw_models["default"])]
+        return []
+
+    async def _models_list(ws, req_id, params, session_id):
+        """返回已配置的所有默认模型列表（与 config.get 一致，返回解密后的完整值）。"""
+        try:
+            config = get_config()
+            models = get_default_models(config)
+            result = []
+            for entry in models:
+                mcc = entry.get("model_client_config", {})
+                mco = entry.get("model_config_obj", {})
+                result.append({
+                    "model_name": mcc.get("model_name", ""),
+                    "api_base": mcc.get("api_base", ""),
+                    "api_key": mcc.get("api_key", ""),
+                    "model_provider": mcc.get("client_provider", ""),
+                    "temperature": mco.get("temperature", 0.95),
+                })
+            active_model = result[0]["model_name"] if result else ""
+            await channel.send_response(ws, req_id, ok=True, payload={
+                "models": result,
+                "active_model": active_model,
+            })
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("[models.list] %s", exc)
+            await channel.send_response(ws, req_id, ok=False, error=str(exc), code="INTERNAL_ERROR")
+
+    async def _models_save(ws, req_id, params, session_id):
+        """新增或更新一个模型配置。model_name 已存在则更新，否则新增。
+
+        支持原子性重命名：传入 original_model_name 时，会先删除旧模型再添加新模型。
+        """
+        if not isinstance(params, dict):
+            await channel.send_response(ws, req_id, ok=False, error="params must be object", code="BAD_REQUEST")
+            return
+        model_name = str(params.get("model_name") or "").strip()
+        if not model_name:
+            await channel.send_response(ws, req_id, ok=False, error="model_name is required", code="BAD_REQUEST")
+            return
+        # 支持 original_model_name 参数用于原子性重命名
+        _raw_original = params.get("original_model_name")
+        original_model_name = str(_raw_original).strip() if _raw_original is not None else None
+        if original_model_name == "":
+            original_model_name = None
+        api_base = str(params.get("api_base") or "").strip()
+        api_key = str(params.get("api_key") or "").strip()
+        model_provider = str(params.get("model_provider") or "").strip()
+        temperature = float(params.get("temperature", 0.95))
+
+        available_model_providers = [p.value for p in ProviderType]
+        if model_provider and model_provider not in available_model_providers:
+            await channel.send_response(
+                ws, req_id, ok=False,
+                error=f"Model provider must be one of: {available_model_providers}",
+                code="BAD_REQUEST",
+            )
+            return
+
+        # 加密 api_key（与 config.set 行为一致）
+        if api_key:
+            from jiuwenclaw.extensions.registry import ExtensionRegistry
+            crypto = ExtensionRegistry.get_instance().get_crypto_provider()
+            if crypto:
+                api_key = crypto.encrypt(api_key)
+
+        new_entry = {
+            "model_client_config": {
+                "api_base": api_base,
+                "api_key": api_key,
+                "model_name": model_name,
+                "client_provider": model_provider,
+                "timeout": int(params.get("timeout", 1800)),
+                "verify_ssl": bool(params.get("verify_ssl", False)),
+            },
+            "model_config_obj": {
+                "temperature": temperature,
+            },
+        }
+
+        try:
+            # 读取原始列表（api_key 保持加密态，不解密）
+            models = _get_raw_model_list()
+
+            action = "created"
+            # 如果是重命名操作，先删除旧模型
+            if original_model_name and original_model_name != model_name:
+                models = [m for m in models if _entry_model_name(m) != original_model_name]
+                action = "renamed"
+
+            # 按 model_name 查找并更新
+            for i, entry in enumerate(models):
+                if _entry_model_name(entry) == model_name:
+                    models[i] = new_entry
+                    if action != "renamed":
+                        action = "updated"
+                    break
+            else:
+                models.append(new_entry)
+
+            update_default_models_in_config(models)
+
+            await _clear_agent_config_cache(_resolve(agent_client))
+            if on_config_saved:
+                config_payload = get_config()
+                callback_result = on_config_saved(
+                    set(),
+                    env_updates={},
+                    config_payload=config_payload,
+                )
+                if inspect.isawaitable(callback_result):
+                    await callback_result
+
+            await channel.send_response(ws, req_id, ok=True, payload={
+                "model_name": model_name,
+                "action": action,
+            })
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("[models.save] %s", exc)
+            await channel.send_response(ws, req_id, ok=False, error=str(exc), code="INTERNAL_ERROR")
+
+    async def _models_remove(ws, req_id, params, session_id):
+        """删除一个模型配置。至少保留一个模型。"""
+        if not isinstance(params, dict):
+            await channel.send_response(ws, req_id, ok=False, error="params must be object", code="BAD_REQUEST")
+            return
+        model_name = str(params.get("model_name") or "").strip()
+        if not model_name:
+            await channel.send_response(ws, req_id, ok=False, error="model_name is required", code="BAD_REQUEST")
+            return
+
+        try:
+            models = _get_raw_model_list()
+            if len(models) <= 1:
+                await channel.send_response(
+                    ws, req_id, ok=False,
+                    error="At least one model configuration is required",
+                    code="BAD_REQUEST",
+                )
+                return
+
+            new_models = [m for m in models if _entry_model_name(m) != model_name]
+            if len(new_models) == len(models):
+                await channel.send_response(
+                    ws, req_id, ok=False,
+                    error=f"Model '{model_name}' not found",
+                    code="NOT_FOUND",
+                )
+                return
+
+            update_default_models_in_config(new_models)
+            await _clear_agent_config_cache(_resolve(agent_client))
+            if on_config_saved:
+                config_payload = get_config()
+                callback_result = on_config_saved(
+                    set(),
+                    env_updates={},
+                    config_payload=config_payload,
+                )
+                if inspect.isawaitable(callback_result):
+                    await callback_result
+
+            await channel.send_response(ws, req_id, ok=True, payload={"model_name": model_name})
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("[models.remove] %s", exc)
+            await channel.send_response(ws, req_id, ok=False, error=str(exc), code="INTERNAL_ERROR")
+
+    async def _models_validate(ws, req_id, params, session_id):
+        """测试指定模型配置是否可用（复用 config.validate_model 逻辑）。"""
+        await _config_validate_model(ws, req_id, params, session_id)
+
+    async def _models_set_active(ws, req_id, params, session_id):
+        """设置默认选中的模型（将其移到列表第一位）。"""
+        if not isinstance(params, dict):
+            await channel.send_response(ws, req_id, ok=False, error="params must be object", code="BAD_REQUEST")
+            return
+        model_name = str(params.get("model_name") or "").strip()
+        if not model_name:
+            await channel.send_response(ws, req_id, ok=False, error="model_name is required", code="BAD_REQUEST")
+            return
+
+        try:
+            models = _get_raw_model_list()
+            target_idx = None
+            for i, entry in enumerate(models):
+                if _entry_model_name(entry) == model_name:
+                    target_idx = i
+                    break
+            if target_idx is None:
+                await channel.send_response(
+                    ws, req_id, ok=False,
+                    error=f"Model '{model_name}' not found",
+                    code="NOT_FOUND",
+                )
+                return
+            if target_idx != 0:
+                target = models.pop(target_idx)
+                models.insert(0, target)
+                update_default_models_in_config(models)
+                await _clear_agent_config_cache(_resolve(agent_client))
+
+            await channel.send_response(ws, req_id, ok=True, payload={"model_name": model_name})
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("[models.set_active] %s", exc)
+            await channel.send_response(ws, req_id, ok=False, error=str(exc), code="INTERNAL_ERROR")
 
     async def _channel_get(ws, req_id, params, session_id):
         """返回已注册的 channel 列表."""
@@ -1566,6 +1799,11 @@ def _register_web_handlers(bind: WebHandlersBindParams) -> None:
     channel.register_method("config.get", _config_get)
     channel.register_method("config.set", _config_set)
     channel.register_method("config.validate_model", _config_validate_model)
+    channel.register_method("models.list", _models_list)
+    channel.register_method("models.save", _models_save)
+    channel.register_method("models.remove", _models_remove)
+    channel.register_method("models.validate", _models_validate)
+    channel.register_method("models.set_active", _models_set_active)
     channel.register_method("channel.get", _channel_get)
 
     channel.register_method("session.list", _session_list)

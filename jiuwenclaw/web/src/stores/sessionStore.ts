@@ -3,10 +3,11 @@
  */
 
 import { create } from 'zustand';
-import { Session, AgentMode, WebConnectionState } from '../types';
+import { Session, AgentMode, WebConnectionState, ModelEntry } from '../types';
 
 const STORAGE_KEY = 'jiuwenclaw_context_compression';
 const MODE_STORAGE_KEY = 'jiuwenclaw_mode';
+const MODEL_STORAGE_KEY = 'jiuwenclaw_selected_model';
 
 function loadFromStorage() {
   try {
@@ -123,6 +124,8 @@ interface SessionState {
   heartbeatHistory: HeartbeatHistoryItem[];
   teamTaskEvents: TeamTaskEvent[];
   teamMembers: TeamMember[];
+  availableModels: ModelEntry[];
+  selectedModelName: string | null;
 
   // Actions
   setCurrentSession: (session: Session | null) => void;
@@ -147,6 +150,8 @@ interface SessionState {
   setTeamMembers: (members: TeamMember[]) => void;
   addTeamMember: (member: TeamMember) => void;
   updateTeamMemberStatus: (memberId: string, newStatus: string, timestamp?: number) => void;
+  setAvailableModels: (models: ModelEntry[], activeModel?: string) => void;
+  setSelectedModelName: (name: string) => void;
 }
 
 export const useSessionStore = create<SessionState>((set) => ({
@@ -173,6 +178,10 @@ export const useSessionStore = create<SessionState>((set) => ({
   heartbeatHistory: [],
   teamTaskEvents: [],
   teamMembers: [],
+  availableModels: [],
+  selectedModelName: (() => {
+    try { return localStorage.getItem(MODEL_STORAGE_KEY); } catch { return null; }
+  })(),
 
   setCurrentSession: (session) => {
     const normalizedSession = session ? normalizeSession(session) : null;
@@ -386,5 +395,22 @@ export const useSessionStore = create<SessionState>((set) => ({
       }
       return state;
     });
+  },
+  setAvailableModels: (models, activeModel) => {
+    set(() => {
+      const names = models.map((m) => m.model_name);
+      // 优先使用后端返回的 activeModel（默认模型）
+      const selected = (activeModel && names.includes(activeModel))
+        ? activeModel
+        : names[0] || null;
+      if (selected) {
+        try { localStorage.setItem(MODEL_STORAGE_KEY, selected); } catch { /* noop */ }
+      }
+      return { availableModels: models, selectedModelName: selected };
+    });
+  },
+  setSelectedModelName: (name) => {
+    try { localStorage.setItem(MODEL_STORAGE_KEY, name); } catch { /* noop */ }
+    set({ selectedModelName: name });
   },
 }));

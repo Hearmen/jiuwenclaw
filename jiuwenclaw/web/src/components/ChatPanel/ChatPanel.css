@@ -217,6 +217,28 @@
   transform: none;
 }
 
+.chat-model-selector {
+  font-size: 12px;
+  line-height: 1.4;
+  padding: 2px 6px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md, 6px);
+  background: var(--bg);
+  color: var(--text);
+  max-width: 140px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  cursor: pointer;
+  outline: none;
+}
+.chat-model-selector:hover {
+  border-color: var(--accent);
+}
+.chat-model-selector:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 1px var(--accent);
+}
+
 .chat-input-btn--send {
   border-radius: var(--radius-lg);
 }

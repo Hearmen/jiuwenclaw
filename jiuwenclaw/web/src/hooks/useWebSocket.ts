@@ -278,11 +278,13 @@ export function useWebSocket(options: UseWebSocketOptions): UseWebSocketReturn {
       
       // 正常调用接口
       const currentMode = useSessionStore.getState().mode;
+      const selectedModel = useSessionStore.getState().selectedModelName;
       try {
         await request('chat.send', {
           session_id: sessionId,
           content,
           mode: currentMode,
+          ...(selectedModel ? { model_name: selectedModel } : {}),
         });
       } catch (error) {
         const webError = error as WebError;

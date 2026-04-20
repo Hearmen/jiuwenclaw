@@ -34,7 +34,7 @@ import {
 } from './features/tool-events/toolEventNormalizer';
 import { useWebSocket } from './hooks';
 import { webRequest } from './services/webClient';
-import { AgentMode, UserAnswer } from './types';
+import { AgentMode, UserAnswer, ModelEntry } from './types';
 import { useSessionStore, useChatStore, useTodoStore } from './stores';
 import { useTranslation } from 'react-i18next';
 import i18n from './i18n';
@@ -250,6 +250,13 @@ function AppContent() {
     if (activeNav !== 'configpanel') {
       setConfigInitialExpandGroup(null);
     }
+    if (activeNav === 'chat') {
+      const { availableModels, setSelectedModelName } = useSessionStore.getState();
+      const defaultModel = availableModels[0]?.model_name;
+      if (defaultModel) {
+        setSelectedModelName(defaultModel);
+      }
+    }
   }, [activeNav]);
 
   useEffect(() => {
@@ -288,7 +295,7 @@ function AppContent() {
 
   useEffect(() => () => disposeInFlightHistoryHandles(), [disposeInFlightHistoryHandles]);
 
-  const { setCurrentSession, setSessions, mode, heartbeatMessage, heartbeatUpdatedAt } = useSessionStore();
+  const { setCurrentSession, setSessions, setAvailableModels, mode, heartbeatMessage, heartbeatUpdatedAt } = useSessionStore();
   const {
     clearMessages,
     clearSubtasks,
@@ -379,7 +386,16 @@ function AppContent() {
       setServerConfig(null);
       setConfigError(t('app.configError'));
     }
-  }, [request, t]);
+    // 同步获取多模型列表
+    try {
+      const resp = await request<{ models: Array<{ model_name: string; api_base: string; api_key: string; model_provider: string; temperature?: number }>; active_model: string }>('models.list');
+      if (resp?.models) {
+        setAvailableModels(resp.models, resp.active_model);
+      }
+    } catch (error) {
+      console.warn('Failed to fetch models list:', error);
+    }
+  }, [request, t, setAvailableModels]);
 
   useEffect(() => {
     if (!FEATURE_APP_UPDATER_UI || !isConnected || startupUpdateCheckRef.current) {
@@ -431,6 +447,31 @@ function AppContent() {
     },
     [request],
   );
+
+  const handleModelSave = useCallback(async (model: ModelEntry) => {
+    await request('models.save', model as unknown as Record<string, unknown>);
+  }, [request]);
+
+  const handleModelRemove = useCallback(async (modelName: string) => {
+    await request('models.remove', { model_name: modelName });
+  }, [request]);
+
+  const handleModelsRefresh = useCallback(async () => {
+    try {
+      const resp = await request<{ models: ModelEntry[]; active_model: string }>('models.list');
+      if (resp?.models) {
+        setAvailableModels(resp.models, resp.active_model);
+      }
+    } catch (error) {
+      console.warn('Failed to refresh models list:', error);
+    }
+  }, [request, setAvailableModels]);
+
+  const handleSetActiveModel = useCallback(async (modelName: string) => {
+    await request('models.set_active', { model_name: modelName });
+    // 不调 handleModelsRefresh —— 避免 useEffect 重置 draftModels 覆盖未保存的编辑
+    // 前端侧由 MultiModelSection 本地重排 draftModels
+  }, [request]);
 
   const saveConfigAndRestart = useCallback(async (updates: Record<string, string>) => {
     const payload = await request<{ updated?: string[]; applied_without_restart?: boolean }>(
@@ -1032,6 +1073,11 @@ function AppContent() {
               onSaveConfig={saveConfigAndRestart}
               onValidateModel={validateModelConfig}
               initialExpandGroupTag={configInitialExpandGroup}
+              onModelSave={handleModelSave}
+              onModelRemove={handleModelRemove}
+              onModelValidate={validateModelConfig}
+              onModelsRefresh={handleModelsRefresh}
+              onSetActiveModel={handleSetActiveModel}
             />
           </div>
         )}

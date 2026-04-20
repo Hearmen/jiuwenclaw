@@ -1,6 +1,7 @@
 import { useEffect, useLayoutEffect, useMemo, useState, type ReactNode } from "react";
 import { useTranslation } from 'react-i18next';
-import { useChatStore } from '../../stores';
+import { useChatStore, useSessionStore } from '../../stores';
+import type { ModelEntry } from '../../types';
 import { PermissionsToolsEditor } from "./PermissionsToolsEditor";
 
 interface ConfigPanelProps {
@@ -16,6 +17,12 @@ interface ConfigPanelProps {
   }) => Promise<void>;
   /** 首次进入配置页时展开的分组 tag（如 third_party_api）；离开配置页时由 App 清空 */
   initialExpandGroupTag?: string | null;
+  /** 多模型操作回调 */
+  onModelSave?: (model: ModelEntry) => Promise<void>;
+  onModelRemove?: (modelName: string) => Promise<void>;
+  onModelValidate?: (fields: { api_base: string; api_key: string; model: string; model_provider: string }) => Promise<void>;
+  onModelsRefresh?: () => Promise<void>;
+  onSetActiveModel?: (modelName: string) => Promise<void>;
 }
 
 interface ConfigGroup {
@@ -451,31 +458,249 @@ function GroupSection({
   );
 }
 
+const MODEL_PROVIDER_OPTIONS = ["OpenAI", "DashScope", "SiliconFlow", "InferenceAffinity"] as const;
+
+/** 多默认模型管理（受控组件，编辑状态由父组件持有） */
+function MultiModelSection({
+  models,
+  onModelsChange,
+  onModelValidate,
+  isConnected,
+  t,
+}: {
+  models: ModelEntry[];
+  onModelsChange: (models: ModelEntry[]) => void;
+  onModelValidate?: (fields: { api_base: string; api_key: string; model: string; model_provider: string }) => Promise<void>;
+  isConnected: boolean;
+  t: (key: string, options?: Record<string, unknown>) => string;
+}) {
+  const [validatingModel, setValidatingModel] = useState<string | null>(null);
+  const [validateResults, setValidateResults] = useState<Record<string, "ok" | "err">>({});
+  const [expandedIdx, setExpandedIdx] = useState<number | null>(null);
+  const [addingNew, setAddingNew] = useState(false);
+  const [newModel, setNewModel] = useState<ModelEntry>({
+    model_name: "", api_base: "", api_key: "", model_provider: "OpenAI",
+  });
+  const [localError, setLocalError] = useState<string | null>(null);
+
+  const handleValidate = async (model: ModelEntry) => {
+    if (!onModelValidate) return;
+    setValidatingModel(model.model_name);
+    setValidateResults((prev) => ({ ...prev, [model.model_name]: undefined as any }));
+    try {
+      await onModelValidate({
+        api_base: model.api_base, api_key: model.api_key,
+        model: model.model_name, model_provider: model.model_provider,
+      });
+      setValidateResults((prev) => ({ ...prev, [model.model_name]: "ok" }));
+    } catch {
+      setValidateResults((prev) => ({ ...prev, [model.model_name]: "err" }));
+    } finally {
+      setValidatingModel(null);
+    }
+  };
+
+  const updateModel = (idx: number, field: keyof ModelEntry, value: string) => {
+    const copy = [...models];
+    copy[idx] = { ...copy[idx], [field]: value };
+    onModelsChange(copy);
+  };
+
+  const removeModel = (idx: number) => {
+    if (models.length <= 1) {
+      setLocalError(t("config.modelList.lastModelWarning"));
+      return;
+    }
+    setLocalError(null);
+    onModelsChange(models.filter((_, i) => i !== idx));
+    // 调整展开索引：删除项在展开项之前则前移，删除的正是展开项则收起
+    setExpandedIdx((prev) => {
+      if (prev === null) return null;
+      if (idx === prev) return null;
+      if (idx < prev) return prev - 1;
+      return prev;
+    });
+  };
+
+  const handleSetActive = (modelName: string) => {
+    const idx = models.findIndex((m) => m.model_name === modelName);
+    if (idx > 0) {
+      const copy = [...models];
+      const [target] = copy.splice(idx, 1);
+      copy.unshift(target);
+      onModelsChange(copy);
+      setExpandedIdx((prev) => {
+        if (prev === null) return null;
+        if (prev === idx) return 0;
+        if (prev < idx) return prev + 1;
+        return prev;
+      });
+    }
+  };
+
+  const handleAddNew = () => {
+    const name = newModel.model_name.trim();
+    if (!name) return;
+    if (models.some((m) => m.model_name === name)) {
+      setLocalError(t("config.modelList.duplicateName"));
+      return;
+    }
+    setLocalError(null);
+    onModelsChange([...models, { ...newModel, model_name: name }]);
+    setExpandedIdx(models.length); // 自动展开新增的条目
+    setAddingNew(false);
+    setNewModel({ model_name: "", api_base: "", api_key: "", model_provider: "OpenAI" });
+  };
+
+  return (
+    <div className="space-y-2">
+      {localError && (
+        <div className="rounded-md border border-[var(--border-danger)] bg-danger-subtle px-3 py-2 text-xs text-danger">
+          {localError}
+        </div>
+      )}
+      {models.map((model, idx) => {
+        const isExpanded = expandedIdx === idx;
+        const vr = validateResults[model.model_name];
+        const isDefault = idx === 0;
+        return (
+          <div key={idx} className="rounded-lg border border-border bg-secondary/20">
+            <div className="flex items-center justify-between px-3 py-2">
+              <button
+                type="button"
+                className="flex items-center gap-2 text-sm font-medium text-text truncate flex-1 text-left"
+                onClick={() => setExpandedIdx(isExpanded ? null : idx)}
+              >
+                <svg className={`w-3 h-3 transition-transform ${isExpanded ? "rotate-90" : ""}`} fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" />
+                </svg>
+                <span className="truncate">{model.model_name || t("config.modelList.untitled")}</span>
+                {isDefault && (
+                  <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-accent/15 text-accent border border-accent/30">{t("config.modelList.default")}</span>
+                )}
+                {vr === "ok" && <span className="text-[10px] text-ok">✓</span>}
+                {vr === "err" && <span className="text-[10px] text-danger">✗</span>}
+              </button>
+              <div className="flex items-center gap-1 ml-2">
+                {!isDefault && (
+                  <button
+                    type="button"
+                    onClick={() => handleSetActive(model.model_name)}
+                    className="text-[11px] px-2 py-0.5 rounded border border-border hover:bg-secondary/60"
+                  >
+                    {t("config.modelList.setDefault")}
+                  </button>
+                )}
+                <button
+                  type="button"
+                  onClick={() => handleValidate(model)}
+                  disabled={!isConnected || validatingModel === model.model_name}
+                  className="text-[11px] px-2 py-0.5 rounded border border-border hover:bg-secondary/60 disabled:opacity-40"
+                >
+                  {validatingModel === model.model_name ? "..." : t("config.validateModel.button")}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => removeModel(idx)}
+                  disabled={models.length <= 1}
+                  className="text-[11px] px-2 py-0.5 rounded border border-border hover:bg-danger-subtle hover:text-danger disabled:opacity-40"
+                >
+                  {t("config.modelList.removeModel")}
+                </button>
+              </div>
+            </div>
+            {isExpanded && (
+              <div className="border-t border-border px-3 py-2 space-y-2">
+                {(["model_name", "api_base", "api_key", "model_provider"] as const).map((field) => (
+                  <div key={field} className="flex items-center gap-2 text-xs">
+                    <label className="w-28 text-text-muted shrink-0">{field}</label>
+                    {field === "model_provider" ? (
+                      <select
+                        value={models[idx]?.[field] ?? ""}
+                        onChange={(e) => updateModel(idx, field, e.target.value)}
+                        className="flex-1 rounded border border-border bg-bg px-2 py-1 text-text text-xs"
+                      >
+                        <option value="">{t("config.selectModelProvider")}</option>
+                        {MODEL_PROVIDER_OPTIONS.map((p) => <option key={p} value={p}>{p}</option>)}
+                      </select>
+                    ) : (
+                      <input
+                        type={field === "api_key" ? "password" : "text"}
+                        value={models[idx]?.[field] ?? ""}
+                        onChange={(e) => updateModel(idx, field, e.target.value)}
+                        className="flex-1 rounded border border-border bg-bg px-2 py-1 text-text text-xs"
+                      />
+                    )}
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        );
+      })}
+
+      {addingNew ? (
+        <div className="rounded-lg border border-accent/40 bg-accent/5 px-3 py-2 space-y-2">
+          {(["model_name", "api_base", "api_key", "model_provider"] as const).map((field) => (
+            <div key={field} className="flex items-center gap-2 text-xs">
+              <label className="w-28 text-text-muted shrink-0">{field}</label>
+              {field === "model_provider" ? (
+                <select
+                  value={newModel[field]}
+                  onChange={(e) => setNewModel((p) => ({ ...p, [field]: e.target.value }))}
+                  className="flex-1 rounded border border-border bg-bg px-2 py-1 text-text text-xs"
+                >
+                  <option value="">{t("config.selectModelProvider")}</option>
+                  {MODEL_PROVIDER_OPTIONS.map((p) => <option key={p} value={p}>{p}</option>)}
+                </select>
+              ) : (
+                <input
+                  type={field === "api_key" ? "password" : "text"}
+                  value={newModel[field]}
+                  onChange={(e) => setNewModel((p) => ({ ...p, [field]: e.target.value }))}
+                  className="flex-1 rounded border border-border bg-bg px-2 py-1 text-text text-xs"
+                  placeholder={field === "model_name" ? "e.g. gpt-4o" : ""}
+                />
+              )}
+            </div>
+          ))}
+          <div className="flex justify-end gap-2 pt-1">
+            <button type="button" onClick={() => setAddingNew(false)} className="btn !px-3 !py-1 text-xs">{t("common.cancel")}</button>
+            <button type="button" onClick={handleAddNew} disabled={!newModel.model_name.trim()} className="btn primary !px-3 !py-1 text-xs">{t("common.confirm")}</button>
+          </div>
+        </div>
+      ) : (
+        <button
+          type="button"
+          onClick={() => setAddingNew(true)}
+          className="w-full rounded-lg border border-dashed border-border py-2 text-xs text-text-muted hover:bg-secondary/40 hover:border-accent/40"
+        >
+          + {t("config.modelList.addModel")}
+        </button>
+      )}
+    </div>
+  );
+}
+
 /** 模型配置父级：把默认/视频/音频/视觉四个子分组收拢在「模型配置」下 */
 function ModelConfigSection({
   modelGroups,
   draftValues,
   onChange,
   t,
-  canValidateDefaultModel,
-  validateLoading,
-  validateDisabled,
-  validateDisabledReason,
-  validateStatus,
-  validateMessage,
-  onValidateDefaultModel,
+  draftModels,
+  onDraftModelsChange,
+  onModelValidate,
+  isConnected,
 }: {
   modelGroups: ConfigGroup[];
   draftValues: Record<string, string>;
   onChange: (key: string, value: string) => void;
   t: (key: string, options?: Record<string, unknown>) => string;
-  canValidateDefaultModel: boolean;
-  validateLoading: boolean;
-  validateDisabled: boolean;
-  validateDisabledReason: string | null;
-  validateStatus: "idle" | "loading" | "ok" | "err";
-  validateMessage: string | null;
-  onValidateDefaultModel: () => void;
+  draftModels: ModelEntry[];
+  onDraftModelsChange: (models: ModelEntry[]) => void;
+  onModelValidate?: (fields: { api_base: string; api_key: string; model: string; model_provider: string }) => Promise<void>;
+  isConnected: boolean;
 }) {
   const [open, setOpen] = useState(true);
   const totalItems = modelGroups.reduce((s, g) => s + g.keys.length, 0);
@@ -511,44 +736,27 @@ function ModelConfigSection({
       </button>
       {open && (
         <div className="border-t border-border px-2 pb-2 pt-1 space-y-2">
-          {modelGroups.map((group) => (
+          {/* 多默认模型管理（替代原 model_default 单组） */}
+          <div className="rounded-lg border border-border bg-secondary/10 px-3 py-2">
+            <div className="text-xs font-medium text-text mb-2">{t("config.groups.modelDefault.label")}</div>
+            <MultiModelSection
+              models={draftModels}
+              onModelsChange={onDraftModelsChange}
+              onModelValidate={onModelValidate}
+              isConnected={isConnected}
+              t={t}
+            />
+          </div>
+          {/* 视频/音频/视觉模型保持原有 GroupSection */}
+          {modelGroups.filter((g) => g.tag !== "model_default").map((group) => (
             <GroupSection
               key={group.tag}
               group={group}
               draftValues={draftValues}
               onChange={onChange}
-              defaultOpen={group.tag === "model_default"}
+              defaultOpen={false}
               t={t}
               nested
-              afterTable={
-                canValidateDefaultModel && group.tag === "model_default" ? (
-                  <div className="border-t border-border px-4 py-4 bg-secondary/10">
-                    <div className="flex flex-col items-center gap-2.5 text-center">
-                      <button
-                        type="button"
-                        onClick={onValidateDefaultModel}
-                        disabled={validateDisabled}
-                        title={validateDisabledReason ?? undefined}
-                        className="btn !px-3 !py-1.5 text-sm disabled:opacity-50 disabled:cursor-not-allowed whitespace-nowrap"
-                      >
-                        {validateLoading ? t("config.validateModel.validating") : t("config.validateModel.button")}
-                      </button>
-                      <p className="text-[11px] leading-snug text-text-muted max-w-sm">
-                        {t("config.validateModel.legend")}
-                      </p>
-                      {validateMessage && validateStatus !== "idle" && validateStatus !== "loading" ? (
-                        <p
-                          className={`text-xs max-w-md break-words ${
-                            validateStatus === "ok" ? "text-ok" : "text-danger"
-                          }`}
-                        >
-                          {validateMessage}
-                        </p>
-                      ) : null}
-                    </div>
-                  </div>
-                ) : null
-              }
             />
           ))}
         </div>
@@ -561,18 +769,21 @@ export function ConfigPanel({
   config,
   isConnected,
   onSaveConfig,
-  onValidateModel,
+  onValidateModel: _onValidateModel,
   initialExpandGroupTag = null,
+  onModelSave,
+  onModelRemove,
+  onModelValidate,
+  onModelsRefresh,
+  onSetActiveModel,
 }: ConfigPanelProps) {
   const { t } = useTranslation();
   const isProcessing = useChatStore((s) => s.isProcessing);
+  const { availableModels } = useSessionStore();
   const [draftValues, setDraftValues] = useState<Record<string, string>>({});
+  const [draftModels, setDraftModels] = useState<ModelEntry[]>([]);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [modelValidateStatus, setModelValidateStatus] = useState<
-    "idle" | "loading" | "ok" | "err"
-  >("idle");
-  const [modelValidateMessage, setModelValidateMessage] = useState<string | null>(null);
 
   const normalizedConfig = useMemo<Record<string, string>>(() => {
     if (!config) return {};
@@ -589,14 +800,8 @@ export function ConfigPanel({
   }, [normalizedConfig]);
 
   useEffect(() => {
-    setModelValidateStatus("idle");
-    setModelValidateMessage(null);
-  }, [
-    draftValues.api_base,
-    draftValues.api_key,
-    draftValues.model,
-    draftValues.model_provider,
-  ]);
+    setDraftModels(availableModels.map((m) => ({ ...m })));
+  }, [availableModels]);
 
   const groups = useMemo<ConfigGroup[]>(() => {
     if (!Object.keys(normalizedConfig).length) return [];
@@ -644,10 +849,20 @@ export function ConfigPanel({
 
   const totalItems = useMemo(() => groups.reduce((sum, group) => sum + group.keys.length, 0), [groups]);
   const topLevelGroupCount = (modelGroups.length > 0 ? 1 : 0) + otherGroups.length;
-  const hasChanges = useMemo(() => {
+  const hasConfigChanges = useMemo(() => {
     const keys = Object.keys(normalizedConfig);
     return keys.some((key) => (draftValues[key] ?? "") !== normalizedConfig[key]);
   }, [draftValues, normalizedConfig]);
+  const hasModelChanges = useMemo(() => {
+    if (draftModels.length !== availableModels.length) return true;
+    return draftModels.some((dm, i) => {
+      const om = availableModels[i];
+      if (!om) return true;
+      return dm.model_name !== om.model_name || dm.api_base !== om.api_base
+        || dm.api_key !== om.api_key || dm.model_provider !== om.model_provider;
+    });
+  }, [draftModels, availableModels]);
+  const hasChanges = hasConfigChanges || hasModelChanges;
   const missingRequiredModelFields = useMemo(
     () => REQUIRED_MODEL_FIELDS.filter((key) => !(draftValues[key] ?? "").trim()),
     [draftValues],
@@ -664,31 +879,10 @@ export function ConfigPanel({
   const handleCancel = () => {
     if (!hasChanges) return;
     setDraftValues(normalizedConfig);
+    setDraftModels(availableModels.map((m) => ({ ...m })));
     setError(null);
   };
 
-  const handleValidateDefaultModel = () => {
-    if (!onValidateModel) {
-      return;
-    }
-    void (async () => {
-      setModelValidateStatus("loading");
-      setModelValidateMessage(null);
-      try {
-        await onValidateModel({
-          api_base: (draftValues.api_base ?? "").trim(),
-          api_key: (draftValues.api_key ?? "").trim(),
-          model: (draftValues.model ?? "").trim(),
-          model_provider: (draftValues.model_provider ?? "").trim(),
-        });
-        setModelValidateStatus("ok");
-        setModelValidateMessage(t("config.validateModel.success"));
-      } catch {
-        setModelValidateStatus("err");
-        setModelValidateMessage(t("config.validateModel.notWorking"));
-      }
-    })();
-  };
 
   const handleSaveAndRestart = async () => {
     if (!hasChanges || saving) return;
@@ -699,7 +893,69 @@ export function ConfigPanel({
     setSaving(true);
     setError(null);
     try {
-      await onSaveConfig(draftValues);
+      // 先计算改名检测所需的值（在 availableModels 可能被更新之前）
+      const originalNames = new Set(availableModels.map((m) => m.model_name));
+      const draftNames = new Set(draftModels.map((m) => m.model_name));
+      const removedNames = [...originalNames].filter((n) => !draftNames.has(n));
+      const addedNames = [...draftNames].filter((n) => !originalNames.has(n));
+      const isRename = removedNames.length === 1 && addedNames.length === 1
+        && draftModels.length === availableModels.length;
+
+      // 保存非模型配置（视频/音频/embed/第三方等）
+      if (hasConfigChanges) {
+        await onSaveConfig(draftValues);
+      }
+      // 保存多模型变更
+      if (hasModelChanges) {
+        if (isRename && onModelSave) {
+          // 改名场景：先原子性处理改名，再处理其他模型的字段变更
+          const newName = addedNames[0];
+          const oldName = removedNames[0];
+          const dm = draftModels.find((m) => m.model_name === newName);
+          if (dm) {
+            await onModelSave({ ...dm, original_model_name: oldName });
+          }
+          // 处理同次保存中其他模型的字段变更
+          for (const other of draftModels) {
+            if (other.model_name === newName) continue;
+            const original = availableModels.find((m) => m.model_name === other.model_name);
+            const isChanged = original && (
+              other.api_base !== original.api_base || other.api_key !== original.api_key
+              || other.model_provider !== original.model_provider
+            );
+            if (isChanged) {
+              await onModelSave(other);
+            }
+          }
+        } else {
+          // 非改名场景：先 save 再 delete
+          for (const dm of draftModels) {
+            if (!dm.model_name) continue;
+            const original = availableModels.find((m) => m.model_name === dm.model_name);
+            const isNew = !originalNames.has(dm.model_name);
+            const isChanged = original && (
+              dm.api_base !== original.api_base || dm.api_key !== original.api_key
+              || dm.model_provider !== original.model_provider
+            );
+            if ((isNew || isChanged) && onModelSave) {
+              await onModelSave(dm);
+            }
+          }
+          // 再删除已移除的模型
+          for (const name of removedNames) {
+            if (onModelRemove) {
+              await onModelRemove(name);
+            }
+          }
+        }
+        // 默认模型变化时同步后端排序
+        const newDefault = draftModels[0]?.model_name;
+        const oldDefault = availableModels[0]?.model_name;
+        if (newDefault && newDefault !== oldDefault && onSetActiveModel) {
+          await onSetActiveModel(newDefault);
+        }
+        if (onModelsRefresh) await onModelsRefresh();
+      }
     } catch (saveError) {
       const message = saveError instanceof Error ? saveError.message : t('config.errors.saveFailed');
       setError(message);
@@ -767,23 +1023,10 @@ export function ConfigPanel({
                 draftValues={draftValues}
                 onChange={handleFieldChange}
                 t={t}
-                canValidateDefaultModel={Boolean(onValidateModel)}
-                validateLoading={modelValidateStatus === "loading"}
-                validateDisabled={
-                  !isConnected ||
-                  hasMissingRequiredModelFields ||
-                  modelValidateStatus === "loading"
-                }
-                validateDisabledReason={
-                  !isConnected
-                    ? t("config.validateModel.needConnection")
-                    : hasMissingRequiredModelFields
-                      ? t("config.validateModel.needFields")
-                      : null
-                }
-                validateStatus={modelValidateStatus}
-                validateMessage={modelValidateMessage}
-                onValidateDefaultModel={handleValidateDefaultModel}
+                draftModels={draftModels}
+                onDraftModelsChange={setDraftModels}
+                onModelValidate={onModelValidate}
+                isConnected={isConnected}
               />
             )}
             {otherGroups.map((group) => (

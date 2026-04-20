@@ -558,6 +558,76 @@ def _normalize_rule_severity_action(rule: dict[str, Any]) -> None:
         rule["action"] = act
 
 
+def _decrypt_model_entries(entries: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """解密模型条目中的 api_key 字段，返回深拷贝不改变原始数据。"""
+    import copy
+
+    reg_mod = sys.modules.get("jiuwenclaw.extensions.registry")
+    if reg_mod is None or not hasattr(reg_mod, "ExtensionRegistry"):
+        return copy.deepcopy(entries)
+    try:
+        crypto = reg_mod.ExtensionRegistry.get_instance().get_crypto_provider()
+    except Exception:
+        return copy.deepcopy(entries)
+
+    result = copy.deepcopy(entries)
+    if not crypto:
+        return result
+
+    for entry in result:
+        mcc = entry.get("model_client_config")
+        if isinstance(mcc, dict) and mcc.get("api_key"):
+            try:
+                mcc["api_key"] = crypto.decrypt(mcc["api_key"])
+            except Exception:
+                pass
+    return result
+
+
+def get_default_models(config: dict[str, Any] | None = None) -> list[dict[str, Any]]:
+    """获取默认模型列表，兼容新旧格式。
+
+    优先级：models.defaults（列表） > models.default（单对象） > 环境变量回退
+    返回的 api_key 已解密。
+    """
+    if config is None:
+        config = get_config()
+    models = config.get("models", {})
+
+    # 新格式：已有 defaults 列表
+    if "defaults" in models and isinstance(models["defaults"], list) and models["defaults"]:
+        return _decrypt_model_entries(models["defaults"])
+
+    # 旧格式：单个 default 对象 → 包装为列表
+    if "default" in models and isinstance(models["default"], dict):
+        return _decrypt_model_entries([models["default"]])
+
+    # 回退：从环境变量构造（env var 已在 resolve_env_vars 中解密）
+    return [{
+        "model_client_config": {
+            "api_base": os.getenv("API_BASE", ""),
+            "api_key": os.getenv("API_KEY", ""),
+            "model_name": os.getenv("MODEL_NAME", ""),
+            "client_provider": os.getenv("MODEL_PROVIDER", ""),
+            "timeout": 1800,
+            "verify_ssl": False,
+        },
+        "model_config_obj": {"temperature": 0.95},
+    }]
+
+
+def update_default_models_in_config(models_list: list[dict[str, Any]]) -> None:
+    """将默认模型列表写入 config.yaml 的 models.defaults 段。"""
+    data = _load_yaml_round_trip(_CONFIG_YAML_PATH)
+    if "models" not in data:
+        data["models"] = {}
+    data["models"]["defaults"] = models_list
+    # 同步 models.default 为第一个条目（兼容旧读取方）
+    if models_list:
+        data["models"]["default"] = models_list[0]
+    _dump_yaml_round_trip(_CONFIG_YAML_PATH, data)
+
+
 def update_memory_forbidden_enabled_in_config(value: bool) -> None:
     """更新 memory.forbidden_memory_definition.enabled（记忆系统敏感信息过滤开关）并写回。"""
     data = _load_yaml_round_trip(_CONFIG_YAML_PATH)
@@ -695,10 +765,21 @@ def migrate_config_from_template(
 
 # ---------- 模型配置管理 ----------
 def get_model_names() -> list[str]:
-    """获取 models 下定义的模型名称列表。"""
-    data = _load_yaml_round_trip(_CONFIG_YAML_PATH)
+    """获取可切换的模型名称列表。优先从 models.defaults 列表读取"""
+    data = get_config_raw()
     models = data.get("models", {})
-    return list(models.keys()) if models else []
+    defaults_list = models.get("defaults")
+    if isinstance(defaults_list, list) and defaults_list:
+        names = []
+        for entry in defaults_list:
+            if not isinstance(entry, dict):
+                continue
+            name = (entry.get("model_client_config") or {}).get("model_name", "")
+            if name:
+                names.append(resolve_env_vars(str(name)))
+        return names
+    skip = {"default", "defaults"}
+    return [k for k, v in models.items() if isinstance(v, dict) and k not in skip]
 
 
 def add_or_update_model_in_config(name: str, model_config: dict[str, Any]) -> None:
@@ -719,7 +800,15 @@ def add_or_update_model_in_config(name: str, model_config: dict[str, Any]) -> No
 
 
 def get_model_config(name: str) -> dict[str, Any] | None:
-    """获取指定模型的原始配置（不解析环境变量）。"""
-    data = _load_yaml_round_trip(_CONFIG_YAML_PATH)
+    """获取指定模型的原始配置（不解析环境变量）。优先从 models.defaults 列表中按 model_name 查找。"""
+    data = get_config_raw()
     models = data.get("models", {})
+    defaults_list = models.get("defaults")
+    if isinstance(defaults_list, list):
+        for entry in defaults_list:
+            if not isinstance(entry, dict):
+                continue
+            entry_name = (entry.get("model_client_config") or {}).get("model_name", "")
+            if resolve_env_vars(str(entry_name)) == name:
+                return entry
     return models.get(name) if name in models else None
