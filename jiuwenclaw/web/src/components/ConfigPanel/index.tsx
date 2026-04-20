@@ -936,9 +936,7 @@ export function ConfigPanel({
         && draftModels.length === availableModels.length;
 
       // 保存非模型配置（视频/音频/embed/第三方等）
-      if (hasConfigChanges) {
-        await onSaveConfig(draftValues);
-      }
+      await onSaveConfig(draftValues);
       // 保存多模型变更
       if (hasModelChanges) {
         if (isRename && onModelSave) {
