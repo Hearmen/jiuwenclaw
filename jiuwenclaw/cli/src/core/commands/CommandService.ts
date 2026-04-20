@@ -48,8 +48,10 @@ export function parseSlashCommand(raw: string, commands: readonly SlashCommand[]
 export class CommandService {
   private commands = new Map<string, SlashCommand>();
   private aliases = new Map<string, string>();
+  private topLevelCommands: SlashCommand[] = [];
 
   register(commands: readonly SlashCommand[]): void {
+    this.topLevelCommands = [...commands];
     for (const command of commands) {
       this.registerCommand(command);
     }
@@ -71,7 +73,7 @@ export class CommandService {
   }
 
   getAll(): SlashCommand[] {
-    return [...this.commands.values()]
+    return this.topLevelCommands
       .filter((command) => !command.hidden)
       .sort((a, b) => a.name.localeCompare(b.name));
   }
