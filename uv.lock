@@ -1487,7 +1487,7 @@ wheels = [
 
 [[package]]
 name = "jiuwenclaw"
-version = "0.1.9.post1"
+version = "0.1.10"
 source = { editable = "." }
 dependencies = [
     { name = "aiosqlite" },
@@ -1567,7 +1567,7 @@ requires-dist = [
     { name = "lark-oapi", specifier = ">=1.5.3" },
     { name = "loguru", specifier = ">=0.7.3" },
     { name = "mutagen", specifier = ">=1.47.0" },
-    { name = "openjiuwen", specifier = "==0.1.10.post2" },
+    { name = "openjiuwen", specifier = "==0.1.10.post3" },
     { name = "opentelemetry-api", specifier = ">=1.25.0" },
     { name = "opentelemetry-exporter-otlp-proto-grpc", specifier = ">=1.25.0" },
     { name = "opentelemetry-exporter-otlp-proto-http", specifier = ">=1.25.0" },
@@ -1609,7 +1609,7 @@ test = [
 
 [[package]]
 name = "jiuwenclaw-tui"
-version = "0.1.9"
+version = "0.1.10"
 source = { directory = "packages/jiuwenclaw-tui" }
 
 [[package]]
@@ -2302,7 +2302,7 @@ wheels = [
 
 [[package]]
 name = "openjiuwen"
-version = "0.1.10.post2"
+version = "0.1.10.post3"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "a2a-sdk" },
@@ -2340,9 +2340,9 @@ dependencies = [
     { name = "tiktoken" },
     { name = "transformers" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/7a/bc/f4599e2176dbef422cf3457c951dedc50ed4d987623dc5e6b4f260178cac/openjiuwen-0.1.10.post2.tar.gz", hash = "sha256:aaff2990cf10afdae6a93f7e98188acf924c906d5069a33d05dd0f9edb0f01a6", size = 1774971, upload-time = "2026-04-14T14:47:54.975Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/9c/60/efeaccfa1604eae97fdfaa0c59953129fda25598dac7a9af79eb12e418a5/openjiuwen-0.1.10.post3.tar.gz", hash = "sha256:e153b0ff852733a91e3df3eb1e7ada92caae92665c72e4ce4a40b7e9fbec0ad1", size = 1917334, upload-time = "2026-04-20T04:22:36.164Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/32/ee/00ba7a3edee2d658a637de001933d9cd26e950cc4b7b3f17966fceeefa2b/openjiuwen-0.1.10.post2-py3-none-any.whl", hash = "sha256:5b943ce086c8ddc3f1f08b6f42bfa383ad9516ce9bf2d680bc9f6e8c2142f61a", size = 2394352, upload-time = "2026-04-14T14:47:52.389Z" },
+    { url = "https://files.pythonhosted.org/packages/a0/47/ab744b174e653fdc622937699f03f1100722ebff48201e5e6d306cd50546/openjiuwen-0.1.10.post3-py3-none-any.whl", hash = "sha256:afad10dcbd4401ab83b7eb21f862b74f26c7ef0d0e94d0f3b7a192953b9c681b", size = 2575638, upload-time = "2026-04-20T04:22:33.563Z" },
 ]
 
 [[package]]
