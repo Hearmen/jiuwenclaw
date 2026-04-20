@@ -3,6 +3,7 @@ import {
   createAttachmentInfoEntry,
   createSessionResultToolDisplay,
   extractMediaItems,
+  isHistoryDonePayload,
 } from "./history-parser.js";
 import { normalizeFinalContent } from "./final-content.js";
 import type { EventFrame } from "./protocol.js";
@@ -87,6 +88,10 @@ export interface AppEventDelegate {
   pushHistoryEntry(entry: HistoryItem): void;
   scheduleHistoryFlush(): void;
   safeRestoreHistory(sessionId: string): void;
+  /** 报告 history.get 流返回的分页元数据（本页 page_idx / total_pages）。 */
+  reportHistoryPageMeta(meta: { pageIdx?: number; totalPages?: number }): void;
+  /** 某一页 history.get 流已结束（收到 `status: done` 帧），由 app-state 决定是否继续拉下一页。 */
+  notifyHistoryPageDone(pageIdx: number): void;
 }
 
 function appendEntry(delegate: AppEventDelegate, entry: HistoryItem): void {
@@ -639,6 +644,19 @@ export function handleIncomingFrame(delegate: AppEventDelegate, frame: EventFram
     }
 
     case "history.message": {
+      // 先感知分页元数据（done 帧不会产生 entry，但必须让 app-state 感知）。
+      const pageIdxRaw = payload.page_idx;
+      const totalPagesRaw = payload.total_pages;
+      delegate.reportHistoryPageMeta({
+        pageIdx: typeof pageIdxRaw === "number" ? pageIdxRaw : undefined,
+        totalPages: typeof totalPagesRaw === "number" ? totalPagesRaw : undefined,
+      });
+      if (isHistoryDonePayload(payload)) {
+        if (typeof pageIdxRaw === "number") {
+          delegate.notifyHistoryPageDone(pageIdxRaw);
+        }
+        return connectionChanged;
+      }
       const entry = parseHistoryFrame(frame);
       if (!entry) {
         return connectionChanged;

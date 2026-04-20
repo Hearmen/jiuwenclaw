@@ -19,6 +19,26 @@ export function mergeAssistantFragmentContents(parts: string[]): string {
   return p.join("");
 }
 
+/**
+ * 按 `at` 时间升序对同一 turn 的 assistant 片段排序，同毫秒时间戳时保持相对稳定性。
+ * AgentServer 为了分页优先返回最新页，`_handle_history_get_stream` 会把整条历史 `list(reversed(raw))`
+ * 再流式下发；CLI 侧每条 `history.message` 单独转成 assistant 条目，若不按时间重排，
+ * 合并得到的就是「final + 倒序 delta」这种乱序正文。
+ */
+function sortAssistantGroupByTime(
+  group: Extract<HistoryItem, { kind: "assistant" }>[],
+): Extract<HistoryItem, { kind: "assistant" }>[] {
+  return group
+    .map((entry, originalIndex) => ({ entry, originalIndex, ts: Date.parse(entry.at) }))
+    .sort((a, b) => {
+      const ta = Number.isNaN(a.ts) ? 0 : a.ts;
+      const tb = Number.isNaN(b.ts) ? 0 : b.ts;
+      if (ta !== tb) return ta - tb;
+      return a.originalIndex - b.originalIndex;
+    })
+    .map((item) => item.entry);
+}
+
 function sameAssistantTurn(
   a: Extract<HistoryItem, { kind: "assistant" }>,
   b: Extract<HistoryItem, { kind: "assistant" }>,
@@ -41,6 +61,11 @@ function sameAssistantTurn(
 /**
  * 将流式恢复产生的多条 `kind: assistant`、同一次模型请求（requestId 或同源 id）的连续条目合并为一条。
  * 覆盖网关 history.get：本地 ack 无 `payload.messages`、正文仅靠 `history.message` 事件注入的路径。
+ *
+ * 策略（优先级从高到低）：
+ *   1. 组内存在 `chat.final` 片段：直接采用最晚一条 final 的正文（权威完整答复，天然避免与 delta 拼接时的重复）。
+ *   2. 全部为 delta：按 `at` 时间升序拼接，修复 AgentServer 分页导致的倒序问题。
+ *   3. 无 eventType 元数据（老链路兜底）：退化到 `mergeAssistantFragmentContents` 原逻辑。
  */
 export function coalesceAssistantHistoryEntries(entries: HistoryItem[]): HistoryItem[] {
   const out: HistoryItem[] = [];
@@ -67,9 +92,7 @@ export function coalesceAssistantHistoryEntries(entries: HistoryItem[]): History
       if (group.length === 1) {
         out.push(e);
       } else {
-        const last = group[group.length - 1]!;
-        const content = mergeAssistantFragmentContents(group.map((g) => g.content));
-        out.push({ ...last, content });
+        out.push(mergeAssistantGroup(group));
       }
       i = j;
     } else {
@@ -78,6 +101,23 @@ export function coalesceAssistantHistoryEntries(entries: HistoryItem[]): History
     }
   }
   return out;
+}
+
+function mergeAssistantGroup(
+  group: Extract<HistoryItem, { kind: "assistant" }>[],
+): Extract<HistoryItem, { kind: "assistant" }> {
+  const finals = group.filter((g) => g.eventType === "chat.final" && g.content);
+  if (finals.length > 0) {
+    const sortedFinals = sortAssistantGroupByTime(finals);
+    const chosen = sortedFinals[sortedFinals.length - 1]!;
+    return { ...chosen };
+  }
+
+  const hasEventTypeMeta = group.some((g) => typeof g.eventType === "string" && g.eventType);
+  const sorted = hasEventTypeMeta ? sortAssistantGroupByTime(group) : group;
+  const last = sorted[sorted.length - 1]!;
+  const content = mergeAssistantFragmentContents(sorted.map((g) => g.content));
+  return { ...last, content };
 }
 
 function asString(value: unknown): string | undefined {
@@ -295,7 +335,7 @@ function buildEventPayloadForRecord(record: Record<string, unknown>): Record<str
   return base;
 }
 
-function isHistoryDonePayload(payload: Record<string, unknown>): boolean {
+export function isHistoryDonePayload(payload: Record<string, unknown>): boolean {
   const status = typeof payload.status === "string" ? payload.status.trim().toLowerCase() : "";
   if (status === "done") {
     return true;
@@ -601,7 +641,9 @@ export function parseHistoryFrame(frame: EventFrame): HistoryItem | null {
     eventType === "chat.evolution_status" ||
     eventType === "chat.processing_status" ||
     eventType === "chat.interrupt_result" ||
-    eventType === "chat.ask_user_question"
+    eventType === "chat.ask_user_question" ||
+    eventType === "chat.usage_metadata" ||
+    eventType === "chat.usage_summary"
   ) {
     return null;
   }
@@ -618,6 +660,9 @@ export function parseHistoryFrame(frame: EventFrame): HistoryItem | null {
     content,
     requestId: pickFirstString(record, ["request_id"]) ?? asString(payload.request_id),
     at,
+    // 供 `coalesceAssistantHistoryEntries` 在同一 requestId 的片段中优先选用 final，
+    // 防止 AgentServer 分页倒序导致 delta 追加在 final 之后出现「镜像」叠加。
+    eventType,
   };
 }
 

@@ -168,6 +168,8 @@ export type HistoryItem =
       streaming?: boolean;
       requestId?: string;
       at: string;
+      /** 历史恢复期间携带原始事件类型（如 `chat.final` / `chat.delta`），用于在分页倒序场景下正确合并片段。 */
+      eventType?: string;
     }
   | { kind: "thinking"; id: string; sessionId: string; content: string; at: string }
   | {

@@ -116,6 +116,10 @@ export class CliPiAppState {
   private historyFlushTimer: ReturnType<typeof setTimeout> | null = null;
   private toolTimeoutTimer: ReturnType<typeof setTimeout> | null = null;
   private historyRequestToken = 0;
+  /** history.get 流返回的分页总数；由 `history.message` 事件帧的 `total_pages` 持续刷新。 */
+  private historyTotalPages: number | null = null;
+  /** 各页 done 事件的 resolver；restoreHistory 循环拉取时按 page_idx 等待。 */
+  private historyPageDoneResolvers = new Map<number, () => void>();
   private unlistenStatus: (() => void) | null = null;
   private unlistenFrames: (() => void) | null = null;
   private modelInfo: { provider: string; model: string; version: string } = {
@@ -194,6 +198,18 @@ export class CliPiAppState {
     },
     safeFetchSessionTitle: (sessionId) => {
       this.safeFetchSessionTitle(sessionId);
+    },
+    reportHistoryPageMeta: ({ totalPages }) => {
+      if (typeof totalPages === "number" && Number.isFinite(totalPages) && totalPages > 0) {
+        this.historyTotalPages = totalPages;
+      }
+    },
+    notifyHistoryPageDone: (pageIdx) => {
+      const resolver = this.historyPageDoneResolvers.get(pageIdx);
+      if (resolver) {
+        this.historyPageDoneResolvers.delete(pageIdx);
+        resolver();
+      }
     },
   };
 
@@ -449,6 +465,8 @@ readonly request = async <T = Record<string, unknown>>(
     this.contextCompression = null;
     this.clearToolExecutionState();
     this.historyEntries = [];
+    this.historyTotalPages = null;
+    this.historyPageDoneResolvers.clear();
     this.emitChange();
   };
 
@@ -659,34 +677,108 @@ readonly request = async <T = Record<string, unknown>>(
     this.historyRequestToken += 1;
     const requestToken = this.historyRequestToken;
     this.historyEntries = [];
+    this.historyTotalPages = null;
+    this.historyPageDoneResolvers.clear();
     this.clearToolExecutionState();
     if (this.historyFlushTimer) {
       clearTimeout(this.historyFlushTimer);
       this.historyFlushTimer = null;
     }
-    const payload = await this.request<{
-      messages?: unknown[];
-      total_pages?: number;
-      page_idx?: number;
-    }>("history.get", { session_id: targetSessionId, page_idx: 1 });
-    if (Array.isArray(payload.messages)) {
-      const merged = mergeHistoryMessagesForRestore(payload.messages);
-      for (const message of merged) {
-        const entry = parseHistoryFrame({
-          type: "event",
-          event: "history.message",
-          payload: {
-            session_id: targetSessionId,
-            message,
-            total_pages: payload.total_pages,
-            page_idx: payload.page_idx,
-          },
-        });
-        if (entry) {
-          this.historyEntries.push(entry);
+
+    // 本地 channel 对 `history.get` 的 ack 里只有 `accepted: true` / `session_id` / `page_idx`，
+    // 真正的消息和分页元数据通过 `history.message` 事件流异步到达；这里先处理本地 ack 返回里
+    // 恰好带 messages 的分支（老链路兼容），再按 `total_pages` 循环逐页拉取。
+    const fetchPage = async (pageIdx: number): Promise<void> => {
+      const donePromise = new Promise<void>((resolve) => {
+        this.historyPageDoneResolvers.set(pageIdx, resolve);
+      });
+      let ackPayload: {
+        messages?: unknown[];
+        total_pages?: number;
+        page_idx?: number;
+      } = {};
+      try {
+        ackPayload = await this.request<{
+          messages?: unknown[];
+          total_pages?: number;
+          page_idx?: number;
+        }>("history.get", { session_id: targetSessionId, page_idx: pageIdx });
+      } catch (error) {
+        this.historyPageDoneResolvers.delete(pageIdx);
+        throw error;
+      }
+
+      if (Array.isArray(ackPayload.messages) && ackPayload.messages.length > 0) {
+        const merged = mergeHistoryMessagesForRestore(ackPayload.messages);
+        for (const message of merged) {
+          if (requestToken !== this.historyRequestToken) {
+            this.historyPageDoneResolvers.delete(pageIdx);
+            return;
+          }
+          const entry = parseHistoryFrame({
+            type: "event",
+            event: "history.message",
+            payload: {
+              session_id: targetSessionId,
+              message,
+              total_pages: ackPayload.total_pages,
+              page_idx: ackPayload.page_idx,
+            },
+          });
+          if (entry) {
+            this.historyEntries.push(entry);
+          }
+        }
+        if (typeof ackPayload.total_pages === "number" && ackPayload.total_pages > 0) {
+          this.historyTotalPages = ackPayload.total_pages;
+        }
+        // 本地 ack 已经自带全部数据，不会再发 done 事件，这里手动解析。
+        this.historyPageDoneResolvers.delete(pageIdx);
+        return;
+      }
+
+      // 等待 history.message 流的 `status: done` 帧；加超时保护，避免 done 丢失时无限挂起。
+      const PAGE_TIMEOUT_MS = 15_000;
+      await Promise.race([
+        donePromise,
+        new Promise<void>((resolve) => {
+          setTimeout(() => {
+            if (this.historyPageDoneResolvers.has(pageIdx)) {
+              this.historyPageDoneResolvers.delete(pageIdx);
+            }
+            resolve();
+          }, PAGE_TIMEOUT_MS);
+        }),
+      ]);
+    };
+
+    try {
+      // 先拉第 1 页（取最新 50 条）。
+      await fetchPage(1);
+      if (requestToken !== this.historyRequestToken) return;
+
+      // 后端按 `list(reversed(raw))` 分页：第 2, 3, ... 页是更早的消息。
+      // 没有显式上限能确定会话总大小，统一按 total_pages 循环；每页不超过 50 条事件，成本可控。
+      const totalPages = this.historyTotalPages ?? 1;
+      for (let page = 2; page <= totalPages; page++) {
+        if (requestToken !== this.historyRequestToken) return;
+        try {
+          await fetchPage(page);
+        } catch (error) {
+          // 容忍老会话或竞态下的 `invalid page_idx` 错误：停止翻页，保留已拉到的消息。
+          if (isIgnorableHistoryRestoreError(error)) {
+            break;
+          }
+          throw error;
         }
       }
+    } catch (error) {
+      if (requestToken === this.historyRequestToken) {
+        throw error;
+      }
+      return;
     }
+
     setTimeout(() => {
       if (requestToken !== this.historyRequestToken) return;
       this.applyHistoryEntriesToTranscript();
@@ -694,7 +786,19 @@ readonly request = async <T = Record<string, unknown>>(
   };
 
   private applyHistoryEntriesToTranscript(): void {
-    this.entries = [...coalesceAssistantHistoryEntries(this.historyEntries)];
+    // AgentServer 为了让分页优先返回最新页，在 `_handle_history_get_stream` 中把整条历史做了
+    // `list(reversed(raw))` 后再流式下发；CLI 按到达顺序 push 到 `historyEntries` 会得到倒序。
+    // 这里按消息时间戳重排回时间升序，再做同 turn 合并，保证 UI 从最早到最新正常显示。
+    const ordered = [...this.historyEntries]
+      .map((entry, originalIndex) => ({ entry, originalIndex, ts: Date.parse(entry.at) }))
+      .sort((a, b) => {
+        const ta = Number.isNaN(a.ts) ? 0 : a.ts;
+        const tb = Number.isNaN(b.ts) ? 0 : b.ts;
+        if (ta !== tb) return ta - tb;
+        return a.originalIndex - b.originalIndex;
+      })
+      .map((item) => item.entry);
+    this.entries = [...coalesceAssistantHistoryEntries(ordered)];
     this.rebuildToolExecutionState();
     this.emitChange();
   }
