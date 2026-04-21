@@ -16,6 +16,7 @@ import logging
 import time
 from typing import Any, AsyncIterator, Tuple
 
+from datetime import datetime, timedelta, timezone
 from dotenv import load_dotenv
 
 from jiuwenclaw.agentserver.agent_adapters import (
@@ -85,9 +86,15 @@ def build_user_prompt(content: str, files: dict, channel: str, language: str) ->
             },
             ensure_ascii=False,
         )
+
+    now = datetime.now(timezone(timedelta(hours=8)))
+    now_str = now.strftime("%Y-%m-%d %H:%M:%S")
+
     return prompt + json.dumps(
         {
             "source": channel,
+            "timezone": "Asia/Shanghai",
+            "timestamp": now_str,
             "preferred_response_language": language,
             "content": content,
             "files_updated_by_user": json.dumps(files, ensure_ascii=False),

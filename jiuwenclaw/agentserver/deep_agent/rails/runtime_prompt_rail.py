@@ -88,11 +88,12 @@ class RuntimePromptRail(DeepAgentRail):
         now = datetime.now(tz=self._tz)
         now_str = now.strftime("%Y-%m-%d %H:%M:%S")
         current_year = now.strftime("%Y")
+        weekday_cn = _CN_WEEKDAYS[now.weekday()]
 
         if self._language == "cn":
             time_content = (
                 f"# 当前日期与时间\n\n"
-                f"- 当前时间：{now_str}\n"
+                f"- 当前时间：{now_str}（{weekday_cn}）\n"
                 f"- 当前年份：{current_year}\n"
                 "- 当用户询问“最新、当前、今年、本年、实时、近期”等信息并需要搜索时，"
                 "搜索 query 必须优先使用当前年份或日期"
@@ -100,7 +101,7 @@ class RuntimePromptRail(DeepAgentRail):
         else:
             time_content = (
                 f"# Current Date & Time\n\n"
-                f"- Current time: {now_str}\n"
+                f"- Current time: {now_str} ({now.strftime('%A')})\n"
                 f"- Current year: {current_year}\n"
                 "- When the user asks for latest/current/this-year/recent information and search is needed, "
                 "search queries must prefer the current year or date."
