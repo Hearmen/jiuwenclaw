@@ -678,6 +678,7 @@ async def _run(
     web_port: int,
     web_path: str,
 ) -> None:
+    from jiuwenclaw.channel.a2a_channel import A2AChannel, A2AChannelConfig
     from jiuwenclaw.channel.dingding import DingTalkChannel, DingTalkConfig
     from jiuwenclaw.channel.feishu import FeishuChannel, FeishuConfig
     from jiuwenclaw.channel.whatsapp_channel import WhatsAppChannel, WhatsAppChannelConfig
@@ -967,6 +968,45 @@ async def _run(
         if binding.install is not None:
             binding.install(gateway_server)
     gateway_server.on_message(acp_inbound_server.handle_message)
+
+    a2a_server_enabled = str(os.getenv("A2A_SERVER_ENABLED", "")).strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }
+    a2a_channel = A2AChannel(
+        A2AChannelConfig(
+            enabled=a2a_server_enabled,
+            host=str(os.getenv("A2A_SERVER_HOST", "127.0.0.1")).strip() or "127.0.0.1",
+            port=int(os.getenv("A2A_SERVER_PORT", "19100")),
+            rpc_path=str(os.getenv("A2A_SERVER_PATH", "/a2a")).strip() or "/a2a",
+            protocol_version=str(os.getenv("A2A_SERVER_PROTOCOL_VERSION", "1.0.0")).strip() or "1.0.0",
+            card_path=str(
+                os.getenv("A2A_SERVER_CARD_PATH", "/.well-known/agent-card.json")
+            ).strip()
+            or "/.well-known/agent-card.json",
+            extended_card_path=str(
+                os.getenv("A2A_SERVER_EXTENDED_CARD_PATH", "/agent/authenticatedExtendedCard")
+            ).strip()
+            or "/agent/authenticatedExtendedCard",
+            app_name=str(
+                os.getenv("A2A_SERVER_APP_NAME", "JiuwenClaw Gateway A2A Server")
+            ).strip()
+            or "JiuwenClaw Gateway A2A Server",
+            app_description=str(
+                os.getenv("A2A_SERVER_APP_DESCRIPTION", "A2A ingress for JiuwenClaw Gateway")
+            ).strip()
+            or "A2A ingress for JiuwenClaw Gateway",
+            app_version=str(
+                os.getenv("A2A_SERVER_APP_VERSION", "0.1.0")
+            ).strip()
+            or "0.1.0",
+        ),
+        _DummyBus(),
+    )
+    channel_manager.register_channel(a2a_channel)
+    a2a_task = asyncio.create_task(a2a_channel.start(), name="a2a-channel")
 
     feishu_channel = None
     feishu_task = None
@@ -1484,6 +1524,14 @@ async def _run(
     except asyncio.CancelledError:
         pass
     finally:
+        if a2a_task is not None:
+            a2a_task.cancel()
+            try:
+                await a2a_task
+            except asyncio.CancelledError:
+                pass
+        await a2a_channel.stop()
+        channel_manager.unregister_channel(a2a_channel.channel_id)
         if gateway_server_task is not None:
             gateway_server_task.cancel()
             try:
