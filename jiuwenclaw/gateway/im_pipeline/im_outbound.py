@@ -13,8 +13,10 @@ import os
 import re
 from typing import TYPE_CHECKING, Any
 
+from jiuwenclaw.config import _parse_custom_headers
+
 if TYPE_CHECKING:
-    from jiuwenclaw.gateway.im_inbound import IMPlatformAdapter
+    from jiuwenclaw.gateway.im_pipeline.im_inbound import IMPlatformAdapter
     from jiuwenclaw.schema.message import Message
 
 logger = logging.getLogger(__name__)
@@ -74,6 +76,7 @@ class IMOutboundPipeline:
             api_base = api_base.rsplit("/chat/completions", 1)[0]
         model_name = (react.get("model_name") or os.getenv("MODEL_NAME") or "gpt-4o").strip()
         client_provider = mcc_raw.get("client_provider", "OpenAI")
+        custom_headers = _parse_custom_headers(mcc_raw.get("custom_headers") or os.getenv("CUSTOM_HEADERS"))
 
         if not api_key or not api_base:
             logger.warning(
@@ -92,6 +95,7 @@ class IMOutboundPipeline:
                 api_key=api_key,
                 api_base=api_base,
                 verify_ssl=False,
+                custom_headers=custom_headers,
             )
             model_config = ModelRequestConfig(
                 model_name=model_name,

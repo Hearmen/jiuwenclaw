@@ -30,12 +30,10 @@ from jiuwenclaw.config import (
     update_default_models_in_config,
     update_preferred_language_in_config,
 )
-from jiuwenclaw.jiuwen_core_patch import apply_openai_model_client_patch
 from jiuwenclaw.gateway.route_binding import GatewayRouteBinding
 from jiuwenclaw.version import __version__
 
 logger = logging.getLogger(__name__)
-apply_openai_model_client_patch()
 
 # ── 需要转发到 Agent 的方法集合 ──────────────────────────────
 

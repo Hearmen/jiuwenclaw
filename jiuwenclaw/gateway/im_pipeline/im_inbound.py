@@ -13,6 +13,7 @@ from typing import Any, Protocol
 from openjiuwen.core.foundation.llm import Model
 from openjiuwen.core.foundation.llm.schema.config import ModelClientConfig, ModelRequestConfig
 
+from jiuwenclaw.config import _parse_custom_headers
 from jiuwenclaw.schema.message import Message, ReqMethod
 from jiuwenclaw.gateway.slash_command import CONTROL_MESSAGE_TEXTS
 from jiuwenclaw.utils import get_root_dir, logger
@@ -383,6 +384,7 @@ class IMConversationProcessor:
             if api_base.endswith("/chat/completions"):
                 api_base = api_base.rsplit("/chat/completions", 1)[0]
             client_provider = mcc.get("client_provider") or os.getenv("MODEL_PROVIDER", "OpenAI")
+            custom_headers = _parse_custom_headers(mcc.get("custom_headers") or os.getenv("CUSTOM_HEADERS"))
             model_client_cfg = ModelClientConfig(
                 client_id="im_conversation_processor_client",
                 client_provider=client_provider,
@@ -390,6 +392,7 @@ class IMConversationProcessor:
                 api_base=api_base,
                 verify_ssl=False,
                 timeout=180.0,
+                custom_headers=custom_headers,
             )
             self._llm = Model(
                 model_config=model_cfg,

@@ -31,6 +31,7 @@ models:
         client_provider: ${MODEL_PROVIDER}
         timeout: 1800
         verify_ssl: false
+        custom_headers: ${CUSTOM_HEADERS:-}
       model_config_obj:
         temperature: 0.95
   video:

@@ -19,10 +19,7 @@ import os
 from dotenv import load_dotenv
 from openjiuwen.core.common.logging import LogManager
 
-from jiuwenclaw.jiuwen_core_patch import apply_openai_model_client_patch
 from jiuwenclaw.utils import get_user_workspace_dir, get_env_file, prepare_workspace, logger
-
-apply_openai_model_client_patch()
 
 # Ensure workspace initialized
 _workspace_dir = get_user_workspace_dir()

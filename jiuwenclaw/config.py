@@ -1,5 +1,7 @@
 # Copyright (c) Huawei Technologies Co., Ltd. 2025. All rights reserved.
 
+import json
+import logging
 import os
 import re
 import sys
@@ -8,6 +10,8 @@ from pathlib import Path
 from typing import Any
 
 import yaml
+
+logger = logging.getLogger(__name__)
 from ruamel.yaml import YAML
 
 from jiuwenclaw.utils import get_config_file
@@ -558,29 +562,55 @@ def _normalize_rule_severity_action(rule: dict[str, Any]) -> None:
         rule["action"] = act
 
 
+def _parse_custom_headers(value: str | None) -> dict[str, Any] | None:
+    """解析 custom_headers 配置，支持 JSON 字符串格式。
+
+    Args:
+        value: 环境变量值，可以是 None、空字符串或 JSON 字符串
+
+    Returns:
+        解析后的字典，如果输入为空或解析失败则返回 None
+    """
+    if not value or value.strip() == "":
+        return None
+    try:
+        result = json.loads(value)
+        if isinstance(result, dict):
+            return result
+        logger.warning(f"custom_headers must be a JSON object, got: {type(result).__name__}")
+        return None
+    except json.JSONDecodeError as e:
+        logger.warning(f"custom_headers JSON parse failed: {e}")
+        return None
+
+
 def _decrypt_model_entries(entries: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """解密模型条目中的 api_key 字段，返回深拷贝不改变原始数据。"""
     import copy
 
-    reg_mod = sys.modules.get("jiuwenclaw.extensions.registry")
-    if reg_mod is None or not hasattr(reg_mod, "ExtensionRegistry"):
-        return copy.deepcopy(entries)
-    try:
-        crypto = reg_mod.ExtensionRegistry.get_instance().get_crypto_provider()
-    except Exception:
-        return copy.deepcopy(entries)
-
     result = copy.deepcopy(entries)
-    if not crypto:
-        return result
+
+    # 获取 crypto provider（可选）
+    reg_mod = sys.modules.get("jiuwenclaw.extensions.registry")
+    crypto = None
+    if reg_mod is not None and hasattr(reg_mod, "ExtensionRegistry"):
+        try:
+            crypto = reg_mod.ExtensionRegistry.get_instance().get_crypto_provider()
+        except Exception:
+            pass
 
     for entry in result:
         mcc = entry.get("model_client_config")
-        if isinstance(mcc, dict) and mcc.get("api_key"):
-            try:
-                mcc["api_key"] = crypto.decrypt(mcc["api_key"])
-            except Exception:
-                pass
+        if isinstance(mcc, dict):
+            # 解密 api_key
+            if mcc.get("api_key") and crypto:
+                try:
+                    mcc["api_key"] = crypto.decrypt(mcc["api_key"])
+                except Exception:
+                    pass
+            # 解析 custom_headers JSON 字符串
+            if "custom_headers" in mcc:
+                mcc["custom_headers"] = _parse_custom_headers(mcc["custom_headers"])
     return result
 
 
@@ -609,6 +639,7 @@ def get_default_models(config: dict[str, Any] | None = None) -> list[dict[str, A
             "api_key": os.getenv("API_KEY", ""),
             "model_name": os.getenv("MODEL_NAME", ""),
             "client_provider": os.getenv("MODEL_PROVIDER", ""),
+            "custom_headers": _parse_custom_headers(os.getenv("CUSTOM_HEADERS", None)),
             "timeout": 1800,
             "verify_ssl": False,
         },

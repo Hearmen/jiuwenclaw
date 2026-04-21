@@ -30,10 +30,7 @@ from openjiuwen.core.common.logging import LogManager
 import jiuwenclaw.channel.acp_channel as acp_channel_module
 from jiuwenclaw.channel.acp_channel import AcpGatewayBridge
 from jiuwenclaw.gateway.route_binding import GatewayRouteBinding
-from jiuwenclaw.jiuwen_core_patch import apply_openai_model_client_patch
 from jiuwenclaw.utils import get_user_workspace_dir, get_env_file, prepare_workspace
-
-apply_openai_model_client_patch()
 
 # Ensure workspace initialized
 _workspace_dir = get_user_workspace_dir()
