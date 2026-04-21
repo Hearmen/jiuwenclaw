@@ -1,10 +1,13 @@
 import { matchesKey } from "@mariozechner/pi-tui";
-import type { AppSnapshot } from "../app-state.js";
+
+/**
+ * 快捷键约定（Ctrl+C）：
+ * 用户在 CLI/TUI 按下 Ctrl+C 时，始终尝试向服务端发送 `chat.interrupt`，
+ * 强制结束当前 session 正在运行的任务；不退出 CLI/TUI。
+ */
 
 export interface AppScreenKeymapDelegate {
-  getSnapshot(): AppSnapshot;
-  cancel(): void;
-  requestExit(): void;
+  interruptTask(): void;
   toggleTodos(): void;
   toggleTeamPanel(): void;
   toggleTranscript(): void;
@@ -22,14 +25,9 @@ export const APP_SCREEN_KEY_BINDINGS: readonly KeyBinding[] = [
   {
     key: "ctrl+c",
     label: "ctrl+c",
-    description: "cancel active run or arm exit",
+    description: "请求强制结束当前任务（不退出 CLI）",
     run: (delegate) => {
-      const snapshot = delegate.getSnapshot();
-      if (snapshot.cancellableWork) {
-        delegate.cancel();
-      } else {
-        delegate.requestExit();
-      }
+      delegate.interruptTask();
     },
   },
   {

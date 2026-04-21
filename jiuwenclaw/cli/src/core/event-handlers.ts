@@ -616,10 +616,36 @@ export function handleIncomingFrame(delegate: AppEventDelegate, frame: EventFram
     case "chat.interrupt_result": {
       const intent = typeof payload.intent === "string" ? payload.intent : "cancel";
       if (intent === "cancel") {
-        delegate.setStreamingState(StreamingState.Idle);
-        delegate.getActiveSubtasks().clear();
-        delegate.setEvolutionStatus("idle");
-        delegate.markRunningToolsInterrupted();
+        const success = payload.success !== false;
+        const message =
+          typeof payload.message === "string" && payload.message.trim()
+            ? payload.message
+            : success
+              ? "当前会话任务已终止"
+              : "当前会话任务终止失败";
+        if (success) {
+          delegate.setStreamingState(StreamingState.Interrupted);
+          delegate.getActiveSubtasks().clear();
+          delegate.setEvolutionStatus("idle");
+          delegate.markRunningToolsInterrupted();
+          appendEntry(delegate, {
+            kind: "info",
+            id: createId("info"),
+            sessionId: activeSessionId,
+            content: message,
+            icon: "i",
+            at: new Date().toISOString(),
+          });
+        } else {
+          appendEntry(delegate, {
+            kind: "error",
+            id: createId("error"),
+            sessionId: activeSessionId,
+            content: message,
+            at: new Date().toISOString(),
+          });
+          delegate.setLastError(message);
+        }
       } else if (intent === "pause") {
         delegate.setStreamingState(StreamingState.Paused);
       } else {

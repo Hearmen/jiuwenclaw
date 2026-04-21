@@ -70,6 +70,10 @@ function renderRunningStatus(animationPhase: number, elapsedMs: number | undefin
   return `• ${animatedLabel} (${formatElapsed(elapsedMs)} • esc to interrupt)`;
 }
 
+function renderInterruptedStatus(): string {
+  return "• Interrupted";
+}
+
 function connectionStatusLabel(status: AppSnapshot["connectionStatus"]): string | null {
   switch (status) {
     case "connecting":
@@ -110,6 +114,8 @@ function buildStatusLines(
 
   const right = snapshot.lastError
     ? `error:${snapshot.lastError}`
+    : snapshot.isInterrupted
+      ? renderInterruptedStatus()
     : snapshot.isPaused
       ? "paused"
       : snapshot.isProcessing || teamWorking

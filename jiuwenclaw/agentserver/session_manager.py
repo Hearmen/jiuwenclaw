@@ -47,6 +47,11 @@ class SessionManager:
             except (asyncio.CancelledError, Exception):
                 pass
             self._session_tasks[session_id] = None
+            logger.info(
+                "[SessionManager] %ssession task terminated: session_id=%s",
+                log_msg_prefix,
+                session_id,
+            )
 
     async def cancel_all_session_tasks(self, log_msg_prefix: str = "") -> None:
         """取消所有 session 的非流式任务."""

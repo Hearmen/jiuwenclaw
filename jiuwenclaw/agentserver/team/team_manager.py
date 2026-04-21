@@ -594,6 +594,31 @@ class TeamManager:
     def register_stream_task(self, session_id: str, task: asyncio.Task) -> None:
         self._stream_tasks[session_id] = task
 
+    async def terminate_session_runtime(self, session_id: str, reason: str = "") -> bool:
+        """终止指定 session 的 Team 运行时（stream/monitor/team agent/runtime cleanup）。"""
+        async with self._lock:
+            has_stream_task = session_id in self._stream_tasks
+            has_team_runtime = session_id in self._team_agents or session_id in self._team_monitors
+            if not has_stream_task and not has_team_runtime:
+                return False
+            logger.info(
+                "[TeamManager] %sterminate team session runtime: session_id=%s",
+                reason,
+                session_id,
+            )
+            cleaned = await self._destroy_team(session_id)
+        logger.info(
+            "[TeamManager] %steam session terminated: session_id=%s cleaned=%s",
+            reason,
+            session_id,
+            cleaned,
+        )
+        return True
+
+    async def cancel_session_stream_task(self, session_id: str, reason: str = "") -> bool:
+        """兼容旧命名；实际语义为终止该 session 的 Team runtime。"""
+        return await self.terminate_session_runtime(session_id, reason=reason)
+
     async def cancel_all_stream_tasks(self, reason: str = "") -> None:
         """Gateway 与 AgentServer 断开时取消 Team 后台 stream 协程（含 create_task 绕开 SessionManager 的任务）。"""
         async with self._lock:

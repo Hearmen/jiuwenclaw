@@ -2,6 +2,7 @@ export enum StreamingState {
   Idle = "idle",
   Responding = "responding",
   Paused = "paused",
+  Interrupted = "interrupted",
   WaitingForConfirmation = "waiting_for_confirmation",
 }
 

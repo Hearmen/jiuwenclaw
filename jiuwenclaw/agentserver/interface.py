@@ -357,7 +357,7 @@ class JiuWenClaw:
         根据 intent 分流：
         - pause: 暂停 ReAct 循环（不取消任务）
         - resume: 恢复已暂停的 ReAct 循环
-        - cancel: 取消所有运行中的任务
+        - cancel: 取消当前 session 正在运行的任务
         - supplement: 取消当前任务但保留 todo
 
         Args:
@@ -368,28 +368,45 @@ class JiuWenClaw:
         Returns:
             AgentResponse 包含 interrupt_result 事件数据
         """
-        adapter = self._ensure_adapter()
-        # 调用 adapter 的 process_interrupt 处理 SDK 特定逻辑（如 pause/resume、todo 标记等）
-        response = await adapter.process_interrupt(request)
         intent = request.params.get("intent", "cancel")
+        session_id = self._session_manager.get_session_id(request.session_id)
+        adapter = self._ensure_adapter()
 
         if intent == "pause":
             # 暂停：不取消任务，只暂停 ReAct 循环
-            return response
+            return await adapter.process_interrupt(request)
 
         if intent == "resume":
             # 恢复：恢复 ReAct 循环
-            return response
+            return await adapter.process_interrupt(request)
 
         if intent == "supplement":
             # 取消当前 session 的任务
-            session_id = self._session_manager.get_session_id(request.session_id)
+            response = await adapter.process_interrupt(request)
             await self._session_manager.cancel_session_task(session_id, "interrupt(supplement): ")
             return response
 
-        # cancel: 取消所有 session 的任务
-        await self._session_manager.cancel_all_session_tasks(f"interrupt(intent={intent}): ")
-        return response
+        # cancel: 仅取消当前 session 的任务，避免误伤其它并发会话
+        await self._session_manager.cancel_session_task(session_id, f"interrupt(intent={intent}): ")
+        await self._cancel_team_work_for_session(
+            session_id,
+            log_prefix=f"interrupt(intent={intent}): ",
+        )
+        return await adapter.process_interrupt(request)
+
+    async def _cancel_team_work_for_session(self, session_id: str, log_prefix: str = "") -> bool:
+        """终止当前 session 的 Team runtime（若存在）。"""
+        from jiuwenclaw.agentserver.team import get_team_manager
+
+        try:
+            team_manager = get_team_manager()
+            return await team_manager.terminate_session_runtime(session_id, reason=log_prefix)
+        except Exception:
+            logger.exception(
+                "[JiuWenClaw] failed to terminate team runtime: session_id=%s",
+                session_id,
+            )
+            return False
 
     async def process_message(self, request: AgentRequest) -> AgentResponse:
         """处理非流式请求.

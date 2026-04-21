@@ -342,7 +342,6 @@ export class AppScreen implements Component, Focusable {
   private showTeamPanel = false;
   private selectedTeamMemberId: string | null = null;
   private viewedTeamMemberId: string | null = null;
-  private exitArmedUntil = 0;
   private transientNotice: string | null = null;
   private transientNoticeTimer: ReturnType<typeof setTimeout> | null = null;
   private animationTimer: ReturnType<typeof setInterval> | null = null;
@@ -403,6 +402,15 @@ export class AppScreen implements Component, Focusable {
     this.editor.invalidate();
   }
 
+  /**
+   * Ctrl+C / SIGINT 始终尝试向服务端发送当前 session 的中断请求。
+   * 是否真的存在运行任务由服务端判断；CLI/TUI 本身不退出。
+   */
+  interruptTask(): void {
+    this.state.cancel();
+    this.tui.requestRender();
+  }
+
   handleInput(data: string): void {
     const snapshot = this.state.getSnapshot();
     const pendingQuestion = snapshot.pendingQuestion;
@@ -418,26 +426,7 @@ export class AppScreen implements Component, Focusable {
     }
 
     const handled = handleAppScreenKeyInput(data, {
-      getSnapshot: () => snapshot,
-      cancel: () => this.state.cancel(),
-      requestExit: () => {
-        const now = Date.now();
-        if (now <= this.exitArmedUntil) {
-          this.exit();
-          return;
-        }
-        this.exitArmedUntil = now + 1500;
-        this.transientNotice = "Press Ctrl+C again to exit";
-        if (this.transientNoticeTimer) {
-          clearTimeout(this.transientNoticeTimer);
-        }
-        this.transientNoticeTimer = setTimeout(() => {
-          this.transientNotice = null;
-          this.transientNoticeTimer = null;
-          this.tui.requestRender();
-        }, 1500);
-        this.tui.requestRender();
-      },
+      interruptTask: () => this.interruptTask(),
       toggleTodos: () => {
         this.showTodos = !this.showTodos;
         this.tui.requestRender();
@@ -611,7 +600,9 @@ export class AppScreen implements Component, Focusable {
       transientNotice: this.transientNotice,
       animationPhase: this.animationPhase,
       runningElapsedMs:
-        (snapshot.isProcessing || teamWorking) && this.runningStartedAtMs !== null
+        !snapshot.isInterrupted &&
+        (snapshot.isProcessing || teamWorking) &&
+        this.runningStartedAtMs !== null
           ? Date.now() - this.runningStartedAtMs
           : undefined,
     });
@@ -1347,7 +1338,8 @@ export class AppScreen implements Component, Focusable {
       snapshot.teamMemberEvents,
       snapshot.teamMessageEvents,
     );
-    const shouldAnimate = snapshot.isProcessing || hasRunningTools || teamWorking;
+    const shouldAnimate =
+      !snapshot.isInterrupted && (snapshot.isProcessing || hasRunningTools || teamWorking);
     if (!shouldAnimate) {
       if (this.animationTimer) {
         clearInterval(this.animationTimer);

@@ -2055,7 +2055,7 @@ class JiuWenClawDeepAdapter:
         根据 intent 分流：
         - pause: 暂停循环（不取消任务）
         - resume: 恢复已暂停的循环
-        - cancel: 取消所有运行中的任务
+        - cancel: 为当前 session 生成取消结果与清理信息；真正停任务由 SessionManager 完成
         - supplement: 取消当前任务但保留 todo
 
         Args:
@@ -2108,14 +2108,9 @@ class JiuWenClawDeepAdapter:
             message = "任务已切换"
 
         else:
-            # cancel（默认）：停止所有执行 + 清理 todo
-            # 1. 通过 rail abort 在 checkpoint 抛 CancelledError，打断当前内层执行
-            if self._stream_event_rail is not None:
-                self._stream_event_rail.abort()
-            # 2. 终止 DeepAgent 外层 task loop
-            if self._instance is not None:
-                await self._instance.abort()
-            # 3. 将未完成的 todo 项标记为 cancelled，并获取更新后的 todo 列表
+            # cancel（默认）：仅做当前 session 的清理与回执。
+            # 真正停止运行中的任务由 facade 层的 SessionManager.cancel_session_task(session_id) 完成，
+            # 避免共享 DeepAgent 实例上的全局 abort 误伤其它并发 session。
             updated_todos = None
             if request.session_id:
                 try:

@@ -47,11 +47,11 @@ tui.setClearOnShrink(true);
 let closed = false;
 let screen: AppScreen | null = null;
 
+/** 退出 CLI 前先向服务端发 `chat.interrupt`，结束当前会话中正在运行的 agent 任务（已连接时；idle 时多为 no-op）。 */
 async function cancelBeforeExit(): Promise<void> {
   if (appState.getSnapshot().connectionStatus !== "connected") {
     return;
   }
-  // 关 TUI 即请求服务端终止当前会话工作；idle 时一般为 no-op。
   appState.cancel({ showNotice: false });
   await new Promise((resolve) => setTimeout(resolve, 200));
 }
@@ -103,6 +103,10 @@ tui.setFocus(screen);
 
 process.on("SIGTERM", () => {
   void closeUi(0);
+});
+// 与 TUI 内 Ctrl+C 一致：SIGINT 始终尝试中断当前 session 的任务，不退出进程（退出用 /exit、SIGTERM 等）。
+process.on("SIGINT", () => {
+  screen?.interruptTask();
 });
 process.on("uncaughtException", (error) => {
   void crash(error);

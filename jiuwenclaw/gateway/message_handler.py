@@ -333,8 +333,8 @@ class MessageHandler(ABC):
     async def _cancel_agent_work_for_session(self, msg: "Message", old_sid: str | None) -> None:
         """取消指定 session 的网关流式任务，并向 AgentServer 发送 CHAT_CANCEL（与 Web chat.interrupt intent=cancel 对齐）。
 
-        网关侧仅取消 ``_stream_sessions[rid] == old_sid`` 的流式任务。AgentServer 对 ``intent=cancel`` 仍可能
-        ``cancel_all_session_tasks``（与现网 unary 中断一致）；若需仅撤销单 session 需在 interface 层扩展协议。
+        网关侧仅取消 ``_stream_sessions[rid] == old_sid`` 的流式任务，并向 AgentServer 发送同 session 的
+        ``intent=cancel``，由 AgentServer 继续取消该 session 上的实际执行任务。
         """
         from jiuwenclaw.schema.message import Message, ReqMethod
 
@@ -358,10 +358,10 @@ class MessageHandler(ABC):
 
         if tasks_to_cancel:
             await asyncio.gather(*tasks_to_cancel, return_exceptions=True)
-
-        for rid in rids_cancelled:
-            await self._send_interrupt_result_notification(
-                rid, msg.channel_id, old_sid, "cancel",
+            logger.info(
+                "[MessageHandler] 当前 session 流式任务已终止: session_id=%s request_ids=%s",
+                old_sid,
+                rids_cancelled,
             )
 
         if old_sid is None and not rids_cancelled:
@@ -394,7 +394,51 @@ class MessageHandler(ABC):
         )
         agent_msg = await self._prepare_agent_dispatch_message(cancel_req)
         env_interrupt = self.message_to_e2a(agent_msg)
-        await self._send_interrupt_to_agent(env_interrupt)
+        try:
+            resp = await self._agent_client.send_request(env_interrupt)
+        except Exception as exc:
+            logger.warning("[MessageHandler] AgentServer 中断请求失败: %s", exc)
+            await self._send_interrupt_result_notification(
+                msg.id,
+                msg.channel_id,
+                sid_for_agent,
+                "cancel",
+                message=f"任务终止失败: {exc}",
+                success=False,
+            )
+            return
+
+        payload = resp.payload if isinstance(resp.payload, dict) else {}
+        if payload.get("event_type") == "chat.interrupt_result":
+            out = self._response_to_message(
+                resp,
+                sid_for_agent,
+                request_metadata=msg.metadata,
+            )
+            await self.publish_robot_messages(out)
+            logger.info(
+                "[MessageHandler] 已转发 AgentServer 中断结果: request_id=%s ok=%s",
+                resp.request_id,
+                resp.ok,
+            )
+            return
+
+        error_message = "任务终止失败"
+        if isinstance(payload, dict):
+            raw_error = payload.get("error") or payload.get("message")
+            if isinstance(raw_error, str) and raw_error.strip():
+                error_message = raw_error.strip()
+        elif not resp.ok:
+            error_message = "任务终止失败"
+
+        await self._send_interrupt_result_notification(
+            msg.id,
+            msg.channel_id,
+            sid_for_agent,
+            "cancel",
+            message=error_message,
+            success=False,
+        )
 
     async def cancel_agent_sessions_on_disconnect(
         self,
@@ -1959,15 +2003,22 @@ class MessageHandler(ABC):
         session_id: str | None,
         intent: str,
         message: str | None = None,
+        success: bool = True,
     ) -> None:
         """发送 interrupt_result 事件到前端（pause / resume 等）."""
         from jiuwenclaw.schema.message import Message, EventType
 
-        messages_map = {
+        success_messages_map = {
             "pause": "任务已暂停",
             "resume": "任务已恢复",
             "cancel": "任务已取消",
             "supplement": "任务已切换",
+        }
+        failure_messages_map = {
+            "pause": "任务暂停失败",
+            "resume": "任务恢复失败",
+            "cancel": "任务终止失败",
+            "supplement": "任务切换失败",
         }
         notify_msg = Message(
             id=request_id,
@@ -1980,8 +2031,13 @@ class MessageHandler(ABC):
             payload={
                 "event_type": "chat.interrupt_result",
                 "intent": intent,
-                "success": True,
-                "message": message or messages_map.get(intent, "任务已中断"),
+                "success": success,
+                "message": message
+                or (
+                    success_messages_map.get(intent, "任务已中断")
+                    if success
+                    else failure_messages_map.get(intent, "任务中断失败")
+                ),
             },
             event_type=EventType.CHAT_INTERRUPT_RESULT,
             metadata=None,

@@ -1,4 +1,4 @@
-import { addInfo } from "./core/commands/helpers.js";
+import { addError, addInfo } from "./core/commands/helpers.js";
 import type { CommandContext } from "./core/commands/types.js";
 import {
   computeTimeoutAt,
@@ -62,9 +62,13 @@ export interface AppSnapshot {
   pendingQuestion: PendingQuestion | null;
   lastError: string | null;
   isProcessing: boolean;
-  /** 主会话流式进行中、等待确认，或 Team 模式下有成员处于工作中（Ctrl+C 应发 interrupt 而非预退出） */
+  /**
+   * 当前 UI 观测到是否存在运行中的工作。
+   * 用于渲染与本地交互（如 Esc）；Ctrl+C 的中断请求仍以服务端为准，不依赖此值放行。
+   */
   cancellableWork: boolean;
   isPaused: boolean;
+  isInterrupted: boolean;
   activeSubtasks: SubtaskState[];
   todos: TodoItem[];
   teamMemberEvents: TeamMemberEvent[];
@@ -302,8 +306,10 @@ export class CliPiAppState {
     const hasActiveSubtasks = [...this.activeSubtasks.values()].some(
       (s) => s.status !== "completed" && s.status !== "error",
     );
+    // 与「Ctrl+C 强制结束当前任务」对齐：有任一进行中工作则为 true。
     const cancellableWork =
       isProcessing ||
+      this.streamingState === StreamingState.Paused ||
       hasRunningTools ||
       hasActiveSubtasks ||
       this.evolutionStatus === "running" ||
@@ -335,6 +341,7 @@ export class CliPiAppState {
       isProcessing,
       cancellableWork,
       isPaused: this.streamingState === StreamingState.Paused,
+      isInterrupted: this.streamingState === StreamingState.Interrupted,
       activeSubtasks: [...this.activeSubtasks.values()].sort((a, b) => a.index - b.index),
       todos: [...this.todos],
       teamMemberEvents: [...this.teamMemberEvents],
@@ -621,12 +628,20 @@ readonly request = async <T = Record<string, unknown>>(
     return requestId;
   }
 
-  cancel(options?: { showNotice?: boolean }): void {
-    this.sendEventOnly("chat.interrupt", { intent: "cancel" });
-    if (options?.showNotice === false) {
-      return;
+  /** 向服务端请求中断当前 session 的任务；成功发送前不宣称“已中断”。 */
+  cancel(options?: { showNotice?: boolean }): boolean {
+    if (this.connectionStatus !== "connected") {
+      if (options?.showNotice !== false) {
+        this.addItem(addError(this.sessionId, "Unable to interrupt task while disconnected"));
+      }
+      return false;
     }
-    this.addItem(addInfo(this.sessionId, "Task interrupted", "i"));
+    const hadLocalWork = this.getSnapshot().cancellableWork;
+    this.sendEventOnly("chat.interrupt", { intent: "cancel" });
+    if (options?.showNotice !== false && hadLocalWork) {
+      this.addItem(addInfo(this.sessionId, "Interrupt requested", "i"));
+    }
+    return true;
   }
 
   resume(): void {
