@@ -226,7 +226,7 @@ class JiuClawStreamEventRail(DeepAgentRail):
             return
 
         try:
-            todo_tool.set_file(session_id)
+            await todo_tool.set_file(session_id)
             todos_data = await todo_tool.load_todos()
         except Exception as exc:
             logger.debug(
@@ -319,8 +319,6 @@ class JiuClawStreamEventRail(DeepAgentRail):
                 "content": item.content,
                 "activeForm": item.activeForm,
                 "status": status_mapping.get(item.status, item.status.value),
-                "createdAt": item.createdAt,
-                "updatedAt": item.updatedAt,
             }
             for item in todos_data
         ]
