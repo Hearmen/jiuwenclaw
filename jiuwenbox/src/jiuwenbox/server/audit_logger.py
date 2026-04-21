@@ -1,3 +1,4 @@
+# Copyright (c) Huawei Technologies Co., Ltd. 2025. All rights reserved.
 """Structured audit logging in JSONL format.
 
 Each sandbox gets its own log file under ~/.jiuwenbox/logs/.

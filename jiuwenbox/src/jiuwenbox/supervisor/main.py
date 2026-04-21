@@ -1,3 +1,4 @@
+# Copyright (c) Huawei Technologies Co., Ltd. 2025. All rights reserved.
 """box-supervisor main entry point."""
 
 from __future__ import annotations
@@ -16,6 +17,10 @@ import yaml
 from jiuwenbox.models.policy import NetworkMode, SecurityPolicy
 from jiuwenbox.supervisor.bwrap import BwrapConfig, BwrapProcess
 from jiuwenbox.supervisor.landlock import encode_landlock_payload
+from jiuwenbox.supervisor.sandbox_daemon import (
+    SANDBOX_DAEMON_COMMAND,
+    SANDBOX_DAEMON_SANDBOX_PATH,
+)
 from jiuwenbox.supervisor.seccomp import open_seccomp_filter
 
 logging.basicConfig(level=logging.INFO)
@@ -38,6 +43,7 @@ class Supervisor:
         self.env = env or {}
         self._bwrap: BwrapProcess | None = None
         self._seccomp_fd: int | None = None
+        self._sandbox_daemon_path: Path | None = None
         self._landlock_launcher_path: Path | None = None
         self._shutting_down = False
 
@@ -84,8 +90,23 @@ class Supervisor:
         for entry in json.loads(raw_binds):
             config.rw_binds.append((entry["host_path"], entry["sandbox_path"]))
 
+    def _setup_sandbox_daemon_mount(self, config: BwrapConfig, temp_dir: Path) -> None:
+        """Expose the internal lifecycle daemon when this supervisor is a holder."""
+        if config.command != SANDBOX_DAEMON_COMMAND:
+            return
+
+        daemon_path = Path(__file__).with_name("sandbox_daemon.py")
+        temp_daemon_path = temp_dir / "jiuwenbox-sandbox-daemon.py"
+        temp_daemon_path.write_bytes(daemon_path.read_bytes())
+        os.chmod(temp_daemon_path, 0o644)
+        self._sandbox_daemon_path = temp_daemon_path
+        config.ro_binds.append((str(self._sandbox_daemon_path), SANDBOX_DAEMON_SANDBOX_PATH))
+
     def _setup_landlock_launcher(self, config: BwrapConfig, temp_dir: Path) -> None:
         """Run a fixed in-sandbox launcher that applies Landlock before exec."""
+        if config.command == SANDBOX_DAEMON_COMMAND:
+            return
+
         if self.policy.landlock.compatibility == "disabled":
             return
 
@@ -117,6 +138,7 @@ class Supervisor:
                     config.workdir = self.workdir
                 self._setup_network_namespace(config)
                 self._setup_policy_directory_mounts(config)
+                self._setup_sandbox_daemon_mount(config, Path(temp_dir))
                 self._setup_landlock_launcher(config, Path(temp_dir))
 
                 # 2. Setup seccomp
@@ -157,6 +179,8 @@ class Supervisor:
     async def _cleanup(self) -> None:
         """Clean up resources."""
         self._close_seccomp_fd()
+        if self._sandbox_daemon_path and self._sandbox_daemon_path.exists():
+            self._sandbox_daemon_path.unlink(missing_ok=True)
         if self._landlock_launcher_path and self._landlock_launcher_path.exists():
             self._landlock_launcher_path.unlink(missing_ok=True)
 

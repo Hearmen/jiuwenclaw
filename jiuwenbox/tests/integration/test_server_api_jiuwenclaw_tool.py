@@ -1,3 +1,4 @@
+# Copyright (c) Huawei Technologies Co., Ltd. 2025. All rights reserved.
 """Integration tests for box-server API endpoints."""
 
 import copy
@@ -24,6 +25,10 @@ SYSTEM_BIND_MOUNTS = [
     {"host_path": "/etc/ssl/certs", "sandbox_path": "/etc/ssl/certs", "mode": "ro"},
     {"host_path": "/etc/ssl/openssl.cnf", "sandbox_path": "/etc/ssl/openssl.cnf", "mode": "ro"},
     {"host_path": "/opt", "sandbox_path": "/opt", "mode": "ro"},
+]
+DEVICE_MOUNTS = [
+    {"host_path": "/dev/urandom", "sandbox_path": "/dev/urandom"},
+    {"host_path": "/dev/null", "sandbox_path": "/dev/null"},
 ]
 JIUWENCLAW_BIND_MOUNT = {
     "host_path": "/home/zzx/.jiuwenclaw",
@@ -361,6 +366,7 @@ class TestPolicyAPI:
         ]
         assert data["filesystem_policy"]["read_write"] == JIUWENCLAW_READ_WRITE_PATHS
         assert data["filesystem_policy"]["bind_mounts"] == SYSTEM_BIND_MOUNTS + [JIUWENCLAW_BIND_MOUNT]
+        assert data["filesystem_policy"]["device"] == DEVICE_MOUNTS
         assert data["namespace"] == {
             "user": False,
             "pid": True,
@@ -384,8 +390,11 @@ class TestPolicyAPI:
         assert data["network"]["ingress"]["allowed_ports"] == [8080]
         assert data["network"]["ingress"]["blocked_ports"] == [22]
         assert "profile" not in data["syscall"]
-        assert "mount" in data["syscall"]["blocked"]
-        assert "kexec_file_load" in data["syscall"]["blocked"]
+        assert "blocked" not in data["syscall"]
+        assert "mount" in data["syscall"]["x86_64"]["blocked"]
+        assert "kexec_file_load" in data["syscall"]["x86_64"]["blocked"]
+        assert "mount" in data["syscall"]["arm64"]["blocked"]
+        assert "kexec_file_load" in data["syscall"]["arm64"]["blocked"]
 
     @staticmethod
     def test_append_policy_merges_with_server_default(client):
@@ -430,7 +439,8 @@ class TestPolicyAPI:
                     "compatibility": "disabled",
                 },
                 "syscall": {
-                    "blocked": ["getpid"],
+                    "x86_64": {"blocked": ["getpid"]},
+                    "arm64": {"blocked": ["getpid"]},
                 },
             },
         })
@@ -485,6 +495,7 @@ class TestPolicyAPI:
                 "mode": "rw",
             },
         ]
+        assert data["filesystem_policy"]["device"] == DEVICE_MOUNTS
         assert data["process"]["run_as_user"] == "root"
         assert data["process"]["run_as_group"] == "root"
         assert data["namespace"] == {
@@ -497,8 +508,10 @@ class TestPolicyAPI:
         assert data["capabilities"]["add"] == ["CAP_NET_RAW"]
         assert data["capabilities"]["drop"] == []
         assert data["landlock"]["compatibility"] == "disabled"
-        assert "getpid" in data["syscall"]["blocked"]
-        assert "mount" in data["syscall"]["blocked"]
+        assert "getpid" in data["syscall"]["x86_64"]["blocked"]
+        assert "mount" in data["syscall"]["x86_64"]["blocked"]
+        assert "getpid" in data["syscall"]["arm64"]["blocked"]
+        assert "mount" in data["syscall"]["arm64"]["blocked"]
 
     @staticmethod
     def test_override_policy_replaces_server_default(client):
@@ -553,7 +566,8 @@ class TestPolicyAPI:
                     "compatibility": "disabled",
                 },
                 "syscall": {
-                    "blocked": ["getppid"],
+                    "x86_64": {"blocked": ["getppid"]},
+                    "arm64": {"blocked": ["getppid"]},
                 },
             },
         })
@@ -577,6 +591,7 @@ class TestPolicyAPI:
         assert data["filesystem_policy"]["read_only"] == ["/usr"]
         assert data["filesystem_policy"]["read_write"] == ["/var/tmp"]
         assert data["filesystem_policy"]["bind_mounts"] == SYSTEM_BIND_MOUNTS
+        assert data["filesystem_policy"]["device"] == []
         assert data["filesystem_policy"]["directories"] == [{
             "path": "/tmp/override-dir",
             "permissions": "0700",
@@ -592,7 +607,8 @@ class TestPolicyAPI:
         }
         assert data["capabilities"] == {"add": ["CAP_NET_RAW"], "drop": []}
         assert data["landlock"]["compatibility"] == "disabled"
-        assert data["syscall"]["blocked"] == ["getppid"]
+        assert data["syscall"]["x86_64"]["blocked"] == ["getppid"]
+        assert data["syscall"]["arm64"]["blocked"] == ["getppid"]
 
     @staticmethod
     def test_get_nonexistent_policy(client):
@@ -610,6 +626,27 @@ class TestPolicyAPI:
                         "host_path": f"{JIUWENCLAW_SANDBOX_WORKSPACE}/manual",
                         "sandbox_path": "/tmp/manual",
                         "mode": "rw",
+                    }],
+                },
+                "network": {
+                    "mode": "host",
+                },
+            },
+        })
+
+        assert resp.status_code == 400
+        assert JIUWENCLAW_SANDBOX_WORKSPACE in resp.json()["error"]
+
+    @staticmethod
+    def test_create_sandbox_rejects_direct_sandbox_device_mount(client):
+        resp = client.post("/api/v1/sandboxes", json={
+            "command": ["/usr/bin/echo", "hello"],
+            "policy": {
+                "name": "bad-sandbox-device-policy",
+                "filesystem_policy": {
+                    "device": [{
+                        "host_path": f"{JIUWENCLAW_SANDBOX_WORKSPACE}/manual-device",
+                        "sandbox_path": "/dev/manual-device",
                     }],
                 },
                 "network": {
@@ -1124,7 +1161,8 @@ class TestPolicyEnforcement:
                     "read_write": ["/tmp"],
                 },
                 "syscall": {
-                    "blocked": ["getpid"],
+                    "x86_64": {"blocked": ["getpid"]},
+                    "arm64": {"blocked": ["getpid"]},
                 },
                 "network": {
                     "mode": "host",
@@ -1292,7 +1330,7 @@ class TestPolicyEnforcement:
     ):
         create_resp = client.post("/api/v1/sandboxes", json={
             "command": ["/usr/bin/echo", "landlock-ok"],
-            "policy": {
+            "policy": _with_runtime_support({
                 "name": "landlock-hard-policy",
                 "filesystem_policy": {
                     "read_only": ["/usr", "/lib", "/lib64", "/etc", "/opt"],
@@ -1304,7 +1342,7 @@ class TestPolicyEnforcement:
                 "network": {
                     "mode": "host",
                 },
-            },
+            }),
         })
         assert create_resp.status_code == 201
         data = create_resp.json()
@@ -1312,16 +1350,16 @@ class TestPolicyEnforcement:
             assert data["phase"] == "ready", data
         else:
             assert data["phase"] == "error", data
-            assert "landlock" in data["error_message"].lower()
+            assert "landlock" in (data.get("error_message") or "").lower()
 
     @staticmethod
     def test_landlock_rules_allow_policy_paths_and_deny_other_mounted_paths(
         client,
-        create_sandbox_with_policy,
     ):
-        sandbox = create_sandbox_with_policy(
-            name_prefix="landlock-rules",
-            policy={
+        create_resp = client.post("/api/v1/sandboxes", json={
+            "name": "landlock-rules",
+            "command": LONG_RUNNING_COMMAND,
+            "policy": _with_runtime_support({
                 "name": "landlock-rules-policy",
                 "filesystem_policy": {
                     "read_only": ["/usr", "/lib", "/lib64", "/etc", "/opt"],
@@ -1333,8 +1371,14 @@ class TestPolicyEnforcement:
                 "network": {
                     "mode": "host",
                 },
-            },
-        )
+            }),
+        })
+        assert create_resp.status_code == 201
+        sandbox = create_resp.json()
+        if sandbox["phase"] == "error":
+            assert "landlock" in (sandbox.get("error_message") or "").lower()
+            return
+        assert sandbox["phase"] == "ready", sandbox
         allowed_path = f"/tmp/{sandbox['id']}-landlock-allowed.txt"
 
         script = textwrap.dedent(

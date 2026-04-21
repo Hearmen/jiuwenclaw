@@ -1,3 +1,4 @@
+# Copyright (c) Huawei Technologies Co., Ltd. 2025. All rights reserved.
 """In-sandbox Landlock launcher.
 
 This module is executed inside bubblewrap after mounts/namespaces are in place.

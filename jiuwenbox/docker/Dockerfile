@@ -1,25 +1,26 @@
-FROM ubuntu:24.04
+FROM openeuler/openeuler:24.03
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     PIP_NO_CACHE_DIR=1
 
-RUN sed -i \
-        -e 's|http://archive.ubuntu.com/ubuntu|http://mirrors.tuna.tsinghua.edu.cn/ubuntu|g' \
-        -e 's|http://security.ubuntu.com/ubuntu|http://mirrors.tuna.tsinghua.edu.cn/ubuntu|g' \
-        /etc/apt/sources.list.d/ubuntu.sources
+RUN echo "sslverify=false" >> /etc/yum.conf
+RUN echo "insecure" >> ~/.curlrc
+RUN sed -i 's/gpgcheck=1/gpgcheck=0/g' /etc/yum.conf /etc/yum.repos.d/openEuler.repo
 
-RUN apt-get update \
-    && apt-get install -y --no-install-recommends \
+RUN yum makecache \
+    && yum install -y \
         bubblewrap \
-        iproute2 \
+        iproute \
         iptables \
+        iptables-nft \
+        nftables \
         ca-certificates \
         nodejs \
         python3-pip \
         git \
         vim \
-    && rm -rf /var/lib/apt/lists/*
+        unzip
 
 WORKDIR /app
 

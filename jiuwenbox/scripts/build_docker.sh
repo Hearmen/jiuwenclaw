@@ -1,0 +1,12 @@
+#!/usr/bin/env bash
+# Copyright (c) Huawei Technologies Co., Ltd. 2025. All rights reserved.
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+PROJECT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
+
+IMAGE_NAME="${JIUWENBOX_IMAGE_NAME:-jiuwenbox}"
+IMAGE_TAG="${JIUWENBOX_IMAGE_TAG:-latest}"
+IMAGE_REF="${IMAGE_NAME}:${IMAGE_TAG}"
+
+docker build -f "$PROJECT_DIR/docker/Dockerfile" --no-cache -t "$IMAGE_REF" "$PROJECT_DIR" "$@"

@@ -1,3 +1,4 @@
+# Copyright (c) Huawei Technologies Co., Ltd. 2025. All rights reserved.
 """Abstract base class for sandbox runtime adapters."""
 
 from __future__ import annotations

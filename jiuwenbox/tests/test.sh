@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
+# Copyright (c) Huawei Technologies Co., Ltd. 2025. All rights reserved.
 set -euo pipefail
 
-SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-PROJECT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
+TEST_DIR="$(cd "$(dirname "$0")" && pwd)"
+PROJECT_DIR="$(cd "$TEST_DIR/.." && pwd)"
 cd "$PROJECT_DIR"
 
 if [ -d ".venv" ]; then

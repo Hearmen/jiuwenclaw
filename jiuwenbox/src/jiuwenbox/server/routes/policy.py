@@ -1,3 +1,4 @@
+# Copyright (c) Huawei Technologies Co., Ltd. 2025. All rights reserved.
 """Policy API routes (static policies only)."""
 
 from __future__ import annotations

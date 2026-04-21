@@ -1,3 +1,4 @@
+# Copyright (c) Huawei Technologies Co., Ltd. 2025. All rights reserved.
 """Process-based runtime adapter (bare-metal mode).
 
 Spawns box-supervisor as a subprocess for each sandbox.
@@ -25,6 +26,7 @@ from jiuwenbox.models.policy import NetworkMode, SecurityPolicy
 from jiuwenbox.models.sandbox import ExecResult
 from jiuwenbox.server.runtime.base import RuntimeAdapter, RuntimeExecRequest
 from jiuwenbox.supervisor import network as network_module
+from jiuwenbox.supervisor.sandbox_daemon import SANDBOX_DAEMON_COMMAND
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -104,9 +106,13 @@ class ProcessRuntime(RuntimeAdapter):
     @staticmethod
     def _resolve_backing_identity(policy: SecurityPolicy) -> tuple[int, int]:
         if policy.namespace.user:
-            # With bwrap user namespaces, the server process uid is mapped to
-            # the sandbox run uid. Keep lifecycle backing dirs owned by that uid.
-            return os.getuid(), os.getgid()
+            # For unprivileged user namespaces, the server uid is mapped to the
+            # sandbox uid, so keeping the backing directory owned by the current
+            # process is the writable choice. When the server runs as root, bwrap
+            # can drop to the requested sandbox uid; root-owned 0755 directories
+            # would then reject writes such as uploads under /home.
+            if os.geteuid() != 0:
+                return os.getuid(), os.getgid()
 
         try:
             uid = pwd.getpwnam(policy.process.run_as_user).pw_uid
@@ -137,6 +143,39 @@ class ProcessRuntime(RuntimeAdapter):
         if permissions is None:
             return
         os.chmod(path, int(permissions, 8))
+
+    @staticmethod
+    def _needs_userns_write_fallback(
+        policy: SecurityPolicy,
+        uid: int,
+        permissions: str | None,
+    ) -> bool:
+        if os.geteuid() != 0 or not policy.namespace.user or uid == 0:
+            return False
+        if permissions is None:
+            return True
+        mode = int(permissions, 8)
+        return (
+            bool(mode & 0o200)
+            and (mode & 0o005) == 0o005
+            and not bool(mode & 0o002)
+        )
+
+    @staticmethod
+    def _apply_userns_write_fallback(path: Path) -> None:
+        mode = path.stat().st_mode & 0o777
+        fallback_mode = mode | 0o003
+        if fallback_mode == mode:
+            return
+        logger.warning(
+            "Relaxing policy directory %s permissions from %s to %s because "
+            "root-run user namespaces cannot map the sandbox uid onto the "
+            "bind-mounted backing directory owner",
+            path,
+            oct(mode),
+            oct(fallback_mode),
+        )
+        os.chmod(path, fallback_mode)
 
     @staticmethod
     def _ensure_writable_when_chown_unavailable(path: Path, owner_applied: bool) -> None:
@@ -186,6 +225,8 @@ class ProcessRuntime(RuntimeAdapter):
             host_path.mkdir(parents=True, exist_ok=True)
             owner_applied = self._apply_directory_ownership(host_path, uid, gid)
             self._apply_directory_permissions(host_path, permissions)
+            if self._needs_userns_write_fallback(policy, uid, permissions):
+                self._apply_userns_write_fallback(host_path)
             self._ensure_writable_when_chown_unavailable(host_path, owner_applied)
             binds.append({
                 "host_path": str(host_path),
@@ -251,9 +292,8 @@ class ProcessRuntime(RuntimeAdapter):
         netns_name = self._ensure_named_netns(sandbox_id, policy)
         directory_binds = self._ensure_policy_directories(sandbox_id, policy)
 
-        # Build supervisor command
         supervisor_cmd = self._wrap_command_in_namespace(
-            self._build_supervisor_command(policy_path, command),
+            self._build_supervisor_command(policy_path, SANDBOX_DAEMON_COMMAND),
             netns_name,
         )
 
@@ -266,7 +306,12 @@ class ProcessRuntime(RuntimeAdapter):
 
         log_file = self._log_dir / f"{sandbox_id}.log"
 
-        logger.info("Spawning supervisor for %s: %s", sandbox_id, supervisor_cmd)
+        logger.info(
+            "Spawning sandbox daemon for %s; ignoring requested command: %s",
+            sandbox_id,
+            command,
+        )
+        logger.info("Sandbox daemon supervisor command for %s: %s", sandbox_id, supervisor_cmd)
 
         try:
             with open(log_file, "w", encoding="utf-8") as log_fd:
@@ -289,6 +334,23 @@ class ProcessRuntime(RuntimeAdapter):
 
         self._processes[sandbox_id] = proc
         self._policy_paths[sandbox_id] = Path(policy_path)
+        await asyncio.sleep(0.3)
+        if proc.poll() is not None:
+            self._processes.pop(sandbox_id, None)
+            self._policy_paths.pop(sandbox_id, None)
+            directory_root = self._directory_roots.pop(sandbox_id, None)
+            if directory_root is not None:
+                shutil.rmtree(directory_root, ignore_errors=True)
+            if netns_name and network_module.namespace_exists(netns_name):
+                network_module.delete_named_namespace(netns_name)
+            self._network_modes.pop(sandbox_id, None)
+            log_tail = ""
+            if log_file.exists():
+                log_tail = log_file.read_text(encoding="utf-8", errors="replace")[-4000:]
+            raise RuntimeError(
+                f"Sandbox daemon exited during startup with code {proc.returncode}; "
+                f"see log {log_file}. Log tail: {log_tail}"
+            )
         logger.info("Supervisor started for %s (pid=%d)", sandbox_id, proc.pid)
         return proc.pid
 
@@ -327,6 +389,19 @@ class ProcessRuntime(RuntimeAdapter):
         if proc is None:
             return False
         return proc.poll() is None
+
+    def get_exit_diagnostics(self, sandbox_id: str) -> str:
+        """Return diagnostics for a sandbox whose lifecycle process is not running."""
+        proc = self._processes.get(sandbox_id)
+        returncode = None if proc is None else proc.poll()
+        log_file = self._log_dir / f"{sandbox_id}.log"
+        log_tail = ""
+        if log_file.exists():
+            log_tail = log_file.read_text(encoding="utf-8", errors="replace")[-4000:]
+        return (
+            f"Sandbox lifecycle process is not running; "
+            f"returncode={returncode}; log={log_file}; log_tail={log_tail}"
+        )
 
     async def exec(
         self,

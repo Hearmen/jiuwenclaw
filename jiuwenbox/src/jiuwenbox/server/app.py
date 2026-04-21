@@ -1,3 +1,4 @@
+# Copyright (c) Huawei Technologies Co., Ltd. 2025. All rights reserved.
 """FastAPI application for box-server."""
 
 from __future__ import annotations

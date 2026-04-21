@@ -76,6 +76,16 @@ filesystem_policy:
       sandbox_path: "/home/USER/.jiuwenclaw"
       mode: "rw"
 
+  # Device nodes to expose inside the sandbox with bwrap --dev-bind.
+  # Each item uses:
+  #   host_path: absolute device path on the host
+  #   sandbox_path: absolute path visible inside the sandbox
+  device:
+    - host_path: "/dev/urandom"
+      sandbox_path: "/dev/urandom"
+    - host_path: "/dev/null"
+      sandbox_path: "/dev/null"
+
 # Process identity inside the sandbox.
 process:
   # User name to run as. If the user cannot be resolved, runtime falls back to nobody-style IDs.
@@ -129,36 +139,68 @@ landlock:
 
 # Seccomp syscall filtering.
 syscall:
-  # Syscall names to block. Leave empty to disable explicit syscall blocking.
-  blocked:
-    - "kexec_load"
-    - "kexec_file_load"
-    - "reboot"
-    - "pivot_root"
-    - "swapon"
-    - "swapoff"
-    - "nfsservctl"
-    - "lookup_dcookie"
-    - "ptrace"
-    - "mount"
-    - "umount2"
-    - "unshare"
-    - "setns"
-    - "userfaultfd"
-    - "perf_event_open"
-    - "bpf"
-    - "add_key"
-    - "request_key"
-    - "keyctl"
-    - "io_uring_setup"
-    - "io_uring_enter"
-    - "io_uring_register"
-    - "open_by_handle_at"
-    - "name_to_handle_at"
-    - "init_module"
-    - "finit_module"
-    - "delete_module"
-    - "acct"
+  # Syscall names to block on x86_64. Leave empty to disable explicit syscall blocking.
+  x86_64:
+    blocked:
+      - "kexec_load"
+      - "kexec_file_load"
+      - "reboot"
+      - "pivot_root"
+      - "swapon"
+      - "swapoff"
+      - "nfsservctl"
+      - "lookup_dcookie"
+      - "ptrace"
+      - "mount"
+      - "umount2"
+      - "unshare"
+      - "setns"
+      - "userfaultfd"
+      - "perf_event_open"
+      - "bpf"
+      - "add_key"
+      - "request_key"
+      - "keyctl"
+      - "io_uring_setup"
+      - "io_uring_enter"
+      - "io_uring_register"
+      - "open_by_handle_at"
+      - "name_to_handle_at"
+      - "init_module"
+      - "finit_module"
+      - "delete_module"
+      - "acct"
+  # Syscall names to block on arm64/aarch64.
+  arm64:
+    blocked:
+      - "kexec_load"
+      - "kexec_file_load"
+      - "reboot"
+      - "pivot_root"
+      - "swapon"
+      - "swapoff"
+      - "nfsservctl"
+      - "lookup_dcookie"
+      - "ptrace"
+      - "mount"
+      - "umount2"
+      - "unshare"
+      - "setns"
+      - "userfaultfd"
+      - "perf_event_open"
+      - "bpf"
+      - "add_key"
+      - "request_key"
+      - "keyctl"
+      - "io_uring_setup"
+      - "io_uring_enter"
+      - "io_uring_register"
+      - "open_by_handle_at"
+      - "name_to_handle_at"
+      - "init_module"
+      - "finit_module"
+      - "delete_module"
+      - "acct"
 
 # Network policy. Egress controls outbound traffic; ingress controls inbound traffic.
 network:

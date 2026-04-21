@@ -1,3 +1,4 @@
+# Copyright (c) Huawei Technologies Co., Ltd. 2025. All rights reserved.
 """Landlock policy helpers shared by the supervisor and launcher."""
 
 from __future__ import annotations
@@ -44,6 +45,8 @@ def encode_landlock_payload(policy: SecurityPolicy) -> str:
             read_only.append(mount.sandbox_path)
         else:
             read_write.append(mount.sandbox_path)
+    for device in policy.filesystem_policy.device:
+        read_write.append(device.sandbox_path)
     # These pseudo-filesystems are created by bwrap and are needed by common runtimes.
     read_only.append("/proc")
     read_write.append("/dev")

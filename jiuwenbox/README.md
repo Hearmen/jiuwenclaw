@@ -56,7 +56,7 @@ tests/
 - Linux
 - Python 3.11+
 - `bubblewrap`
-- `iproute2` and `iptables` when `network.mode: isolated` is used
+- `iproute2`, `iptables`, and `nftables` when `network.mode: isolated` is used
 - Kernel support for Landlock and seccomp when those features are enabled
 - `nodejs` if JavaScript execution is needed
 
@@ -64,7 +64,7 @@ On Ubuntu:
 
 ```bash
 sudo apt-get update
-sudo apt-get install -y bubblewrap iproute2 iptables python3-pip nodejs
+sudo apt-get install -y bubblewrap iproute2 iptables nftables python3-pip nodejs
 ```
 
 ## Install
@@ -143,6 +143,8 @@ Important fields:
     `bind_mounts` to make the paths exist inside the sandbox.
 - `filesystem_policy.bind_mounts`
   - Explicit host-to-sandbox bind mounts.
+- `filesystem_policy.device`
+  - Explicit device nodes exposed inside the sandbox with `bwrap --dev-bind`.
 
 Path fields support shell-style expansion such as `~` and environment
 variables.
@@ -201,6 +203,9 @@ filesystem_policy:
     - host_path: "/etc/ssl/openssl.cnf"
       sandbox_path: "/etc/ssl/openssl.cnf"
       mode: "ro"
+  device:
+    - host_path: "/dev/null"
+      sandbox_path: "/dev/null"
 
 process:
   run_as_user: sandbox
@@ -221,12 +226,20 @@ landlock:
   compatibility: best_effort
 
 syscall:
-  blocked:
-    - "ptrace"
-    - "mount"
-    - "umount2"
-    - "reboot"
-    - "kexec_load"
+  x86_64:
+    blocked:
+      - "ptrace"
+      - "mount"
+      - "umount2"
+      - "reboot"
+      - "kexec_load"
+  arm64:
+    blocked:
+      - "ptrace"
+      - "mount"
+      - "umount2"
+      - "reboot"
+      - "kexec_load"
 
 network:
   mode: isolated
@@ -297,15 +310,17 @@ curl -sS -X DELETE http://127.0.0.1:8321/api/v1/sandboxes/<sandbox-id>
 
 ## Run Integration Tests
 
-```bash
-./scripts/test.sh
-```
-
 Run one policy-specific integration suite:
 
 ```bash
 ./scripts/test.sh default # jiuwenbox runs the service using default-policy.yaml as the security policy.
 ./scripts/test.sh jiuwenclaw-tool # jiuwenbox runs the service using jiuwenclaw-tool-policy.yaml as the security policy.
+```
+
+Run specific test-case:
+
+```bash
+python3 -m pytest tests/integration/test_server_api_default.py::TestPolicyEnforcement::test_network_mode_isolated_blocks_http_requests -s --server-endpoint 127.0.0.1:8321
 ```
 
 ## Notes

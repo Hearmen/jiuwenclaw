@@ -54,7 +54,7 @@ tests/
 - Linux
 - Python 3.11+
 - `bubblewrap`
-- 使用 `network.mode: isolated` 时需要 `iproute2` 和 `iptables`
+- 使用 `network.mode: isolated` 时需要 `iproute2`、`iptables` 和 `nftables`
 - 启用 Landlock 和 seccomp 时需要内核支持对应能力
 - 如果需要执行 JavaScript，则需要 `nodejs`
 
@@ -62,7 +62,7 @@ Ubuntu 安装示例：
 
 ```bash
 sudo apt-get update
-sudo apt-get install -y bubblewrap iproute2 iptables python3-pip nodejs
+sudo apt-get install -y bubblewrap iproute2 iptables nftables python3-pip nodejs
 ```
 
 ## 安装
@@ -137,6 +137,8 @@ Docker 镜像默认会启动 `./scripts/server.sh`。
     让这些路径实际存在于沙箱内。
 - `filesystem_policy.bind_mounts`
   - 显式的宿主机到沙箱路径的 bind mount 配置。
+- `filesystem_policy.device`
+  - 使用 `bwrap --dev-bind` 暴露到沙箱内的显式设备节点。
 
 路径字段支持 shell 风格的展开，例如 `~` 和环境变量。
 
@@ -194,6 +196,9 @@ filesystem_policy:
     - host_path: "/etc/ssl/openssl.cnf"
       sandbox_path: "/etc/ssl/openssl.cnf"
       mode: "ro"
+  device:
+    - host_path: "/dev/null"
+      sandbox_path: "/dev/null"
 
 process:
   run_as_user: sandbox
@@ -214,12 +219,20 @@ landlock:
   compatibility: best_effort
 
 syscall:
-  blocked:
-    - "ptrace"
-    - "mount"
-    - "umount2"
-    - "reboot"
-    - "kexec_load"
+  x86_64:
+    blocked:
+      - "ptrace"
+      - "mount"
+      - "umount2"
+      - "reboot"
+      - "kexec_load"
+  arm64:
+    blocked:
+      - "ptrace"
+      - "mount"
+      - "umount2"
+      - "reboot"
+      - "kexec_load"
 
 network:
   mode: isolated
@@ -290,15 +303,17 @@ curl -sS -X DELETE http://127.0.0.1:8321/api/v1/sandboxes/<sandbox-id>
 
 ## 运行集成测试
 
-```bash
-./scripts/test.sh
-```
-
 运行指定 policy 对应的集成测试：
 
 ```bash
 ./scripts/test.sh default # jiuwenbox 使用 default-policy.yaml 作为安全策略运行服务。
 ./scripts/test.sh jiuwenclaw-tool # jiuwenbox 使用 jiuwenclaw-tool-policy.yaml 作为安全策略运行服务。
+```
+
+运行指定测试用例：
+
+```bash
+python3 -m pytest tests/integration/test_server_api_default.py::TestPolicyEnforcement::test_network_mode_isolated_blocks_http_requests -s --server-endpoint 127.0.0.1:8321
 ```
 
 ## 注意事项

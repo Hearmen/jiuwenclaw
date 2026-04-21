@@ -1,3 +1,4 @@
+# Copyright (c) Huawei Technologies Co., Ltd. 2025. All rights reserved.
 """Sandbox lifecycle manager.
 
 Coordinates runtime adapters, policy engine, and audit logger to manage
@@ -174,14 +175,13 @@ class SandboxManager:
         """Create a new sandbox."""
         async with self._lock:
             sandbox_id = str(uuid.uuid4())[:12]
-            effective_command = list(command or [])
             policy = self._resolve_effective_policy(policy_data, policy_mode)
             self.policy_engine.validate_policy(policy)
             # Create sandbox ref
             ref = SandboxRef(
                 id=sandbox_id,
                 phase=SandboxPhase.PROVISIONING,
-                command=effective_command,
+                command=[],
                 workdir=spec.workdir,
                 env=dict(spec.env),
             )
@@ -222,6 +222,9 @@ class SandboxManager:
             if ref.phase == SandboxPhase.READY:
                 if not await self.runtime.is_running(sandbox_id):
                     ref.phase = SandboxPhase.STOPPED
+                    diagnostics = getattr(self.runtime, "get_exit_diagnostics", None)
+                    if diagnostics is not None:
+                        ref.error_message = diagnostics(sandbox_id)
                     self._save_state(ref)
             return ref
 
@@ -346,19 +349,41 @@ class SandboxManager:
         )
 
         encoded_content = base64.b64encode(content)
+        upload_script = textwrap.dedent(
+            """
+            set -euo pipefail
+            target="$1"
+            parent=$(/usr/bin/dirname -- "$target") || {
+                status=$?
+                printf "dirname failed for upload target '%s' (exit %s)\\n" "$target" "$status" >&2
+                exit "$status"
+            }
+            /usr/bin/mkdir -p -- "$parent" || {
+                status=$?
+                uid=$(/usr/bin/id -u 2>/dev/null || true)
+                gid=$(/usr/bin/id -g 2>/dev/null || true)
+                parent_parent=$(/usr/bin/dirname -- "$parent" 2>/dev/null || true)
+                printf "mkdir failed: parent='%s' target='%s'\\n" "$parent" "$target" >&2
+                printf "sandbox identity: uid=%s gid=%s exit=%s\\n" "$uid" "$gid" "$status" >&2
+                if [ -n "$parent_parent" ]; then
+                    /usr/bin/ls -ld -- "$parent_parent" "$parent" >&2 || true
+                fi
+                exit "$status"
+            }
+            /usr/bin/base64 -d > "$target" || {
+                status=$?
+                printf "base64 decode/write failed: target='%s' exit=%s\\n" "$target" "$status" >&2
+                exit "$status"
+            }
+            """
+        ).strip()
         result = await self.exec_in_sandbox(
             sandbox_id,
             SandboxExecRequest(
                 command=[
                     "/usr/bin/bash",
                     "-c",
-                    (
-                        "set -euo pipefail; "
-                        'target="$1"; '
-                        'parent=$(/usr/bin/dirname -- "$target"); '
-                        '/usr/bin/mkdir -p -- "$parent"; '
-                        '/usr/bin/base64 -d > "$target"'
-                    ),
+                    upload_script,
                     "jiuwenbox-upload",
                     sandbox_path,
                 ],
@@ -366,8 +391,11 @@ class SandboxManager:
             ),
         )
         if result.exit_code != 0:
+            detail = (result.stderr or result.stdout).strip()
+            if not detail:
+                detail = f"command exited with code {result.exit_code} without stderr/stdout"
             raise SandboxStateError(
-                f"Failed to upload file to '{sandbox_path}': {result.stderr or result.stdout}"
+                f"Failed to upload file to '{sandbox_path}': {detail}"
             )
 
     async def download_file_from_sandbox(

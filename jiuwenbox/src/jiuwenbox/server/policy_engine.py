@@ -1,3 +1,4 @@
+# Copyright (c) Huawei Technologies Co., Ltd. 2025. All rights reserved.
 """Policy Engine - validates and resolves static security policies."""
 
 from __future__ import annotations
@@ -92,6 +93,27 @@ class PolicyEngine:
                 self._is_sandbox_internal_path(mount.host_path, policy.sandbox_workspace)
                 or self._is_sandbox_internal_path(
                     mount.sandbox_path,
+                    policy.sandbox_workspace,
+                )
+            ):
+                raise PolicyValidationError(
+                    f"Policy cannot directly reference '{policy.sandbox_workspace}' "
+                    "or its child paths; this path is reserved for server-managed "
+                    "backing storage"
+                )
+
+        for device in policy.filesystem_policy.device:
+            if (
+                not self._is_absolute_sandbox_path(device.host_path)
+                or not self._is_absolute_sandbox_path(device.sandbox_path)
+            ):
+                raise PolicyValidationError(
+                    "Filesystem device mount paths must be absolute paths"
+                )
+            if (
+                self._is_sandbox_internal_path(device.host_path, policy.sandbox_workspace)
+                or self._is_sandbox_internal_path(
+                    device.sandbox_path,
                     policy.sandbox_workspace,
                 )
             ):

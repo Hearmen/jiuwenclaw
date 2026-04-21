@@ -1,3 +1,4 @@
+# Copyright (c) Huawei Technologies Co., Ltd. 2025. All rights reserved.
 """Bubblewrap (bwrap) sandbox wrapper.
 
 Translates a SecurityPolicy into bwrap command-line arguments and manages
@@ -44,6 +45,11 @@ def _path_depth(path: str) -> int:
     return len([part for part in path.split("/") if part])
 
 
+def _append_unique(paths: list[str], path: str) -> None:
+    if path not in paths:
+        paths.append(path)
+
+
 def _bind_parent_dirs(binds: list[tuple[str, str]], existing_dirs: set[str]) -> list[str]:
     """Return parent directories bwrap must create before nested bind targets."""
     result: list[str] = []
@@ -86,8 +92,10 @@ class BwrapConfig:
     rootfs: str | None = None
     ro_binds: list[tuple[str, str]] = field(default_factory=list)
     rw_binds: list[tuple[str, str]] = field(default_factory=list)
+    device_binds: list[tuple[str, str]] = field(default_factory=list)
     dir_mounts: list[tuple[str, str | None]] = field(default_factory=list)
     tmpfs_mounts: list[str] = field(default_factory=list)
+    remount_ro: list[str] = field(default_factory=list)
     dev_path: str = "/dev"
     proc_path: str = "/proc"
 
@@ -122,13 +130,20 @@ class BwrapConfig:
 
     @staticmethod
     def _apply_filesystem(cfg: BwrapConfig, fs: FilesystemPolicy) -> None:
-        # read_only/read_write are in-sandbox access rules enforced by
-        # Landlock. Only bind_mounts expose host paths in the sandbox.
+        read_write_paths = set(fs.read_write)
+        for path in fs.read_only:
+            if path not in read_write_paths and path not in cfg.remount_ro:
+                cfg.remount_ro.append(path)
+
+        # read_only/read_write are also enforced by Landlock when available.
+        # Only bind_mounts expose host paths in the sandbox.
         for mount in fs.bind_mounts:
             if mount.mode == "ro":
                 cfg.ro_binds.append((mount.host_path, mount.sandbox_path))
             else:
                 cfg.rw_binds.append((mount.host_path, mount.sandbox_path))
+        for device in fs.device:
+            cfg.device_binds.append((device.host_path, device.sandbox_path))
 
     @staticmethod
     def _apply_process(cfg: BwrapConfig, proc: ProcessPolicy) -> None:
@@ -229,19 +244,55 @@ class BwrapConfig:
         args.extend(["--proc", self.proc_path])
         args.extend(["--dev", self.dev_path])
 
-        explicit_dir_paths = {path for path, _ in self.dir_mounts}
-        auto_dir_mounts = [
-            (path, None)
-            for path in _bind_parent_dirs([*ro_binds, *rw_binds], explicit_dir_paths)
-        ]
+        explicit_dir_paths = {
+            self.proc_path,
+            self.dev_path,
+            *[path for path, _ in self.dir_mounts],
+        }
+        bind_targets = [*ro_binds, *rw_binds, *self.device_binds]
+        auto_dir_paths = _bind_parent_dirs(bind_targets, explicit_dir_paths)
+        auto_dir_mounts = [(path, None) for path in auto_dir_paths]
         dir_mounts = [*self.dir_mounts, *auto_dir_mounts]
         dir_mounts.sort(key=lambda item: _path_depth(item[0]))
+        remount_ro_paths = set(self.remount_ro)
+        read_only_dir_paths = {path for path, _ in dir_mounts if path in remount_ro_paths}
+        writable_dir_mounts = [
+            (path, permissions)
+            for path, permissions in dir_mounts
+            if path not in read_only_dir_paths
+        ]
+        tmpfs_mounts: list[str] = []
+        for path in self.tmpfs_mounts:
+            _append_unique(tmpfs_mounts, path)
+        for path in sorted(read_only_dir_paths, key=_path_depth):
+            _append_unique(tmpfs_mounts, path)
+        created_paths = {
+            "/",
+            self.proc_path,
+            self.dev_path,
+            *[dst for _, dst in root_ro_binds],
+            *[dst for _, dst in root_rw_binds],
+            *[dst for _, dst in ro_binds],
+            *[dst for _, dst in rw_binds],
+            *[dst for _, dst in self.device_binds],
+            *[path for path, _ in writable_dir_mounts],
+            *tmpfs_mounts,
+        }
 
         # create directories before binding over them
-        for path, permissions in dir_mounts:
-            if permissions:
-                args.extend(["--perms", permissions])
-            args.extend(["--dir", path])
+        creation_ops = [
+            ("dir", path, permissions)
+            for path, permissions in writable_dir_mounts
+        ]
+        creation_ops.extend(("tmpfs", path, None) for path in tmpfs_mounts)
+        creation_ops.sort(key=lambda item: _path_depth(item[1]))
+        for op, path, permissions in creation_ops:
+            if op == "dir":
+                if permissions:
+                    args.extend(["--perms", permissions])
+                args.extend(["--dir", path])
+            else:
+                args.extend(["--tmpfs", path])
 
         # read-only binds
         for src, dst in ro_binds:
@@ -251,9 +302,13 @@ class BwrapConfig:
         for src, dst in rw_binds:
             args.extend(["--bind", src, dst])
 
-        # tmpfs mounts
-        for path in self.tmpfs_mounts:
-            args.extend(["--tmpfs", path])
+        for src, dst in self.device_binds:
+            args.extend(["--dev-bind", src, dst])
+
+        for path in sorted(self.remount_ro, key=_path_depth, reverse=True):
+            if path not in created_paths:
+                continue
+            args.extend(["--remount-ro", path])
 
         if self.seccomp_fd is not None:
             args.extend(["--seccomp", str(self.seccomp_fd)])

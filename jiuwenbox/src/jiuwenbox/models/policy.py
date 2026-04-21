@@ -1,3 +1,4 @@
+# Copyright (c) Huawei Technologies Co., Ltd. 2025. All rights reserved.
 """Security policy data models (static only)."""
 
 from __future__ import annotations
@@ -7,7 +8,7 @@ import os
 from pathlib import Path
 from typing import Literal
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 
 def _expand_path(value: str) -> str:
@@ -19,6 +20,18 @@ class BindMount(BaseModel):
     host_path: str
     sandbox_path: str
     mode: Literal["ro", "rw"] = "ro"
+
+    @field_validator("host_path", "sandbox_path", mode="before")
+    @classmethod
+    def expand_paths(cls, value: object) -> object:
+        if isinstance(value, str):
+            return _expand_path(value)
+        return value
+
+
+class DeviceMount(BaseModel):
+    host_path: str
+    sandbox_path: str
 
     @field_validator("host_path", "sandbox_path", mode="before")
     @classmethod
@@ -65,6 +78,7 @@ class FilesystemPolicy(BaseModel):
     read_only: list[str] = Field(default_factory=list)
     read_write: list[str] = Field(default_factory=list)
     bind_mounts: list[BindMount] = Field(default_factory=list)
+    device: list[DeviceMount] = Field(default_factory=list)
 
     @field_validator("directories", mode="before")
     @classmethod
@@ -103,8 +117,15 @@ class LandlockPolicy(BaseModel):
     compatibility: Literal["disabled", "best_effort", "hard_requirement"] = "best_effort"
 
 
-class SyscallPolicy(BaseModel):
+class ArchitectureSyscallPolicy(BaseModel):
     blocked: list[str] = Field(default_factory=list)
+
+
+class SyscallPolicy(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    x86_64: ArchitectureSyscallPolicy = Field(default_factory=ArchitectureSyscallPolicy)
+    arm64: ArchitectureSyscallPolicy = Field(default_factory=ArchitectureSyscallPolicy)
 
 
 class NetworkMode(str, enum.Enum):

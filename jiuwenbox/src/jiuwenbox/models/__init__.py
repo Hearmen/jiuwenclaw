@@ -1,3 +1,5 @@
+# Copyright (c) Huawei Technologies Co., Ltd. 2025. All rights reserved.
+
 from jiuwenbox.models.sandbox import (
     ExecResult,
     SandboxPhase,
@@ -5,6 +7,7 @@ from jiuwenbox.models.sandbox import (
     SandboxSpec,
 )
 from jiuwenbox.models.policy import (
+    ArchitectureSyscallPolicy,
     BindMount,
     DirectoryMount,
     FilesystemPolicy,
@@ -29,6 +32,7 @@ __all__ = [
     "SandboxRef",
     "SandboxSpec",
     "BindMount",
+    "ArchitectureSyscallPolicy",
     "DirectoryMount",
     "FilesystemPolicy",
     "CapabilityPolicy",
