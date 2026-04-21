@@ -360,12 +360,12 @@ class JiuClawStreamEventRail(DeepAgentRail):
         except Exception:
             logger.debug("context_compression emit failed", exc_info=True)
 
-    @staticmethod
-    def _ensure_json_arguments(arguments: Any) -> str:
+    def _ensure_json_arguments(self, arguments: Any) -> str:
         """Ensure tool call arguments are valid JSON string.
 
         If arguments is a dict, convert to JSON string. If arguments is a string,
-        validate it can be parsed as JSON. If parsing fails, return empty JSON object.
+        attempt multi-stage repair (json_repair, rule-based quote fixing) before
+        returning valid JSON. If all repair attempts fail, return empty JSON object.
 
         Args:
             arguments: The arguments value from tool_call.
@@ -375,15 +375,106 @@ class JiuClawStreamEventRail(DeepAgentRail):
         """
         import json
         if isinstance(arguments, dict):
-            return json.dumps(arguments)
+            return json.dumps(arguments, ensure_ascii=False)
         if isinstance(arguments, str):
-            try:
-                json.loads(arguments)
-                return arguments
-            except (json.JSONDecodeError, TypeError):
-                logger.warning(f"Illegal Tool call arguments: {arguments}")
+            _arguments = arguments.strip()
+            if not _arguments:
                 return "{}"
+
+            # First attempt: direct parsing
+            try:
+                json.loads(_arguments)
+                return arguments
+            except json.JSONDecodeError:
+                pass
+
+            # Second attempt: json_repair library
+            try:
+                import json_repair
+                repaired = json_repair.loads(_arguments)
+                if isinstance(repaired, dict):
+                    logger.info(
+                        "[_ensure_json_arguments] stage=json_repair outcome=success."
+                    )
+                    return json.dumps(repaired, ensure_ascii=False)
+                # json_repair returned non-dict (e.g., list, str, int)
+                logger.warning(
+                    "[_ensure_json_arguments] stage=json_repair outcome=failed."
+                )
+            except Exception as exc:
+                logger.warning(
+                    "[_ensure_json_arguments] stage=json_repair, error=%s",
+                    str(exc),
+                )
+
+            # Third attempt: rule-based quote fixing
+            fixed = self._fix_missing_quotes(_arguments)
+            if fixed != _arguments:
+                try:
+                    result = json.loads(fixed)
+                    logger.info(
+                        "[_ensure_json_arguments] stage=rule_fix outcome=success"
+                    )
+                    return json.dumps(result, ensure_ascii=False)
+                except json.JSONDecodeError as exc:
+                    logger.warning(
+                        "[_ensure_json_arguments] stage=rule_fix outcome=failed, error=%s",
+                        str(exc),
+                    )
+            else:
+                # rule_fix made no structural change
+                logger.warning(
+                    "[_ensure_json_arguments] stage=rule_fix outcome=failed"
+                )
+
+            logger.warning(
+                "[_ensure_json_arguments] outcome=failed_all_stages"
+            )
+            return "{}"
         return "{}"
+
+    @staticmethod
+    def _fix_missing_quotes(json_str: str) -> str:
+        """Attempt to fix missing quotes in JSON string.
+
+        Common repair scenarios:
+        1. Missing end quote: {"query": hello} -> {"query": "hello"}
+        2. Missing key quote: {query: "hello"} -> {"query": "hello"}
+        3. Windows path without quotes: {"path": D:/work/file.txt} -> {"path": "D:/work/file.txt"}
+
+        Args:
+            json_str: Possibly malformed JSON string
+
+        Returns:
+            Repaired JSON string, or original if no repair possible
+        """
+        import re
+
+        s = json_str.strip()
+
+        # Pattern 1: Fix Windows paths (D:/path, C:/path)
+        s = re.sub(
+            r':\s+([A-Za-z]:/[^\{\[]*?)(?=\s*[,\}\]])',
+            lambda m: f': "{m.group(1)}"',
+            s
+        )
+
+        # Pattern 2: Fix missing end quote for string values (non-path)
+        # Match ": value" where value is unquoted string
+        s = re.sub(
+            r':\s+(?!"|true|false|null|\d+|{|\[|:|"|[A-Za-z]:/)([^\s,\}\[\]""]+?)(?=\s*[,}\]])',
+            lambda m: f': "{m.group(1)}"',
+            s
+        )
+
+        # Pattern 3: Fix missing key quotes ({key: value} -> {"key": value})
+        s = re.sub(
+            r'{\s+([a-zA-Z_][a-zA-Z0-9_]*)\s*:',
+            r'{"\1":',
+            s
+        )
+
+        return s
 
     async def _fix_incomplete_tool_context(self, context: Any) -> None:
         """Fix incomplete context: ensure assistant messages with tool_calls have matching tool messages."""
