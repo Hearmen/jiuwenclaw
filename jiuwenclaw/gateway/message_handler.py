@@ -32,6 +32,7 @@ _ACP_ORIGINAL_SESSION_ID_KEY = "acp_original_session_id"
 _DEFAULT_INLINE_FILE_SIZE_LIMIT = 128 * 1024
 _KNOWN_JIUWENCLAW_SESSION_PREFIXES = (
     "sess_",
+    "tui_",
     "acp_",
     "cron_",
     "feishu_",
