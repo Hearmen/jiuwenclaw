@@ -325,22 +325,57 @@ class JiuClawStreamEventRail(DeepAgentRail):
 
     @staticmethod
     async def _emit_context_compression(ctx: AgentCallbackContext) -> None:
-        """Emit context compression stats based on raw_total_tokens and current context tokens."""
+        """Emit context compression stats if OffloadMixin messages are present."""
         session = ctx.session
-        if session is None:
+        if session is None or not hasattr(ctx.inputs, "messages"):
             return
 
-        context = ctx.context
-        if context is None:
-            return
+        messages = ctx.inputs.messages
+        compression_to_show: List = []
+        uncompressed: List = []
+
+        for message in messages:
+            if isinstance(message, OffloadMixin):
+                try:
+                    context = ctx.context
+                    if context is not None:
+                        original_message = await context.reloader_tool().invoke(
+                            inputs={
+                                "offload_handle": message.offload_handle,
+                                "offload_type": message.offload_type,
+                            }
+                        )
+                        compression_to_show.append((message, original_message))
+                except Exception:
+                    pass
+            else:
+                uncompressed.append(message)
 
         try:
-            stat = context.statistic()
-            raw_total_tokens = stat.raw_total_tokens
-            current_context_tokens = stat.single_messages_token
+            try:
+                encoding = tiktoken.get_encoding("cl100k_base")
+                tokens_compressed = 0
+                tokens_full = 0
+                token_uncompressed = 0
+                for msg in uncompressed:
+                    token_uncompressed += len(encoding.encode(getattr(msg, "content", "") or ""))
+                for compressed_msg, original_msg in compression_to_show:
+                    tokens_compressed += len(encoding.encode(getattr(compressed_msg, "content", "") or ""))
+                    tokens_full += len(encoding.encode(original_msg if isinstance(original_msg, str) else ""))
+            except Exception:
+                tokens_compressed = 0
+                tokens_full = 0
+                token_uncompressed = 0
+                for msg in uncompressed:
+                    token_uncompressed += len(getattr(msg, "content", "") or "")
+                for compressed_msg, original_msg in compression_to_show:
+                    tokens_compressed += len(getattr(compressed_msg, "content", "") or "")
+                    tokens_full += len(original_msg if isinstance(original_msg, str) else "")
 
-            if raw_total_tokens > 0:
-                rate = (raw_total_tokens - current_context_tokens) / raw_total_tokens * 100
+            pre_compression = tokens_full + token_uncompressed
+            post_compression = tokens_compressed + token_uncompressed
+            if pre_compression > 0:
+                rate = (1 - post_compression / pre_compression) * 100
             else:
                 rate = 0
 
@@ -350,8 +385,8 @@ class JiuClawStreamEventRail(DeepAgentRail):
                     index=0,
                     payload={
                         "rate": rate,
-                        "before_compressed": raw_total_tokens,
-                        "after_compressed": current_context_tokens,
+                        "before_compressed": pre_compression,
+                        "after_compressed": post_compression,
                     },
                 )
             )
