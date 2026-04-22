@@ -35,6 +35,23 @@ from jiuwenclaw.agentserver.team.team_runtime_inheritance import (
 logger = logging.getLogger(__name__)
 
 
+async def cleanup_team_runtime_state_once() -> tuple[list[str], list[str]]:
+    """Clear leftover shared team runtime state once during AgentServer startup."""
+    from openjiuwen.agent_teams.paths import get_agent_teams_home
+    from openjiuwen.agent_teams.spawn.shared_resources import get_shared_db
+    from openjiuwen.agent_teams.tools.database import DatabaseConfig
+
+    db_config = DatabaseConfig()
+    if db_config.db_type == "sqlite" and not db_config.connection_string:
+        db_config.connection_string = str(get_agent_teams_home() / "team.db")
+    try:
+        shared_db = get_shared_db(db_config)
+        return await shared_db.cleanup_all_runtime_state()
+    except Exception as exc:
+        logger.warning("[TeamManager] startup runtime cleanup failed: %s", exc)
+        return [], []
+
+
 class TeamManager:
     """Manage team instances across sessions."""
 
@@ -53,24 +70,6 @@ class TeamManager:
     @staticmethod
     def _load_team_spec(session_id: str) -> TeamAgentSpec:
         return TeamAgentSpec.model_validate(load_team_spec_dict(session_id))
-
-    @staticmethod
-    async def _cleanup_team_runtime_state(
-        spec: TeamAgentSpec,
-    ) -> tuple[list[str], list[str]]:
-        from openjiuwen.agent_teams.paths import get_agent_teams_home
-        from openjiuwen.agent_teams.spawn.shared_resources import get_shared_db
-        from openjiuwen.agent_teams.tools.database import DatabaseConfig
-
-        db_config = spec.storage.build() if spec.storage else DatabaseConfig()
-        if db_config.db_type == "sqlite" and not db_config.connection_string:
-            db_config.connection_string = str(get_agent_teams_home() / "team.db")
-        try:
-            shared_db = get_shared_db(db_config)
-            return await shared_db.cleanup_all_runtime_state()
-        except Exception as exc:
-            logger.warning("[TeamManager] runtime cleanup failed for team=%s: %s", spec.team_name, exc)
-            return [], []
 
     @staticmethod
     def register_member_runtime_tools(
@@ -420,13 +419,6 @@ class TeamManager:
     ) -> TeamAgent:
         logger.info("[TeamManager] building TeamAgentSpec: session_id=%s", session_id)
         spec = self._load_team_spec(session_id)
-        deleted_tables, cleared_tables = await self._cleanup_team_runtime_state(spec)
-        if deleted_tables or cleared_tables:
-            logger.info(
-                "[TeamManager] pre-create cleanup deleted dynamic tables=%s cleared static tables=%s",
-                deleted_tables,
-                cleared_tables,
-            )
 
         spec.agent_customizer = self.build_agent_customizer(
             spec,
@@ -526,14 +518,9 @@ class TeamManager:
 
         team_agent = self._team_agents.pop(session_id, None)
         cleaned = False
-        cleanup_spec: TeamAgentSpec | None = None
         try:
-            cleanup_spec = self._load_team_spec(session_id)
             if team_agent is None:
-                logger.info(
-                    "[TeamManager] no in-memory team for session_id=%s, run runtime cleanup fallback only",
-                    session_id,
-                )
+                logger.info("[TeamManager] no in-memory team for session_id=%s", session_id)
                 return False
 
             token = set_session_id(session_id)
@@ -553,28 +540,6 @@ class TeamManager:
                 session_id,
                 exc,
             )
-        finally:
-            if cleanup_spec is None:
-                try:
-                    cleanup_spec = self._load_team_spec(session_id)
-                except Exception as exc:
-                    logger.warning(
-                        "[TeamManager] failed to rebuild team spec for cleanup: session_id=%s error=%s",
-                        session_id,
-                        exc,
-                    )
-                    cleanup_spec = None
-            deleted_tables: list[str] = []
-            cleared_tables: list[str] = []
-            if cleanup_spec is not None:
-                deleted_tables, cleared_tables = await self._cleanup_team_runtime_state(cleanup_spec)
-            if deleted_tables or cleared_tables:
-                logger.info(
-                    "[TeamManager] fallback cleanup after destroy deleted dynamic tables=%s "
-                    "cleared static tables=%s",
-                    deleted_tables,
-                    cleared_tables,
-                )
 
         return cleaned
 
@@ -602,7 +567,7 @@ class TeamManager:
             if not has_stream_task and not has_team_runtime:
                 return False
             logger.info(
-                "[TeamManager] %sterminate team session runtime: session_id=%s",
+                "[TeamManager] %s terminate team session runtime: session_id=%s",
                 reason,
                 session_id,
             )
@@ -627,7 +592,7 @@ class TeamManager:
             if task.done():
                 continue
             logger.info(
-                "[TeamManager] %scancel stream task session_id=%s",
+                "[TeamManager] %s cancel stream task session_id=%s",
                 reason,
                 session_id,
             )
@@ -649,16 +614,22 @@ class TeamManager:
             self._stream_tasks.clear()
 
 
-_team_manager: TeamManager | None = None
+_team_managers: dict[str, TeamManager] = {}
 
 
-def get_team_manager() -> TeamManager:
-    global _team_manager
-    if _team_manager is None:
-        _team_manager = TeamManager()
-    return _team_manager
+def get_team_manager(channel_id: str | None = None) -> TeamManager:
+    resolved_channel_id = str(channel_id or "default").strip() or "default"
+    manager = _team_managers.get(resolved_channel_id)
+    if manager is None:
+        manager = TeamManager()
+        _team_managers[resolved_channel_id] = manager
+    return manager
 
 
-def reset_team_manager() -> None:
-    global _team_manager
-    _team_manager = None
+def reset_team_manager(channel_id: str | None = None) -> None:
+    if channel_id is None:
+        _team_managers.clear()
+        return
+
+    resolved_channel_id = str(channel_id).strip() or "default"
+    _team_managers.pop(resolved_channel_id, None)

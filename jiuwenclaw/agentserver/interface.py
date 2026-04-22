@@ -579,7 +579,7 @@ class JiuWenClaw:
         is_team_first_request = True
         if is_team_mode:
             from jiuwenclaw.agentserver.team import get_team_manager
-            team_manager = get_team_manager()
+            team_manager = get_team_manager(request.channel_id)
             is_team_first_request = not team_manager.has_stream_task(session_id)
             logger.info(
                 "[JiuWenClaw] Team模式: session_id=%s is_first=%s",

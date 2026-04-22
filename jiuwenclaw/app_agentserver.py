@@ -41,6 +41,7 @@ load_dotenv(dotenv_path=get_env_file())
 async def _run(host: str, port: int) -> None:
     from openjiuwen.core.runner import Runner
     from jiuwenclaw.agentserver.agent_ws_server import AgentWebSocketServer
+    from jiuwenclaw.agentserver.team import cleanup_team_runtime_state_once
     from jiuwenclaw.extensions.manager import ExtensionManager
     from jiuwenclaw.extensions.registry import ExtensionRegistry
 
@@ -49,6 +50,13 @@ async def _run(host: str, port: int) -> None:
     from jiuwenclaw.agentserver.session_metadata import remove_team_mode_session_dirs_at_startup
 
     remove_team_mode_session_dirs_at_startup()
+    deleted_tables, cleared_tables = await cleanup_team_runtime_state_once()
+    if deleted_tables or cleared_tables:
+        logger.info(
+            "[AgentServer] startup team runtime cleanup deleted dynamic tables=%s cleared static tables=%s",
+            deleted_tables,
+            cleared_tables,
+        )
 
     # ---------- 扩展系统初始化 ----------
     callback_framework = Runner.callback_framework
