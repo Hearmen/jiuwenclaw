@@ -334,6 +334,8 @@ export function useWebSocket(options: UseWebSocketOptions): UseWebSocketReturn {
         };
         if (intent === 'supplement') {
           params.new_input = newInput ?? '';
+          const selectedModel = useSessionStore.getState().selectedModelName;
+          if (selectedModel) params.model_name = selectedModel;
         }
         await request('chat.interrupt', params);
       } catch (error) {

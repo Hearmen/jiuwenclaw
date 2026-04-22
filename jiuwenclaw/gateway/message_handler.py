@@ -1718,6 +1718,11 @@ class MessageHandler(ABC):
                                 "session_id": msg.session_id,
                                 "is_supplement": True,
                                 **(
+                                    {"model_name": (msg.params or {}).get("model_name")}
+                                    if (msg.params or {}).get("model_name")
+                                    else {}
+                                ),
+                                **(
                                     {"attachments": supplement_attachments}
                                     if supplement_attachments
                                     else {}
