@@ -20,7 +20,7 @@ from jiuwenclaw.agentserver.gateway_push import (
     GatewayPushTransport,
     WebSocketGatewayPushTransport,
 )
-from jiuwenclaw.utils import get_user_workspace_dir
+from jiuwenclaw.utils import get_cron_jobs_path
 
 logger = logging.getLogger(__name__)
 
@@ -58,7 +58,7 @@ class CronTools:
     ) -> None:
         self._gateway_push: GatewayPushTransport = gateway_push or WebSocketGatewayPushTransport()
         self._local_store = CronJobStore(
-            path=get_user_workspace_dir() / "agent" / "home" / "cron_jobs.json"
+            path=get_cron_jobs_path()
         )
         # 内置调度器，用于在 Agent-side 执行定时任务
         self._scheduler: CronSchedulerService | None = None

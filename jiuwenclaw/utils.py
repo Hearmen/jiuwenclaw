@@ -965,6 +965,11 @@ def get_agent_skills_dir() -> Path:
     return get_agent_workspace_dir() / "skills"
 
 
+def get_cron_jobs_path() -> Path:
+    """Canonical path for cron_jobs.json shared by gateway and agentserver."""
+    return get_user_workspace_dir() / "agent" / "home" / "cron_jobs.json"
+
+
 def get_deepagent_todo_dir() -> Path:
     """Get the DeepAgent todo directory path.
 

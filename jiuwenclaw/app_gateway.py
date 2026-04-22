@@ -30,7 +30,7 @@ from openjiuwen.core.common.logging import LogManager
 import jiuwenclaw.channel.acp_channel as acp_channel_module
 from jiuwenclaw.channel.acp_channel import AcpGatewayBridge
 from jiuwenclaw.gateway.route_binding import GatewayRouteBinding
-from jiuwenclaw.utils import get_user_workspace_dir, get_env_file, prepare_workspace
+from jiuwenclaw.utils import get_user_workspace_dir, get_env_file, prepare_workspace, get_cron_jobs_path
 
 # Ensure workspace initialized
 _workspace_dir = get_user_workspace_dir()
@@ -762,7 +762,7 @@ async def _run(
     message_handler.set_inbound_pipeline(im_inbound)
     message_handler.set_outbound_pipeline(im_outbound)
 
-    cron_store = CronJobStore(path=get_user_workspace_dir() / "gateway" / "cron_jobs.json")
+    cron_store = CronJobStore(path=get_cron_jobs_path())
     cron_scheduler = CronSchedulerService(
         store=cron_store,
         agent_client=client,
