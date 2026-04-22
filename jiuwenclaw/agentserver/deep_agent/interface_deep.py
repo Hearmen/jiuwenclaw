@@ -2283,10 +2283,14 @@ class JiuWenClawDeepAdapter:
     # ------------------------------------------------------------------
 
     async def _handle_evolve_command(self, query: str, session_id: str) -> dict[str, Any]:
-        """/evolve [list | <skill_name>] handler using the optimizer path.
+        """/evolve [list | <skill_name> [<user_query>...]] handler using the optimizer path.
 
         Uses SkillEvolutionRail.generate_and_emit_experience to stage records
         in memory and emit approval events.
+
+        Args:
+            query: Command query, format: /evolve <skill_name> [<user_query>...]
+            session_id: Current session ID for message collection
 
         Returns a result dict.  When evolution records are generated the dict
         includes an ``approval_chunks`` list so the caller can forward the
@@ -2314,8 +2318,12 @@ class JiuWenClawDeepAdapter:
                 "result_type": "answer",
             }
 
-        # --- /evolve <skill_name> ---
-        skill_name = skill_arg
+        # --- /evolve <skill_name> [<user_query>...] ---
+        # Parse skill_name and optional user_query
+        skill_parts = skill_arg.split(maxsplit=1)
+        skill_name = skill_parts[0].strip()
+        user_query = skill_parts[1].strip() if len(skill_parts) > 1 else ""
+
         if skill_name not in skill_names:
             available = "、".join(skill_names) or "（无可用 Skill）"
             return {
@@ -2329,16 +2337,11 @@ class JiuWenClawDeepAdapter:
 
         # 1) Collect conversation messages from the context engine cache
         parsed_messages = self._collect_messages_for_evolve(session_id)
-        if not parsed_messages:
-            return {
-                "output": "当前对话无可用消息，无法检测演进信号。请先与 Agent 进行对话后再执行 /evolve。",
-                "result_type": "answer",
-            }
 
         # 2) Detect signals (reuse rail's dedup set)
         existing_skills = {n for n in skill_names if store.skill_exists(n)}
         detector = SignalDetector(existing_skills=existing_skills)
-        detected = detector.detect(parsed_messages)
+        detected = detector.detect(parsed_messages) if parsed_messages else []
 
         new_signals = [
             sig for sig in detected
@@ -2348,16 +2351,20 @@ class JiuWenClawDeepAdapter:
             rail.processed_signal_keys.add((sig.signal_type, sig.excerpt[:100]))
 
         attributed = [s for s in new_signals if s.skill_name == skill_name]
-        if not attributed:
+
+        # If no detected signals and no user_query, nothing to evolve
+        if not attributed and not user_query:
             return {
                 "output": "当前对话未发现明确的演进信号（无工具执行失败、无用户纠正）。\n",
                 "result_type": "answer",
             }
 
         # 3) Generate experience records and emit approval event
+        # user_query is passed directly to generate_and_emit_experience which handles
+        # synthetic signal and message creation internally.
         try:
             has_records = await rail.generate_and_emit_experience(
-                skill_name, attributed, parsed_messages
+                skill_name, attributed, parsed_messages, user_query=user_query
             )
         except Exception as exc:
             logger.warning("[JiuWenClaw] evolve generate failed (skill=%s): %s", skill_name, exc)
@@ -2425,26 +2432,112 @@ class JiuWenClawDeepAdapter:
 
         return SkillEvolutionRail._parse_messages(raw_messages)
 
-    async def _handle_solidify_command(self, query: str) -> dict[str, Any]:
-        """/solidify <skill_name> handler using the new online EvolutionStore."""
+    async def _handle_evolve_rewrite_command(self, query: str) -> dict[str, Any]:
+        """/evolve_rewrite <skill_name> [--min-score <float>] [--dry-run] [<user_query>...]
+
+        Rewrite SKILL.md by deeply integrating evolution experiences using LLM.
+        Unlike solidify() which appends experiences, this rewrites the document
+        for a more natural, coherent result.
+        """
         rail = self._skill_evolution_rail
         assert rail is not None
         store = rail.store
 
-        parts = query.split(maxsplit=1)
-        skill_name = parts[1].strip() if len(parts) > 1 else ""
-        if not skill_name:
+        # Parse arguments
+        parts = query.split()
+        usage_msg = (
+            "请指定 Skill 名称：\n"
+            "`/evolve_rewrite <skill_name> [--min-score <float>] [--dry-run] [<user_query>...]`"
+        )
+        if len(parts) < 2:
+            return {"output": usage_msg, "result_type": "error"}
+
+        skill_name = parts[1]
+        if skill_name.startswith("--"):
+            return {"output": usage_msg, "result_type": "error"}
+
+        if not store.skill_exists(skill_name):
+            available = "、".join(store.list_skill_names()) or "（无可用 Skill）"
             return {
-                "output": "请指定 Skill 名称：`/solidify <skill_name>`",
+                "output": f"未找到 Skill '{skill_name}'。当前可用：{available}",
                 "result_type": "error",
             }
 
-        count = await store.solidify(skill_name)
-        if count == 0:
-            msg = f"Skill '{skill_name}' 没有待固化的演进经验。"
-        else:
-            msg = f"已将 {count} 条演进经验固化到 Skill '{skill_name}' 的 SKILL.md。"
-        return {"output": msg, "result_type": "answer"}
+        # Parse flags
+        min_score = 0.5
+        dry_run = False
+        user_query_parts = []
+
+        i = 2
+        while i < len(parts):
+            part = parts[i]
+            if part == "--min-score" and i + 1 < len(parts):
+                try:
+                    min_score = float(parts[i + 1])
+                    i += 2
+                    continue
+                except ValueError:
+                    return {
+                        "output": f"--min-score 参数无效：{parts[i + 1]}",
+                        "result_type": "error",
+                    }
+            elif part == "--dry-run":
+                dry_run = True
+                i += 1
+                continue
+            else:
+                # Remaining parts are user_query
+                user_query_parts = parts[i:]
+                break
+            i += 1
+
+        user_query = " ".join(user_query_parts)
+
+        try:
+            result = await rail.rewrite_skill(
+                skill_name,
+                min_score=min_score,
+                dry_run=dry_run,
+                user_query=user_query,
+            )
+        except Exception as exc:
+            logger.warning("[JiuWenClaw] evolve_rewrite failed: %s", exc)
+            return {
+                "output": f"重写失败：{exc}",
+                "result_type": "error",
+            }
+
+        if result is None:
+            return {
+                "output": f"Skill '{skill_name}' 没有符合条件的演进经验（当前 min_score={min_score}）。",
+                "result_type": "answer",
+            }
+
+        if dry_run:
+            # Preview mode: show summary and content preview
+            preview_lines = result.rewritten_content.split("\n")[:30]
+            preview = "\n".join(preview_lines)
+            if len(result.rewritten_content.split("\n")) > 30:
+                preview += "\n... (truncated)"
+
+            return {
+                "output": (
+                    f"**Skill '{skill_name}' 重写预览（dry-run，未执行）：**\n\n"
+                    f"{result.summary}\n\n"
+                    f"**重写后内容预览（前30行）：**\n```markdown\n{preview}\n```"
+                ),
+                "result_type": "answer",
+            }
+
+        # Applied mode
+        return {
+            "output": (
+                f"**Skill '{skill_name}' 重写完成：**\n\n"
+                f"{result.summary}\n\n"
+                f"已清理 {result.records_cleaned} 条已应用的经验记录。"
+            ),
+            "result_type": "answer",
+        }
 
     async def _handle_evolve_list_command(self, query: str) -> dict[str, Any]:
         """/evolve_list <skill_name> [--sort score] — show experiences with scores."""
@@ -2605,11 +2698,11 @@ class JiuWenClawDeepAdapter:
         """
         stripped = query.strip()
 
-        if stripped.startswith("/solidify"):
+        if stripped.startswith("/evolve_rewrite"):
             err = self._ensure_evolution_rail_for_slash(mode)
             if err:
                 return {"output": err, "result_type": "error"}
-            return await self._handle_solidify_command(stripped)
+            return await self._handle_evolve_rewrite_command(stripped)
 
         if stripped.startswith("/evolve_simplify"):
             err = self._ensure_evolution_rail_for_slash(mode)

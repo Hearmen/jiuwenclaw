@@ -3,19 +3,19 @@ import { CommandKind, type SlashCommand } from "../types.js";
 
 /**
  * /evolve - Trigger skill evolution or list pending summaries
- * Usage: /evolve [list | <skill_name>]
+ * Usage: /evolve [list | <skill_name> [<user_query>...]]
  */
 export function createEvolveCommand(): SlashCommand {
   return {
     name: "evolve",
-    description: "Trigger skill evolution for <skill_name>, or list pending summaries if 'list' or no argument",
-    usage: "/evolve [list | <skill_name>]",
-    example: "/evolve pptx",
+    description: "Trigger skill evolution for <skill_name> (optionally with user_query), or list pending summaries if 'list' or no argument",
+    usage: "/evolve [list | <skill_name> [<user_query>...]]",
+    example: "/evolve pptx improve error handling",
     kind: CommandKind.BUILT_IN,
     takesArgs: true,
     action: (ctx, args) => {
       const skillArg = args.trim();
-      // /evolve, /evolve list, or /evolve <skill_name>
+      // /evolve, /evolve list, or /evolve <skill_name> [<user_query>...]
       const text = skillArg ? `/evolve ${skillArg}` : `/evolve`;
 
       const requestId = ctx.sendMessage(text);
@@ -105,37 +105,41 @@ export function createEvolveSimplifyCommand(): SlashCommand {
 }
 
 /**
- * /solidify - Approve and solidify evolution proposals for a skill
- * Usage: /solidify <skill_name>
+ * /evolve_rewrite - Rewrite SKILL.md by deeply integrating evolution experiences using LLM
+ * Usage: /evolve_rewrite <skill_name> [--min-score <float>] [--dry-run] [<user_query>...]
  */
-export function createSolidifyCommand(): SlashCommand {
+export function createEvolveRewriteCommand(): SlashCommand {
   return {
-    name: "solidify",
-    description: "Approve and solidify evolution experiences for a skill into SKILL.md",
-    usage: "/solidify <skill_name>",
-    example: "/solidify pptx",
+    name: "evolve_rewrite",
+    description: "Rewrite SKILL.md by deeply integrating evolution experiences using LLM",
+    usage: "/evolve_rewrite <skill_name> [--min-score <float>] [--dry-run] [<user_query>...]",
+    example: "/evolve_rewrite pptx --min-score 0.7 --dry-run improve error handling",
     kind: CommandKind.BUILT_IN,
     takesArgs: true,
     action: (ctx, args) => {
-      const skillName = args.trim();
+      const parsedArgs = parseArgs(args);
+      const skillName = parsedArgs[0];
 
-      if (!skillName) {
+      if (!skillName || skillName.startsWith("--")) {
         ctx.addItem(
           makeItem(
             ctx.sessionId,
             "error",
-            "usage: /solidify <skill_name> - Provide the name of the skill",
+            "usage: /evolve_rewrite <skill_name> [--min-score <float>] [--dry-run] [<user_query>...] - Provide the name of the skill",
           ),
         );
         return;
       }
 
-      const requestId = ctx.sendMessage(`/solidify ${skillName}`);
+      // Forward all arguments to backend (including flags and user_query)
+      const requestId = ctx.sendMessage(`/evolve_rewrite ${args.trim()}`);
       if (!requestId) {
         ctx.addItem(
-          makeItem(ctx.sessionId, "error", "offline: waiting for reconnect before sending solidify request"),
+          makeItem(ctx.sessionId, "error", "offline: waiting for reconnect before sending evolve_rewrite request"),
         );
       }
     },
   };
 }
+
+
