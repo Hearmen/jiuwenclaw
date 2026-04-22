@@ -427,6 +427,7 @@ export class AppScreen implements Component, Focusable {
 
     const handled = handleAppScreenKeyInput(data, {
       interruptTask: () => this.interruptTask(),
+      exitApp: () => this.exit(),
       toggleTodos: () => {
         this.showTodos = !this.showTodos;
         this.tui.requestRender();

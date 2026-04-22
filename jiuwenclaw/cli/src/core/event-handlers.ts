@@ -85,6 +85,9 @@ export interface AppEventDelegate {
   clearToolExecutionState(): void;
   /** 用户中断：将 running 的工具标为已结束，避免 TUI 继续转圈 */
   markRunningToolsInterrupted(): void;
+  /** 退出前 cancel({showNotice:false}) 置 true，抑制 interrupt_result UI 通知。 */
+  getSuppressInterruptResult(): boolean;
+  clearSuppressInterruptResult(): void;
   pushHistoryEntry(entry: HistoryItem): void;
   scheduleHistoryFlush(): void;
   safeRestoreHistory(sessionId: string): void;
@@ -616,6 +619,11 @@ export function handleIncomingFrame(delegate: AppEventDelegate, frame: EventFram
     case "chat.interrupt_result": {
       const intent = typeof payload.intent === "string" ? payload.intent : "cancel";
       if (intent === "cancel") {
+        const suppressed = delegate.getSuppressInterruptResult();
+        if (suppressed) {
+          delegate.clearSuppressInterruptResult();
+          return true;
+        }
         const success = payload.success !== false;
         const message =
           typeof payload.message === "string" && payload.message.trim()

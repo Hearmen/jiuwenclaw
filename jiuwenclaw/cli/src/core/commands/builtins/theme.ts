@@ -1,18 +1,18 @@
 import { addError, addInfo } from "../helpers.js";
 import { CommandKind, type SlashCommand } from "../types.js";
-import { getThemeOptions } from "../../../ui/theme.js";
+import type { ThemeName } from "../../../ui/theme.js";
 
-const THEME_OPTIONS = getThemeOptions();
+const DISPLAY_OPTIONS: readonly ["dark", "light"] = ["dark", "light"];
 
 export function createThemeCommand(): SlashCommand {
   return {
     name: "theme",
     description: "Change the theme",
-    usage: "/theme [system|dark|light]",
+    usage: "/theme [dark|light]",
     example: "/theme dark",
     kind: CommandKind.BUILT_IN,
     takesArgs: true,
-    completion: async () => [...THEME_OPTIONS],
+    completion: async () => [...DISPLAY_OPTIONS],
     action: (ctx, args) => {
       const value = args.trim().toLowerCase();
       if (!value) {
@@ -20,26 +20,26 @@ export function createThemeCommand(): SlashCommand {
           addInfo(ctx.sessionId, `Current theme: ${ctx.themeName}`, "t", {
             view: "list",
             title: "Theme",
-            items: THEME_OPTIONS.map((option) => ({
-              label: option,
-              description: option === ctx.themeName ? "current" : undefined,
+            items: DISPLAY_OPTIONS.map((option) => ({
+              label:
+                option === ctx.themeName ? `${option} (current)` : option,
             })),
           }),
         );
         return;
       }
 
-      if (!THEME_OPTIONS.includes(value as (typeof THEME_OPTIONS)[number])) {
+      if (!DISPLAY_OPTIONS.includes(value as "dark" | "light")) {
         ctx.addItem(
           addError(
             ctx.sessionId,
-            `invalid theme "${value}". available: ${THEME_OPTIONS.join(", ")}`,
+            `invalid theme "${value}". available: ${DISPLAY_OPTIONS.join(", ")}`,
           ),
         );
         return;
       }
 
-      ctx.setThemeName(value as (typeof THEME_OPTIONS)[number]);
+      ctx.setThemeName(value as ThemeName);
       ctx.addItem(addInfo(ctx.sessionId, `Theme set to ${value}`, "t"));
     },
   };

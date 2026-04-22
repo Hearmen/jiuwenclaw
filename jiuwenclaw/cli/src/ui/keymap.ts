@@ -2,12 +2,15 @@ import { matchesKey } from "@mariozechner/pi-tui";
 
 /**
  * 快捷键约定（Ctrl+C）：
- * 用户在 CLI/TUI 按下 Ctrl+C 时，始终尝试向服务端发送 `chat.interrupt`，
- * 强制结束当前 session 正在运行的任务；不退出 CLI/TUI。
+ * 第一次按下尝试向服务端发送 `chat.interrupt`，中断当前任务；
+ * 1 秒内再次按下则退出 CLI/TUI。
  */
+
+let lastInterruptTime = 0;
 
 export interface AppScreenKeymapDelegate {
   interruptTask(): void;
+  exitApp(): void;
   toggleTodos(): void;
   toggleTeamPanel(): void;
   toggleTranscript(): void;
@@ -25,8 +28,14 @@ export const APP_SCREEN_KEY_BINDINGS: readonly KeyBinding[] = [
   {
     key: "ctrl+c",
     label: "ctrl+c",
-    description: "请求强制结束当前任务（不退出 CLI）",
+    description: "中断任务；连按两次退出",
     run: (delegate) => {
+      const now = Date.now();
+      if (now - lastInterruptTime < 1000) {
+        delegate.exitApp();
+        return;
+      }
+      lastInterruptTime = now;
       delegate.interruptTask();
     },
   },

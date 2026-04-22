@@ -104,8 +104,15 @@ tui.setFocus(screen);
 process.on("SIGTERM", () => {
   void closeUi(0);
 });
-// 与 TUI 内 Ctrl+C 一致：SIGINT 始终尝试中断当前 session 的任务，不退出进程（退出用 /exit、SIGTERM 等）。
+// 双击 Ctrl+C 退出：第一次中断当前任务，1 秒内再按一次退出进程。
+let lastInterruptTime = 0;
 process.on("SIGINT", () => {
+  const now = Date.now();
+  if (now - lastInterruptTime < 1000) {
+    void closeUi(0);
+    return;
+  }
+  lastInterruptTime = now;
   screen?.interruptTask();
 });
 process.on("uncaughtException", (error) => {

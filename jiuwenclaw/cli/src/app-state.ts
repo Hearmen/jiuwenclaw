@@ -132,6 +132,8 @@ export class CliPiAppState {
     version: "",
   };
   private workspaceDir: string = loadTuiWorkspaceDir();
+  /** 当 closeUi 中 cancelBeforeExit 调 cancel({showNotice:false}) 时置 true，抑制 chat.interrupt_result 的 UI 通知。 */
+  private suppressInterruptResult = false;
   private readonly eventDelegate: AppEventDelegate = {
     getConnectionStatus: () => this.connectionStatus,
     getSessionId: () => this.sessionId,
@@ -202,6 +204,10 @@ export class CliPiAppState {
     },
     safeFetchSessionTitle: (sessionId) => {
       this.safeFetchSessionTitle(sessionId);
+    },
+    getSuppressInterruptResult: () => this.suppressInterruptResult,
+    clearSuppressInterruptResult: () => {
+      this.suppressInterruptResult = false;
     },
     reportHistoryPageMeta: ({ totalPages }) => {
       if (typeof totalPages === "number" && Number.isFinite(totalPages) && totalPages > 0) {
@@ -631,13 +637,16 @@ readonly request = async <T = Record<string, unknown>>(
     return requestId;
   }
 
-  /** 向服务端请求中断当前 session 的任务；成功发送前不宣称“已中断”。 */
+  /** 向服务端请求中断当前 session 的任务；成功发送前不宣称"已中断"。 */
   cancel(options?: { showNotice?: boolean }): boolean {
     if (this.connectionStatus !== "connected") {
       if (options?.showNotice !== false) {
         this.addItem(addError(this.sessionId, "Unable to interrupt task while disconnected"));
       }
       return false;
+    }
+    if (options?.showNotice === false) {
+      this.suppressInterruptResult = true;
     }
     const hadLocalWork = this.getSnapshot().cancellableWork;
     this.sendEventOnly("chat.interrupt", { intent: "cancel" });
