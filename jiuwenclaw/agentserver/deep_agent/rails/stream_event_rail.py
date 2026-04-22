@@ -28,7 +28,8 @@ from openjiuwen.core.single_agent.rail.base import (
 from openjiuwen.core.runner import Runner
 from openjiuwen.core.single_agent import BaseAgent
 from openjiuwen.harness.rails.base import DeepAgentRail
-from openjiuwen.harness.tools.todo import TodoStatus, TodoListTool
+from openjiuwen.harness.schema.task import TodoStatus
+from openjiuwen.harness.tools.todo import TodoListTool
 from openjiuwen.harness.workspace.workspace import WorkspaceNode
 
 from jiuwenclaw.utils import logger

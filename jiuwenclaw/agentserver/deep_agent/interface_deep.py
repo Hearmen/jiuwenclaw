@@ -65,7 +65,8 @@ from openjiuwen.harness.tools import (
     create_audio_tools,
     create_vision_tools,
 )
-from openjiuwen.harness.tools.todo import TodoStatus, TodoModifyTool
+from openjiuwen.harness.schema.task import TodoStatus
+from openjiuwen.harness.tools.todo import TodoModifyTool
 from openjiuwen.harness.workspace.workspace import Workspace, WorkspaceNode
 
 from jiuwenclaw.agentserver.deep_agent.cron_runtime import CronRuntimeBridge
@@ -1484,7 +1485,13 @@ class JiuWenClawDeepAdapter:
         config = config_base.get('react', {}).copy()
         self._config_cache = config.copy()
         self._agent_name = self._instance_overrides.get("agent_name", config.get("agent_name", "main_agent"))
-        self._workspace_dir = self._instance_overrides.get("workspace_dir", config.get("workspace_dir", "workspace"))
+        self._workspace_dir = self._instance_overrides.get(
+            "workspace_dir",
+            config.get(
+                "workspace_dir",
+                get_agent_workspace_dir()
+            )
+        )
 
         model = self._create_model(config_base)
         agent_card = AgentCard(name=self._agent_name, id='jiuwenclaw')
