@@ -581,6 +581,9 @@ readonly request = async <T = Record<string, unknown>>(
   ): string | null => {
     if (this.connectionStatus !== "connected") return null;
     const mode = modeOverride ?? this.mode;
+    if (this.streamingState !== StreamingState.Idle) {
+      this.sendEventOnly("chat.interrupt", { intent: "cancel" });
+    }
     const requestId = this.sendEventOnly("chat.send", {
       content,
       query: content,

@@ -712,6 +712,9 @@ function AppContent() {
 
   // 新建会话：立即生成可用的 session_id，避免停留在 'new' 导致无法发送消息
   const handleNewSession = useCallback(async () => {
+    if (mode === 'team' && sessionId) {
+      cancel(sessionId);
+    }
     disposeInFlightHistoryHandles();
     setHistoryPagerMeta(null);
     setHistoryLoadingMore(false);
@@ -752,6 +755,7 @@ function AppContent() {
       newSessionToastTimerRef.current = null;
     }, 2000);
   }, [
+    cancel,
     clearMessages,
     clearNewSessionToastTimer,
     clearTodos,
@@ -759,6 +763,7 @@ function AppContent() {
     fetchSessions,
     mode,
     request,
+    sessionId,
     setCurrentSession,
     setPaused,
     setProcessing,
