@@ -22,11 +22,27 @@ def _has_paid_search_api_key() -> bool:
     ])
 
 
+def _env_flag(name: str, default: bool = False) -> bool:
+    raw = str(os.environ.get(name, "") or "").strip().lower()
+    if not raw:
+        return default
+    return raw in {"1", "true", "yes", "on", "enabled"}
+
+
+def _is_free_search_enabled() -> bool:
+    return (
+        _env_flag("FREE_SEARCH_DDG_ENABLED", default=False)
+        or _env_flag("FREE_SEARCH_BING_ENABLED", default=False)
+    )
+
+
 def get_mcp_tools() -> list[Tool]:
     """Return all MCP toolkit tools for registration in Runner."""
-    tools: list[Tool] = [mcp_free_search]
+    tools = []
     if _has_paid_search_api_key():
         tools.append(mcp_paid_search)
+    if _is_free_search_enabled():
+        tools.append(mcp_free_search)
     tools.extend([mcp_fetch_webpage, mcp_exec_command])
     return tools
 

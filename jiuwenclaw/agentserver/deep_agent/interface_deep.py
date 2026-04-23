@@ -65,6 +65,25 @@ from openjiuwen.harness.tools import (
     create_audio_tools,
     create_vision_tools,
 )
+try:
+    from openjiuwen.harness.tools import is_paid_search_enabled
+except ImportError:  # Compatibility with older agent-core versions.
+    try:
+        from openjiuwen.harness.tools.web_tools import is_paid_search_enabled
+    except ImportError:
+
+        def is_paid_search_enabled() -> bool:
+            api_key_envs = (
+                "BOCHA_API_KEY",
+                "PERPLEXITY_API_KEY",
+                "SERPER_API_KEY",
+                "JINA_API_KEY",
+            )
+            for key in api_key_envs:
+                if str(os.environ.get(key, "") or "").strip():
+                    return True
+            return False
+
 from openjiuwen.harness.schema.task import TodoStatus
 from openjiuwen.harness.tools.todo import TodoModifyTool
 from openjiuwen.harness.workspace.workspace import Workspace, WorkspaceNode
@@ -143,9 +162,11 @@ from jiuwenclaw.utils import (
     get_agent_workspace_dir,
     get_checkpoint_dir,
     get_env_file,
+    reset_free_search_runtime_flags,
 )
 
 load_dotenv(dotenv_path=get_env_file())
+reset_free_search_runtime_flags()
 
 _react_config = get_config().get("react", {})
 _sandbox_config = get_config().get("sandbox", {})
@@ -776,6 +797,29 @@ class JiuWenClawDeepAdapter:
         if card.name not in existing_names:
             self._tool_cards.append(card)
 
+    def _prioritize_paid_search_tool_card(self) -> None:
+        """Keep paid_search before free_search when both cards are present."""
+        if not self._tool_cards:
+            return
+        paid_cards = [
+            item for item in self._tool_cards
+            if (item.card.name if hasattr(item, "card") else item.name) == "paid_search"
+        ]
+        if not paid_cards:
+            return
+        remaining_cards = [
+            item for item in self._tool_cards
+            if (item.card.name if hasattr(item, "card") else item.name) != "paid_search"
+        ]
+        free_index = next(
+            (
+                idx for idx, item in enumerate(remaining_cards)
+                if (item.card.name if hasattr(item, "card") else item.name) == "free_search"
+            ),
+            0,
+        )
+        self._tool_cards = remaining_cards[:free_index] + paid_cards + remaining_cards[free_index:]
+
     def _prune_tool_cards(self, tool_names: set[str]) -> None:
         """Remove tracked tool cards by tool name."""
         if not self._tool_cards:
@@ -833,14 +877,13 @@ class JiuWenClawDeepAdapter:
         tools, self._paid_search_registered = self._sync_tool_group(
             current_tools=[self._paid_search_tool] if self._paid_search_tool else [],
             registered=self._paid_search_registered,
-            enabled=any(
-                os.environ.get(key)
-                for key in ("BOCHA_API_KEY", "PERPLEXITY_API_KEY", "SERPER_API_KEY", "JINA_API_KEY")
-            ),
+            enabled=is_paid_search_enabled(),
             create_fn=lambda: [WebPaidSearchTool(language=self._resolve_runtime_language(), agent_id=agent_id)],
             warn_label="paid search tool",
         )
         self._paid_search_tool = tools[0] if tools else None
+        if self._paid_search_tool is not None:
+            self._prioritize_paid_search_tool_card()
 
     @staticmethod
     async def set_checkpoint():
@@ -1373,20 +1416,17 @@ class JiuWenClawDeepAdapter:
         """Get tool cards."""
         tool_cards = []
 
-        for tool_cls in [WebFreeSearchTool, WebFetchWebpageTool]:
-            tool_instance = tool_cls(agent_id=agent_id)
-            Runner.resource_mgr.add_tool(tool_instance)
-            tool_cards.append(tool_instance.card)
-
         # 付费搜索工具：有任意一个付费 key 就注册
-        if any(
-                os.environ.get(key)
-                for key in ("BOCHA_API_KEY", "PERPLEXITY_API_KEY", "SERPER_API_KEY", "JINA_API_KEY")
-        ):
+        if is_paid_search_enabled():
             self._paid_search_tool = WebPaidSearchTool(language=self._resolve_runtime_language(), agent_id=agent_id)
             Runner.resource_mgr.add_tool(self._paid_search_tool)
             tool_cards.append(self._paid_search_tool.card)
             self._paid_search_registered = True
+
+        for tool_cls in [WebFreeSearchTool, WebFetchWebpageTool]:
+            tool_instance = tool_cls(agent_id=agent_id)
+            Runner.resource_mgr.add_tool(tool_instance)
+            tool_cards.append(tool_instance.card)
 
         self._vision_tools = []
         self._vision_tools_registered = False

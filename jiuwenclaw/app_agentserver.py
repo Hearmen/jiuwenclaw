@@ -19,7 +19,13 @@ import os
 from dotenv import load_dotenv
 from openjiuwen.core.common.logging import LogManager
 
-from jiuwenclaw.utils import get_user_workspace_dir, get_env_file, prepare_workspace, logger
+from jiuwenclaw.utils import (
+    get_env_file,
+    get_user_workspace_dir,
+    logger,
+    prepare_workspace,
+    reset_free_search_runtime_flags,
+)
 
 # Ensure workspace initialized
 _workspace_dir = get_user_workspace_dir()
@@ -36,6 +42,7 @@ for _lg in LogManager.get_all_loggers().values():
 
 # Load env from user workspace config/.env
 load_dotenv(dotenv_path=get_env_file())
+reset_free_search_runtime_flags()
 
 
 async def _run(host: str, port: int) -> None:

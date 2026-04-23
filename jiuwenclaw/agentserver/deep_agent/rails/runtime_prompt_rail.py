@@ -49,6 +49,7 @@ class RuntimePromptRail(DeepAgentRail):
         if self.system_prompt_builder is not None:
             self.system_prompt_builder.remove_section("time")
             self.system_prompt_builder.remove_section("runtime")
+            self.system_prompt_builder.remove_section("browser_tool_policy")
         self.system_prompt_builder = None
 
     def set_language(self, language: str) -> None:
@@ -145,3 +146,22 @@ class RuntimePromptRail(DeepAgentRail):
             content={"cn": runtime_content, "en": runtime_content},
             priority=95,
         ))
+
+        self.system_prompt_builder.remove_section("browser_tool_policy")
+        if self._channel == "web":
+            browser_tool_policy = (
+                "# Browser Tool Policy\n\n"
+                "- For browser tasks such as opening pages, navigation, clicking, typing, login, screenshots, "
+                "page inspection, or extracting data from a live website, use `task_tool` with "
+                '`subagent_type` set to `"browser_agent"` and put the full browser objective in '
+                "`task_description`.\n"
+                "- Do not use bash, execute_code, subprocess, shell commands, or direct Chrome/Edge launches "
+                "for browser automation.\n"
+                "- If `task_tool` or `browser_agent` is unavailable, say that the browser subagent is unavailable "
+                "before trying to start a browser through commands."
+            )
+            self.system_prompt_builder.add_section(PromptSection(
+                name="browser_tool_policy",
+                content={"cn": browser_tool_policy, "en": browser_tool_policy},
+                priority=98,
+            ))

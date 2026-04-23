@@ -11,6 +11,7 @@ from html import unescape
 from urllib.parse import parse_qs, unquote, urlparse
 
 import requests
+import urllib3
 from openjiuwen.core.foundation.tool import tool
 
 _USER_AGENT = (
@@ -20,8 +21,9 @@ _USER_AGENT = (
 )
 _REQUEST_HEADERS = {"User-Agent": _USER_AGENT}
 _FREE_SEARCH_PROXY_URL_ENV = "FREE_SEARCH_PROXY_URL"
+_FREE_SEARCH_SSL_VERIFY_ENV = "FREE_SEARCH_SSL_VERIFY"
 _FREE_SEARCH_DEFAULT_NO_PROXY = (
-    "127.0.0.1,.huawei.com,localhost,local,.local,10.155.97.247,.myhuaweicloud.coms"
+    "127.0.0.1,.huawei.com,localhost,local,.local,10.155.97.247,.myhuaweicloud.com"
 )
 _CHARSET_HEADER_RE = re.compile(r"charset=([^\s;]+)", flags=re.IGNORECASE)
 _CHARSET_META_RE = re.compile(
@@ -48,6 +50,21 @@ def _extract_declared_charset(response: requests.Response) -> str:
 
 def _get_free_search_proxy_url() -> str:
     return str(os.environ.get(_FREE_SEARCH_PROXY_URL_ENV, "") or "").strip()
+
+
+def _env_bool(name: str, default: bool = True) -> bool:
+    raw = str(os.environ.get(name, "") or "").strip().lower()
+    if not raw:
+        return default
+    return raw in {"1", "true", "yes", "on", "enabled"}
+
+
+def _free_search_ssl_verify() -> bool:
+    return _env_bool(_FREE_SEARCH_SSL_VERIFY_ENV, default=False)
+
+
+def _disable_insecure_request_warning() -> None:
+    urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 
 def _no_proxy_entries() -> list[str]:
@@ -125,6 +142,10 @@ def _decode_response_text(response: requests.Response) -> str:
 def _http_get(url: str, **kwargs) -> requests.Response:
     """Try normal requests first; retry without env proxies on ProxyError."""
     explicit_proxy = _apply_free_search_proxy(url, kwargs)
+    verify = _free_search_ssl_verify()
+    kwargs.setdefault("verify", verify)
+    if verify is False:
+        _disable_insecure_request_warning()
     try:
         return requests.get(url, **kwargs)
     except requests.exceptions.ProxyError:

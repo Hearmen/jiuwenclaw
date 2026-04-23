@@ -349,17 +349,17 @@ def _register_web_handlers(bind: WebHandlersBindParams) -> None:
             preferred_lang = raw.get("preferred_language", "zh")
             payload["memory_forbidden_description"] = memory_desc.get(preferred_lang, memory_desc.get("zh", ""))
             if not payload.get("free_search_ddg_enabled"):
-                payload["free_search_ddg_enabled"] = "true"
+                payload["free_search_ddg_enabled"] = "false"
             if not payload.get("free_search_bing_enabled"):
-                payload["free_search_bing_enabled"] = "true"
+                payload["free_search_bing_enabled"] = "false"
         except Exception:  # noqa: BLE001
             payload.setdefault("context_engine_enabled", "false")
             payload.setdefault("kv_cache_affinity_enabled", "false")
             payload.setdefault("permissions_enabled", "false")
             payload.setdefault("memory_forbidden_enabled", "false")
             payload.setdefault("memory_forbidden_description", "")
-            payload.setdefault("free_search_ddg_enabled", "true")
-            payload.setdefault("free_search_bing_enabled", "true")
+            payload.setdefault("free_search_ddg_enabled", "false")
+            payload.setdefault("free_search_bing_enabled", "false")
         await channel.send_response(ws, req_id, ok=True, payload=payload)
 
     def _persist_env_updates(updates: dict[str, str]) -> None:

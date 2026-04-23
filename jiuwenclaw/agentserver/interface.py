@@ -34,9 +34,15 @@ from jiuwenclaw.schema.agent import AgentRequest, AgentResponse, AgentResponseCh
 from jiuwenclaw.schema.hook_event import AgentServerHookEvents
 from jiuwenclaw.schema.hooks_context import MemoryHookContext
 from jiuwenclaw.schema.message import EventType, ReqMethod
-from jiuwenclaw.utils import get_agent_home_dir, get_agent_workspace_dir, get_env_file
+from jiuwenclaw.utils import (
+    get_agent_home_dir,
+    get_agent_workspace_dir,
+    get_env_file,
+    reset_free_search_runtime_flags,
+)
 
 load_dotenv(dotenv_path=get_env_file())
+reset_free_search_runtime_flags()
 
 logger = logging.getLogger(__name__)
 

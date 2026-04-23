@@ -12,11 +12,13 @@ import re
 import shutil
 import tempfile
 import uuid
+from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Awaitable, Callable
 from urllib.parse import urlparse
 import yaml
+import urllib3
 from jiuwenclaw.utils import (
     get_agent_root_dir,
     get_agent_skills_dir,
@@ -29,6 +31,20 @@ logger = logging.getLogger(__name__)
 
 _SKILLNET_DOWNLOAD_TIMEOUT: int = int(os.environ.get("SKILLNET_DOWNLOAD_TIMEOUT", "60"))
 _SKILLNET_MAX_RETRIES: int = int(os.environ.get("SKILLNET_MAX_RETRIES", "3"))
+_FREE_SEARCH_PROXY_URL_ENV = "FREE_SEARCH_PROXY_URL"
+_FREE_SEARCH_SSL_VERIFY_ENV = "FREE_SEARCH_SSL_VERIFY"
+_SKILLNET_PROXY_ENV_KEYS = (
+    "HTTP_PROXY",
+    "HTTPS_PROXY",
+    "ALL_PROXY",
+    "http_proxy",
+    "https_proxy",
+    "all_proxy",
+)
+_SKILLNET_NO_PROXY_ENV_KEYS = ("NO_PROXY", "no_proxy")
+_FREE_SEARCH_DEFAULT_NO_PROXY = (
+    "127.0.0.1,.huawei.com,localhost,local,.local,10.155.97.247,.myhuaweicloud.com"
+)
 
 
 # ---------------------------------------------------------------------------
@@ -72,6 +88,66 @@ def _is_valid_http_mirror_url(url: str) -> bool:
     if not parsed.netloc:
         return False
     return True
+
+
+def _env_bool(name: str, default: bool = True) -> bool:
+    raw = str(os.environ.get(name, "") or "").strip().lower()
+    if not raw:
+        return default
+    return raw in {"1", "true", "yes", "on", "enabled"}
+
+
+def _get_free_search_proxy_url() -> str:
+    return str(os.environ.get(_FREE_SEARCH_PROXY_URL_ENV, "") or "").strip()
+
+
+def _free_search_ssl_verify() -> bool:
+    return _env_bool(_FREE_SEARCH_SSL_VERIFY_ENV, default=False)
+
+
+def _disable_insecure_request_warning() -> None:
+    urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+
+
+def _skillnet_proxy_mapping() -> dict[str, str]:
+    proxy_url = _get_free_search_proxy_url()
+    if not proxy_url:
+        return {}
+    return {"http": proxy_url, "https": proxy_url}
+
+
+def _configure_skillnet_requests_session(session: Any) -> None:
+    proxies = _skillnet_proxy_mapping()
+    if proxies:
+        session.proxies.update(proxies)
+    verify = _free_search_ssl_verify()
+    session.verify = verify
+    if verify is False:
+        _disable_insecure_request_warning()
+
+
+@contextmanager
+def _skillnet_network_context():
+    """Expose the configured proxy to third-party SkillNet clients during one call."""
+    proxy_url = _get_free_search_proxy_url()
+    env_keys = (*_SKILLNET_PROXY_ENV_KEYS, *_SKILLNET_NO_PROXY_ENV_KEYS)
+    previous = {key: os.environ.get(key) for key in env_keys}
+    try:
+        if proxy_url:
+            for key in _SKILLNET_PROXY_ENV_KEYS:
+                os.environ[key] = proxy_url
+            if not os.environ.get("NO_PROXY") and not os.environ.get("no_proxy"):
+                for key in _SKILLNET_NO_PROXY_ENV_KEYS:
+                    os.environ[key] = _FREE_SEARCH_DEFAULT_NO_PROXY
+        if _free_search_ssl_verify() is False:
+            _disable_insecure_request_warning()
+        yield
+    finally:
+        for key, value in previous.items():
+            if value is None:
+                os.environ.pop(key, None)
+            else:
+                os.environ[key] = value
 
 
 def _safe_rmtree(path: Path) -> bool:
@@ -1856,8 +1932,9 @@ class SkillManager:
             "github_token": SkillManager._get_github_token() or None,
         }
         try:
-            client = SkillNetClient(**kwargs)
-            result = client.evaluate(target=skill_url, model=str(llm["model"]))
+            with _skillnet_network_context():
+                client = SkillNetClient(**kwargs)
+                result = client.evaluate(target=skill_url, model=str(llm["model"]))
         except SkillNetError as exc:
             return {"ok": False, "detail": str(exc).strip() or "评估失败。"}
         except Exception as exc:
@@ -1872,14 +1949,16 @@ class SkillManager:
     def _skillnet_search_sync(search_kwargs: dict[str, Any]) -> list[Any]:
         """同步调用 skillnet-ai search，供 asyncio.to_thread 使用."""
         try:
-            from skillnet_ai import SkillNetClient
+            from skillnet_ai.searcher import SkillNetSearcher
         except Exception as exc:
             raise RuntimeError(
                 "未安装 skillnet-ai，请先安装依赖: pip install skillnet-ai"
             ) from exc
 
-        client = SkillNetClient(github_token=SkillManager._get_github_token())
-        results = client.search(**search_kwargs)
+        with _skillnet_network_context():
+            searcher = SkillNetSearcher()
+            _configure_skillnet_requests_session(searcher.session)
+            results = searcher.search(**search_kwargs)
         if results is None:
             return []
         if isinstance(results, list):
@@ -1895,6 +1974,7 @@ class SkillManager:
             return ""
 
         dl = SkillDownloader(api_token=SkillManager._get_github_token())
+        _configure_skillnet_requests_session(dl.session)
         parsed = dl._parse_github_url(skill_url)
         if not parsed:
             return ""
@@ -1902,7 +1982,8 @@ class SkillManager:
         owner, repo, ref, dir_path, _ = parsed
         api = f"https://api.github.com/repos/{owner}/{repo}/contents/{dir_path}?ref={ref}"
         try:
-            r = dl.session.get(api, timeout=_SKILLNET_DOWNLOAD_TIMEOUT)
+            with _skillnet_network_context():
+                r = dl.session.get(api, timeout=_SKILLNET_DOWNLOAD_TIMEOUT)
         except Exception as exc:
             logger.debug(
                 "SkillNet 安装错误上下文: GitHub Contents 请求失败: %s", exc
@@ -1932,7 +2013,8 @@ class SkillManager:
                     "rate limit" in p.lower() for p in parts
             ):
                 try:
-                    rl = dl.session.get("https://api.github.com/rate_limit", timeout=12)
+                    with _skillnet_network_context():
+                        rl = dl.session.get("https://api.github.com/rate_limit", timeout=12)
                     if rl.status_code == 200:
                         core = rl.json().get("resources", {}).get("core") or {}
                         rem, lim = core.get("remaining"), core.get("limit")
@@ -1969,17 +2051,18 @@ class SkillManager:
         }
         if mirror_url:
             dl_kwargs["mirror_url"] = mirror_url
-        downloader = SkillDownloader(**dl_kwargs)
-
-        try:
-            local_path = downloader.download(folder_url=skill_url, target_dir=target_dir)
-        except GitHubAPIError:
-            raise
-        except Exception as exc:
-            ctx = SkillManager._github_skillnet_install_error_context(skill_url)
-            if ctx:
-                raise RuntimeError(f"{exc} | {ctx}") from exc
-            raise
+        with _skillnet_network_context():
+            downloader = SkillDownloader(**dl_kwargs)
+            _configure_skillnet_requests_session(downloader.session)
+            try:
+                local_path = downloader.download(folder_url=skill_url, target_dir=target_dir)
+            except GitHubAPIError:
+                raise
+            except Exception as exc:
+                ctx = SkillManager._github_skillnet_install_error_context(skill_url)
+                if ctx:
+                    raise RuntimeError(f"{exc} | {ctx}") from exc
+                raise
         if not local_path:
             # skillnet-ai 在多种情况下会无异常地返回 None：URL 无效、目录下列表为空、
             # 或 Contents API 成功但拉 raw 文件全部失败（超时/网络）等，库未区分原因。

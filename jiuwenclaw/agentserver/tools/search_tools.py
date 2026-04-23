@@ -13,6 +13,7 @@ from typing import Any
 from urllib.parse import parse_qs, quote_plus, unquote, urlparse
 
 import requests
+import urllib3
 from openjiuwen.core.foundation.tool import tool
 
 _USER_AGENT = (
@@ -21,14 +22,46 @@ _USER_AGENT = (
     "Chrome/124.0.0.0 Safari/537.36"
 )
 _REQUEST_HEADERS = {"User-Agent": _USER_AGENT}
+_FREE_SEARCH_DDG_ENABLED_ENV = "FREE_SEARCH_DDG_ENABLED"
+_FREE_SEARCH_BING_ENABLED_ENV = "FREE_SEARCH_BING_ENABLED"
 _FREE_SEARCH_PROXY_URL_ENV = "FREE_SEARCH_PROXY_URL"
+_FREE_SEARCH_SSL_VERIFY_ENV = "FREE_SEARCH_SSL_VERIFY"
+_FREE_SEARCH_DDG_URL_ENV = "FREE_SEARCH_DDG_URL"
 _FREE_SEARCH_DEFAULT_NO_PROXY = (
-    "127.0.0.1,.huawei.com,localhost,local,.local,10.155.97.247,.myhuaweicloud.coms"
+    "127.0.0.1,.huawei.com,localhost,local,.local,10.155.97.247,.myhuaweicloud.com"
 )
 
 
 def _get_free_search_proxy_url() -> str:
     return str(os.environ.get(_FREE_SEARCH_PROXY_URL_ENV, "") or "").strip()
+
+
+def _env_bool(name: str, default: bool = True) -> bool:
+    raw = str(os.environ.get(name, "") or "").strip().lower()
+    if not raw:
+        return default
+    return raw in {"1", "true", "yes", "on", "enabled"}
+
+
+def _env_flag(name: str, default: bool = False) -> bool:
+    return _env_bool(name, default=default)
+
+
+def _free_search_ssl_verify() -> bool:
+    return _env_bool(_FREE_SEARCH_SSL_VERIFY_ENV, default=False)
+
+
+def _disable_insecure_request_warning() -> None:
+    urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+
+
+def _duckduckgo_search_url(query: str) -> str:
+    base_url = (
+        os.environ.get(_FREE_SEARCH_DDG_URL_ENV, "https://html.duckduckgo.com/html/")
+        or "https://html.duckduckgo.com/html/"
+    ).strip()
+    separator = "&" if "?" in base_url else "?"
+    return f"{base_url.rstrip('?&')}{separator}q={quote_plus(query)}"
 
 
 def _no_proxy_entries() -> list[str]:
@@ -65,6 +98,10 @@ def _http_request(method: str, url: str, **kwargs) -> requests.Response:
     """Try normal request first; retry without env proxies on ProxyError."""
     method_up = method.upper()
     explicit_proxy = _apply_free_search_proxy(url, kwargs)
+    if "verify" not in kwargs:
+        kwargs["verify"] = _free_search_ssl_verify()
+        if kwargs["verify"] is False:
+            _disable_insecure_request_warning()
     try:
         if method_up == "GET":
             return requests.get(url, **kwargs)
@@ -138,7 +175,7 @@ def _is_ddg_challenge_page(status_code: int, html: str) -> bool:
 
 
 def _search_duckduckgo_sync(query: str, max_results: int, timeout_seconds: int) -> list[dict[str, str]]:
-    url = f"https://duckduckgo.com/html/?q={quote_plus(query)}"
+    url = _duckduckgo_search_url(query)
     response = _http_request("GET", url, headers=_REQUEST_HEADERS, timeout=timeout_seconds)
     if _is_ddg_challenge_page(response.status_code, response.text):
         raise RuntimeError("DuckDuckGo anti-bot challenge page returned")
@@ -247,11 +284,16 @@ def _search_free_sync(
     query: str, max_results: int, timeout_seconds: int
 ) -> tuple[str, list[dict[str, str]]]:
     errors: list[str] = []
-    engines = [
-        ("duckduckgo", _search_duckduckgo_sync),
-        ("duckduckgo-jina", _search_duckduckgo_via_jina_sync),
-        ("bing", _search_bing_sync),
-    ]
+    engines = []
+    if _env_flag(_FREE_SEARCH_DDG_ENABLED_ENV, default=False):
+        engines.extend([
+            ("duckduckgo", _search_duckduckgo_sync),
+            ("duckduckgo-jina", _search_duckduckgo_via_jina_sync),
+        ])
+    if _env_flag(_FREE_SEARCH_BING_ENABLED_ENV, default=False):
+        engines.append(("bing", _search_bing_sync))
+    if not engines:
+        raise RuntimeError("all free search engines are disabled")
     for engine_name, runner in engines:
         try:
             rows = runner(query, max_results, timeout_seconds)

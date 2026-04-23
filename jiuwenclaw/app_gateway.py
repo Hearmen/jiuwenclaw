@@ -30,7 +30,14 @@ from openjiuwen.core.common.logging import LogManager
 import jiuwenclaw.channel.acp_channel as acp_channel_module
 from jiuwenclaw.channel.acp_channel import AcpGatewayBridge
 from jiuwenclaw.gateway.route_binding import GatewayRouteBinding
-from jiuwenclaw.utils import get_user_workspace_dir, get_env_file, prepare_workspace, get_cron_jobs_path
+from jiuwenclaw.utils import (
+    get_env_file,
+    get_user_workspace_dir,
+    prepare_workspace,
+    reset_free_search_runtime_flags,
+    get_cron_jobs_path
+)
+
 
 # Ensure workspace initialized
 _workspace_dir = get_user_workspace_dir()
@@ -47,6 +54,7 @@ for _lg in LogManager.get_all_loggers().values():
     _lg.set_level(logging.CRITICAL)
 
 load_dotenv(dotenv_path=get_env_file())
+reset_free_search_runtime_flags()
 
 logger = logging.getLogger(__name__)
 

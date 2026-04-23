@@ -1086,6 +1086,12 @@ def get_env_file() -> Path:
     return get_config_dir() / ".env"
 
 
+def reset_free_search_runtime_flags() -> None:
+    """Start each process with free-search engines disabled unless reopened via config UI."""
+    os.environ["FREE_SEARCH_DDG_ENABLED"] = "false"
+    os.environ["FREE_SEARCH_BING_ENABLED"] = "false"
+
+
 def get_config_file() -> Path:
     """Get the config.yaml file path."""
     return get_config_dir() / "config.yaml"

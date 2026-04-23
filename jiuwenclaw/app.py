@@ -13,7 +13,13 @@ import time
 
 from dotenv import load_dotenv
 
-from jiuwenclaw.utils import get_user_workspace_dir, get_env_file, prepare_workspace, cleanup_team_files
+from jiuwenclaw.utils import (
+    cleanup_team_files,
+    get_env_file,
+    get_user_workspace_dir,
+    prepare_workspace,
+    reset_free_search_runtime_flags,
+)
 
 
 _workspace_dir = get_user_workspace_dir()
@@ -29,6 +35,7 @@ if not _config_file.exists() or (_old_workspace.exists() and not _new_workspace.
     prepare_workspace(overwrite=False)
 
 load_dotenv(dotenv_path=get_env_file())
+reset_free_search_runtime_flags()
 
 
 def main() -> None:
