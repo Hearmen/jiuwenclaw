@@ -65,6 +65,7 @@ from openjiuwen.harness.tools import (
     WebPaidSearchTool,
     create_audio_tools,
     create_vision_tools,
+    TodoModifyTool,
 )
 try:
     from openjiuwen.harness.tools import is_paid_search_enabled
@@ -86,7 +87,6 @@ except ImportError:  # Compatibility with older agent-core versions.
             return False
 
 from openjiuwen.harness.schema.task import TodoStatus
-from openjiuwen.harness.tools.todo import TodoModifyTool
 from openjiuwen.harness.workspace.workspace import Workspace, WorkspaceNode
 
 from jiuwenclaw.agentserver.deep_agent.cron_runtime import CronRuntimeBridge
