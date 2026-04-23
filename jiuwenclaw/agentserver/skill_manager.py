@@ -14,7 +14,7 @@ import tempfile
 import uuid
 from contextlib import contextmanager
 from datetime import datetime, timezone
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 from typing import Any, Awaitable, Callable
 from urllib.parse import urlparse
 import yaml
@@ -148,6 +148,44 @@ def _skillnet_network_context():
                 os.environ.pop(key, None)
             else:
                 os.environ[key] = value
+
+
+def _safe_path_name(value: Any, label: str) -> str:
+    raw = str(value or "").strip()
+    if not raw:
+        raise ValueError(f"invalid {label} name")
+    path_value = Path(raw)
+    invalid_name_checks = (
+        raw in (".", ".."),
+        "/" in raw,
+        "\\" in raw,
+        path_value.is_absolute(),
+        PureWindowsPath(raw).is_absolute(),
+    )
+    if any(invalid_name_checks):
+        raise ValueError(f"invalid {label} name: {raw}")
+    return raw
+
+
+def _safe_child_path(base: Path, name: Any, label: str) -> Path:
+    safe_name = _safe_path_name(name, label)
+    base_resolved = base.resolve()
+    candidate = (base / safe_name).resolve()
+    try:
+        candidate.relative_to(base_resolved)
+    except ValueError as exc:
+        raise ValueError(f"invalid {label} path: {safe_name}") from exc
+    return candidate
+
+
+def _log_rejected_name(operation: str, label: str, value: Any, exc: ValueError) -> None:
+    logger.warning(
+        "rejected invalid %s name: operation=%s value=%r error=%s",
+        label,
+        operation,
+        value,
+        exc,
+    )
 
 
 def _safe_rmtree(path: Path) -> bool:
@@ -365,6 +403,11 @@ class SkillManager:
         name = str(params.get("name") or "").strip()
         if not name:
             raise ValueError("缺少参数: name")
+        try:
+            name = _safe_path_name(name, "skill")
+        except ValueError as exc:
+            _log_rejected_name("skills.evolution.status", "skill", name, exc)
+            raise ValueError(str(exc)) from exc
         evo_path = self._get_skill_evolution_path(name)
         return {
             "name": name,
@@ -376,6 +419,11 @@ class SkillManager:
         name = str(params.get("name") or "").strip()
         if not name:
             raise ValueError("缺少参数: name")
+        try:
+            name = _safe_path_name(name, "skill")
+        except ValueError as exc:
+            _log_rejected_name("skills.evolution.get", "skill", name, exc)
+            raise ValueError(str(exc)) from exc
 
         evo_path = self._get_skill_evolution_path(name)
         if evo_path is None or not evo_path.is_file():
@@ -416,6 +464,11 @@ class SkillManager:
         name = str(params.get("name") or "").strip()
         if not name:
             raise ValueError("缺少参数: name")
+        try:
+            name = _safe_path_name(name, "skill")
+        except ValueError as exc:
+            _log_rejected_name("skills.evolution.save", "skill", name, exc)
+            raise ValueError(str(exc)) from exc
 
         if not self._resolve_local_skill_dir(name):
             raise ValueError(f"未找到 skill: {name}")
@@ -499,6 +552,12 @@ class SkillManager:
         plugin_name, marketplace_name = spec.rsplit("@", 1)
         if not plugin_name or not marketplace_name:
             return {"success": False, "detail": "plugin 或 marketplace 名称为空"}
+        try:
+            plugin_name = _safe_path_name(plugin_name, "plugin")
+            marketplace_name = _safe_path_name(marketplace_name, "marketplace")
+        except ValueError as exc:
+            _log_rejected_name("skills.install", "plugin/marketplace", spec, exc)
+            return {"success": False, "detail": str(exc)}
 
         if marketplace_name == "builtin":
             return await self.handle_skills_install_builtin({"name": plugin_name})
@@ -517,7 +576,7 @@ class SkillManager:
             return {"success": False, "detail": f"marketplace {marketplace_name} 缺少 url"}
 
         # 确保 marketplace 仓库已 clone
-        repo_dir = self._marketplace_dir / marketplace_name
+        repo_dir = _safe_child_path(self._marketplace_dir, marketplace_name, "marketplace")
         if repo_dir.exists():
             await self._git_pull(repo_dir)
         else:
@@ -539,7 +598,7 @@ class SkillManager:
             return {"success": False, "detail": f"plugin {plugin_name} 缺少 SKILL.md"}
 
         # 复制到本地 skills 目录
-        dest = self._skills_dir / plugin_name
+        dest = _safe_child_path(self._skills_dir, plugin_name, "skill")
         if dest.exists():
             if not force:
                 return {"success": False, "detail": f"skill {plugin_name} 已存在"}
@@ -571,17 +630,22 @@ class SkillManager:
         name = params.get("name", "")
         if not name:
             return {"success": False, "detail": "缺少参数: name"}
+        try:
+            name = _safe_path_name(name, "skill")
+        except ValueError as exc:
+            _log_rejected_name("skills.install_builtin", "skill", name, exc)
+            return {"success": False, "detail": str(exc)}
 
         builtin_dir = get_builtin_skills_dir()
         if not builtin_dir.exists():
             return {"success": False, "detail": "内置技能目录不存在"}
 
-        src = builtin_dir / name
+        src = _safe_child_path(builtin_dir, name, "skill")
         if not src.exists() or not src.is_dir():
             return {"success": False, "detail": f"未找到内置技能: {name}"}
 
         # 检查是否已经安装
-        dest = get_agent_skills_dir() / name
+        dest = _safe_child_path(self._skills_dir, name, "skill")
         if dest.exists() and dest.is_dir():
             return {"success": False, "detail": f"技能 {name} 已经安装"}
 
@@ -890,6 +954,11 @@ class SkillManager:
         slug = str(params.get("slug", "")).strip()
         if not slug:
             return {"success": False, "detail": "缺少参数: slug"}
+        try:
+            slug = _safe_path_name(slug, "skill")
+        except ValueError as exc:
+            _log_rejected_name("skills.clawhub.download", "skill", slug, exc)
+            return {"success": False, "detail": str(exc)}
 
         token = self._get_clawhub_token()
         if not token:
@@ -904,7 +973,7 @@ class SkillManager:
         force = bool(params.get("force", False))
 
         # 检查 skill 是否已安装
-        dest = self._skills_dir / slug
+        dest = _safe_child_path(self._skills_dir, slug, "skill")
         if dest.exists() and not force:
             return {
                 "success": False,
@@ -979,7 +1048,7 @@ class SkillManager:
                     # 复制到 skills 目录
                     shutil.copytree(skill_dir, dest)
                     for mirror_root in self._get_mirror_skills_dirs():
-                        mirror_dest = mirror_root / slug
+                        mirror_dest = _safe_child_path(mirror_root, slug, "skill")
                         if mirror_dest.exists():
                             if not force:
                                 continue
@@ -1147,8 +1216,13 @@ class SkillManager:
                         "detail_key": "skills.skillNet.errors.parseSkillFailed",
                     }
 
-                skill_name = str(meta.get("name", skill_dir.name)).strip() or skill_dir.name
-                dest = self._skills_dir / skill_name
+                raw_skill_name = meta.get("name", skill_dir.name)
+                try:
+                    skill_name = _safe_path_name(raw_skill_name, "skill")
+                except ValueError as exc:
+                    _log_rejected_name("skills.skillnet.install", "skill", raw_skill_name, exc)
+                    return {"ok": False, "detail": str(exc)}
+                dest = _safe_child_path(self._skills_dir, skill_name, "skill")
                 if dest.exists():
                     if not force:
                         return {
@@ -1160,7 +1234,7 @@ class SkillManager:
 
                 shutil.copytree(skill_dir, dest)
                 for mirror_root in self._get_mirror_skills_dirs():
-                    mirror_dest = mirror_root / skill_name
+                    mirror_dest = _safe_child_path(mirror_root, skill_name, "skill")
                     if mirror_dest.exists():
                         if not force:
                             continue
@@ -1201,6 +1275,11 @@ class SkillManager:
         name = params.get("name", "")
         if not name:
             return {"success": False, "detail": "缺少参数: name"}
+        try:
+            name = _safe_path_name(name, "skill")
+        except ValueError as exc:
+            _log_rejected_name("skills.uninstall", "skill", name, exc)
+            return {"success": False, "detail": str(exc)}
 
         # 使用 _resolve_local_skill_dir 正确解析技能目录（处理 name 与文件夹名称不一致的情况）
         dest = self._resolve_local_skill_dir(name)
@@ -1212,7 +1291,7 @@ class SkillManager:
         if builtin_dir.exists():
             # 检查 builtin 技能目录中是否有该技能
             builtin_skill_path = None
-            direct_builtin = builtin_dir / name
+            direct_builtin = _safe_child_path(builtin_dir, name, "skill")
             if direct_builtin.exists() and direct_builtin.is_dir():
                 builtin_skill_path = direct_builtin
             else:
@@ -1236,7 +1315,7 @@ class SkillManager:
 
         # 处理 mirror 根目录中的技能
         for mirror_root in self._get_mirror_skills_dirs():
-            mirror_dest = mirror_root / dest.name
+            mirror_dest = _safe_child_path(mirror_root, dest.name, "skill")
             if mirror_dest.exists() and mirror_dest.is_dir():
                 _safe_rmtree(mirror_dest)
 
@@ -1266,8 +1345,13 @@ class SkillManager:
             meta = self._parse_skill_md(src)
             if meta is None:
                 return {"success": False, "detail": "无法解析 skill 文件"}
-            skill_name = meta.get("name", src.stem)
-            dest = self._skills_dir / skill_name
+            raw_skill_name = meta.get("name", src.stem)
+            try:
+                skill_name = _safe_path_name(raw_skill_name, "skill")
+            except ValueError as exc:
+                _log_rejected_name("skills.import_local", "skill", raw_skill_name, exc)
+                return {"success": False, "detail": str(exc)}
+            dest = _safe_child_path(self._skills_dir, skill_name, "skill")
             if dest.exists():
                 if not force:
                     return {"success": False, "detail": f"skill {skill_name} 已存在"}
@@ -1279,8 +1363,13 @@ class SkillManager:
             if md is None:
                 return {"success": False, "detail": f"目录中未找到 SKILL.md: {raw_path}"}
             meta = self._parse_skill_md(md) or {}
-            skill_name = meta.get("name", src.name)
-            dest = self._skills_dir / skill_name
+            raw_skill_name = meta.get("name", src.name)
+            try:
+                skill_name = _safe_path_name(raw_skill_name, "skill")
+            except ValueError as exc:
+                _log_rejected_name("skills.import_local", "skill", raw_skill_name, exc)
+                return {"success": False, "detail": str(exc)}
+            dest = _safe_child_path(self._skills_dir, skill_name, "skill")
             if dest.exists():
                 if not force:
                     return {"success": False, "detail": f"skill {skill_name} 已存在"}
@@ -1304,6 +1393,11 @@ class SkillManager:
         url = params.get("url", "")
         if not name or not url:
             return {"success": False, "detail": "缺少参数: name 和 url"}
+        try:
+            name = _safe_path_name(name, "marketplace")
+        except ValueError as exc:
+            _log_rejected_name("skills.marketplace.add", "marketplace", name, exc)
+            return {"success": False, "detail": str(exc)}
 
         # 检查是否已存在
         for m in self._get_marketplaces():
@@ -1325,6 +1419,11 @@ class SkillManager:
         remove_cache = params.get("remove_cache", True)
         if not name:
             return {"success": False, "detail": "缺少参数: name"}
+        try:
+            name = _safe_path_name(name, "marketplace")
+        except ValueError as exc:
+            _log_rejected_name("skills.marketplace.remove", "marketplace", name, exc)
+            return {"success": False, "detail": str(exc)}
 
         removed = self._remove_marketplace(name)
         if not removed:
@@ -1332,7 +1431,7 @@ class SkillManager:
 
         cache_removed = False
         if bool(remove_cache):
-            repo_dir = self._marketplace_dir / name
+            repo_dir = _safe_child_path(self._marketplace_dir, name, "marketplace")
             if repo_dir.exists() and repo_dir.is_dir():
                 try:
                     _safe_rmtree(repo_dir)
@@ -1359,6 +1458,11 @@ class SkillManager:
             return {"success": False, "detail": "缺少参数: name"}
         if not isinstance(enabled, bool):
             return {"success": False, "detail": "缺少参数: enabled (bool)"}
+        try:
+            name = _safe_path_name(name, "marketplace")
+        except ValueError as exc:
+            _log_rejected_name("skills.marketplace.toggle", "marketplace", name, exc)
+            return {"success": False, "detail": str(exc)}
 
         marketplace = next(
             (m for m in self._get_marketplaces() if m.get("name") == name),
@@ -1368,7 +1472,7 @@ class SkillManager:
             return {"success": False, "detail": f"marketplace 不存在: {name}"}
 
         if enabled:
-            repo_dir = self._marketplace_dir / name
+            repo_dir = _safe_child_path(self._marketplace_dir, name, "marketplace")
             url = marketplace.get("url", "")
             if not url:
                 return {"success": False, "detail": f"marketplace {name} 缺少 url"}
@@ -1390,7 +1494,7 @@ class SkillManager:
             return {"success": True, "name": name, "enabled": True, "detail": detail}
 
         # 禁用：删除本地缓存目录，不卸载已安装 skill。
-        repo_dir = self._marketplace_dir / name
+        repo_dir = _safe_child_path(self._marketplace_dir, name, "marketplace")
         cache_removed = False
         if repo_dir.exists() and repo_dir.is_dir():
             cache_removed = _safe_rmtree(repo_dir)
@@ -1544,7 +1648,7 @@ class SkillManager:
             # 没有提供 skill_path 时，回退到通过 skill_name 判断（兼容旧代码）
             builtin_dir = get_builtin_skills_dir()
             if builtin_dir.exists():
-                builtin_skill_path = builtin_dir / skill_name
+                builtin_skill_path = _safe_child_path(builtin_dir, skill_name, "skill")
                 return builtin_skill_path.exists() and builtin_skill_path.is_dir()
             return False
         except Exception:
@@ -1669,7 +1773,10 @@ class SkillManager:
 
     def _resolve_local_skill_dir(self, skill_name: str) -> Path | None:
         """根据 skill name 定位本地技能目录（仅 agent/skills 下）."""
-        direct = self._skills_dir / skill_name
+        try:
+            direct = _safe_child_path(self._skills_dir, skill_name, "skill")
+        except ValueError:
+            return None
         if direct.is_dir():
             return direct
 
@@ -2133,8 +2240,11 @@ class SkillManager:
             url = marketplace.get("url", "")
             if not name or not url:
                 continue
-
-            repo_dir = self._marketplace_dir / name
+            try:
+                repo_dir = _safe_child_path(self._marketplace_dir, name, "marketplace")
+            except ValueError as exc:
+                _log_rejected_name("skills.marketplace.sync", "marketplace", name, exc)
+                continue
             try:
                 if repo_dir.exists():
                     await self._git_pull(repo_dir)
@@ -2289,11 +2399,17 @@ class SkillManager:
         """判断当前运行目录中的 skill 是否为真正的内置技能。"""
         if not skill_name:
             return False
-        dest = self._skills_dir / skill_name
+        try:
+            dest = _safe_child_path(self._skills_dir, skill_name, "skill")
+        except ValueError:
+            return False
         builtin_dir = get_builtin_skills_dir()
         if not builtin_dir.exists():
             return False
-        builtin_skill_path = builtin_dir / skill_name
+        try:
+            builtin_skill_path = _safe_child_path(builtin_dir, skill_name, "skill")
+        except ValueError:
+            return False
         if not builtin_skill_path.exists() or not builtin_skill_path.is_dir():
             return False
         return dest.exists() and dest.is_dir() and dest.resolve() == builtin_skill_path.resolve()
