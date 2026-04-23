@@ -23,6 +23,7 @@ from jiuwenclaw.agentserver.tools.multimodal_config import (
     apply_image_gen_model_config_from_yaml,
     apply_vision_model_config_from_yaml,
 )
+from jiuwenclaw.agentserver.tools.ssl_config import get_requests_verify
 
 
 logger = logging.getLogger(__name__)
@@ -185,7 +186,7 @@ async def _invoke_gemini_vision(src: str, q: str) -> str:
             data = None
             for attempt in range(4):
                 try:
-                    r = requests.get(src, headers={"User-Agent": ua})
+                    r = requests.get(src, headers={"User-Agent": ua}, verify=get_requests_verify())
                     r.raise_for_status()
                     data = r.content
                     break
