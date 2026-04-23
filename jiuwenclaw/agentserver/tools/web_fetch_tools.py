@@ -14,8 +14,6 @@ import requests
 import urllib3
 from openjiuwen.core.foundation.tool import tool
 
-from jiuwenclaw.agentserver.tools.ssl_config import get_requests_verify
-
 _USER_AGENT = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
     "AppleWebKit/537.36 (KHTML, like Gecko) "
@@ -143,7 +141,6 @@ def _decode_response_text(response: requests.Response) -> str:
 
 def _http_get(url: str, **kwargs) -> requests.Response:
     """Try normal requests first; retry without env proxies on ProxyError."""
-    kwargs.setdefault("verify", get_requests_verify())
     explicit_proxy = _apply_free_search_proxy(url, kwargs)
     verify = _free_search_ssl_verify()
     kwargs.setdefault("verify", verify)
