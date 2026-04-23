@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import asyncio
+import copy
 import json
 import logging
 import shutil
@@ -25,6 +26,7 @@ from jiuwenclaw.agentserver.team.config_loader import (
     load_team_spec_dict,
 )
 from jiuwenclaw.agentserver.team.monitor_handler import TeamMonitorHandler
+from jiuwenclaw.config import get_config
 from jiuwenclaw.agentserver.team.team_runtime_inheritance import (
     RAIL_WHITELIST,
     build_member_rails,
@@ -68,8 +70,185 @@ class TeamManager:
         return self._stream_tasks.pop(session_id, None)
 
     @staticmethod
+    def _is_distributed_mode(config_base: dict[str, Any]) -> bool:
+        team_cfg = config_base.get("team", {}) if isinstance(config_base.get("team"), dict) else {}
+        runtime_cfg = team_cfg.get("runtime", {}) if isinstance(team_cfg.get("runtime"), dict) else {}
+        runtime_mode = str(runtime_cfg.get("mode", "")).strip().lower()
+        if runtime_mode == "distributed":
+            return True
+        transport_cfg = team_cfg.get("transport", {}) if isinstance(team_cfg.get("transport"), dict) else {}
+        transport_type = str(transport_cfg.get("type", "")).strip().lower()
+        return transport_type == "pyzmq"
+
+    @staticmethod
+    def _runtime_role(config_base: dict[str, Any]) -> str:
+        team_cfg = config_base.get("team", {}) if isinstance(config_base.get("team"), dict) else {}
+        runtime_cfg = team_cfg.get("runtime", {}) if isinstance(team_cfg.get("runtime"), dict) else {}
+        role = str(runtime_cfg.get("role", "leader")).strip().lower()
+        return role if role in ("leader", "teammate") else "leader"
+
+    @staticmethod
+    def _runtime_member_name(config_base: dict[str, Any], team_cfg: dict[str, Any]) -> str | None:
+        runtime_cfg = team_cfg.get("runtime", {}) if isinstance(team_cfg.get("runtime"), dict) else {}
+        configured = str(runtime_cfg.get("member_name", "")).strip()
+        if configured:
+            return configured
+        predefined = team_cfg.get("predefined_members", [])
+        if isinstance(predefined, list):
+            for item in predefined:
+                if isinstance(item, dict):
+                    member_name = str(item.get("member_name", "")).strip()
+                    if member_name:
+                        return member_name
+        return None
+
+    @staticmethod
+    def _normalize_team_identity_fields(team_cfg: dict[str, Any]) -> dict[str, Any]:
+        normalized_cfg = copy.deepcopy(team_cfg)
+        leader_cfg = normalized_cfg.get("leader", {})
+        if isinstance(leader_cfg, dict):
+            display_name = str(leader_cfg.get("display_name", "")).strip()
+            name = str(leader_cfg.get("name", "")).strip()
+            if display_name and not name:
+                leader_cfg["name"] = display_name
+            elif name and not display_name:
+                leader_cfg["display_name"] = name
+
+        members = normalized_cfg.get("predefined_members", [])
+        if isinstance(members, list):
+            for member in members:
+                if not isinstance(member, dict):
+                    continue
+                display_name = str(member.get("display_name", "")).strip()
+                name = str(member.get("name", "")).strip()
+                if display_name and not name:
+                    member["name"] = display_name
+                elif name and not display_name:
+                    member["display_name"] = name
+        return normalized_cfg
+
+    @staticmethod
+    def _normalize_distributed_transport_fields(
+        config_base: dict[str, Any],
+        team_cfg: dict[str, Any],
+    ) -> dict[str, Any]:
+        normalized_cfg = copy.deepcopy(team_cfg)
+        transport_cfg = normalized_cfg.get("transport", {})
+        if not isinstance(transport_cfg, dict):
+            return normalized_cfg
+        if str(transport_cfg.get("type", "")).strip().lower() != "pyzmq":
+            return normalized_cfg
+        params = transport_cfg.get("params", {})
+        if not isinstance(params, dict):
+            return normalized_cfg
+        if params.get("pubsub_publish_addr") and params.get("pubsub_subscribe_addr"):
+            return normalized_cfg
+
+        role = TeamManager._runtime_role(config_base)
+        leader_cfg = params.get("leader", {}) if isinstance(params.get("leader"), dict) else {}
+        teammate_cfg = params.get("teammate", {}) if isinstance(params.get("teammate"), dict) else {}
+        leader_host = str(leader_cfg.get("host", "127.0.0.1")).strip() or "127.0.0.1"
+        leader_direct_port = TeamManager._parse_port(
+            leader_cfg.get("direct_port"),
+            18555,
+            "team.transport.params.leader.direct_port",
+        )
+        leader_pub_port = TeamManager._parse_port(
+            leader_cfg.get("pub_port"),
+            18556,
+            "team.transport.params.leader.pub_port",
+        )
+        leader_sub_port = TeamManager._parse_port(
+            leader_cfg.get("sub_port"),
+            18557,
+            "team.transport.params.leader.sub_port",
+        )
+        teammate_host = str(teammate_cfg.get("host", "127.0.0.1")).strip() or "127.0.0.1"
+        teammate_direct_port = TeamManager._parse_port(
+            teammate_cfg.get("direct_port"),
+            18600,
+            "team.transport.params.teammate.direct_port",
+        )
+
+        local_member_name = TeamManager._runtime_member_name(config_base, normalized_cfg) or "teammate_1"
+        leader_member_name = "team_leader"
+        leader_identity_cfg = normalized_cfg.get("leader", {})
+        if isinstance(leader_identity_cfg, dict):
+            leader_member_name = str(leader_identity_cfg.get("member_name", "")).strip() or leader_member_name
+
+        if role == "leader":
+            local_direct_addr = f"tcp://0.0.0.0:{leader_direct_port}"
+            known_peers = [
+                {
+                    "agent_id": local_member_name,
+                    "addrs": [f"tcp://{teammate_host}:{teammate_direct_port}"],
+                }
+            ]
+            pubsub_bind = True
+        else:
+            local_direct_addr = f"tcp://0.0.0.0:{teammate_direct_port}"
+            known_peers = [
+                {
+                    "agent_id": leader_member_name,
+                    "addrs": [f"tcp://{leader_host}:{leader_direct_port}"],
+                }
+            ]
+            pubsub_bind = False
+
+        params["direct_addr"] = local_direct_addr
+        params["pubsub_publish_addr"] = f"tcp://{leader_host}:{leader_pub_port}"
+        params["pubsub_subscribe_addr"] = f"tcp://{leader_host}:{leader_sub_port}"
+        params["known_peers"] = known_peers
+        params["bootstrap_peers"] = known_peers
+        metadata = params.get("metadata", {})
+        if not isinstance(metadata, dict):
+            metadata = {}
+        metadata["pubsub_bind"] = pubsub_bind
+        params["metadata"] = metadata
+        return normalized_cfg
+
+    @staticmethod
+    def normalize_distributed_transport_fields(
+        config_base: dict[str, Any],
+        team_cfg: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Public wrapper for distributed transport normalization."""
+        return TeamManager._normalize_distributed_transport_fields(config_base, team_cfg)
+
+    @staticmethod
+    def _parse_port(value: Any, default: int, field_name: str) -> int:
+        if value is None:
+            return default
+        if isinstance(value, str):
+            stripped = value.strip()
+            if not stripped:
+                return default
+            raw = stripped
+        else:
+            raw = value
+
+        try:
+            port = int(raw)
+        except (TypeError, ValueError) as exc:
+            raise ValueError(f"Invalid {field_name}: {value!r}. Expected an integer in range 1..65535.") from exc
+
+        if port < 1 or port > 65535:
+            raise ValueError(f"Invalid {field_name}: {value!r}. Expected an integer in range 1..65535.")
+        return port
+
+    @staticmethod
+    def parse_port(value: Any, default: int, field_name: str) -> int:
+        """Public wrapper for validated port parsing."""
+        return TeamManager._parse_port(value, default, field_name)
+
+    @staticmethod
     def _load_team_spec(session_id: str) -> TeamAgentSpec:
-        return TeamAgentSpec.model_validate(load_team_spec_dict(session_id))
+        config_base = get_config()
+        spec_dict = load_team_spec_dict(session_id)
+        spec_dict = TeamManager._normalize_team_identity_fields(spec_dict)
+        if TeamManager._is_distributed_mode(config_base):
+            spec_dict = TeamManager._normalize_distributed_transport_fields(config_base, spec_dict)
+        return TeamAgentSpec.model_validate(spec_dict)
 
     @staticmethod
     def register_member_runtime_tools(
@@ -80,7 +259,6 @@ class TeamManager:
         channel_id: str | None,
         request_metadata: dict[str, Any] | None,
     ) -> None:
-        from jiuwenclaw.config import get_config
         from jiuwenclaw.agentserver.deep_agent.cron_runtime import CronRuntimeBridge
         from jiuwenclaw.agentserver.tools.send_file_to_user import SendFileToolkit
         from openjiuwen.core.runner import Runner

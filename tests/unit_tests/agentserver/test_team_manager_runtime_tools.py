@@ -73,7 +73,7 @@ def test_register_member_runtime_tools_adds_cron_and_send_file(monkeypatch):
         _FakeSendFileToolkit,
     )
     monkeypatch.setattr(
-        "jiuwenclaw.config.get_config",
+        "jiuwenclaw.agentserver.team.team_manager.get_config",
         lambda: {"channels": {"web": {"send_file_allowed": True}}},
     )
     monkeypatch.setattr(

@@ -4,6 +4,7 @@
 - [E2A protocol (Gateway↔Agent)](E2A-protocol.md)
 - [A2A integration](A2A.md)
 - [Configuration](Configuration.md)
+- [Distributed Team](DistributedTeam.md)
 - [User guide](README.md)
   - [Channels](Channels.md)
     - [Discord](Discord.md)

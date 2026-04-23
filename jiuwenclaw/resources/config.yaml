@@ -514,6 +514,13 @@ extensions:
 
 
 team:
+  runtime:
+    # team 运行模式：local / distributed
+    # local: 单进程 team；distributed: 多 claw 分布式 team（按请求懒创建）
+    mode: local
+    # distributed runtime 角色（leader / teammate），仅对分布式启动器生效
+    role: leader
+
   team_name: jiuwen_team
   lifecycle: persistent
   teammate_mode: build_mode
@@ -536,6 +543,34 @@ team:
 
   transport:
     type: inprocess
+    # 远端多机协作示例（leader claw + teammate claw）:
+    # type: pyzmq
+    # params:
+    #   request_timeout: 20
+    #   leader:
+    #     host: 172.31.12.19
+    #     bind_host: 0.0.0.0
+    #     direct_port: 18555
+    #     pub_port: 18556
+    #     sub_port: 18557
+    #   teammate:
+    #     host: 172.31.9.134
+    #     bind_host: 0.0.0.0
+    #     direct_port: 18600
+
+  # 可选：显式声明远端 teammate 成员（用于 distributed team 场景）
+  # predefined_members:
+  #   - member_name: teammate_1
+  #     display_name: TeammateOne
+  #     role_type: teammate
+  #     persona: "通用执行助手"
+  #
+  # 可选：显式覆盖 agents 配置（若配置此字段，TeamManager 将不再覆盖为固定本地模板）
+  # agents:
+  #   leader:
+  #     max_iterations: 200
+  #   teammate:
+  #     max_iterations: 200
 
   storage:
     type: sqlite

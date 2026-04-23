@@ -177,9 +177,15 @@ def _build_workspace_spec(team_raw: dict[str, Any]) -> dict[str, Any] | None:
 
 def _build_leader_spec(team_raw: dict[str, Any]) -> dict[str, Any]:
     leader_raw = team_raw.get("leader", {})
+    leader_name = (
+        str(leader_raw.get("name", "")).strip()
+        or str(leader_raw.get("display_name", "")).strip()
+        or "TeamLeader"
+    )
     return {
         "member_name": leader_raw.get("member_name", "team_leader"),
         "display_name": leader_raw.get("display_name", "Team Leader"),
+        "name": leader_name,
         "persona": leader_raw.get("persona", "天才项目管理专家"),
     }
 
@@ -200,9 +206,17 @@ def _build_predefined_members(team_raw: dict[str, Any]) -> list[dict[str, Any]]:
             logger.warning("[TeamConfigLoader] skipped predefined member without member_name: %s", item)
             continue
 
+        identity_name = item.get("name") or item.get("display_name")
+        if not identity_name or not str(identity_name).strip():
+            logger.warning(
+                "[TeamConfigLoader] skipped predefined member without name/display_name: %s",
+                item,
+            )
+            continue
+
         member_spec = deepcopy(item)
         member_spec["member_name"] = member_name
-        member_spec.setdefault("display_name", member_name)
+        member_spec["display_name"] = str(identity_name).strip()
         member_spec["persona"] = member_spec.get("persona") or ""
 
         predefined_members.append(member_spec)
