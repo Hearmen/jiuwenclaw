@@ -1,4 +1,4 @@
-import { existsSync } from "node:fs";
+import { existsSync, statSync } from "node:fs";
 import { resolve } from "node:path";
 
 /**
@@ -31,8 +31,8 @@ export function getTrustedDirs(): string[] {
 
 /**
  * Add a trusted directory.
- * @param path - Directory path to add
- * @returns "added" if added, "exists" if already trusted, "not_found" if path doesn't exist, "invalid" if invalid path
+ * @param path - Directory path to add (must be a folder, not a file)
+ * @returns "added" if added, "exists" if already trusted, "not_found" if path doesn't exist, "invalid" if invalid path or not a directory
  */
 export function addTrustedDir(path: string): "added" | "exists" | "not_found" | "invalid" {
   const normalized = normalizePath(path);
@@ -41,6 +41,14 @@ export function addTrustedDir(path: string): "added" | "exists" | "not_found" | 
   }
   if (!existsSync(normalized)) {
     return "not_found";
+  }
+  try {
+    const stats = statSync(normalized);
+    if (!stats.isDirectory()) {
+      return "invalid";
+    }
+  } catch {
+    return "invalid";
   }
   if (_trustedDirs.includes(normalized)) {
     return "exists";
@@ -51,8 +59,8 @@ export function addTrustedDir(path: string): "added" | "exists" | "not_found" | 
 
 /**
  * Reset trusted dirs and set a single path.
- * @param path - Directory path to set as the only trusted dir
- * @returns "set" if set successfully, "not_found" if path doesn't exist, "invalid" if invalid path
+ * @param path - Directory path to set as the only trusted dir (must be a folder, not a file)
+ * @returns "set" if set successfully, "not_found" if path doesn't exist, "invalid" if invalid path or not a directory
  */
 export function setTrustedDir(path: string): "set" | "not_found" | "invalid" {
   const normalized = normalizePath(path);
@@ -61,6 +69,14 @@ export function setTrustedDir(path: string): "set" | "not_found" | "invalid" {
   }
   if (!existsSync(normalized)) {
     return "not_found";
+  }
+  try {
+    const stats = statSync(normalized);
+    if (!stats.isDirectory()) {
+      return "invalid";
+    }
+  } catch {
+    return "invalid";
   }
   _trustedDirs = [normalized];
   return "set";

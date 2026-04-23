@@ -110,7 +110,7 @@ export function createWorkspaceCommand(): SlashCommand {
           } else if (result === "not_found") {
             ctx.addItem(addError(ctx.sessionId, `Path does not exist: ${resolvedPath}`));
           } else {
-            ctx.addItem(addError(ctx.sessionId, `Invalid path: ${resolvedPath}`));
+            ctx.addItem(addError(ctx.sessionId, `Path is not a directory: ${resolvedPath}`));
           }
         },
       },
@@ -134,7 +134,7 @@ export function createWorkspaceCommand(): SlashCommand {
             return;
           }
           if (result === "invalid") {
-            ctx.addItem(addError(ctx.sessionId, `Invalid path: ${directoryPath}`));
+            ctx.addItem(addError(ctx.sessionId, `Path is not a directory: ${directoryPath}`));
             return;
           }
 
