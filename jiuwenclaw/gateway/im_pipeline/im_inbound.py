@@ -14,6 +14,7 @@ from openjiuwen.core.foundation.llm import Model
 from openjiuwen.core.foundation.llm.schema.config import ModelClientConfig, ModelRequestConfig
 
 from jiuwenclaw.config import _parse_custom_headers
+from jiuwenclaw.gateway.interaction_context import PendingInteraction
 from jiuwenclaw.schema.message import Message, ReqMethod
 from jiuwenclaw.gateway.slash_command import CONTROL_MESSAGE_TEXTS
 from jiuwenclaw.utils import get_root_dir, logger
@@ -171,6 +172,8 @@ class IMConversationProcessor:
         self,
         msg: Message,
         adapter: IMPlatformAdapter,
+        *,
+        pending_context: str | None = None,
     ) -> InboundProcessResult:
         if msg.req_method != ReqMethod.CHAT_SEND:
             return InboundProcessResult(reason="non-chat-send")
@@ -230,6 +233,7 @@ class IMConversationProcessor:
             timestamp_ms=self._resolve_timestamp_ms(msg.timestamp, metadata),
             principal_name=principal_name,
             adapter=adapter,
+            pending_context=pending_context,
         )
         rewritten_content = await self._rewrite_query(prompt, principal_name, adapter)
         if not rewritten_content:
@@ -329,6 +333,7 @@ class IMConversationProcessor:
         timestamp_ms: int,
         principal_name: str,
         adapter: IMPlatformAdapter,
+        pending_context: str | None = None,
     ) -> str:
         prompt_parts: list[str] = []
         prompt_parts.append("=== 群聊历史消息 ===")
@@ -349,6 +354,11 @@ class IMConversationProcessor:
         user_profile = self._load_user_profile()
         prompt_parts.append(user_profile if user_profile else "暂无用户画像信息")
         prompt_parts.append("")
+
+        if pending_context:
+            prompt_parts.append("=== 待回答的追问 ===")
+            prompt_parts.append(pending_context)
+            prompt_parts.append("")
 
         prompt_parts.append("=== 当前消息 ===")
         sender_name = adapter.resolve_user_display_name(sender_user_id) or "未知用户"
@@ -465,6 +475,44 @@ class IMInboundPipeline:
         if adapter is None:
             return True
 
+        metadata = dict(msg.metadata or {})
+        if bool(metadata.get("is_resume_message")):
+            dm_pending_id = str(metadata.get("dm_pending_interaction_id") or "").strip()
+            if dm_pending_id:
+                pi = PendingInteraction.load(dm_pending_id)
+                if pi is not None:
+                    answer = ""
+                    if isinstance(msg.params, dict):
+                        answer = str(
+                            msg.params.get("query") or msg.params.get("content") or ""
+                        ).strip()
+                    resume_content = pi.build_resume_content(answer)
+                    logger.info(
+                        "[IMInboundPipeline][DEBUG] dm_resume: id=%s answer=%s",
+                        dm_pending_id,
+                        answer[:80],
+                    )
+                    logger.info(
+                        "[IMInboundPipeline][DEBUG] resume_content=\n%s",
+                        resume_content,
+                    )
+                    if not isinstance(msg.params, dict):
+                        msg.params = {}
+                    msg.params["query"] = resume_content
+                    if "content" in msg.params:
+                        msg.params["content"] = resume_content
+                    merged = dict(msg.metadata or {})
+                    merged["interaction_context"] = resume_content
+                    msg.metadata = merged
+                    pi.status = "completed"
+                    pi.save()
+                    pi.remove()
+            logger.info(
+                "[IMInboundPipeline] resume 消息直接放行: channel=%s id=%s",
+                msg.channel_id, msg.id,
+            )
+            return True
+
         original_query = ""
         if isinstance(msg.params, dict):
             query = msg.params.get("query")
@@ -474,7 +522,14 @@ class IMInboundPipeline:
             elif isinstance(content, str):
                 original_query = content
 
-        result = await self._processor.process(msg, adapter)
+        pending_context = self._peek_pending(msg)
+        if pending_context:
+            logger.info(
+                "[IMInboundPipeline][DEBUG] pending_context=\n%s",
+                pending_context,
+            )
+
+        result = await self._processor.process(msg, adapter, pending_context=pending_context)
 
         if result.metadata_patch:
             merged_metadata = dict(msg.metadata or {})
@@ -487,15 +542,45 @@ class IMInboundPipeline:
             msg.params["query"] = result.rewritten_content
             if "content" in msg.params:
                 msg.params["content"] = result.rewritten_content
-        
-        # 将原始 query 存入 metadata，供 outbound pipeline 路由决策使用
+
         if original_query:
             merged = dict(msg.metadata or {})
             merged["avatar_original_query"] = original_query
             msg.metadata = merged
 
-        # 补全 avatar 详情字段（avatar_mode 已在 channel 层源头注入）
-        # 只在群聊模式下补全 avatar 详情字段
+        if pending_context and result.should_forward:
+            merged = dict(msg.metadata or {})
+            merged["interaction_context"] = pending_context
+            sender_user_id = str(
+                metadata.get("im_sender_user_id")
+                or metadata.get("open_id")
+                or metadata.get("sender_id")
+                or ""
+            ).strip()
+            if sender_user_id:
+                merged["interaction_answered_user_id"] = sender_user_id
+            msg.metadata = merged
+
+            session_id = str(msg.session_id or "").strip()
+            if session_id and sender_user_id:
+                pi = PendingInteraction.find_group_pending(session_id, sender_user_id)
+                logger.info(
+                    "[IMInboundPipeline][DEBUG] find_group_pending=%s",
+                    pi,
+                )
+                if pi is not None:
+                    answer = result.rewritten_content or original_query
+                    resume_content = pi.build_resume_content(answer)
+                    logger.info(
+                        "[IMInboundPipeline][DEBUG] resume_content=\n%s",
+                        resume_content,
+                    )
+                    if not isinstance(msg.params, dict):
+                        msg.params = {}
+                    msg.params["query"] = resume_content
+                    if "content" in msg.params:
+                        msg.params["content"] = resume_content
+
         if result.should_forward and result.reason != "non-group-chat":
             principal_name = adapter.get_principal_display_name().strip()
             avatar_detail: dict[str, Any] = {
@@ -506,7 +591,6 @@ class IMInboundPipeline:
                 avatar_detail["avatar_principal_name"] = principal_name
             principal_id = adapter.get_principal_user_id().strip()
             if principal_id:
-                # 统一用 principal_user_id，供权限方案和 prompt 方案共享
                 avatar_detail["principal_user_id"] = principal_id
             merged = dict(msg.metadata or {})
             merged.update(avatar_detail)
@@ -518,7 +602,7 @@ class IMInboundPipeline:
 
         logger.info(
             "[IMInboundPipeline] channel=%s request=%s should_forward=%s reason=%s rewritten=%s "
-            "original_preview=%r rewritten_preview=%r metadata_keys=%s",
+            "original_preview=%r rewritten_preview=%r metadata_keys=%s pending=%s",
             msg.channel_id,
             msg.id,
             result.should_forward,
@@ -527,5 +611,30 @@ class IMInboundPipeline:
             original_preview,
             rewritten_preview,
             metadata_keys,
+            bool(pending_context),
         )
         return result.should_forward
+
+    @staticmethod
+    def _peek_pending(msg: Message) -> str | None:
+        metadata = dict(msg.metadata or {})
+        session_id = str(msg.session_id or "").strip()
+        sender_user_id = str(
+            metadata.get("im_sender_user_id")
+            or metadata.get("open_id")
+            or metadata.get("sender_id")
+            or ""
+        ).strip()
+        if not session_id or not sender_user_id:
+            return None
+        pi = PendingInteraction.find_group_pending(session_id, sender_user_id)
+        if pi is None:
+            return None
+        return (
+            f"【追问上下文】你之前在处理以下任务时向 {pi.target_user_name or '用户'} 追问了信息：\n"
+            f"- 原始请求：{pi.origin_content}\n"
+            f"- 你的追问：{pi.question}\n"
+            f"现在 {pi.target_user_name or '用户'} 已回复，请综合「原始请求」和「用户回复」中的所有信息继续完成任务，"
+            f"原始请求中已明确提供的信息（如时间、地点等）直接使用即可，不要再次追问。"
+            f"不要与群聊历史中的其他任务混淆。"
+        )

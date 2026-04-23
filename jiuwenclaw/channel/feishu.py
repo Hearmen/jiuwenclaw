@@ -229,7 +229,8 @@ class FeishuChannel(BaseChannel):
         Args:
             inbound: Feishu 入站消息
         """
-        # Message 的 id 必须全局唯一；多 bot 同群时飞书消息 message_id 相同，需加上 channel_id 防止冲突。
+        from jiuwenclaw.gateway.interaction_context import PendingInteraction
+
         msg_id = f"{self.channel_id}:{inbound.message_id}"
         params = {"content": inbound.content, "query": inbound.content} if inbound.params is None else inbound.params
         _meta = inbound.metadata or {}
@@ -244,6 +245,43 @@ class FeishuChannel(BaseChannel):
             _meta["avatar_mode"] = True
             _meta["principal_user_id"] = self._get_target_user_open_id()
             _meta["triggering_user_id"] = str(inbound.user_id or "")
+
+        if not _is_group and self.config.group_digital_avatar:
+            sender_open_id = str(inbound.user_id or "").strip()
+            principal_id = self._get_target_user_open_id()
+            if sender_open_id and sender_open_id == principal_id:
+                pi = PendingInteraction.find_pending(self.channel_id, principal_id)
+                if pi is not None:
+                    _meta = dict(_meta)
+                    _meta["avatar_mode"] = True
+                    _meta["is_resume_message"] = True
+                    _meta["principal_user_id"] = principal_id
+                    _meta["dm_pending_interaction_id"] = pi.interaction_id
+
+                    resume_msg = Message(
+                        id=f"{self.channel_id}:resume:{inbound.message_id}",
+                        type="req",
+                        channel_id=self.channel_id,
+                        session_id=pi.origin_session_id,
+                        params={"content": inbound.content or "", "query": inbound.content or ""},
+                        timestamp=time.time(), ok=True,
+                        provider=self.name,
+                        chat_id=pi.origin_session_id,
+                        user_id=principal_id,
+                        bot_id=str(inbound.bot_id or self.config.app_id or ""),
+                        req_method=ReqMethod.CHAT_SEND,
+                        is_stream=False,
+                        metadata=_meta,
+                        group_digital_avatar=True,
+                        enable_memory=self.config.enable_memory,
+                        enable_streaming=False,
+                    )
+                    if self._message_callback:
+                        self._message_callback(resume_msg)
+                    else:
+                        await self.bus.route_user_message(resume_msg)
+                    return
+
         _effective_group_digital_avatar = self.config.group_digital_avatar and _is_group
         msg = Message(
             id=msg_id,
@@ -652,7 +690,6 @@ class FeishuChannel(BaseChannel):
     @staticmethod
     def _should_send_group_ack(metadata: dict[str, Any]) -> bool:
         """仅在待办/提醒类私发场景下，才补发群内短确认。"""
-        # 定时任务消息不发送群确认
         if bool(metadata.get("is_cron_job")):
             return False
         if str(metadata.get("reply_scope") or "").strip().lower() != "dm":
@@ -665,6 +702,39 @@ class FeishuChannel(BaseChannel):
         if not str(metadata.get("feishu_chat_id") or "").strip():
             return False
         return bool(metadata.get("reply_personal_action"))
+
+    @staticmethod
+    def _should_send_interaction_ack(metadata: dict[str, Any]) -> bool:
+        """追问场景下，群内补发简短确认。"""
+        if bool(metadata.get("is_cron_job")):
+            return False
+        has_interaction = bool(metadata.get("interaction_mention_user")) or bool(
+            metadata.get("interaction_question")
+        )
+        if not has_interaction:
+            return False
+        if not str(metadata.get("feishu_chat_id") or "").strip():
+            return False
+        return True
+
+    async def _send_interaction_ack(self, metadata: dict[str, Any], content: str) -> None:
+        """追问场景下在群内补发简短确认。"""
+        try:
+            group_chat_id = str(metadata.get("feishu_chat_id") or "").strip()
+            if not group_chat_id:
+                return
+
+            mention_name = str(metadata.get("interaction_mention_user") or "").strip()
+            if mention_name:
+                ack_text = f"已向 {mention_name} 追问，等回复后继续处理。"
+            else:
+                ack_text = "已私聊确认，等回复后继续处理。"
+
+            card = self._build_card_content(ack_text)
+            await self._send_feishu_message(group_chat_id, "chat_id", card, "interaction_ack")
+            logger.info("[FeishuChannel] 追问确认已发送: chat_id=%s", group_chat_id)
+        except Exception as e:
+            logger.warning("[FeishuChannel] 追问确认发送失败: %s", e)
 
     @staticmethod
     def _fallback_group_ack() -> str:
@@ -1419,19 +1489,24 @@ class FeishuChannel(BaseChannel):
             
             # 群聊数字分身回复到群聊时，@发送人
             if msg.group_digital_avatar and id_type == "chat_id":
+                mention_user_id = str(
+                    meta.get("interaction_mention_user_id") or ""
+                ).strip()
                 sender_open_id = str(
                     meta.get("im_sender_user_id")
                     or meta.get("open_id")
                     or ""
                 ).strip()
-                if sender_open_id and not sender_open_id.startswith("bot"):
-                    content_str = f"<at id={sender_open_id}></at>\n{content_str}"
+                at_user_id = mention_user_id or sender_open_id
+                if at_user_id and not at_user_id.startswith("bot"):
+                    content_str = f"<at id={at_user_id}></at>\n{content_str}"
 
             card_content = self._build_card_content(content_str)
             await self._send_feishu_message(receive_id, id_type, card_content, msg.id)
 
-            # 用LLM在群内补发简短回复
-            if msg.group_digital_avatar and self._should_send_group_ack(meta):
+            if msg.group_digital_avatar and self._should_send_interaction_ack(meta):
+                asyncio.create_task(self._send_interaction_ack(meta, content_str))
+            elif msg.group_digital_avatar and self._should_send_group_ack(meta):
                 group_chat_id = str(meta.get("feishu_chat_id") or "").strip()
                 if group_chat_id and group_chat_id != receive_id:
                     asyncio.create_task(self._send_group_ack(meta, content_str))

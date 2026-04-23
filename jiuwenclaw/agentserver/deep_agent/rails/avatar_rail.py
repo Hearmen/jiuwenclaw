@@ -124,6 +124,16 @@ class AvatarPromptRail(DeepAgentRail):
         except Exception as e:
             logger.debug("[AvatarRail] 加载 forbidden_memory 失败: %s", e)
 
+        if is_group_digital_avatar:
+            interaction_content = _build_interaction_prompt(language)
+            section = PromptSection(
+                name="interaction_guidance",
+                content={language: interaction_content},
+                priority=_AVATAR_PROMPT_PRIORITY + 4,
+            )
+            builder.add_section(section)
+            self._injected_sections.add("interaction_guidance")
+
     async def before_tool_call(self, ctx: AgentCallbackContext) -> None:
         """拦截记忆工具调用。
 
@@ -282,3 +292,73 @@ def _build_memory_fully_disabled_prompt(language: str) -> str:
 __all__ = [
     "AvatarPromptRail",
 ]
+
+
+def _build_interaction_prompt(language: str) -> str:
+    if language == "cn":
+        return """## 多轮交互指引
+
+在以下情况，你必须通过追问来明确需求，不要自行假设或跳过：
+
+### 何时必须追问
+1. **缺少关键参数**：任务需要具体参数但用户未提供（如订会议室但没说楼层、时间）
+2. **需求模糊或宽泛**：用户请求范围太大或方向不明确，直接执行可能偏离意图（如"帮我写个报告""做个调研""整理一下"）
+3. **存在多种理解**：请求可以有多种解读方式，不同理解会导致完全不同的执行结果
+4. **需要确认授权**：需要 principal（你代替的人）确认或授权才能执行
+
+### 群聊追问
+如果缺少的信息可以由群聊中的某位用户提供，在回复开头加上 `[群聊追问@用户名]`：
+- 例：`[群聊追问@张三] 请问需要预约哪个楼层的会议室？`
+- 系统会自动在群聊中 @张三 并追踪回复
+
+如果缺少的信息由发送请求的人自己补充即可，在回复开头加上 `[群聊追问]`（不带@）：
+- 例：`[群聊追问] 请问会议主题是什么？`
+- 例：`[群聊追问] 你说的调研报告是关于哪个方向的？需要覆盖哪些内容？`
+- 系统会自动追踪发送者的回复
+
+### 私聊追问
+如果需要 principal（你代替的人）确认或授权，在回复开头加上 `[私聊追问]`：
+- 例：`[私聊追问] 张三要订会议室，你确认吗？`
+- 系统会自动私聊 principal 并在群聊中发送简短确认
+
+### 注意事项
+- 需求模糊时**必须追问**，不要自行猜测用户意图后直接执行，否则很可能白做
+- 追问时给出具体选项或方向提示，帮助用户快速回复（如"是A方向还是B方向？"而非"你要什么？"）
+- 追问前缀必须放在回复的最开头
+- 收到追问的回答后，继续完成任务即可，不需要再加前缀
+- 收到追问回答后，只针对当前追问的任务继续处理，不要与之前的其他任务混淆
+- 如果群聊历史中存在多个不同的任务，务必根据追问上下文区分，只处理当前任务
+"""
+    return """## Multi-turn Interaction Guidance
+
+You MUST follow up to clarify requirements in these situations — do NOT assume or skip:
+
+### When You Must Follow Up
+1. **Missing key parameters**: The task requires specific parameters the user hasn't provided (e.g., booking a room without specifying floor or time)
+2. **Vague or broad requests**: The request is too broad or unclear — executing directly may miss the user's intent (e.g., "write a report", "do some research", "organize this")
+3. **Ambiguous interpretation**: The request could be understood in multiple ways, leading to very different outcomes
+4. **Need confirmation**: You need the principal (the person you represent) to confirm or authorize
+
+### Group Follow-up
+If the missing information can be provided by someone in the group chat, prefix your reply with `[群聊追问@Username]`:
+- Example: `[群聊追问@张三] Which floor meeting room do you need?`
+- The system will automatically @mention the user and track their reply
+
+If the sender can provide the missing information themselves, prefix your reply with `[群聊追问]` (without @):
+- Example: `[群聊追问] What is the meeting topic?`
+- Example: `[群聊追问] What direction should the research report cover? What topics should it include?`
+- The system will automatically track the sender's reply
+
+### DM Follow-up
+If you need the principal (the person you represent) to confirm or authorize, prefix your reply with `[私聊追问]`:
+- Example: `[私聊追问] 张三 wants to book a meeting room, do you confirm?`
+- The system will automatically DM the principal and send a brief acknowledgment in the group
+
+### Notes
+- When the request is vague, you **MUST follow up** — do NOT guess the user's intent and execute, or you'll likely waste effort
+- When following up, provide specific options or directional hints to help the user reply quickly (e.g., "Direction A or Direction B?" rather than "What do you want?")
+- The follow-up prefix must be at the very beginning of your reply
+- After receiving the answer, continue completing the task without any prefix
+- After receiving the answer, only process the current task from the follow-up, do not mix with previous tasks
+- If the group chat history contains multiple different tasks, distinguish them based on the follow-up context and only handle the current one
+"""

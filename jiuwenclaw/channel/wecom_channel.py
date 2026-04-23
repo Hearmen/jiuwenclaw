@@ -204,7 +204,6 @@ class WecomChannel(BaseChannel):
     @staticmethod
     def _should_send_group_ack(metadata: dict[str, Any]) -> bool:
         """仅在待办/提醒类私发场景下，才补发群内短确认。"""
-        # 定时任务消息不发送群确认
         if bool(metadata.get("is_cron_job")):
             return False
         
@@ -214,8 +213,8 @@ class WecomChannel(BaseChannel):
         reply_personal_action = bool(metadata.get("reply_personal_action"))
         
         logger.info(
-            "[WecomChannel] _should_send_group_ack: reply_scope=%s \
-                reply_reason=%s wecom_chat_id=%s reply_personal_action=%s",
+            "[WecomChannel] _should_send_group_ack: reply_scope=%s "
+            "reply_reason=%s wecom_chat_id=%s reply_personal_action=%s",
             reply_scope, reply_reason, wecom_chat_id, reply_personal_action
         )
         
@@ -237,6 +236,39 @@ class WecomChannel(BaseChannel):
             return False
         logger.info("[WecomChannel] _should_send_group_ack: 返回True")
         return True
+
+    @staticmethod
+    def _should_send_interaction_ack(metadata: dict[str, Any]) -> bool:
+        """追问场景下，群内补发简短确认。"""
+        if bool(metadata.get("is_cron_job")):
+            return False
+        has_interaction = bool(metadata.get("interaction_mention_user")) or bool(
+            metadata.get("interaction_question")
+        )
+        if not has_interaction:
+            return False
+        if not str(metadata.get("wecom_chat_id") or "").strip():
+            return False
+        return True
+
+    async def _send_interaction_ack(self, metadata: dict[str, Any]) -> None:
+        """追问场景下在群内补发简短确认。"""
+        try:
+            group_chat_id = str(metadata.get("wecom_chat_id") or "").strip()
+            if not group_chat_id or not self._ws_client:
+                return
+
+            mention_name = str(metadata.get("interaction_mention_user") or "").strip()
+            if mention_name:
+                ack_text = f"已向 {mention_name} 追问，等回复后继续处理。"
+            else:
+                ack_text = "已私聊确认，等回复后继续处理。"
+
+            body = {"msgtype": "markdown", "markdown": {"content": ack_text}}
+            await self._ws_client.send_message(group_chat_id, body)
+            logger.info("[WecomChannel] 追问确认已发送: chat_id=%s", group_chat_id)
+        except Exception as e:
+            logger.warning("[WecomChannel] 追问确认发送失败: %s", e)
 
     @staticmethod
     def _fallback_group_ack() -> str:
@@ -742,6 +774,8 @@ class WecomChannel(BaseChannel):
         metadata: dict[str, Any],
     ) -> None:
         """内部消息处理入口。"""
+        from jiuwenclaw.gateway.interaction_context import PendingInteraction
+
         chat_type = metadata.get("chat_type", "")
         is_group_chat = chat_type == "group"
         msg_enable_streaming = self.config.enable_streaming
@@ -749,12 +783,43 @@ class WecomChannel(BaseChannel):
         if self.config.group_digital_avatar and is_group_chat:
             msg_enable_streaming = False
             is_stream = False
-            # 源头注入基础 avatar 标记，即使 inbound pipeline 异常 Agent 也能感知数字分身场景
             metadata = dict(metadata)
             metadata["avatar_mode"] = True
-            # 权限方案：统一注入 principal/triggering
             metadata["principal_user_id"] = self._get_target_user_id()
             metadata["triggering_user_id"] = user_id
+
+        if not is_group_chat and self.config.group_digital_avatar:
+            principal_id = self._get_target_user_id()
+            if user_id and user_id == principal_id:
+                pi = PendingInteraction.find_pending(self.name, principal_id)
+                if pi is not None:
+                    metadata = dict(metadata)
+                    metadata["avatar_mode"] = True
+                    metadata["is_resume_message"] = True
+                    metadata["principal_user_id"] = principal_id
+                    metadata["dm_pending_interaction_id"] = pi.interaction_id
+
+                    resume_msg = Message(
+                        id=f"{self.name}:resume:{int(time.time() * 1000)}",
+                        type="req",
+                        channel_id=self.name,
+                        session_id=pi.origin_session_id,
+                        params={"content": content, "query": content},
+                        timestamp=time.time(),
+                        ok=True,
+                        req_method=ReqMethod.CHAT_SEND,
+                        is_stream=False,
+                        metadata=metadata,
+                        group_digital_avatar=True,
+                        enable_memory=self.config.enable_memory,
+                        enable_streaming=False,
+                    )
+                    if self._message_callback:
+                        self._message_callback(resume_msg)
+                    else:
+                        await self.bus.route_user_message(resume_msg)
+                    return
+
         effective_group_digital_avatar = self.config.group_digital_avatar and is_group_chat
         msg = Message(
             id=metadata.get("message_id") or f"wecom_{int(time.time() * 1000)}",
@@ -1217,13 +1282,16 @@ class WecomChannel(BaseChannel):
 
         try:
             is_dm = str(meta.get("reply_scope") or "").strip().lower() == "dm"
-            # 群聊数字分身回复到群聊时，@发送人
             if msg.group_digital_avatar and not is_dm:
+                mention_user_id = str(
+                    meta.get("interaction_mention_user_id") or ""
+                ).strip()
                 sender_user_id = str(
                     meta.get("im_sender_user_id") or ""
                 ).strip()
-                if sender_user_id and not sender_user_id.startswith("bot"):
-                    content = f"<@{sender_user_id}>\n{content}"
+                at_user_id = mention_user_id or sender_user_id
+                if at_user_id and not at_user_id.startswith("bot"):
+                    content = f"<@{at_user_id}>\n{content}"
 
             body = {"msgtype": "markdown", "markdown": {"content": content}}
             await self._ws_client.send_message(chatid, body)
@@ -1234,7 +1302,9 @@ class WecomChannel(BaseChannel):
             else:
                 logger.info("[WecomChannel] 发送消息: chatid=%s len=%d", chatid, len(content))
 
-            if msg.group_digital_avatar and self._should_send_group_ack(meta):
+            if msg.group_digital_avatar and self._should_send_interaction_ack(meta):
+                asyncio.create_task(self._send_interaction_ack(meta))
+            elif msg.group_digital_avatar and self._should_send_group_ack(meta):
                 group_chat_id = str(meta.get("wecom_chat_id") or "").strip()
                 if group_chat_id and group_chat_id != chatid:
                     asyncio.create_task(self._send_group_ack(meta, content))

@@ -1,9 +1,13 @@
 # Copyright (c) Huawei Technologies Co., Ltd. 2025. All rights reserved.
 
-"""IMOutboundPipeline — 出站预处理管线：路由决策（群发 vs 私发）。
+"""IMOutboundPipeline — 出站预处理管线：路由决策（群发 vs 私发）+ 追问前缀解析。
 
 在 MessageHandler.publish_robot_messages() 入队前拦截，根据 LLM 分类和关键词匹配
 决定是否将回复私发给目标用户。Channel.send() 仅读取 metadata 执行实际发送。
+
+追问前缀约定：
+  [群聊追问@张三] → 群聊中 @张三 追问
+  [私聊追问]      → 私聊 principal 追问
 """
 
 from __future__ import annotations
@@ -11,9 +15,11 @@ from __future__ import annotations
 import logging
 import os
 import re
+import secrets
 from typing import TYPE_CHECKING, Any
 
 from jiuwenclaw.config import _parse_custom_headers
+from jiuwenclaw.gateway.interaction_context import PendingInteraction
 
 if TYPE_CHECKING:
     from jiuwenclaw.gateway.im_pipeline.im_inbound import IMPlatformAdapter
@@ -39,6 +45,9 @@ _GROUP_ACK_KEYWORDS: tuple[str, ...] = (
     "记下了",
     "记住了",
 )
+
+_RE_GROUP_FOLLOWUP = re.compile(r"^\[群聊追问(?:@(.+?))?\]\s*")
+_RE_DM_FOLLOWUP = re.compile(r"^\[私聊追问\]\s*")
 
 
 class IMOutboundPipeline:
@@ -123,24 +132,16 @@ class IMOutboundPipeline:
             msg.channel_id, msg.id, msg.group_digital_avatar
         )
 
-        # 检查是否需要数字分身路由决策
-        # 优先使用 msg.group_digital_avatar，其次检查 metadata 中的 avatar_mode
         meta = dict(msg.metadata or {})
         is_digital_avatar = msg.group_digital_avatar or bool(meta.get("avatar_mode"))
         if not is_digital_avatar:
             return
 
-        # 幂等：已经有 reply_scope 则跳过
-        if str(meta.get("reply_scope") or "").strip():
-            return
-
-        # 跳过不需要路由决策的中间事件
         payload = msg.payload if isinstance(msg.payload, dict) else {}
         event_type = str(payload.get("event_type") or "")
         if event_type in _SKIP_EVENT_TYPES:
             return
 
-        # 仅群聊需要路由决策
         chat_type = str(meta.get("chat_type") or "").strip()
         if chat_type != "group":
             return
@@ -149,12 +150,41 @@ class IMOutboundPipeline:
         if adapter is None:
             return
 
-        candidate_user_id = adapter.get_candidate_user_id(meta)
-        if not candidate_user_id:
-            return
-
         content = self._extract_content(msg)
         if not content:
+            return
+
+        # ---- 群聊追问的 pending 清除逻辑（必须在追问前缀解析之前） ----
+        answered_user_id = str(meta.get("interaction_answered_user_id") or "").strip()
+        if answered_user_id:
+            session_id = str(msg.session_id or "").strip()
+            if session_id:
+                existing = PendingInteraction.find_group_pending(session_id, answered_user_id)
+                if existing:
+                    existing.remove()
+                    logger.info(
+                        "[IMOutboundPipeline] clear_pending: session=%s user=%s",
+                        session_id, answered_user_id,
+                    )
+
+        # ---- 追问前缀解析（优先于原有路由逻辑） ----
+        group_match = _RE_GROUP_FOLLOWUP.match(content)
+        dm_match = _RE_DM_FOLLOWUP.match(content)
+
+        if group_match:
+            await self._handle_group_followup(msg, meta, adapter, content, group_match)
+            return
+
+        if dm_match:
+            await self._handle_dm_followup(msg, meta, adapter, content)
+            return
+
+        # ---- 原有路由逻辑 ----
+        if str(meta.get("reply_scope") or "").strip():
+            return
+
+        candidate_user_id = adapter.get_candidate_user_id(meta)
+        if not candidate_user_id:
             return
 
         logger.info(
@@ -162,7 +192,6 @@ class IMOutboundPipeline:
             msg.channel_id, candidate_user_id, len(content)
         )
 
-        # 先进行关键词判断，只有包含个人行动关键词时才需要进一步判断
         keyword_hit = _is_personal_action_reply(content)
 
         is_personal, llm_raw = await self._classify_personal_action(
@@ -205,12 +234,146 @@ class IMOutboundPipeline:
             msg.channel_id, msg.id, adapter.reply_user_id_key,
         )
 
+    # ---- 追问处理 ----
+
+    async def _handle_group_followup(
+        self,
+        msg: "Message",
+        meta: dict[str, Any],
+        adapter: "IMPlatformAdapter",
+        content: str,
+        match: re.Match,
+    ) -> None:
+        target_name = (match.group(1) or "").strip()
+        stripped = _RE_GROUP_FOLLOWUP.sub("", content).strip()
+
+        target_user_id = ""
+        if target_name and hasattr(adapter, "resolve_user_id_by_name"):
+            target_user_id = adapter.resolve_user_id_by_name(target_name)
+
+        if not target_user_id:
+            sender_user_id = str(
+                meta.get("im_sender_user_id")
+                or meta.get("open_id")
+                or meta.get("sender_id")
+                or ""
+            ).strip()
+            if sender_user_id:
+                target_user_id = sender_user_id
+                if not target_name and hasattr(adapter, "resolve_user_display_name"):
+                    target_name = adapter.resolve_user_display_name(sender_user_id)
+            else:
+                candidate_user_id = adapter.get_candidate_user_id(meta)
+                if candidate_user_id:
+                    target_user_id = candidate_user_id
+                    if not target_name:
+                        target_name = str(meta.get("reply_target_name") or "").strip()
+
+        meta["interaction_mention_user"] = target_name
+        meta["interaction_mention_user_id"] = target_user_id
+        meta["interaction_question"] = True
+
+        payload = msg.payload if isinstance(msg.payload, dict) else {}
+        payload["content"] = content
+        msg.payload = payload
+
+        session_id = str(msg.session_id or "").strip()
+        origin_content = str(meta.get("avatar_original_query") or "").strip()
+        origin_sender_id = str(
+            meta.get("im_sender_user_id")
+            or meta.get("open_id")
+            or meta.get("sender_id")
+            or ""
+        ).strip()
+        origin_sender_name = target_name
+
+        pi = PendingInteraction(
+            interaction_id=f"gpq_{session_id}_{target_user_id}",
+            mode="group",
+            origin_channel_id=msg.channel_id,
+            origin_session_id=session_id,
+            origin_content=origin_content,
+            origin_sender_name=origin_sender_name,
+            origin_sender_id=origin_sender_id,
+            question=stripped,
+            target_user_id=target_user_id,
+            target_user_name=target_name,
+            origin_metadata=dict(meta),
+        )
+        pi.save()
+
+        msg.metadata = meta
+        logger.info(
+            "[IMOutboundPipeline] 群聊追问: session=%s target=%s(%s) question=%s",
+            session_id, target_name, target_user_id, stripped[:80],
+        )
+
+    async def _handle_dm_followup(
+        self,
+        msg: "Message",
+        meta: dict[str, Any],
+        adapter: "IMPlatformAdapter",
+        content: str,
+    ) -> None:
+        stripped = _RE_DM_FOLLOWUP.sub("", content).strip()
+
+        meta["reply_scope"] = "dm"
+        meta["interaction_question"] = True
+
+        candidate_user_id = adapter.get_candidate_user_id(meta)
+        if candidate_user_id:
+            meta[adapter.reply_user_id_key] = candidate_user_id
+
+        payload = msg.payload if isinstance(msg.payload, dict) else {}
+        payload["content"] = content
+        msg.payload = payload
+
+        session_id = str(msg.session_id or "").strip()
+        origin_content = str(meta.get("avatar_original_query") or "").strip()
+        origin_sender_name = str(meta.get("reply_target_name") or "").strip()
+        origin_sender_id = str(
+            meta.get("im_sender_user_id")
+            or meta.get("open_id")
+            or meta.get("sender_id")
+            or ""
+        ).strip()
+        target_user_id = candidate_user_id or ""
+
+        hex_suffix = secrets.token_hex(4)
+        pi = PendingInteraction(
+            interaction_id=f"iact_{msg.channel_id}_{hex_suffix}",
+            mode="dm",
+            origin_channel_id=msg.channel_id,
+            origin_session_id=session_id,
+            origin_content=origin_content,
+            origin_sender_name=origin_sender_name,
+            origin_sender_id=origin_sender_id,
+            question=stripped,
+            target_user_id=target_user_id,
+            origin_metadata=dict(meta),
+        )
+        pi.save()
+
+        msg.metadata = meta
+        logger.info(
+            "[IMOutboundPipeline] DM 追问: session=%s target=%s question=%s",
+            session_id, target_user_id, stripped[:80],
+        )
+
     # ---- helpers ----
 
     @staticmethod
     def _extract_content(msg: "Message") -> str:
         payload = msg.payload if isinstance(msg.payload, dict) else {}
-        return str(payload.get("content") or "").strip()
+        content = payload.get("content")
+        if isinstance(content, str):
+            return content.strip()
+        if isinstance(content, dict):
+            for key in ("output", "text", "message"):
+                val = content.get(key)
+                if isinstance(val, str) and val.strip():
+                    return val.strip()
+        return str(content or "").strip()
 
     async def _classify_personal_action(
         self,

@@ -172,3 +172,27 @@ class FeishuIMPlatformAdapter:
     @staticmethod
     def get_candidate_user_id(metadata: dict[str, Any]) -> str:
         return str(metadata.get("reply_candidate_feishu_open_id") or "").strip()
+
+    def resolve_user_id_by_name(self, name: str) -> str:
+        """根据用户名在群聊历史中查找对应的 open_id。"""
+        if not name or not self._api_client:
+            return ""
+        try:
+            from jiuwenclaw.utils import get_agent_workspace_dir
+            import json
+            from pathlib import Path
+
+            interactions_dir = Path.home() / ".jiuwenclaw" / "workspace" / "agent" / "interactions"
+            for fp in interactions_dir.glob("*.json"):
+                try:
+                    data = json.loads(fp.read_text(encoding="utf-8"))
+                    if data.get("target_user_name") == name:
+                        uid = str(data.get("target_user_id") or "").strip()
+                        if uid:
+                            return uid
+                except Exception as e:
+                    logger.debug("[FeishuIMAdapter] 解析交互文件 %s 失败: %s", fp, e)
+                    continue
+        except Exception as e:
+            logger.warning("[FeishuIMAdapter] resolve_user_id_by_name 失败: %s", e)
+        return ""

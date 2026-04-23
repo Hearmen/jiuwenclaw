@@ -146,3 +146,27 @@ class WecomIMPlatformAdapter:
             if candidate:
                 metadata.update(patch)
         return candidate
+
+    @staticmethod
+    def resolve_user_id_by_name(name: str) -> str:
+        """根据用户名在群聊历史中查找对应的 user_id。"""
+        if not name:
+            return ""
+        try:
+            import json
+            from pathlib import Path
+
+            interactions_dir = Path.home() / ".jiuwenclaw" / "workspace" / "agent" / "interactions"
+            for fp in interactions_dir.glob("*.json"):
+                try:
+                    data = json.loads(fp.read_text(encoding="utf-8"))
+                    if data.get("target_user_name") == name:
+                        uid = str(data.get("target_user_id") or "").strip()
+                        if uid:
+                            return uid
+                except Exception as e:
+                    logger.debug("[WecomIMAdapter] 解析交互文件 %s 失败: %s", fp, e)
+                    continue
+        except Exception as e:
+            logger.warning("[WecomIMAdapter] resolve_user_id_by_name 失败: %s", e)
+        return ""

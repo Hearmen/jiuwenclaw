@@ -221,10 +221,12 @@ permissions:
   deny_guidance_message: "This tool is not authorized in digital avatar mode."
 ``````
 
-6. The Feishu robot needs to be granted the following permissions：
-  im:message.group_msg - Retrieve all messages in the group (with sensitive permissions)
-  contact:contact.base:readonly - Retrieve basic information of the contact list
-  contact:user.base:readonly - Retrieve basic information of the user
+6\. The Feishu robot needs to be granted the following permissions：
+
+   - `im:message.group_msg` - Retrieve all messages in the group (with sensitive permissions)
+   - `contact:contact.base:readonly` - Retrieve basic information of the contact list
+   - `contact:user.base:readonly` - Retrieve basic information of the user
+   - `im:message.p2p_msg:readonly` - Retrieve private messages sent to the bot
 
 ### Fields
 

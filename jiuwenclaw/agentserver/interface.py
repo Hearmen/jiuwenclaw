@@ -76,24 +76,42 @@ _SKILL_ROUTES: dict[ReqMethod, str] = {
 }
 
 
-def build_user_prompt(
-        content: str, files: dict, channel: str,
-        language: str, trusted_dirs: list[str] | None = None
-    ) -> str:
+def build_user_prompt(content: str, files: dict, channel: str, language: str, *, 
+    trusted_dirs: list[str] | None = None, metadata: dict[str, Any] | None = None) -> str:
     """Build user prompt for the agent."""
+    interaction_prefix = ""
+    if metadata:
+        interaction_ctx = str(metadata.get("interaction_context") or "").strip()
+        if interaction_ctx:
+            interaction_prefix = f"\n{interaction_ctx}\n\n"
+
     if language == "zh":
         prompt = "你收到一条消息：\n"
     else:
         prompt = "You receive a new message:\n"
+    msg_data: dict[str, Any] = {
+        "source": channel,
+        "preferred_response_language": language,
+        "content": content,
+        "type": "user input",
+    }
     if channel in ["cron", "heartbeat"]:
-        return prompt + json.dumps(
-            {
-                "source": "system",
-                "preferred_response_language": language,
-                "content": content,
-                "type": channel,
-            },
-            ensure_ascii=False,
+        msg_data["source"] = "system"
+        msg_data["type"] = channel
+    if metadata:
+        chat_type = str(metadata.get("chat_type") or metadata.get("im_chat_type") or "").strip()
+        if chat_type:
+            msg_data["chat_type"] = chat_type
+        sender_name = str(metadata.get("sender_name") or "").strip()
+        if sender_name:
+            msg_data["sender"] = sender_name
+    if channel not in ["cron", "heartbeat"]:
+        msg_data["files_updated_by_user"] = json.dumps(files, ensure_ascii=False)
+    final_prompt = interaction_prefix + prompt + json.dumps(msg_data, ensure_ascii=False)
+    if interaction_prefix:
+        logger.info(
+            "[build_user_prompt][DEBUG] interaction_context 存在，最终 prompt=\n%s",
+            final_prompt,
         )
 
     now = datetime.now(timezone(timedelta(hours=8)))
@@ -109,7 +127,7 @@ def build_user_prompt(
     }
     if trusted_dirs:
         user_message_context["trusted_dirs"] = json.dumps(trusted_dirs, ensure_ascii=False)
-    return prompt + json.dumps(user_message_context, ensure_ascii=False)
+    return interaction_prefix + prompt + json.dumps(user_message_context, ensure_ascii=False)
 
 
 class JiuWenClaw:
@@ -218,6 +236,11 @@ class JiuWenClaw:
             for d in raw_trusted_dirs:
                 if isinstance(d, str) and d.strip():
                     trusted_dirs.append(d.strip())
+        if request.metadata and request.metadata.get("interaction_context"):
+            logger.info(
+                "[_build_inputs][DEBUG] request.params.query=\n%s",
+                query[:2000] if isinstance(query, str) else str(query)[:2000],
+            )
 
         if isinstance(query, InteractiveInput):
             final_query = query
@@ -232,6 +255,7 @@ class JiuWenClaw:
                     channel=channel,
                     language=language,
                     trusted_dirs=trusted_dirs,
+                    metadata=request.metadata,
                 )
             else:
                 final_query = build_user_prompt(
@@ -240,6 +264,7 @@ class JiuWenClaw:
                     channel=channel,
                     language=language,
                     trusted_dirs=trusted_dirs,
+                    metadata=request.metadata,
                 )
 
         inputs: dict[str, Any] = {
