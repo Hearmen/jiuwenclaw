@@ -32,6 +32,7 @@ import {
 import type { SessionListPayload, SessionMeta } from "../core/commands/builtins/resume.js";
 import type { ConfigItemSchema } from "../core/commands/builtins/config.js";
 import { buildModeAutocompleteItems } from "../core/commands/builtins/mode.js";
+import { addTrustedDir } from "../core/tui-trusted-dirs-store.js";
 import { handleAppScreenKeyInput } from "./keymap.js";
 import { buildAppScreenLines } from "./screen-layout.js";
 import {
@@ -338,6 +339,7 @@ export class AppScreen implements Component, Focusable {
   private resumeSessionList: ResumeSessionListState | null = null;
   private modelList: ModelListState | null = null;
   private configEditorState: ConfigEditorState | null = null;
+  private startupPromptList: SelectList | null = null;
   private showTodos = true;
   private showTeamPanel = false;
   private selectedTeamMemberId: string | null = null;
@@ -375,6 +377,40 @@ export class AppScreen implements Component, Focusable {
     this.unsubscribe = this.state.onChange(() => {
       this.handleStateChange();
     });
+    // Initialize startup prompt for workspace trust
+    this.initStartupPrompt();
+  }
+
+  private initStartupPrompt(): void {
+    const cwd = process.cwd();
+    const items: SelectItem[] = [
+      {
+        label: "Yes, I trust this folder",
+        value: "yes",
+        description: "JiuwenClaw will be able to read, edit, and execute files here",
+      },
+      {
+        label: "No, use default workspace",
+        value: "no",
+        description: "Only ~/.jiuwenclaw/agent/jiuwenclaw_workspace will be accessible",
+      },
+    ];
+    this.startupPromptList = new SelectList(items, 2, selectListTheme, {
+      minPrimaryColumnWidth: 40,
+      maxPrimaryColumnWidth: 60,
+    });
+    this.startupPromptList.onSelect = (item) => {
+      if (item.value === "yes") {
+        addTrustedDir(cwd);
+      }
+      this.startupPromptList = null;
+      this.tui.requestRender();
+    };
+    this.startupPromptList.onCancel = () => {
+      // Same as "No" - use default workspace
+      this.startupPromptList = null;
+      this.tui.requestRender();
+    };
   }
 
   get focused(): boolean {
@@ -482,6 +518,13 @@ export class AppScreen implements Component, Focusable {
       }
     }
 
+    // Startup prompt for workspace trust (shown first)
+    if (this.startupPromptList !== null) {
+      this.startupPromptList.handleInput(data);
+      this.tui.requestRender();
+      return;
+    }
+
     if (!snapshot.pendingQuestion && this.resumeSessionList !== null) {
       this.resumeSessionList.list.handleInput(data);
       this.tui.requestRender();
@@ -579,6 +622,7 @@ export class AppScreen implements Component, Focusable {
     const editorLines = this.applySlashCommandHint(this.editor.render(width), width);
     const composerPreviewLines: string[] = [];
     const questionLines = [
+      ...this.buildStartupPromptLines(width),
       ...this.buildConfigEditorLines(width),
       ...this.buildResumeSessionListLines(width),
       ...this.buildModelListLines(width),
@@ -837,6 +881,26 @@ export class AppScreen implements Component, Focusable {
     this.state.clearEntries();
     await this.state.restoreHistory(nextSessionId);
     this.tui.requestRender();
+  }
+
+  private buildStartupPromptLines(width: number): string[] {
+    if (!this.startupPromptList) {
+      return [];
+    }
+    const cwd = process.cwd();
+    return [
+      "",
+      padToWidth(palette.status.warning("Safety Check"), width),
+      "",
+      padToWidth(palette.text.primary(`Current folder: ${cwd}`), width),
+      "",
+      padToWidth(palette.text.dim("Is this a project you created or one you trust?"), width),
+      padToWidth(palette.text.dim("(e.g. your own code, well-known open source, or team project)"), width),
+      padToWidth(palette.text.dim("If unfamiliar, please review the folder contents before proceeding."), width),
+      "",
+      ...this.startupPromptList.render(width),
+      padToWidth(palette.text.dim("↑/↓ choose · Enter confirm · Esc use default workspace"), width),
+    ];
   }
 
   private buildResumeSessionListLines(width: number): string[] {

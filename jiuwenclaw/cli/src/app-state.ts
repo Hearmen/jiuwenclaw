@@ -45,7 +45,13 @@ import {
   type ThemeName,
 } from "./ui/theme.js";
 import { type ConnectionStatus, WsClient } from "./core/ws-client.js";
-import { loadTuiWorkspaceDir, saveTuiWorkspaceDir } from "./core/tui-workspace-dir-store.js";
+import {
+  getTrustedDirs,
+  addTrustedDir,
+  setTrustedDir,
+  removeTrustedDir,
+  clearTrustedDirs,
+} from "./core/tui-trusted-dirs-store.js";
 
 export interface AppSnapshot {
   connectionStatus: ConnectionStatus;
@@ -131,7 +137,6 @@ export class CliPiAppState {
     model: "",
     version: "",
   };
-  private workspaceDir: string = loadTuiWorkspaceDir();
   /** 当 closeUi 中 cancelBeforeExit 调 cancel({showNotice:false}) 时置 true，抑制 chat.interrupt_result 的 UI 通知。 */
   private suppressInterruptResult = false;
   private readonly eventDelegate: AppEventDelegate = {
@@ -396,21 +401,18 @@ export class CliPiAppState {
       expandToolGroups: this.expandToolGroups,
       sessionTitle: snapshot.sessionTitle,
       setSessionTitle: this.setSessionTitle,
-      getWorkspaceDir: () => this.workspaceDir,
-      setWorkspaceDir: this.setWorkspaceDir,
+      getTrustedDirs: getTrustedDirs,
+      addTrustedDir: addTrustedDir,
+      setTrustedDir: setTrustedDir,
+      removeTrustedDir: removeTrustedDir,
+      clearTrustedDirs: clearTrustedDirs,
       enterConfigEditor: undefined, // AppScreen injects the real handler when executing slash commands.
     };
   }
 
-  readonly setWorkspaceDir = (path: string): void => {
-    this.workspaceDir = path.trim();
-    saveTuiWorkspaceDir(this.workspaceDir);
-    this.emitChange();
-  };
-
   readonly sendEventOnly = (method: string, params: Record<string, unknown>): string => {
     const id = `tui_${Date.now().toString(16)}_${Math.random().toString(36).slice(2, 6)}`;
-    const wd = this.workspaceDir.trim();
+    const trustedDirs = getTrustedDirs();
     this.wsClient.send({
       type: "req",
       id,
@@ -418,7 +420,7 @@ export class CliPiAppState {
       params: {
         ...params,
         session_id: (params.session_id as string | undefined) ?? this.sessionId,
-        ...(wd ? { workspace_dir: wd } : {}),
+        ...(trustedDirs.length > 0 ? { trusted_dirs: trustedDirs } : {}),
       },
     });
     return id;

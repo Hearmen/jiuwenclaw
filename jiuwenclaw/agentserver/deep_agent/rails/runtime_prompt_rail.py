@@ -39,6 +39,7 @@ class RuntimePromptRail(DeepAgentRail):
         self._tz = timezone(timedelta(hours=timezone_offset))
         self._agent_name = agent_name
         self._model_name = model_name
+        self._trusted_dirs: list[str] | None = None
 
     def init(self, agent) -> None:
         """从 agent 获取 system_prompt_builder 引用。"""
@@ -50,6 +51,7 @@ class RuntimePromptRail(DeepAgentRail):
             self.system_prompt_builder.remove_section("time")
             self.system_prompt_builder.remove_section("runtime")
             self.system_prompt_builder.remove_section("browser_tool_policy")
+            self.system_prompt_builder.remove_section("trusted_dirs_policy")
         self.system_prompt_builder = None
 
     def set_language(self, language: str) -> None:
@@ -59,6 +61,10 @@ class RuntimePromptRail(DeepAgentRail):
     def set_channel(self, channel: str) -> None:
         """per-request 更新频道。"""
         self._channel = channel
+
+    def set_trusted_dirs(self, trusted_dirs: list[str] | None) -> None:
+        """per-request 更新可信目录。"""
+        self._trusted_dirs = trusted_dirs
 
     @staticmethod
     def _get_git_branch() -> str:
@@ -165,3 +171,36 @@ class RuntimePromptRail(DeepAgentRail):
                 content={"cn": browser_tool_policy, "en": browser_tool_policy},
                 priority=98,
             ))
+
+        if self._channel == "tui":
+            # Trusted directories policy for TUI mode
+            if self._trusted_dirs and len(self._trusted_dirs) > 0:
+                workspace_dir = "~/.jiuwenclaw/agent/jiuwenclaw_workspace"
+                dirs_display = ", ".join(self._trusted_dirs)
+                if self._language == "cn":
+                    trusted_dirs_content = (
+                        "# 可信目录策略\n\n"
+                        f"- 默认工作空间：{workspace_dir}\n"
+                        f"- 用户可信目录：{dirs_display}\n"
+                        "- 文件操作（读取、编辑、执行）必须限制在上述目录范围内\n"
+                        "- 若用户请求的操作涉及超出可信目录范围的路径，必须先向用户确认是否允许此次操作\n"
+                        "- 确认时需明确告知：操作的完整路径、操作类型（读取/编辑/执行）、潜在风险\n"
+                    )
+                else:
+                    trusted_dirs_content = (
+                        "# Trusted Directories Policy\n\n"
+                        f"- Default workspace: {workspace_dir}\n"
+                        f"- User trusted directories: {dirs_display}\n"
+                        "- File operations (read, edit, execute) must be limited to the above directories\n"
+                        "- If the user requests an operation involving paths outside trusted directories, "
+                        "you must first ask the user to confirm whether to allow this operation\n"
+                        "- When confirming, clearly state: the full path, operation type (read/edit/execute), "
+                        "potential risks\n"
+                    )
+                self.system_prompt_builder.add_section(PromptSection(
+                    name="trusted_dirs_policy",
+                    content={"cn": trusted_dirs_content, "en": trusted_dirs_content},
+                    priority=90,
+                ))
+            else:
+                self.system_prompt_builder.remove_section("trusted_dirs_policy")

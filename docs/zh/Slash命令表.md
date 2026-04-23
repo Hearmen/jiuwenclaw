@@ -20,7 +20,7 @@
 | `/help` | 查看可用命令 |
 | `/theme` | 切换主题 |
 | `/config` | 修改配置（当前为本地实现，后续计划统一到 Gateway） |
-| `/workspace` | 管理工作区路径与目录授权（见下文） |
+| `/workspace` | 管理可信目录（见下文） |
 
 > 说明：`/mode` 的受控切换逻辑以 Gateway 侧行为为主，详见下文「`/mode` 与 `/switch`」。
 
@@ -30,7 +30,6 @@
 
 | 命令 | 说明 |
 |---|---|
-| `/add_dir` | 目录授权为可读写（TUI 侧建议改用 `/workspace add`） |
 | `/plan` | 切换规划子模式 |
 | `/resume` | 历史会话恢复（见下文） |
 | `/new_session` | 新建会话（仅 IM 生效） |
@@ -44,21 +43,42 @@
 
 ## 重点命令说明
 
-### `/workspace`（TUI 工作区目录、待开发）
+### `/workspace`（TUI 可信目录管理）
 
-- 常用子命令：
-  - `/workspace` 或 `/workspace get`：查看当前路径；
-  - `/workspace set <path>`：设置工作区路径（支持如 `./` 的相对路径，按 TUI 启动目录解析）；
-  - `/workspace clear`：清空工作区路径；
-  - `/workspace add <path>`：迁移自原 `/add-dir`，底层调用 `command.add_dir`。
-- 兼容别名：`/workspace_dir`、`/workspace-dir`。
-- 持久化文件：`~/.jiuwenclaw/tui-workspace-dir`（单行文本）。
-- 默认值：若本地未保存，TUI 启动时默认取 `process.cwd()`。
-- 与 Gateway 关系：当存在非空工作区路径时，TUI 通过 `sendEventOnly` 发送请求会在 `params` 中附带 `workspace_dir`，供 Gateway / AgentServer 使用。
-- 切换路径与会话隔离：
-  - 仅当新旧路径（规范化后）不同才触发处理；
-  - 当前会话已发生 `chat.send` 时，`/workspace set` 才进入“确认 ->（必要时）中断 -> 新建会话”流程；
-  - 若尚未 `chat.send`，仅更新 `workspace_dir`，不新建会话。
+管理 AI 可访问的目录范围，用于文件读取、编辑、执行等操作。
+
+#### 子命令
+
+| 命令 | 说明 |
+|---|---|
+| `/workspace` 或 `/workspace get` | 查看系统默认工作空间与当前可信目录列表 |
+| `/workspace add [path]` | 添加可信目录（默认为当前目录，路径不存在时提示错误） |
+| `/workspace set <path>` | 重置可信目录为单个路径（已有可信目录时需确认） |
+| `/workspace remove <path>` | 移除指定可信目录 |
+| `/workspace clear` | 清空所有可信目录（仅使用默认工作空间） |
+
+#### 概念说明
+
+- **系统默认工作空间（workspace）**：固定路径 `~/.jiuwenclaw/agent/jiuwenclaw_workspace`，始终可用
+- **可信目录（trusted_dirs）**：用户授权的可访问目录，由 TUI 管理，传递给后端 Agent
+
+#### 控制逻辑
+
+1. **启动确认**：TUI 启动时询问用户是否信任当前目录
+   - 选择「信任」：将当前目录添加为可信目录
+   - 选择「不信任」：仅使用默认工作空间
+
+2. **会话级管理**：可信目录在当前 CLI 会话有效，不持久化到文件
+
+3. **后端传递**：TUI 通过请求参数 `trusted_dirs` 传递可信目录列表，Agent 据此限制文件操作范围
+
+4. **路径限制**：Agent 收到可信目录后，文件操作需限制在可信目录范围内；超出范围需向用户确认
+
+5. **路径校验**：`add` 和 `set` 操作会校验路径是否存在，不存在则提示错误
+
+#### 兼容别名
+
+`/workspace_dir`、`/workspace-dir`
 
 ### `/mode` 与 `/switch`（受控通道）
 

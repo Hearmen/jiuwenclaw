@@ -1,6 +1,5 @@
 /** 内置 slash 与 Gateway 受控指令对齐时参见仓库 `jiuwenclaw/gateway/slash_command.py`（SSOT）与 `docs/zh/CLI_COMMANDS.md`。 */
 import type { SlashCommand } from "./types.js";
-import { createAddDirCommand } from "./builtins/add-dir.js";
 import { createClearCommand } from "./builtins/clear.js";
 import { createColorCommand } from "./builtins/color.js";
 import { createCompactCommand } from "./builtins/compact.js";
@@ -25,12 +24,11 @@ import { createRenameCommand } from "./builtins/rename.js";
 import { createSessionCommand } from "./builtins/session.js";
 import { createSkillsCommand } from "./builtins/skills.js";
 import { createThemeCommand } from "./builtins/theme.js";
-import { createWorkspaceDirCommand } from "./builtins/workspace-dir.js";
+import { createWorkspaceCommand } from "./builtins/workspace-dir.js";
 
 export function createBuiltinCommands(): SlashCommand[] {
   const commands: SlashCommand[] = [
     createHelpCommand(() => commands),
-    createAddDirCommand(),
     createClearCommand(),
     createInitCommand(),
     createColorCommand(),
@@ -51,7 +49,7 @@ export function createBuiltinCommands(): SlashCommand[] {
     createSessionCommand(),
     createSkillsCommand(),
     createThemeCommand(),
-    createWorkspaceDirCommand(),
+    createWorkspaceCommand(),
     createHotkeyCommand(),
   ];
 

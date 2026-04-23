@@ -76,7 +76,10 @@ _SKILL_ROUTES: dict[ReqMethod, str] = {
 }
 
 
-def build_user_prompt(content: str, files: dict, channel: str, language: str) -> str:
+def build_user_prompt(
+        content: str, files: dict, channel: str,
+        language: str, trusted_dirs: list[str] | None = None
+    ) -> str:
     """Build user prompt for the agent."""
     if language == "zh":
         prompt = "你收到一条消息：\n"
@@ -95,19 +98,18 @@ def build_user_prompt(content: str, files: dict, channel: str, language: str) ->
 
     now = datetime.now(timezone(timedelta(hours=8)))
     now_str = now.strftime("%Y-%m-%d %H:%M:%S")
-
-    return prompt + json.dumps(
-        {
-            "source": channel,
-            "timezone": "Asia/Shanghai",
-            "timestamp": now_str,
-            "preferred_response_language": language,
-            "content": content,
-            "files_updated_by_user": json.dumps(files, ensure_ascii=False),
-            "type": "user input",
-        },
-        ensure_ascii=False,
-    )
+    user_message_context = {
+        "source": channel,
+        "timezone": "Asia/Shanghai",
+        "timestamp": now_str,
+        "preferred_response_language": language,
+        "content": content,
+        "files_updated_by_user": json.dumps(files, ensure_ascii=False),
+        "type": "user input"
+    }
+    if trusted_dirs:
+        user_message_context["trusted_dirs"] = json.dumps(trusted_dirs, ensure_ascii=False)
+    return prompt + json.dumps(user_message_context, ensure_ascii=False)
 
 
 class JiuWenClaw:
@@ -199,7 +201,7 @@ class JiuWenClaw:
         await adapter.reload_agent_config(config_base, env_overrides)
         logger.info("[JiuWenClaw] Agent config reloaded: sdk=%s", self._sdk_name)
 
-    def _build_inputs(self, request: AgentRequest) -> Tuple[dict[str, Any], str]:
+    def _build_inputs(self, request: AgentRequest) -> Tuple[dict[str, Any], str, str]:
         """构建 adapter 所需的 inputs 字典."""
         from openjiuwen.core.session.interaction.interactive_input import InteractiveInput
 
@@ -208,6 +210,14 @@ class JiuWenClaw:
         query = request.params.get("query", "")
         channel = request.session_id.split('_')[0] if request.session_id else "web"
         language = config_base.get("preferred_language", "zh")
+
+        # Get trusted directories from request params (passed by TUI)
+        trusted_dirs: list[str] = []
+        raw_trusted_dirs = request.params.get("trusted_dirs")
+        if isinstance(raw_trusted_dirs, list):
+            for d in raw_trusted_dirs:
+                if isinstance(d, str) and d.strip():
+                    trusted_dirs.append(d.strip())
 
         if isinstance(query, InteractiveInput):
             final_query = query
@@ -220,14 +230,16 @@ class JiuWenClaw:
                     query,
                     files=request.params.get("files", {}),
                     channel=channel,
-                    language=language
+                    language=language,
+                    trusted_dirs=trusted_dirs,
                 )
             else:
                 final_query = build_user_prompt(
                     query,
                     files=request.params.get("files", {}),
                     channel=channel,
-                    language=language
+                    language=language,
+                    trusted_dirs=trusted_dirs,
                 )
 
         inputs: dict[str, Any] = {
@@ -240,6 +252,10 @@ class JiuWenClaw:
         # 传递 enable_memory 参数
         enable_memory = request.metadata.get("enable_memory", True) if request.metadata else True
         inputs["enable_memory"] = enable_memory
+
+        # 传递 trusted_dirs 参数（用于 RuntimePromptRail 添加路径限制策略）
+        if trusted_dirs:
+            inputs["trusted_dirs"] = trusted_dirs
 
         run = request.params.get("run")
         if run:

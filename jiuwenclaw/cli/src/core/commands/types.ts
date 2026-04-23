@@ -55,8 +55,12 @@ export interface CommandContext {
   expandToolGroups: (scope: "last" | "all") => void;
   sessionTitle: string;
   setSessionTitle: (title: string) => void;
-  getWorkspaceDir: () => string;
-  setWorkspaceDir: (path: string) => void;
+  // Trusted directories management (global, not session-specific)
+  getTrustedDirs: () => string[];
+  addTrustedDir: (path: string) => "added" | "exists" | "not_found" | "invalid";
+  setTrustedDir: (path: string) => "set" | "not_found" | "invalid";
+  removeTrustedDir: (path: string) => boolean;
+  clearTrustedDirs: () => void;
   enterConfigEditor?: (
     focusKey?: string,
     configPayload?: Record<string, unknown> & { schema?: ConfigItemSchema[] },

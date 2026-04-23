@@ -68,7 +68,7 @@ export function formatToolArguments(args: Record<string, unknown>): string {
 /**
  * 格式化工具结果（截断长结果）
  */
-export function formatToolResult(result: string, maxLength = 500): string {
+export function formatToolResult(result: string, maxLength = 10000): string {
   if (result.length <= maxLength) return result;
   return result.slice(0, maxLength) + `\n... (${i18n.t('chatUi.toolResult.truncated')})`;
 }
