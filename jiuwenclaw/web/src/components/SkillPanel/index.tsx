@@ -9,6 +9,7 @@ import { webRequest } from "../../services/webClient";
 import { SourceManagerModal } from "../../features/SourceManagerModal";
 import { SkillNetSearchModal } from "../../features/SkillNetSearchModal";
 import { ClawHubSearchModal } from "../../features/ClawHubSearchModal";
+import { OpenJiuwenMarketModal } from "../../features/OpenJiuwenMarketModal";
 import { SkillEvolutionModal } from "../../features/SkillEvolutionModal";
 import { normalizeSkillNetUrl } from "../../utils/skillNetUrl";
 
@@ -111,6 +112,7 @@ export function SkillPanel({ sessionId, onNavigateToConfig }: SkillPanelProps) {
   const [sourceModalOpen, setSourceModalOpen] = useState(false);
   const [skillNetModalOpen, setSkillNetModalOpen] = useState(false);
   const [clawHubModalOpen, setClawHubModalOpen] = useState(false);
+  const [openjiuwenModalOpen, setOpenjiuwenModalOpen] = useState(false);
   const [evolutionModalOpen, setEvolutionModalOpen] = useState(false);
   const [evolutionSkillName, setEvolutionSkillName] = useState<string | null>(null);
   const withSession = useCallback(
@@ -584,7 +586,7 @@ export function SkillPanel({ sessionId, onNavigateToConfig }: SkillPanelProps) {
   return (
     <div className="flex-1 flex flex-col min-w-0 min-h-0">
       <div className="card flex-1 flex flex-col min-h-0 overflow-hidden">
-        <div className="flex items-center justify-between gap-4">
+        <div className="flex flex-wrap items-start justify-between gap-3">
           <div>
             <h2 className="text-lg font-semibold">
               {t('skills.title')}
@@ -593,7 +595,7 @@ export function SkillPanel({ sessionId, onNavigateToConfig }: SkillPanelProps) {
               {t('skills.subtitle')}
             </p>
           </div>
-          <div className="flex items-center gap-2">
+          <div className="flex items-center justify-end gap-2 flex-wrap">
             <button
               onClick={() => fetchSkills(true)}
               className="px-3 py-1.5 rounded-md text-sm bg-secondary text-text-muted hover:text-text hover:bg-card border border-border"
@@ -628,6 +630,12 @@ export function SkillPanel({ sessionId, onNavigateToConfig }: SkillPanelProps) {
               className="px-3 py-1.5 rounded-md text-sm bg-accent text-white hover:bg-accent-hover"
             >
               {t('skills.clawhub.title')}
+            </button>
+            <button
+              onClick={() => setOpenjiuwenModalOpen(true)}
+              className="px-3 py-1.5 rounded-md text-sm bg-accent text-white hover:bg-accent-hover"
+            >
+              {t('skills.openjiuwen.title')}
             </button>
           </div>
         </div>
@@ -801,6 +809,15 @@ export function SkillPanel({ sessionId, onNavigateToConfig }: SkillPanelProps) {
         sessionId={sessionId}
         installedSkillNames={installedSkillNames}
         onClose={() => setClawHubModalOpen(false)}
+        onInstalled={async () => {
+          await fetchSkills();
+        }}
+      />
+      <OpenJiuwenMarketModal
+        open={openjiuwenModalOpen}
+        sessionId={sessionId}
+        installedSkillNames={installedSkillNames}
+        onClose={() => setOpenjiuwenModalOpen(false)}
         onInstalled={async () => {
           await fetchSkills();
         }}

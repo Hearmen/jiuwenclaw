@@ -746,6 +746,22 @@
         "httpError": "Request failed. Please check your token or try again later if you've been making frequent requests."
       }
     },
+    "openjiuwen": {
+      "title": "TeamSkills Search",
+      "titleHubLinkText": "TeamSkillsHub",
+      "titleHubAria": "TeamSkillsHub marketplace",
+      "search": "Search",
+      "searchPlaceholder": "Search TeamSkills by keyword",
+      "noResults": "No matching skills. Try different keywords.",
+      "installing": "Installing…",
+      "messages": {
+        "installed": "Installed: {{name}}"
+      },
+      "errors": {
+        "searchFailed": "Search failed",
+        "installFailed": "Install failed"
+      }
+    },
     "marketplacesAvailable": "Available marketplaces: {{names}}",
     "marketplacesDefault": "Default marketplace: anthropics",
     "installPrompt": "Enter plugin spec (plugin@marketplace)",

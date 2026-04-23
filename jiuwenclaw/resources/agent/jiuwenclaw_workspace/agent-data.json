@@ -128,6 +128,67 @@
       "isMarkdown": true
     }
   ],
+  "jiuwenclaw_workspace/skills/ascend-moe-optimizer-trace-analyzer": [
+    {
+      "name": "app.py",
+      "path": "agent/jiuwenclaw_workspace/skills/ascend-moe-optimizer-trace-analyzer/app.py",
+      "isMarkdown": false
+    },
+    {
+      "name": "SKILL.md",
+      "path": "agent/jiuwenclaw_workspace/skills/ascend-moe-optimizer-trace-analyzer/SKILL.md",
+      "isMarkdown": true
+    }
+  ],
+  "jiuwenclaw_workspace/skills/ascend-moe-optimizer-trace-analyzer/analyzers": [
+    {
+      "name": "__init__.py",
+      "path": "agent/jiuwenclaw_workspace/skills/ascend-moe-optimizer-trace-analyzer/analyzers/__init__.py",
+      "isMarkdown": false
+    },
+    {
+      "name": "diagnosis.py",
+      "path": "agent/jiuwenclaw_workspace/skills/ascend-moe-optimizer-trace-analyzer/analyzers/diagnosis.py",
+      "isMarkdown": false
+    },
+    {
+      "name": "llm_analysis.py",
+      "path": "agent/jiuwenclaw_workspace/skills/ascend-moe-optimizer-trace-analyzer/analyzers/llm_analysis.py",
+      "isMarkdown": false
+    },
+    {
+      "name": "metrics.py",
+      "path": "agent/jiuwenclaw_workspace/skills/ascend-moe-optimizer-trace-analyzer/analyzers/metrics.py",
+      "isMarkdown": false
+    },
+    {
+      "name": "parser.py",
+      "path": "agent/jiuwenclaw_workspace/skills/ascend-moe-optimizer-trace-analyzer/analyzers/parser.py",
+      "isMarkdown": false
+    },
+    {
+      "name": "phase_mapper.py",
+      "path": "agent/jiuwenclaw_workspace/skills/ascend-moe-optimizer-trace-analyzer/analyzers/phase_mapper.py",
+      "isMarkdown": false
+    },
+    {
+      "name": "plots.py",
+      "path": "agent/jiuwenclaw_workspace/skills/ascend-moe-optimizer-trace-analyzer/analyzers/plots.py",
+      "isMarkdown": false
+    },
+    {
+      "name": "reporter.py",
+      "path": "agent/jiuwenclaw_workspace/skills/ascend-moe-optimizer-trace-analyzer/analyzers/reporter.py",
+      "isMarkdown": false
+    }
+  ],
+  "jiuwenclaw_workspace/skills/ascend-moe-optimizer-trace-analyzer/config": [
+    {
+      "name": "phase_map.yaml",
+      "path": "agent/jiuwenclaw_workspace/skills/ascend-moe-optimizer-trace-analyzer/config/phase_map.yaml",
+      "isMarkdown": false
+    }
+  ],
   "jiuwenclaw_workspace/skills/cross-channel-history-retrieval": [
     {
       "name": "SKILL.md",
@@ -394,13 +455,6 @@
     {
       "name": "wechat_article.py",
       "path": "agent/jiuwenclaw_workspace/skills/skill-gen-4-enterprise-doc/scripts/skill_gen/url_ingest/wechat_article.py",
-      "isMarkdown": false
-    }
-  ],
-  "workspace": [
-    {
-      "name": "agent-data.json",
-      "path": "agent/workspace/agent-data.json",
       "isMarkdown": false
     }
   ]
