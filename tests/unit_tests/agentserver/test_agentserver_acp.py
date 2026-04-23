@@ -10,7 +10,10 @@ from jiuwenclaw.agentserver.tools import acp_output_tools
 from jiuwenclaw.agentserver.tools.acp_output_tools import AcpOutputRequest, get_acp_output_manager
 from jiuwenclaw.agentserver.deep_agent import interface_deep as interface_deep_module
 from jiuwenclaw.agentserver.stream_utils import parse_stream_chunk
-from jiuwenclaw.agentserver.deep_agent.interface_deep import _build_context_engineering_rail
+from jiuwenclaw.agentserver.deep_agent.interface_deep import (
+    _build_context_assemble_rail,
+    _build_context_processor_rail,
+)
 from jiuwenclaw.e2a.gateway_normalize import e2a_from_agent_fields
 from jiuwenclaw.schema.agent import AgentRequest
 from jiuwenclaw.schema.message import ReqMethod
@@ -46,10 +49,15 @@ class FakeAgentManager:
         return dict(self.client_capabilities)
 
 
-class FakeJiuClawContextEngineeringRail:
+class FakeContextProcessorRail:
     def __init__(self, *, processors=None, preset=None):
         self.processors = processors
         self.preset = preset
+
+
+class FakeContextAssembleRail:
+    def __init__(self):
+        pass
 
 
 class AgentWebSocketServerHarness(agent_ws_server_module.AgentWebSocketServer):
@@ -67,8 +75,11 @@ class AgentWebSocketServerHarness(agent_ws_server_module.AgentWebSocketServer):
 
 
 class DeepAdapterHarness(interface_deep_module.JiuWenClawDeepAdapter):
-    def build_context_engineering_rail_for_test(self, config):
-        return _build_context_engineering_rail(config, "agent.plan")
+    def build_context_assemble_rail_for_test(self):
+        return _build_context_assemble_rail()
+
+    def build_context_processor_rail_for_test(self, config):
+        return _build_context_processor_rail(config)
 
 
 def fake_encode_agent_response_for_wire(resp, response_id):
@@ -468,15 +479,15 @@ async def test_wait_for_terminal_exit_completed_result_sets_should_retry_false(m
     }
 
 
-def test_build_context_engineering_rail_uses_summary_offloader_config(monkeypatch):
+def test_build_context_processor_rail_uses_summary_offloader_config(monkeypatch):
     monkeypatch.setattr(
         interface_deep_module,
-        "JiuClawContextEngineeringRail",
-        FakeJiuClawContextEngineeringRail,
+        "ContextProcessorRail",
+        FakeContextProcessorRail,
     )
     adapter = DeepAdapterHarness()
 
-    rail = adapter.build_context_engineering_rail_for_test(
+    rail = adapter.build_context_processor_rail_for_test(
         {
             "context_engine_config": {
                 "message_summary_offloader_config": {
@@ -488,7 +499,7 @@ def test_build_context_engineering_rail_uses_summary_offloader_config(monkeypatc
         }
     )
 
-    assert isinstance(rail, FakeJiuClawContextEngineeringRail)
+    assert isinstance(rail, FakeContextProcessorRail)
     assert rail.preset is True
     assert rail.processors == [
         (
@@ -502,15 +513,15 @@ def test_build_context_engineering_rail_uses_summary_offloader_config(monkeypatc
     ]
 
 
-def test_build_context_engineering_rail_prefers_summary_offloader_config(monkeypatch):
+def test_build_context_processor_rail_prefers_summary_offloader_config(monkeypatch):
     monkeypatch.setattr(
         interface_deep_module,
-        "JiuClawContextEngineeringRail",
-        FakeJiuClawContextEngineeringRail,
+        "ContextProcessorRail",
+        FakeContextProcessorRail,
     )
     adapter = DeepAdapterHarness()
 
-    rail = adapter.build_context_engineering_rail_for_test(
+    rail = adapter.build_context_processor_rail_for_test(
         {
             "context_engine_config": {
                 "message_summary_offloader_config": {
@@ -523,7 +534,20 @@ def test_build_context_engineering_rail_prefers_summary_offloader_config(monkeyp
         }
     )
 
-    assert isinstance(rail, FakeJiuClawContextEngineeringRail)
+    assert isinstance(rail, FakeContextProcessorRail)
     assert rail.processors == [
         ("MessageSummaryOffloader", {"tokens_threshold": 6000}),
     ]
+
+
+def test_build_context_assemble_rail_returns_context_assemble_rail_instance(monkeypatch):
+    monkeypatch.setattr(
+        interface_deep_module,
+        "ContextAssembleRail",
+        FakeContextAssembleRail,
+    )
+    adapter = DeepAdapterHarness()
+
+    rail = adapter.build_context_assemble_rail_for_test()
+
+    assert isinstance(rail, FakeContextAssembleRail)

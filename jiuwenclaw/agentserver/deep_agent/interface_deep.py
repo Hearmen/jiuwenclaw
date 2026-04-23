@@ -49,7 +49,8 @@ from openjiuwen.harness.prompts import resolve_language
 from openjiuwen.harness.rails import SkillUseRail, TaskPlanningRail, SecurityRail, SkillEvolutionRail
 from openjiuwen.harness.rails.subagent_rail import SubagentRail
 from openjiuwen.harness.rails.lsp_rail import LspRail
-from openjiuwen.harness.rails.context_engineering_rail import ContextEngineeringRail
+from openjiuwen.harness.rails.context_engineer.context_assemble_rail import ContextAssembleRail
+from openjiuwen.harness.rails.context_engineer.context_processor_rail import ContextProcessorRail
 from openjiuwen.harness.rails.filesystem_rail import FileSystemRail
 from openjiuwen.harness.rails.heartbeat_rail import HeartbeatRail
 from openjiuwen.agent_evolving.signal import SignalDetector
@@ -95,7 +96,6 @@ from jiuwenclaw.agentserver.deep_agent.interrupt.interrupt_helpers import (
 )
 from jiuwenclaw.agentserver.deep_agent.prompt_builder import build_identity_prompt
 from jiuwenclaw.agentserver.deep_agent.rails import (
-    JiuClawContextEngineeringRail,
     JiuClawStreamEventRail,
     ResponsePromptRail,
     RuntimePromptRail,
@@ -225,60 +225,58 @@ def _deep_agent_context_engine_config(react_cfg: dict[str, Any] | None) -> Conte
     )
 
 
-def _build_context_engineering_rail(config: dict[str, Any],
-                                    mode: str = "agent.fast") -> ContextEngineeringRail | None:
-    """Build ContextEngineeringRail with user config merged into presets.
+def _build_context_assemble_rail() -> ContextAssembleRail | None:
+    """Build ContextAssembleRail.
+    """
+    try:
+        context_assemble_rail = ContextAssembleRail()
+        logger.info("[JiuWenClawDeepAdapter] ContextAssembleRail create success")
+    except Exception as exc:
+        logger.warning("[JiuWenClawDeepAdapter] ContextAssembleRail create failed: %s", exc)
+        context_assemble_rail = None
+    return context_assemble_rail
 
-    用户提供的 processor 配置（dict 格式）会与预置配置做字段级别合并，
-    只覆盖用户指定的字段，其他使用预置默认值。
+
+def _build_context_processor_rail(config: dict[str, Any]) -> ContextProcessorRail | None:
+    """Build ContextProcessorRail with user config.
+
+    从配置中读取 processor 配置，传递给 ContextProcessorRail。
 
     Args:
         config: 配置字典
-        mode: 模式，agent.plan 模式使用 preset=True 和 processors，其他模式使用 preset=False 和 processors=None
     """
     try:
-        if mode == "agent.plan":
-            user_processors: List[Tuple[str, dict]] = []
-            context_engine_cfg = config.get("context_engine_config", {})
+        user_processors: List[Tuple[str, dict]] = []
+        context_engine_cfg = config.get("context_engine_config", {})
 
-            offloader_cfg = context_engine_cfg.get("message_summary_offloader_config", {})
-            if isinstance(offloader_cfg, dict) and offloader_cfg:
-                user_processors.append(("MessageSummaryOffloader", offloader_cfg))
+        offloader_cfg = context_engine_cfg.get("message_summary_offloader_config", {})
+        if isinstance(offloader_cfg, dict) and offloader_cfg:
+            user_processors.append(("MessageSummaryOffloader", offloader_cfg))
 
-            compressor_cfg = context_engine_cfg.get("dialogue_compressor_config", {})
-            if isinstance(compressor_cfg, dict) and compressor_cfg:
-                user_processors.append(("DialogueCompressor", compressor_cfg))
+        compressor_cfg = context_engine_cfg.get("dialogue_compressor_config", {})
+        if isinstance(compressor_cfg, dict) and compressor_cfg:
+            user_processors.append(("DialogueCompressor", compressor_cfg))
 
-            current_round_cfg = context_engine_cfg.get("current_round_compressor_config", {})
-            if isinstance(current_round_cfg, dict) and current_round_cfg:
-                user_processors.append(("CurrentRoundCompressor", current_round_cfg))
+        current_round_cfg = context_engine_cfg.get("current_round_compressor_config", {})
+        if isinstance(current_round_cfg, dict) and current_round_cfg:
+            user_processors.append(("CurrentRoundCompressor", current_round_cfg))
 
-            round_level_cfg = context_engine_cfg.get("round_level_compressor_config", {})
-            if isinstance(round_level_cfg, dict) and round_level_cfg:
-                user_processors.append(("RoundLevelCompressor", round_level_cfg))
+        round_level_cfg = context_engine_cfg.get("round_level_compressor_config", {})
+        if isinstance(round_level_cfg, dict) and round_level_cfg:
+            user_processors.append(("RoundLevelCompressor", round_level_cfg))
 
-            context_rail = JiuClawContextEngineeringRail(
-                processors=user_processors if user_processors else None,
-                preset=True,
-            )
-            logger.info(
-                "[JiuWenClawDeepAdapter] JiuClawContextEngineeringRail create success for agent.plan mode, "
-                "user_processors=%s",
-                [p[0] for p in user_processors] if user_processors else "none"
-            )
-        else:
-            context_rail = JiuClawContextEngineeringRail(
-                processors=None,
-                preset=False,
-            )
-            logger.info(
-                "[JiuWenClawDeepAdapter] JiuClawContextEngineeringRail create success for %s mode, "
-                "preset=False",
-                mode
-            )
+        context_rail = ContextProcessorRail(
+            processors=user_processors if user_processors else None,
+            preset=True,
+        )
+        logger.info(
+            "[JiuWenClawDeepAdapter] ContextProcessorRail create success for agent.plan mode, "
+            "user_processors=%s",
+            [p[0] for p in user_processors] if user_processors else "none"
+        )
         return context_rail
     except Exception as exc:
-        logger.warning("[JiuWenClawDeepAdapter] ContextEngineeringRail create failed: %s", exc)
+        logger.warning("[JiuWenClawDeepAdapter] ContextProcessorRail create failed: %s", exc)
         return None
 
 
@@ -336,8 +334,9 @@ class JiuWenClawDeepAdapter:
         self._skill_rail: SkillUseRail | None = None
         self._stream_event_rail: JiuClawStreamEventRail | None = None
         self._task_planning_rail: TaskPlanningRail | None = None
-        self._context_engineering_rail: ContextEngineeringRail | None = None
-        self._context_engineering_rail_mode: str | None = None
+        self._context_assemble_rail: ContextAssembleRail | None = None
+        self._context_assemble_mode: str | None = None
+        self._context_processor_rail: ContextProcessorRail | None = None
         self._runtime_prompt_rail: RuntimePromptRail | None = None
         self._response_prompt_rail: ResponsePromptRail | None = None
         self._security_rail: SecurityRail | None = None
@@ -1400,8 +1399,10 @@ class JiuWenClawDeepAdapter:
         rails_list = []
         if self._skill_rail is not None:
             rails_list.append(self._skill_rail)
-        if self._context_engineering_rail is not None:
-            rails_list.append(self._context_engineering_rail)
+        if self._context_assemble_rail is not None:
+            rails_list.append(self._context_assemble_rail)
+        if self._context_processor_rail is not None:
+            rails_list.append(self._context_processor_rail)
         if self._memory_rail is not None:
             rails_list.append(self._memory_rail)
         if self._lsp_rail is not None:
@@ -1783,23 +1784,32 @@ class JiuWenClawDeepAdapter:
                 self._instance.ability_manager.remove(existing.name)
         # plan 模式，根据config选择是否注册或者卸载memory rail
         await self._handle_memory_rail_by_config("plan")
-        # 恢复上下文 rail（仅配置启用时）
-        if self._config_cache.get("context_engine_config", {}).get("enabled", False):
-            if self._context_engineering_rail is not None and self._context_engineering_rail_mode != "agent.plan":
-                await self._instance.unregister_rail(self._context_engineering_rail)
-                self._context_engineering_rail = None
-                self._context_engineering_rail_mode = None
-            if self._context_engineering_rail is None:
-                self._context_engineering_rail = _build_context_engineering_rail(
-                    self._config_cache, mode="agent.plan")
-                if self._context_engineering_rail is not None:
-                    self._context_engineering_rail_mode = "agent.plan"
-                    await self._instance.register_rail(self._context_engineering_rail)
-        elif self._context_engineering_rail is not None:
-            await self._instance.unregister_rail(self._context_engineering_rail)
-            self._context_engineering_rail = None
-            self._context_engineering_rail_mode = None
-            logger.info("[JiuWenClawDeepAdapter] ContextEngineeringRail unregistered for plan mode (disabled)")
+        # 上下文 rail（仅 plan 模式）
+        context_enabled = self._config_cache.get("context_engine_config", {}).get("enabled", False)
+
+        if (self._context_assemble_rail is None
+                or self._context_assemble_mode != "agent.plan"):
+            if self._context_assemble_rail is not None:
+                await self._instance.unregister_rail(self._context_assemble_rail)
+                self._context_assemble_rail = None
+            self._context_assemble_rail = _build_context_assemble_rail()
+            self._context_assemble_mode = "agent.plan"
+            await self._instance.register_rail(self._context_assemble_rail)
+            logger.info("[JiuWenClawDeepAdapter] %s registered for plan mode", "ContextAssembleRail")
+
+        # ContextProcessorRail
+        if context_enabled:
+            if self._context_processor_rail is None:
+                self._context_processor_rail = _build_context_processor_rail(self._config_cache)
+                if self._context_processor_rail is not None:
+                    await self._instance.register_rail(self._context_processor_rail)
+                    logger.info("[JiuWenClawDeepAdapter] ContextProcessorRail registered for plan mode")
+        else:
+            if self._context_processor_rail is not None:
+                await self._instance.unregister_rail(self._context_processor_rail)
+                self._context_processor_rail = None
+                logger.info("[JiuWenClawDeepAdapter] ContextProcessorRail unregistered for plan mode (disabled)")
+
         # 恢复自演进 rail（仅配置启用时）
         if self._skill_evolution_rail is None and self._config_cache.get("evolution", {}).get("enabled", False):
             self._skill_evolution_rail = self._build_skill_evolution_rail(self._config_cache)
@@ -1828,17 +1838,17 @@ class JiuWenClawDeepAdapter:
         # agent 模式，根据config选择是否注册或者卸载memory rail
         await self._handle_memory_rail_by_config("fast")
         # agent/智能模式：恢复上下文 rail（仅配置启用时）
-        if self._config_cache.get("context_engine_config", {}).get("enabled", False):
-            if self._context_engineering_rail is not None and self._context_engineering_rail_mode == "agent.plan":
-                await self._instance.unregister_rail(self._context_engineering_rail)
-                self._context_engineering_rail = None
-                self._context_engineering_rail_mode = None
-            if self._context_engineering_rail is None:
-                self._context_engineering_rail = _build_context_engineering_rail(
-                    self._config_cache, mode="agent.fast")
-                if self._context_engineering_rail is not None:
-                    self._context_engineering_rail_mode = "agent.fast"
-                    await self._instance.register_rail(self._context_engineering_rail)
+        if (self._context_assemble_rail is None
+                or self._context_assemble_mode == "agent.plan"):
+            if self._context_assemble_rail is not None:
+                await self._instance.unregister_rail(self._context_assemble_rail)
+                self._context_assemble_rail = None
+            if self._context_processor_rail is not None:
+                await self._instance.unregister_rail(self._context_processor_rail)
+                self._context_processor_rail = None
+            self._context_assemble_rail = _build_context_assemble_rail()
+            self._context_assemble_mode = "agent.fast"
+            await self._instance.register_rail(self._context_assemble_rail)
 
     @staticmethod
     def _acp_runtime_tools_enabled(
