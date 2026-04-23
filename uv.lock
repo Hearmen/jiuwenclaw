@@ -34,6 +34,7 @@ http-server = [
     { name = "sse-starlette" },
     { name = "starlette" },
 ]
+
 [[package]]
 name = "aiofiles"
 version = "25.1.0"
@@ -1591,7 +1592,7 @@ requires-dist = [
     { name = "lark-oapi", specifier = ">=1.5.3" },
     { name = "loguru", specifier = ">=0.7.3" },
     { name = "mutagen", specifier = ">=1.47.0" },
-    { name = "openjiuwen", specifier = "==0.1.10.post3" },
+    { name = "openjiuwen", git = "https://gitcode.com/openJiuwen/agent-core.git?rev=develop" },
     { name = "opentelemetry-api", specifier = ">=1.25.0" },
     { name = "opentelemetry-exporter-otlp-proto-grpc", specifier = ">=1.25.0" },
     { name = "opentelemetry-exporter-otlp-proto-http", specifier = ">=1.25.0" },
@@ -2326,8 +2327,8 @@ wheels = [
 
 [[package]]
 name = "openjiuwen"
-version = "0.1.10.post3"
-source = { registry = "https://pypi.org/simple" }
+version = "0.1.11"
+source = { git = "https://gitcode.com/openJiuwen/agent-core.git?rev=develop#ebba9da59c3b818e855edfa75d03cb2aa9f56f47" }
 dependencies = [
     { name = "a2a-sdk" },
     { name = "aiofiles" },
@@ -2363,10 +2364,6 @@ dependencies = [
     { name = "tenacity" },
     { name = "tiktoken" },
     { name = "transformers" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/9c/60/efeaccfa1604eae97fdfaa0c59953129fda25598dac7a9af79eb12e418a5/openjiuwen-0.1.10.post3.tar.gz", hash = "sha256:e153b0ff852733a91e3df3eb1e7ada92caae92665c72e4ce4a40b7e9fbec0ad1", size = 1917334, upload-time = "2026-04-20T04:22:36.164Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/a0/47/ab744b174e653fdc622937699f03f1100722ebff48201e5e6d306cd50546/openjiuwen-0.1.10.post3-py3-none-any.whl", hash = "sha256:afad10dcbd4401ab83b7eb21f862b74f26c7ef0d0e94d0f3b7a192953b9c681b", size = 2575638, upload-time = "2026-04-20T04:22:33.563Z" },
 ]
 
 [[package]]
