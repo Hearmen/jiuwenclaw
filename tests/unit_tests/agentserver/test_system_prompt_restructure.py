@@ -41,9 +41,7 @@ async def test_runtime_time_section_participates_in_priority_order():
 
     runtime_rail = RuntimePromptRail(
         language="cn",
-        channel="web",
-        agent_name="main_agent",
-        model_name="test-model",
+        channel="web"
     )
     runtime_rail.init(SimpleNamespace(system_prompt_builder=builder))
 
@@ -60,7 +58,7 @@ async def test_runtime_time_section_participates_in_priority_order():
     ]
     positions = [prompt.index(marker) for marker in ordered_markers]
     assert positions == sorted(positions)
-    assert "频道：web" in prompt
+    assert "runtime_state.yaml" in prompt
 
 
 def test_resolve_skill_mode_accepts_all_and_auto_list():

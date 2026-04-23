@@ -80,8 +80,6 @@ def build_member_rails(
     skills_dir: str,
     language: str = "cn",
     channel: str = "default",
-    agent_name: str = "team_member",
-    model_name: str = "gpt-4",
 ) -> list[Any]:
     """为 Team 成员创建 rails 列表.
 
@@ -89,8 +87,6 @@ def build_member_rails(
         skills_dir: 兼容保留参数，当前不参与 skill rail 构造
         language: 语言设置
         channel: 渠道设置（使用真实 channel_id）
-        agent_name: 成员名称
-        model_name: 模型名称
 
     Returns:
         rail 实例列表
@@ -101,8 +97,6 @@ def build_member_rails(
         rail = RuntimePromptRail(
             language=language,
             channel=channel,
-            agent_name=agent_name,
-            model_name=model_name,
         )
         rails_list.append(rail)
         logger.info("[TeamRuntime] RuntimePromptRail created: channel=%s", channel)

@@ -1,26 +1,25 @@
 # Copyright (c) Huawei Technologies Co., Ltd. 2025. All rights reserved.
 
-"""RuntimePromptRail — Inject dynamic time/channel/runtime info per model call.
+"""RuntimePromptRail — Inject dynamic time/runtime info per model call.
 
-Dynamic content (time, channel, agent, model, language) is decoupled from the
-static identity prompt and refreshed on every model call via before_model_call().
+Time is injected fresh on every model call. Static runtime properties
+(model, mode, language, platform, etc.) are maintained in runtime_state.yaml
+and the model is instructed to read that file when the user asks about them.
 """
 from __future__ import annotations
 
-import platform
-import subprocess
-from shutil import which
 from datetime import datetime, timedelta, timezone
 
 from openjiuwen.core.single_agent.rail.base import AgentCallbackContext
 from openjiuwen.harness.prompts import PromptSection
 from openjiuwen.harness.rails.base import DeepAgentRail
+from jiuwenclaw.utils import get_config_dir
 
 _CN_WEEKDAYS = ["星期一", "星期二", "星期三", "星期四", "星期五", "星期六", "星期日"]
 
 
 class RuntimePromptRail(DeepAgentRail):
-    """在 before_model_call 中注入运行时动态 section（时间、运行时信息）。"""
+    """在 before_model_call 中注入时间及运行时状态文件路径。"""
 
     priority = 5  # 高优先级，确保早于其他 rail 执行
 
@@ -29,16 +28,12 @@ class RuntimePromptRail(DeepAgentRail):
         language: str = "cn",
         channel: str = "web",
         timezone_offset: int = 8,
-        agent_name: str = "main_agent",
-        model_name: str = "gpt-4",
     ) -> None:
         super().__init__()
         self.system_prompt_builder = None
         self._language = language
         self._channel = channel
         self._tz = timezone(timedelta(hours=timezone_offset))
-        self._agent_name = agent_name
-        self._model_name = model_name
         self._trusted_dirs: list[str] | None = None
 
     def init(self, agent) -> None:
@@ -66,29 +61,7 @@ class RuntimePromptRail(DeepAgentRail):
         """per-request 更新可信目录。"""
         self._trusted_dirs = trusted_dirs
 
-    @staticmethod
-    def _get_git_branch() -> str:
-        """获取当前 git 分支名，失败时返回 N/A。"""
-        git_bin = which("git")
-        if not git_bin:
-            return "N/A"
-
-        try:
-            result = subprocess.run(
-                [git_bin, "rev-parse", "--abbrev-ref", "HEAD"],
-                capture_output=True,
-                text=True,
-                timeout=5,
-            )
-        except (subprocess.SubprocessError, OSError):
-            return "N/A"
-
-        if result.returncode == 0 and result.stdout.strip():
-            return result.stdout.strip()
-        return "N/A"
-
     async def before_model_call(self, ctx: AgentCallbackContext) -> None:
-        """每次 model call 注入最新的时间和运行时信息。"""
         if not self.system_prompt_builder:
             return
 
@@ -120,31 +93,22 @@ class RuntimePromptRail(DeepAgentRail):
             priority=92,
         ))
 
-        plat = f"{platform.system()} {platform.machine()}"
-        python_ver = platform.python_version()
-        git_branch = self._get_git_branch()
-
+        runtime_state_path = str(get_config_dir() / "runtime_state.yaml")
         if self._language == "cn":
             runtime_content = (
                 "# 运行时\n\n"
-                f"- 平台：{plat}\n"
-                f"- Python：{python_ver}\n"
-                f"- 模型：{self._model_name}\n"
-                f"- Git 分支：{git_branch}\n"
-                f"- Agent：{self._agent_name}\n"
-                f"- 频道：{self._channel}\n"
-                f"- 语言：{self._language}"
+                f"- 运行时状态文件：{runtime_state_path}\n"
+                "- 每次用户询问当前模型、模式、语言等运行时属性时，"
+                "必须重新调用 read_file 工具读取该文件获取最新值，"
+                "只用一句话回答用户问的那个字段，不要列出其他内容"
             )
         else:
             runtime_content = (
                 "# Runtime\n\n"
-                f"- Platform: {plat}\n"
-                f"- Python: {python_ver}\n"
-                f"- Model: {self._model_name}\n"
-                f"- Git branch: {git_branch}\n"
-                f"- Agent: {self._agent_name}\n"
-                f"- Channel: {self._channel}\n"
-                f"- Language: {self._language}"
+                f"- Runtime state file: {runtime_state_path}\n"
+                "- Every time the user asks about the current model, mode, language, "
+                "or other runtime properties, you MUST re-invoke the read_file tool to get the latest value. "
+                "Only answer the field the user asked about in one sentence, do not list all file contents."
             )
 
         self.system_prompt_builder.add_section(PromptSection(

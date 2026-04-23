@@ -11,10 +11,14 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import platform
+import subprocess
 from contextvars import ContextVar, Token
 from dataclasses import dataclass
+from shutil import which
 from typing import Any, AsyncIterator, Callable, List, Tuple
 
+import yaml
 from dotenv import load_dotenv
 from openjiuwen.core.context_engine.schema.config import ContextEngineConfig
 from openjiuwen.core.foundation.llm import ModelRequestConfig, ModelClientConfig, Model
@@ -161,6 +165,7 @@ from jiuwenclaw.utils import (
     get_agent_skills_dir,
     get_agent_workspace_dir,
     get_checkpoint_dir,
+    get_config_dir,
     get_env_file,
     reset_free_search_runtime_flags,
 )
@@ -278,6 +283,13 @@ def _build_context_processor_rail(config: dict[str, Any]) -> ContextProcessorRai
     except Exception as exc:
         logger.warning("[JiuWenClawDeepAdapter] ContextProcessorRail create failed: %s", exc)
         return None
+
+
+_MODE_DISPLAY_MAP: dict[str, dict[str, str]] = {
+    "agent.plan": {"cn": "规划模式", "en": "Planning Mode"},
+    "agent.fast": {"cn": "性能模式", "en": "Performance Mode"},
+    "team":       {"cn": "集群模式", "en": "Cluster Mode"},
+}
 
 
 class _RuntimeCronToolContext:
@@ -416,9 +428,44 @@ class JiuWenClawDeepAdapter:
 
     def _resolve_model_name(self) -> str:
         """Resolve current model name from model request config."""
-        if self._model_request_config and hasattr(self._model_request_config, 'model'):
-            return self._model_request_config.model or "unknown"
+        if self._model_request_config and hasattr(self._model_request_config, 'model_name'):
+            return self._model_request_config.model_name or "unknown"
         return "unknown"
+
+    def _write_runtime_state(self, mode: str, language: str, channel: str) -> None:
+        """将当前运行时状态写入 config 目录下的 runtime_state.yaml。"""
+        try:
+            git_branch = "N/A"
+            git_bin = which("git")
+            if git_bin:
+                try:
+                    r = subprocess.run(
+                        [git_bin, "rev-parse", "--abbrev-ref", "HEAD"],
+                        capture_output=True, text=True, timeout=5,
+                        cwd=os.path.dirname(__file__),
+                    )
+                    if r.returncode == 0 and r.stdout.strip():
+                        git_branch = r.stdout.strip()
+                except Exception:
+                    pass
+
+            mode_display = _MODE_DISPLAY_MAP.get(mode, {}).get(language, mode)
+
+            state = {
+                "model": self._resolve_model_name(),
+                "mode": mode_display,
+                "language": language,
+                "channel": channel,
+                "agent": self._agent_name,
+                "platform": f"{platform.system()} {platform.machine()}",
+                "python": platform.python_version(),
+                "git_branch": git_branch,
+            }
+            path = get_config_dir() / "runtime_state.yaml"
+            with open(path, "w", encoding="utf-8") as f:
+                yaml.safe_dump(state, f, allow_unicode=True, sort_keys=False)
+        except Exception as exc:
+            logger.debug("[JiuWenClawDeepAdapter] write runtime_state failed: %s", exc)
 
     @staticmethod
     def _browser_runtime_enabled() -> bool:
@@ -969,6 +1016,7 @@ class JiuWenClawDeepAdapter:
             config.model_name = model.model_config.model_name
             config.model_client_config = model.model_client_config
             config.model_config_obj = model.model_config
+        self._model_request_config = model.model_config
 
     @staticmethod
     def _resolve_skill_mode(config: dict[str, Any]) -> str:
@@ -1232,8 +1280,6 @@ class JiuWenClawDeepAdapter:
             rail = RuntimePromptRail(
                 language=self._resolve_runtime_language(),
                 channel=default_channel,
-                agent_name=self._agent_name,
-                model_name=self._resolve_model_name(),
             )
             logger.info("[JiuWenClawDeepAdapter] RuntimePromptRail create success")
         except Exception as exc:
@@ -2049,11 +2095,13 @@ class JiuWenClawDeepAdapter:
             raise RuntimeError("JiuWenClawDeepAdapter 未初始化，请先调用 create_instance()")
 
         resolved_language = self._resolve_runtime_language()
+        resolved_channel = str(runtime_config.channel_id or
+                               self._resolve_prompt_channel(runtime_config.session_id) or "web").strip() or "web"
         if self._runtime_prompt_rail:
             self._runtime_prompt_rail.set_language(resolved_language)
-            resolved_channel = str(runtime_config.channel_id or self._resolve_prompt_channel(runtime_config.session_id) or "web").strip() or "web"
             self._runtime_prompt_rail.set_channel(resolved_channel)
             self._runtime_prompt_rail.set_trusted_dirs(runtime_config.trusted_dirs)
+        self._write_runtime_state(mode=runtime_config.mode, language=resolved_language, channel=resolved_channel)
 
         await self._update_rails_for_mode(runtime_config.mode)
         await self._update_tools_for_mode(runtime_config.mode, runtime_config.session_id, runtime_config.request_id)
