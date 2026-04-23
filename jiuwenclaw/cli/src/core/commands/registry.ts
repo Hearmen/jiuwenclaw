@@ -18,6 +18,7 @@ import { createHotkeyCommand } from "./builtins/hotkey.js";
 import { createInitCommand } from "./builtins/init.js";
 import { createModelCommand } from "./builtins/model.js";
 import { createModeCommand } from "./builtins/mode.js";
+import { createPermissionsCommand } from "./builtins/permissions.js";
 import { createPlanCommand } from "./builtins/plan.js";
 import { createResumeCommand } from "./builtins/resume.js";
 import { createRenameCommand } from "./builtins/rename.js";
@@ -43,6 +44,7 @@ export function createBuiltinCommands(): SlashCommand[] {
     createExitCommand(),
     createModelCommand(),
     createModeCommand(),
+    createPermissionsCommand(),
     createPlanCommand(),
     createResumeCommand(),
     createRenameCommand(),
