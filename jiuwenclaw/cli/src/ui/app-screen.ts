@@ -550,6 +550,19 @@ export class AppScreen implements Component, Focusable {
           }
           return;
         }
+        // Handle Enter to submit the config value (single-line input)
+        if (matchesKey(data, "return")) {
+          const text = this.editor.getText().trim();
+          if (text && this.configEditorState.selectedKey) {
+            const key = this.configEditorState.selectedKey;
+            const schema = this.configEditorState.schemaList.find((s) => s.key === key);
+            if (schema) {
+              void this.applyConfigEditorSet(key, text, schema, this.configEditorState.currentValues);
+              this.editor.setText("");
+            }
+          }
+          return;
+        }
         this.editor.handleInput(data);
       } else {
         this.configEditorState.list.handleInput(data);
@@ -619,7 +632,12 @@ export class AppScreen implements Component, Focusable {
     this.editor.borderColor = snapshot.pendingQuestion
       ? palette.border.question
       : palette.border.panel;
-    const editorLines = this.applySlashCommandHint(this.editor.render(width), width);
+    // When in config editor input_value phase, editor is rendered inside buildConfigEditorLines
+    // to avoid duplicate rendering, don't include editorLines in that case
+    const isConfigInputValue = this.configEditorState?.phase === "input_value";
+    const editorLines = isConfigInputValue
+      ? []
+      : this.applySlashCommandHint(this.editor.render(width), width);
     const composerPreviewLines: string[] = [];
     const questionLines = [
       ...this.buildStartupPromptLines(width),
