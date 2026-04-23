@@ -679,11 +679,13 @@ readonly request = async <T = Record<string, unknown>>(
         query: "",
         request_id: this.pendingQuestion.requestId,
         answers,
+        mode: this.mode,
       });
     } else {
       this.sendEventOnly("chat.user_answer", {
         request_id: this.pendingQuestion.requestId,
         answers,
+        mode: this.mode,
       });
     }
     this.pendingQuestion = null;

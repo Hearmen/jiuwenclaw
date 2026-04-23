@@ -1591,7 +1591,7 @@ class JiuWenClawDeepAdapter:
                 audio_model_config=self._audio_model_config,
                 completion_timeout=config.get("completion_timeout", 3600.0),
             )
-        logger.info("[JiuWenClawDeepAdapter] 初始化完成: agent_name=%s", self._agent_name)
+        logger.info("[JiuWenClawDeepAdapter] 初始化完成: agent_name=%s, mode=%s", self._agent_name, mode)
 
         # 动态加载用户自定义的 Rail 扩展
         await self.load_user_rails()
@@ -1725,6 +1725,8 @@ class JiuWenClawDeepAdapter:
         """按 mode 注册或卸载 rails。"""
         if mode == "agent.plan":
             await self._update_plan_mode_rails()
+        elif mode in ("code.plan", "code.normal"):
+            logger.info("[JiuWenClawDeepAdapter] skip agent mode rail update for code mode")
         else:
             await self._update_agent_mode_rails()
 
