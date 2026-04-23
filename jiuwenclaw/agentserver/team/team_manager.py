@@ -377,8 +377,6 @@ class TeamManager:
                         skills_dir=str(member_skills_dir),
                         language="cn",
                         channel=resolved_channel,
-                        agent_name=getattr(agent.card, "name", "team_member"),
-                        model_name=resolved_model_name,
                     )
                     for rail in member_rails:
                         if type(rail).__name__ in RAIL_WHITELIST:
