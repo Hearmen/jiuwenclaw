@@ -112,14 +112,15 @@ def resolve_sdk_choice() -> str:
     return _DEFAULT_SDK
 
 
-def create_adapter(sdk: str | None = None) -> AgentAdapter:
+def create_adapter(sdk: str | None = None, *, mode: str = "agent") -> AgentAdapter:
     """Factory function to create SDK adapter instance.
 
     Args:
         sdk: SDK name, if None will resolve from environment.
+        mode: Instance mode, "agent" (default) or "code".
 
     Returns:
-        AgentAdapter instance for the specified SDK.
+        AgentAdapter instance for the specified SDK and mode.
 
     Raises:
         NotImplementedError: If SDK is 'pi' (not yet implemented).
@@ -128,6 +129,9 @@ def create_adapter(sdk: str | None = None) -> AgentAdapter:
     sdk_name = sdk or resolve_sdk_choice()
 
     if sdk_name == "harness":
+        if mode == "code":
+            from jiuwenclaw.agentserver.deep_agent.interface_code import JiuwenClawCodeAdapter
+            return JiuwenClawCodeAdapter()
         from jiuwenclaw.agentserver.deep_agent.interface_deep import JiuWenClawDeepAdapter
         return JiuWenClawDeepAdapter()
 

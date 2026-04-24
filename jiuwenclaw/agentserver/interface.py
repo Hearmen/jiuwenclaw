@@ -183,17 +183,17 @@ class JiuWenClaw:
         logger.info("[JiuWenClaw] SkillDevService 初始化完成")
         return self._skilldev_service
 
-    def _ensure_adapter(self) -> AgentAdapter:
-        """确保 adapter 已初始化，如果未初始化则根据环境变量创建."""
+    def _ensure_adapter(self, *, mode: str = "agent") -> AgentAdapter:
+        """确保 adapter 已初始化，如果未初始化则根据环境变量和 mode 创建."""
         if self._adapter is None:
             self._sdk_name = resolve_sdk_choice()
-            self._adapter = create_adapter(self._sdk_name)
+            self._adapter = create_adapter(self._sdk_name, mode=mode)
             if hasattr(self._adapter, "set_skill_manager"):
                 self._adapter.set_skill_manager(self._skill_manager)
             self._skill_manager.set_skillnet_install_complete_hook(
                 self.create_instance
             )
-            logger.info("[JiuWenClaw] Initialized adapter: sdk=%s", self._sdk_name)
+            logger.info("[JiuWenClaw] Initialized adapter: sdk=%s, mode=%s", self._sdk_name, mode)
         return self._adapter
 
     async def create_instance(self, config: dict[str, Any] | None = None, *, mode: str = "agent") -> None:
@@ -203,9 +203,9 @@ class JiuWenClaw:
             config: 可选配置，透传给底层 adapter.
             mode: 实例化模式，"claw"（默认）或 "code"，透传给底层 adapter.
         """
-        adapter = self._ensure_adapter()
+        adapter = self._ensure_adapter(mode=mode)
         await adapter.create_instance(config, mode=mode)
-        logger.info("[JiuWenClaw] Agent instance created: sdk=%s", self._sdk_name)
+        logger.info("[JiuWenClaw] Agent instance created: sdk=%s, mode=%s", self._sdk_name, mode)
 
     async def reload_agent_config(
             self,

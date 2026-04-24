@@ -593,7 +593,24 @@ modes:
       tools:
     team:
   code:
-    # code 模式
-    memory:
+    # 动态 Rails — 列表中出现的 = 启用；不出现的 = 不启用
+    # 固定 Rails（RuntimePromptRail/ResponsePromptRail/JiuClawStreamEventRail/SecurityRail/PermissionInterruptRail）
+    # 写死在代码中，不在此配置
     rails:
+      - FileSystemRail
+      - SkillUseRail
+      - LspRail
+
+    # 动态 Tools — 列表中出现的 = 启用
+    # send_file_to_user 由运行时 _update_session_tools 注册，不在此配置
+    # coding_memory_read/write/edit 由 CodingMemoryRail 在 subagent 内部注册，不在此配置
     tools:
+      - web_free_search
+      - web_fetch_webpage
+      - web_paid_search
+      - user_todos
+
+    embedding_config:
+      model_name: null
+      base_url: null
+      api_key: null
