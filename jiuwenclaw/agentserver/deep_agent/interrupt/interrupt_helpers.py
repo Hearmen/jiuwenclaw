@@ -88,30 +88,101 @@ def build_ask_user_rail() -> Any | None:
 
 
 def convert_interactions_to_ask_user_question(state_outputs: list) -> dict | None:
-    """Convert __interaction__ list to frontend chat.ask_user_question format.
+    """Convert __interaction__ list to frontend format.
 
     Args:
         state_outputs: List of OutputSchema(type=__interaction__, payload=InteractionOutput)
                       Note: In streaming mode, this list contains only one element per chunk
 
     Returns:
-        Frontend expected chat.ask_user_question format dict
+        Frontend event dict or None
     """
     if not state_outputs:
         return None
 
     payload = state_outputs[0].payload if hasattr(state_outputs[0], 'payload') else state_outputs[0]
+    tool_name = extract_tool_name_from_interaction(payload)
+    request_id = getattr(payload, 'id', '') if hasattr(payload, 'id') else payload.get('id', '')
+
+    if tool_name == "ask_user":
+        input_data = extract_ask_user_input_from_interaction(payload)
+        if not input_data:
+            return None
+        title = input_data.get("title", "用户输入")
+        prompt = input_data.get("prompt", "请填写内容")
+        tool_name = input_data.get("tool_name", "ask_user")
+        return {
+            "event_type": "chat.ask_user_question",
+            "request_id": request_id,
+            "questions": [
+                {
+                    "header": title,
+                    "question": prompt,
+                    "options": [],
+                    "multi_select": False,
+                }
+            ],
+            "source": "ask_user",
+            "tool_name": tool_name,
+        }
+
     question_data = extract_question_from_interaction(payload)
     if not question_data:
         return None
-
-    request_id = getattr(payload, 'id', '') if hasattr(payload, 'id') else payload.get('id', '')
 
     return {
         "event_type": "chat.ask_user_question",
         "request_id": request_id,
         "questions": [question_data],
         "source": "permission_interrupt",
+    }
+
+
+def extract_tool_name_from_interaction(payload: Any) -> str:
+    """Extract tool_name from an interaction payload."""
+    if payload is None:
+        return ""
+
+    if hasattr(payload, 'value'):
+        value_obj = payload.value
+        return getattr(value_obj, 'tool_name', '') or ''
+
+    if isinstance(payload, dict):
+        value_obj = payload.get('value', {})
+        if isinstance(value_obj, dict):
+            return value_obj.get('tool_name', '') or ''
+
+    return ""
+
+
+def extract_ask_user_input_from_interaction(payload: Any) -> dict | None:
+    """Extract ask_user input dialog info from a single interaction payload."""
+    if payload is None:
+        return None
+
+    message = ""
+    tool_name = "ask_user"
+
+    if hasattr(payload, 'value'):
+        value_obj = payload.value
+        message = getattr(value_obj, 'message', '') or getattr(value_obj, 'question', '')
+        tool_name = getattr(value_obj, 'tool_name', '') or tool_name
+    elif isinstance(payload, dict):
+        value_obj = payload.get('value', {})
+        if isinstance(value_obj, dict):
+            message = value_obj.get('message', '') or value_obj.get('question', '')
+            tool_name = value_obj.get('tool_name', '') or tool_name
+        else:
+            message = payload.get('message', '') or payload.get('question', '')
+    else:
+        return None
+
+    logger.info("[InterruptHelpers] ask_user payload: %s", payload)
+
+    return {
+        "title": "用户输入",
+        "prompt": message or "请填写内容",
+        "tool_name": tool_name,
     }
 
 

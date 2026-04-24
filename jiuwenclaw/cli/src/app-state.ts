@@ -676,7 +676,10 @@ readonly request = async <T = Record<string, unknown>>(
       this.emitChange();
       return;
     }
-    if (this.pendingQuestion.source === "permission_interrupt") {
+    if (
+      this.pendingQuestion.source === "permission_interrupt" ||
+      this.pendingQuestion.source === "ask_user"
+    ) {
       this.sendEventOnly("chat.send", {
         query: "",
         request_id: this.pendingQuestion.requestId,
