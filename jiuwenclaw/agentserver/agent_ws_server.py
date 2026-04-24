@@ -827,13 +827,52 @@ class AgentWebSocketServer:
 
     async def _handle_command_compact(self, ws: Any, request: AgentRequest, send_lock: asyncio.Lock) -> None:
         try:
+            session_id = request.session_id or "default"
             params = request.params or {}
-            custom_instructions = params.get("instructions")
+
+            channel_id = request.channel_id or "default"
+            mode = params.get("mode", "agent.plan").split(".")[0]
+            agent = await self._agent_manager.get_agent(
+                channel_id=channel_id,
+                mode=mode,
+                workspace_dir=params.get("workspace_dir", None)
+            )
+
+            if agent is None:
+                raise ValueError("Failed to get agent")
+
+            result_data = await agent.compress_context(session_id=session_id)
+
+            result = result_data.get("result")
+            stats = result_data.get("stats")
+
+            if result == "compressed" and stats:
+                before_tokens = stats.get("raw_total_tokens", 0)
+                after_tokens = stats.get("total_tokens", 0)
+                if before_tokens > 0:
+                    rate = round((before_tokens - after_tokens) / before_tokens * 100, 1)
+                else:
+                    rate = 0
+
+                await self.send_push({
+                    "channel_id": channel_id,
+                    "session_id": session_id,
+                    "payload": {
+                        "event_type": "context.compressed",
+                        "rate": rate,
+                        "beforeCompressed": before_tokens,
+                        "afterCompressed": after_tokens,
+                    },
+                })
+
             resp = AgentResponse(
                 request_id=request.request_id,
                 channel_id=request.channel_id,
                 ok=True,
-                payload={"instructions": custom_instructions},
+                payload={
+                    "result": result,
+                    "stats": stats,
+                },
             )
         except Exception as e:  # noqa: BLE001
             logger.exception("[AgentWebSocketServer] command.compact failed: %s", e)

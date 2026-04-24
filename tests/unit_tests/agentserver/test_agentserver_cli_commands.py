@@ -35,6 +35,9 @@ class AgentWebSocketServerHarness(agent_ws_server_module.AgentWebSocketServer):
     async def handle_command_session_for_test(self, ws, request, send_lock):
         await self._handle_command_session(ws, request, send_lock)
 
+    def get_agent_manager_for_test(self):
+        return self._agent_manager
+
 
 def fake_encode_agent_response_for_wire(resp, response_id):
     return {
@@ -102,7 +105,7 @@ async def test_handle_command_add_dir_returns_path_and_remember(
 
 
 @pytest.mark.asyncio
-async def test_handle_command_compact_returns_custom_instructions(server, fake_ws):
+async def test_handle_command_compact_returns_custom_instructions(server, fake_ws, monkeypatch):
     request = AgentRequest(
         request_id="req-compact",
         channel_id="tui",
@@ -110,12 +113,47 @@ async def test_handle_command_compact_returns_custom_instructions(server, fake_w
         params={"instructions": "focus on architecture"},
     )
 
+    class MockAgent:
+        async def compress_context(self, session_id):
+            return {
+                "result": "compressed",
+                "stats": {
+                    "raw_total_tokens": 1000,
+                    "total_tokens": 300,
+                },
+            }
+
+    mock_agent = MockAgent()
+
+    async def mock_get_agent(channel_id, mode, workspace_dir):
+        return mock_agent
+
+    async def mock_send_push(msg):
+        pass
+
+    monkeypatch.setattr(
+        server.get_agent_manager_for_test(),
+        "get_agent",
+        mock_get_agent,
+    )
+    monkeypatch.setattr(
+        server,
+        "send_push",
+        mock_send_push,
+    )
+
     await server.handle_command_compact_for_test(fake_ws, request, asyncio.Lock())
 
     assert fake_ws.sent == [
         {
             "response_id": "req-compact",
-            "payload": {"instructions": "focus on architecture"},
+            "payload": {
+                "result": "compressed",
+                "stats": {
+                    "raw_total_tokens": 1000,
+                    "total_tokens": 300,
+                },
+            },
             "ok": True,
         }
     ]

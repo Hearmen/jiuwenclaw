@@ -813,6 +813,26 @@ class JiuWenClaw:
     def get_instance(self):
         return self._adapter._instance
 
+    async def compress_context(self, session_id: str, session: Any = None) -> dict[str, Any]:
+        """主动触发上下文压缩。
+
+        Args:
+            session_id: 会话ID
+            session: Session 对象（可选）
+
+        Returns:
+            包含压缩结果的字典:
+            - result: "busy" | "compressed" | "noop"
+            - stats: 压缩统计信息（仅当 result == "compressed" 时）
+        """
+        adapter = self._adapter
+        if adapter is None:
+            raise ValueError("Agent adapter not available")
+        return await adapter.compress_context(
+            session_id=session_id,
+            session=session,
+        )
+
     # ---------- 资源清理 ----------
 
     async def cancel_inflight_work(self, log_prefix: str = "[gateway disconnect] ") -> None:

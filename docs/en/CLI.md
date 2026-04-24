@@ -95,3 +95,26 @@ The Gateway will:
 
 - When a non-empty path is set, TUI includes **`workspace_dir`** in the WebSocket **`params`** for fire-and-forget requests built by `sendEventOnly` (e.g. `chat.send`), so Gateway and AgentServer can read it from `Message.params` / `AgentRequest.params`. Downstream usage depends on the agent and extensions.
 
+---
+
+### 4. `/compact` — context compression
+
+**Scope:** TUI only; triggers context compression via AgentServer.
+
+**Behavior**
+
+- Actively triggers context compression to clean up conversation history while keeping summary information in context.
+- TUI sends `command.compact` request to AgentServer.
+
+**Usage**
+
+  ```text
+  /compact
+  ```
+
+**Return Values**
+
+- `busy`: Compression is already in progress, please try again later.
+- `compressed`: Compression successful, displays token count before/after compression and savings percentage.
+- `noop`: No compression needed, context is already optimized.
+

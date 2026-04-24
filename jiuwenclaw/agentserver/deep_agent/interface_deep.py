@@ -3607,3 +3607,42 @@ class JiuWenClawDeepAdapter:
                 await self._instance.unregister_rail(self._memory_rail)
                 self._memory_rail = None
                 logger.info(f"[JiuWenClawDeepAdapter] MemoryRail unregistered for {mode} mode")
+
+    async def compress_context(self, session_id: str, session: Any = None) -> dict[str, Any]:
+        """主动触发上下文压缩。
+
+        Args:
+            session_id: 会话ID
+            session: Session 对象（可选）
+
+        Returns:
+            包含压缩结果的字典:
+            - result: "busy" | "compressed" | "noop"
+            - stats: 压缩统计信息（仅当 result == "compressed" 时）
+        """
+        if self._instance is None or self._instance.react_agent is None:
+            raise ValueError("Agent instance not available")
+
+        context_engine = self._instance.react_agent.context_engine
+
+        context = context_engine.get_context(session_id=session_id)
+        raw_total_tokens = context.statistic().total_tokens if context else 0
+
+        result = await context_engine.compress_context(
+            session=session,
+            session_id=session_id,
+        )
+
+        response: dict[str, Any] = {"result": result}
+
+        if result == "compressed":
+            context = context_engine.get_context(session_id=session_id)
+            if context:
+                stats = context.statistic()
+                response["stats"] = {
+                    "total_messages": stats.total_messages,
+                    "total_tokens": stats.total_tokens,
+                    "raw_total_tokens": raw_total_tokens,
+                }
+
+        return response
