@@ -6,6 +6,7 @@ import os
 import re
 import sys
 import uuid
+from copy import deepcopy
 from pathlib import Path
 from typing import Any
 
@@ -656,6 +657,187 @@ def update_default_models_in_config(models_list: list[dict[str, Any]]) -> None:
     # 同步 models.default 为第一个条目（兼容旧读取方）
     if models_list:
         data["models"]["default"] = models_list[0]
+    _dump_yaml_round_trip(_CONFIG_YAML_PATH, data)
+
+
+def _require_dict(value: Any, field_name: str) -> dict[str, Any]:
+    if not isinstance(value, dict):
+        raise ValueError(f"{field_name} must be an object")
+    return value
+
+
+def _require_non_empty_string(value: Any, field_name: str) -> str:
+    text = str(value or "").strip()
+    if not text:
+        raise ValueError(f"{field_name} must be non-empty")
+    return text
+
+
+def _transform_front_team_model_config(model_raw: dict[str, Any]) -> dict[str, Any]:
+    model_client_config: dict[str, Any] = {}
+    model_request_config: dict[str, Any] = {}
+
+    if "provider" in model_raw and model_raw["provider"] is not None:
+        model_client_config["client_provider"] = model_raw["provider"]
+    if "api_base" in model_raw and model_raw["api_base"] is not None:
+        model_client_config["api_base"] = model_raw["api_base"]
+    if "api_key" in model_raw and model_raw["api_key"] is not None:
+        model_client_config["api_key"] = model_raw["api_key"]
+    if "model" in model_raw and model_raw["model"] is not None:
+        model_request_config["model"] = model_raw["model"]
+
+    transformed: dict[str, Any] = {}
+    if model_client_config:
+        transformed["model_client_config"] = model_client_config
+    if model_request_config:
+        transformed["model_request_config"] = model_request_config
+    return transformed
+
+
+def _transform_front_team_agent_spec(agent_key: str, agent_raw: Any) -> dict[str, Any]:
+    agent_config = _require_dict(agent_raw, f"agents.{agent_key}")
+    transformed: dict[str, Any] = {}
+
+    if "model" in agent_config:
+        model_raw = _require_dict(agent_config.get("model"), f"agents.{agent_key}.model")
+        transformed_model = _transform_front_team_model_config(model_raw)
+        if transformed_model:
+            transformed["model"] = transformed_model
+
+    for field_name in ("skills", "workspace", "max_iterations", "completion_timeout"):
+        if field_name in agent_config:
+            transformed[field_name] = deepcopy(agent_config[field_name])
+
+    return transformed
+
+
+def _resolve_front_team_agent_spec(
+    agents_raw: dict[str, Any],
+    agent_key: Any,
+    *,
+    field_name: str,
+) -> dict[str, Any]:
+    resolved_key = _require_non_empty_string(agent_key, field_name)
+    if resolved_key not in agents_raw:
+        raise ValueError(f"{field_name} references unknown agent_key: {resolved_key}")
+    return _transform_front_team_agent_spec(resolved_key, agents_raw[resolved_key])
+
+
+def _build_modes_team_mapping(front_payload: dict[str, Any]) -> dict[str, Any]:
+    agents_raw = _require_dict(front_payload.get("agents"), "agents")
+    teams_raw = front_payload.get("team")
+    if not isinstance(teams_raw, list) or not teams_raw:
+        raise ValueError("team must be a non-empty array")
+
+    team_mapping: dict[str, Any] = {}
+    seen_team_names: set[str] = set()
+
+    for team_index, team_item in enumerate(teams_raw):
+        team_raw = _require_dict(team_item, f"team[{team_index}]")
+        team_name = _require_non_empty_string(team_raw.get("team_name"), f"team[{team_index}].team_name")
+        if team_name in seen_team_names:
+            raise ValueError(f"duplicate team_name: {team_name}")
+        seen_team_names.add(team_name)
+
+        transformed_team: dict[str, Any] = {}
+        for key, value in team_raw.items():
+            if key in {"leader", "teammate", "predefined_members"}:
+                continue
+            transformed_team[key] = value
+        transformed_team["team_name"] = team_name
+
+        leader_raw = _require_dict(team_raw.get("leader"), f"team[{team_index}].leader")
+        transformed_team["leader"] = {
+            key: leader_raw[key]
+            for key in ("member_name", "display_name", "persona")
+            if key in leader_raw
+        }
+        leader_agent_spec = _resolve_front_team_agent_spec(
+            agents_raw,
+            leader_raw.get("agent_key"),
+            field_name=f"team[{team_index}].leader.agent_key",
+        )
+
+        teammate_raw = team_raw.get("teammate")
+        teammate_agent_spec: dict[str, Any] | None = None
+        if teammate_raw is not None:
+            teammate_raw = _require_dict(teammate_raw, f"team[{team_index}].teammate")
+            transformed_team["teammate"] = {
+                key: teammate_raw[key]
+                for key in ("member_name", "display_name", "persona", "prompt_hint")
+                if key in teammate_raw
+            }
+            teammate_agent_spec = _resolve_front_team_agent_spec(
+                agents_raw,
+                teammate_raw.get("agent_key"),
+                field_name=f"team[{team_index}].teammate.agent_key",
+            )
+
+        predefined_members_raw = team_raw.get("predefined_members", [])
+        if predefined_members_raw is None:
+            predefined_members_raw = []
+        if not isinstance(predefined_members_raw, list):
+            raise ValueError(f"team[{team_index}].predefined_members must be an array")
+
+        transformed_members: list[dict[str, Any]] = []
+        transformed_agents: dict[str, Any] = {"leader": leader_agent_spec}
+        seen_member_names: set[str] = set()
+
+        for member_index, member_item in enumerate(predefined_members_raw):
+            member = _require_dict(
+                member_item,
+                f"team[{team_index}].predefined_members[{member_index}]",
+            )
+            member_name = _require_non_empty_string(
+                member.get("member_name"),
+                f"team[{team_index}].predefined_members[{member_index}].member_name",
+            )
+            if member_name in seen_member_names:
+                raise ValueError(
+                    f"duplicate member_name in team[{team_index}]: {member_name}"
+                )
+            seen_member_names.add(member_name)
+            transformed_member = {
+                key: member[key]
+                for key in ("member_name", "display_name", "role_type", "persona", "prompt_hint")
+                if key in member
+            }
+            transformed_member["member_name"] = member_name
+            transformed_members.append(transformed_member)
+
+            member_agent_spec = _resolve_front_team_agent_spec(
+                agents_raw,
+                member.get("agent_key"),
+                field_name=f"team[{team_index}].predefined_members[{member_index}].agent_key",
+            )
+            transformed_agents[member_name] = member_agent_spec
+
+        if transformed_members:
+            transformed_team["predefined_members"] = transformed_members
+
+        if teammate_agent_spec is not None:
+            transformed_agents["teammate"] = deepcopy(teammate_agent_spec)
+
+        transformed_team["agents"] = transformed_agents
+        team_mapping[team_name] = transformed_team
+
+    return team_mapping
+
+
+def replace_teams_in_config(front_payload: dict[str, Any]) -> None:
+    """Replace ``modes.team`` using the frontend team-editor payload.
+
+    Keep legacy top-level ``team`` config intact for backward compatibility.
+    """
+    if not isinstance(front_payload, dict):
+        raise ValueError("payload must be an object")
+
+    team_mapping = _build_modes_team_mapping(front_payload)
+
+    data = _load_yaml_round_trip(_CONFIG_YAML_PATH)
+    if "modes" not in data or not isinstance(data["modes"], dict):
+        data["modes"] = {}
+    data["modes"]["team"] = team_mapping
     _dump_yaml_round_trip(_CONFIG_YAML_PATH, data)
 
 

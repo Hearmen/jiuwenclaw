@@ -24,6 +24,7 @@ from jiuwenclaw.config import (
     get_config,
     get_config_raw,
     get_default_models,
+    replace_teams_in_config,
     update_default_models_in_config,
     update_heartbeat_in_config,
     update_channel_in_config,
@@ -431,6 +432,30 @@ def _register_web_handlers(bind: WebHandlersBindParams) -> None:
 
         raw = get_config_raw()
         preferred_lang = raw.get("preferred_language", "zh")
+
+        if "agents" in params or "team" in params:
+            try:
+                replace_teams_in_config(params)
+                yaml_updated.append("modes.team")
+            except ValueError as exc:
+                await channel.send_response(
+                    ws,
+                    req_id,
+                    ok=False,
+                    error=str(exc),
+                    code="BAD_REQUEST",
+                )
+                return
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("[config.set] 写回 modes.team 失败: %s", exc)
+                await channel.send_response(
+                    ws,
+                    req_id,
+                    ok=False,
+                    error="failed to update modes.team",
+                    code="INTERNAL_ERROR",
+                )
+                return
 
         for param_key in _CONFIG_YAML_KEYS:
             if param_key not in params:

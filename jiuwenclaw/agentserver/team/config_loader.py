@@ -21,12 +21,44 @@ _DEFAULT_COMPLETION_TIMEOUT = 600.0
 _DEFAULT_AGENT_WORKSPACE = {"stable_base": True}
 
 
+def _select_first_modes_team(config_base: dict[str, Any]) -> dict[str, Any]:
+    modes_raw = config_base.get("modes", {})
+    if not isinstance(modes_raw, dict):
+        return {}
+
+    teams_raw = modes_raw.get("team", {})
+    if not isinstance(teams_raw, dict):
+        return {}
+
+    for team_name, team_raw in teams_raw.items():
+        if isinstance(team_raw, dict):
+            logger.debug("[TeamConfigLoader] selected team from modes.team: %s", team_name)
+            return team_raw
+
+    return {}
+
+
+def _resolve_team_raw_for_storage(config_base: dict[str, Any]) -> dict[str, Any]:
+    selected = _select_first_modes_team(config_base)
+    if selected:
+        return selected
+
+    legacy_team = config_base.get("team", {})
+    if isinstance(legacy_team, dict):
+        return legacy_team
+
+    if any(key in config_base for key in ("team_name", "leader", "agents", "storage", "predefined_members")):
+        return config_base
+
+    return {}
+
+
 def resolve_team_sqlite_db_path(config_base: dict[str, Any] | None = None) -> Path | None:
     """Resolve the team sqlite database path using openjiuwen semantics."""
     if config_base is None:
         config_base = get_config()
 
-    team_raw = config_base.get("team", {})
+    team_raw = _resolve_team_raw_for_storage(config_base)
     if not isinstance(team_raw, dict):
         return None
 
@@ -79,7 +111,7 @@ def _resolve_storage_config(storage_raw: dict[str, Any]) -> dict[str, Any]:
     if "connection_string" not in storage_params:
         return storage_dict
 
-    db_path = resolve_team_sqlite_db_path({"team": {"storage": storage_dict}})
+    db_path = resolve_team_sqlite_db_path({"storage": storage_dict})
     if db_path is None:
         return storage_dict
 
@@ -227,10 +259,10 @@ def _build_predefined_members(team_raw: dict[str, Any]) -> list[dict[str, Any]]:
 def load_team_spec_dict(session_id: str) -> dict[str, Any]:
     """Load team config and build a TeamAgentSpec-compatible dict."""
     config_base = get_config()
-    team_raw = config_base.get("team", {})
+    team_raw = _select_first_modes_team(config_base)
 
     if not team_raw:
-        logger.warning("[TeamConfigLoader] no team config found, using defaults")
+        logger.warning("[TeamConfigLoader] no modes.team config found, using defaults")
         team_raw = {}
 
     agents = _build_agents_config(team_raw, config_base)

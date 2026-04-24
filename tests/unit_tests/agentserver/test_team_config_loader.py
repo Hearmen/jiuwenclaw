@@ -10,6 +10,10 @@ from jiuwenclaw.agentserver.team.config_loader import (
 )
 
 
+def _wrap_modes_team(team_mapping: dict[str, dict]) -> dict:
+    return {"modes": {"team": team_mapping}}
+
+
 def test_load_team_spec_dict_supports_member_specific_agents(monkeypatch, tmp_path):
     """Predefined members should resolve to member_name-keyed DeepAgentSpec entries."""
     fake_agent_teams_home = tmp_path / ".agent_teams"
@@ -23,47 +27,49 @@ def test_load_team_spec_dict_supports_member_specific_agents(monkeypatch, tmp_pa
                 "model_config_obj": {"temperature": 0.2},
             }
         },
-        "team": {
-            "team_name": "demo_team",
-            "leader": {
-                "member_name": "team_leader",
-                "display_name": "TeamLeader",
-                "persona": "Lead the team",
-            },
-            "workspace": {
-                "enabled": True,
-                "artifact_dirs": ["artifacts/reports"],
-            },
-            "agents": {
-                "leader": {
-                },
-                "teammate": {
-                },
-                "analyst": {
-                    "name": "Analyst",
-                    "skills": ["skill-a", "skill-b"],
-                },
-            },
-            "predefined_members": [
-                {
-                    "member_name": "analyst",
-                    "display_name": "Data Analyst",
-                    "persona": "Analyze data",
-                    "prompt_hint": "Focus on trends",
-                    "toolkits": ["sql", "python"],
+        **_wrap_modes_team(
+            {
+                "demo_team": {
+                    "team_name": "demo_team",
+                    "leader": {
+                        "member_name": "team_leader",
+                        "display_name": "TeamLeader",
+                        "persona": "Lead the team",
+                    },
+                    "workspace": {
+                        "enabled": True,
+                        "artifact_dirs": ["artifacts/reports"],
+                    },
+                    "agents": {
+                        "leader": {},
+                        "teammate": {},
+                        "analyst": {
+                            "name": "Analyst",
+                            "skills": ["skill-a", "skill-b"],
+                        },
+                    },
+                    "predefined_members": [
+                        {
+                            "member_name": "analyst",
+                            "display_name": "Data Analyst",
+                            "persona": "Analyze data",
+                            "prompt_hint": "Focus on trends",
+                            "toolkits": ["sql", "python"],
+                        }
+                    ],
+                    "storage": {
+                        "type": "sqlite",
+                        "params": {
+                            "connection_string": "team.db",
+                        },
+                    },
+                    "planning": {
+                        "enabled": True,
+                        "max_parallel_tasks": 3,
+                    },
                 }
-            ],
-            "storage": {
-                "type": "sqlite",
-                "params": {
-                    "connection_string": "team.db",
-                },
-            },
-            "planning": {
-                "enabled": True,
-                "max_parallel_tasks": 3,
-            },
-        },
+            }
+        ),
     }
 
     monkeypatch.setattr(
@@ -99,6 +105,58 @@ def test_load_team_spec_dict_supports_member_specific_agents(monkeypatch, tmp_pa
     )
 
 
+def test_load_team_spec_dict_uses_first_team_from_modes_team(monkeypatch, tmp_path):
+    """The current runtime should default to the first team entry in modes.team."""
+    config = {
+        "models": {
+            "default": {
+                "model_client_config": {
+                    "model_name": "gpt-first",
+                    "client_provider": "openai",
+                },
+                "model_config_obj": {},
+            }
+        },
+        **_wrap_modes_team(
+            {
+                "alpha_team": {
+                    "team_name": "alpha_team",
+                    "leader": {
+                        "member_name": "alpha_leader",
+                        "display_name": "Alpha Leader",
+                        "persona": "Lead alpha",
+                    },
+                    "agents": {"leader": {"skills": ["alpha-skill"]}},
+                },
+                "beta_team": {
+                    "team_name": "beta_team",
+                    "leader": {
+                        "member_name": "beta_leader",
+                        "display_name": "Beta Leader",
+                        "persona": "Lead beta",
+                    },
+                    "agents": {"leader": {"skills": ["beta-skill"]}},
+                },
+            }
+        ),
+    }
+
+    monkeypatch.setattr(
+        "jiuwenclaw.agentserver.team.config_loader.get_config",
+        lambda: config,
+    )
+    monkeypatch.setattr(
+        "jiuwenclaw.agentserver.team.config_loader.get_agent_teams_home",
+        lambda: tmp_path / ".agent_teams",
+    )
+
+    spec = load_team_spec_dict("session-first")
+
+    assert spec["team_name"] == "alpha_team_session-first"
+    assert spec["leader"]["member_name"] == "alpha_leader"
+    assert spec["agents"]["leader"]["skills"] == ["alpha-skill"]
+
+
 def test_load_team_spec_dict_keeps_role_defaults_when_member_alias_is_added(monkeypatch, tmp_path):
     """Role keys should remain usable after member_name aliases are injected."""
     config = {
@@ -111,17 +169,22 @@ def test_load_team_spec_dict_keeps_role_defaults_when_member_alias_is_added(monk
                 "model_config_obj": {},
             }
         },
-        "team": {
-            "agents": {
-                "leader": {},
-                "teammate": {
-                    "skills": ["shared-skill"],
-                },
-                "default_teammate": {
-                    "skills": ["member-skill"],
-                },
+        **_wrap_modes_team(
+            {
+                "demo_team": {
+                    "team_name": "demo_team",
+                    "agents": {
+                        "leader": {},
+                        "teammate": {
+                            "skills": ["shared-skill"],
+                        },
+                        "default_teammate": {
+                            "skills": ["member-skill"],
+                        },
+                    },
+                }
             }
-        },
+        ),
     }
 
     monkeypatch.setattr(
@@ -154,14 +217,19 @@ def test_load_team_spec_dict_preserves_explicit_empty_skills(monkeypatch, tmp_pa
                 "model_config_obj": {},
             }
         },
-        "team": {
-            "agents": {
-                "leader": {},
-                "reviewer": {
-                    "skills": [],
-                },
+        **_wrap_modes_team(
+            {
+                "demo_team": {
+                    "team_name": "demo_team",
+                    "agents": {
+                        "leader": {},
+                        "reviewer": {
+                            "skills": [],
+                        },
+                    },
+                }
             }
-        },
+        ),
     }
 
     monkeypatch.setattr(
@@ -198,12 +266,17 @@ def test_load_team_spec_dict_expands_missing_skills_to_all_global_skills(monkeyp
                 "model_config_obj": {},
             }
         },
-        "team": {
-            "agents": {
-                "leader": {},
-                "writer": {},
+        **_wrap_modes_team(
+            {
+                "demo_team": {
+                    "team_name": "demo_team",
+                    "agents": {
+                        "leader": {},
+                        "writer": {},
+                    },
+                }
             }
-        },
+        ),
     }
 
     monkeypatch.setattr(
@@ -227,14 +300,17 @@ def test_load_team_spec_dict_expands_missing_skills_to_all_global_skills(monkeyp
 
 def test_resolve_team_sqlite_db_path_defaults_to_agent_teams_home(monkeypatch, tmp_path):
     """Missing connection_string should fall back to openjiuwen agent-teams team.db."""
-    config = {
-        "team": {
-            "storage": {
-                "type": "sqlite",
-                "params": {},
+    config = _wrap_modes_team(
+        {
+            "demo_team": {
+                "team_name": "demo_team",
+                "storage": {
+                    "type": "sqlite",
+                    "params": {},
+                },
             }
         }
-    }
+    )
 
     monkeypatch.setattr(
         "jiuwenclaw.agentserver.team.config_loader.get_config",
@@ -262,16 +338,21 @@ def test_load_team_spec_dict_preserves_arbitrary_team_top_level_fields(monkeypat
                 "model_config_obj": {},
             }
         },
-        "team": {
-            "agents": {
-                "leader": {},
-            },
-            "runtime_flags": {
-                "enable_observer": True,
-                "retry_limit": 5,
-            },
-            "custom_labels": ["a", "b"],
-        },
+        **_wrap_modes_team(
+            {
+                "demo_team": {
+                    "team_name": "demo_team",
+                    "agents": {
+                        "leader": {},
+                    },
+                    "runtime_flags": {
+                        "enable_observer": True,
+                        "retry_limit": 5,
+                    },
+                    "custom_labels": ["a", "b"],
+                }
+            }
+        ),
     }
 
     monkeypatch.setattr(
