@@ -1,272 +1,226 @@
+import { existsSync } from "node:fs";
+import { join } from "node:path";
+
 import { addError, addInfo } from "../helpers.js";
 import { CommandKind, type SlashCommand } from "../types.js";
-import type { UserAnswer } from "../../event-handlers.js";
+import {
+  buildInitPrompt,
+  resolveLanguage,
+  type ExistingFiles,
+  type ScopeKey,
+} from "./init.prompts.js";
 
-type InitModelConfig = {
-  model_provider: string;
-  model: string;
-  api_base: string;
-  api_key: string;
-};
+// ---------------------------------------------------------------------------
+// Scope options (labels are UI-only; ScopeKey is the internal identifier).
+// ---------------------------------------------------------------------------
 
-type StoredConfigPayload = Partial<InitModelConfig> & {
-  api_key_set?: boolean;
-};
+interface ScopeOption {
+  key: ScopeKey;
+  label: string;
+  description: string;
+}
 
-type ValidateModelPayload = {
-  provider?: string;
-  model?: string;
-  response?: string;
-};
+function getScopeOptions(lang: "zh" | "en"): ScopeOption[] {
+  if (lang === "zh") {
+    return [
+      {
+        key: "project",
+        label: "团队共享 (JIUWENCLAW.md)",
+        description:
+          "签入版本库，供团队共用 —— 架构说明、编码规范、常用命令、CI 约定等。",
+      },
+      {
+        key: "personal",
+        label: "个人私有 (JIUWENCLAW.local.md)",
+        description:
+          "只属于你自己，加入 .gitignore —— 个人偏好、沙箱地址、私有凭据、工作习惯。",
+      },
+      {
+        key: "both",
+        label: "都要 (团队 + 个人)",
+        description: "同时写两份文件。",
+      },
+    ];
+  }
+  return [
+    {
+      key: "project",
+      label: "Team-shared (JIUWENCLAW.md)",
+      description:
+        "Checked into source control — architecture, coding standards, common commands, CI conventions.",
+    },
+    {
+      key: "personal",
+      label: "Personal (JIUWENCLAW.local.md)",
+      description:
+        "Private to you, gitignored — preferences, sandbox URLs, credentials, workflow quirks.",
+    },
+    {
+      key: "both",
+      label: "Both (team + personal)",
+      description: "Write both files.",
+    },
+  ];
+}
+
+// ---------------------------------------------------------------------------
+// Command
+// ---------------------------------------------------------------------------
 
 export function createInitCommand(): SlashCommand {
   return {
     name: "init",
-    description: "Guide default model setup",
+    description:
+      "Initialize project AI collaboration config (generates JIUWENCLAW.md, optionally JIUWENCLAW.local.md)",
     usage: "/init",
     example: "/init",
     kind: CommandKind.BUILT_IN,
     action: async (ctx) => {
+      const language = resolveLanguage(ctx);
+
+      // ---- Guard 1: must be in coding mode ----
+      if (!ctx.mode.startsWith("code.")) {
+        ctx.addItem(
+          addError(
+            ctx.sessionId,
+            language === "zh"
+              ? "/init 需要在 coding 模式下运行。请先执行 /mode code 或 /code 切到 coding 模式再重试。"
+              : "/init requires coding mode. Run /mode code or /code first, then try again.",
+          ),
+        );
+        return;
+      }
+
+      // ---- Guard 2: code.plan blocks Write/Edit; auto-switch to code.normal ----
+      if (ctx.mode === "code.plan") {
+        ctx.setMode("code.normal");
+        ctx.addItem(
+          addInfo(
+            ctx.sessionId,
+            language === "zh"
+              ? "已自动切换到 code.normal 以便 /init 能写文件。"
+              : "Switched to code.normal for /init (needs write permission).",
+            "i",
+          ),
+        );
+      }
+
+      // ---- Guard 3: workspace root ----
+      const rootDir =
+        ctx.getWorkspaceDir() ||
+        (typeof process !== "undefined" ? process.cwd() : "");
+      if (!rootDir) {
+        ctx.addItem(
+          addError(
+            ctx.sessionId,
+            language === "zh"
+              ? "无法识别工作目录，请先用 /workspace-dir <path> 指定。"
+              : "Cannot resolve workspace directory. Use /workspace-dir <path> first.",
+          ),
+        );
+        return;
+      }
+
+      // ---- Step 1 (local): ask scope via multi-choice ----
+      const scopeOptions = getScopeOptions(language);
+      // Build a label -> key map so we can reject unknown labels instead of
+      // silently defaulting to "both" when the TUI returns something we don't
+      // recognise (e.g. user sent a custom_input via free-text).
+      const labelToKey = new Map<string, ScopeKey>(
+        scopeOptions.map((o) => [o.label, o.key] as const),
+      );
+
+      let scopeKey: ScopeKey;
       try {
-        const stored = await readStoredModelConfig(ctx);
-        const config = await runInitModelWizard(ctx, stored);
-        if (!config) {
-          ctx.addItem(addInfo(ctx.sessionId, "Initialization cancelled before saving.", "i"));
+        const [answer] = await ctx.askQuestions(
+          [
+            {
+              header: language === "zh" ? "范围" : "Scope",
+              question:
+                language === "zh"
+                  ? "要设置哪些 JIUWENCLAW 文件？"
+                  : "Which JIUWENCLAW files would you like to set up?",
+              options: scopeOptions.map((o) => ({
+                label: o.label,
+                description: o.description,
+              })),
+            },
+          ],
+          "local_command_init",
+        );
+        const selectedLabel = answer?.selected_options?.[0];
+        if (!selectedLabel || !labelToKey.has(selectedLabel)) {
+          ctx.addItem(
+            addInfo(
+              ctx.sessionId,
+              language === "zh"
+                ? "/init 已取消：未识别到范围选择。"
+                : "/init cancelled: no scope selection received.",
+              "i",
+            ),
+          );
           return;
         }
-
-        await persistModelConfig(ctx, config);
+        scopeKey = labelToKey.get(selectedLabel) as ScopeKey;
+      } catch (err) {
         ctx.addItem(
           addInfo(
             ctx.sessionId,
-            `Default model saved: ${config.model_provider}/${config.model}`,
+            language === "zh"
+              ? `/init 已取消：${err instanceof Error ? err.message : String(err)}`
+              : `/init cancelled: ${err instanceof Error ? err.message : String(err)}`,
             "i",
           ),
         );
-      } catch (error) {
-        const message = error instanceof Error ? error.message : String(error);
-        ctx.addItem(addError(ctx.sessionId, `init failed: ${message}`));
+        return;
       }
-    },
-  };
-}
 
-async function readStoredModelConfig(
-  ctx: Parameters<SlashCommand["action"]>[0],
-): Promise<StoredConfigPayload> {
-  const payload = await ctx.request<StoredConfigPayload>("config.get", { key: "model_default" });
-  return {
-    model_provider: String(payload.model_provider ?? "").trim(),
-    model: String(payload.model ?? "").trim(),
-    api_base: String(payload.api_base ?? "").trim(),
-    api_key: String(payload.api_key ?? "").trim(),
-    api_key_set: payload.api_key_set === true || String(payload.api_key ?? "").trim().length > 0,
-  };
-}
+      // ---- Pre-detect existing memory / legacy AI config files ----
+      const existing: ExistingFiles = {
+        jiuwenclawMd: existsSync(join(rootDir, "JIUWENCLAW.md")),
+        jiuwenclawLocalMd: existsSync(join(rootDir, "JIUWENCLAW.local.md")),
+        claudeMd: existsSync(join(rootDir, "CLAUDE.md")),
+        claudeLocalMd: existsSync(join(rootDir, "CLAUDE.local.md")),
+        agentsMd: existsSync(join(rootDir, "AGENTS.md")),
+        openjiuwenMd: existsSync(join(rootDir, "OPENJIUWEN.md")),
+        cursorRules: existsSync(join(rootDir, ".cursorrules")),
+        copilotInstructions: existsSync(
+          join(rootDir, ".github", "copilot-instructions.md"),
+        ),
+      };
 
-async function runInitModelWizard(
-  ctx: Parameters<SlashCommand["action"]>[0],
-  stored: StoredConfigPayload,
-): Promise<InitModelConfig | null> {
-  let candidate = buildInitialCandidate(stored);
+      const prompt = buildInitPrompt({ rootDir, scopeKey, language, existing });
 
-  if (hasCompleteConfig(candidate)) {
-    const maskedKey = stored.api_key_set ? "already set" : "missing";
-    const useExisting = await askYesNo(
-      ctx,
-      "Current Config",
-      `Found an existing default model:\nprovider: ${candidate.model_provider}\nmodel: ${candidate.model}\napi_base: ${candidate.api_base}\napi_key: ${maskedKey}\n\nValidate and keep this configuration?`,
-      "Keep current config",
-      "Edit it",
-    );
-    if (useExisting) {
-      const validated = await validateModelConfig(ctx, candidate);
-      if (validated.ok) {
+      // ---- Send ----
+      // The earlier guard 2 already called setMode("code.normal") if needed.
+      // ctx.mode is reactive state and may not reflect the change in the same
+      // tick; we therefore pass the mode explicitly to sendMessage so the
+      // server still receives "code.normal" even if ctx.mode is briefly stale.
+      const requestId = ctx.sendMessage(prompt, undefined, "code.normal", {
+        logAsUser: false,
+      });
+      if (!requestId) {
         ctx.addItem(
           addInfo(
             ctx.sessionId,
-            `Model validation succeeded for ${validated.payload.provider ?? candidate.model_provider}/${validated.payload.model ?? candidate.model}.`,
-            "i",
+            language === "zh"
+              ? "当前离线，/init 请求未发送；网络恢复后请重试。"
+              : "Offline; /init message not sent. Please retry after reconnecting.",
+            "p",
           ),
         );
-        return candidate;
+        return;
       }
-      ctx.addItem(addError(ctx.sessionId, `Existing model config failed validation: ${validated.error}`));
-    }
-  }
 
-  while (true) {
-    candidate = await promptForModelConfig(ctx, candidate, stored.api_key_set === true);
-    const validation = await validateModelConfig(ctx, candidate);
-    if (validation.ok) {
       ctx.addItem(
         addInfo(
           ctx.sessionId,
-          `Model validation succeeded for ${validation.payload.provider ?? candidate.model_provider}/${validation.payload.model ?? candidate.model}.`,
+          language === "zh"
+            ? `正在启动项目初始化（scope=${scopeKey}）…`
+            : `Starting project initialization (scope=${scopeKey})…`,
           "i",
         ),
       );
-      return candidate;
-    }
-
-    ctx.addItem(addError(ctx.sessionId, `Model validation failed: ${validation.error}`));
-    const retry = await askYesNo(
-      ctx,
-      "Validation Failed",
-      "The model probe failed. Do you want to re-enter the configuration?",
-      "Retry",
-      "Cancel init",
-    );
-    if (!retry) {
-      return null;
-    }
-  }
-}
-
-function buildInitialCandidate(stored: StoredConfigPayload): InitModelConfig {
-  return {
-    model_provider: stored.model_provider ?? "",
-    model: stored.model ?? "",
-    api_base: stored.api_base ?? "",
-    api_key: stored.api_key ?? "",
+    },
   };
-}
-
-function hasCompleteConfig(config: InitModelConfig): boolean {
-  return Boolean(
-    config.model_provider.trim() &&
-      config.model.trim() &&
-      config.api_base.trim() &&
-      config.api_key.trim(),
-  );
-}
-
-async function promptForModelConfig(
-  ctx: Parameters<SlashCommand["action"]>[0],
-  current: InitModelConfig,
-  hadStoredApiKey: boolean,
-): Promise<InitModelConfig> {
-  const provider = await askRequiredText(
-    ctx,
-    "Provider",
-    buildTextPrompt(
-      "Enter the default model provider to use for chat.",
-      current.model_provider,
-      "Examples: openai, deepseek, anthropic, openrouter",
-    ),
-  );
-  const model = await askRequiredText(
-    ctx,
-    "Model",
-    buildTextPrompt(
-      "Enter the default model name.",
-      current.model,
-      "Examples: gpt-4.1, deepseek-chat, claude-3-7-sonnet, openai/gpt-4.1",
-    ),
-  );
-  const apiBase = await askRequiredText(
-    ctx,
-    "API Base",
-    buildTextPrompt(
-      "Enter the API base URL for the model provider.",
-      current.api_base,
-      "Example: https://api.openai.com/v1",
-    ),
-  );
-  const apiKeyHint =
-    current.api_key.trim().length > 0 || hadStoredApiKey
-      ? "A key is already stored. Re-enter it here to validate and save this configuration."
-      : "Enter the API key for this provider.";
-  const apiKey = await askRequiredText(
-    ctx,
-    "API Key",
-    `${apiKeyHint}\nInput is not masked in the TUI.`,
-  );
-
-  return {
-    model_provider: provider,
-    model,
-    api_base: apiBase,
-    api_key: apiKey,
-  };
-}
-
-async function validateModelConfig(
-  ctx: Parameters<SlashCommand["action"]>[0],
-  config: InitModelConfig,
-): Promise<{ ok: true; payload: ValidateModelPayload } | { ok: false; error: string }> {
-  try {
-    const payload = await ctx.request<ValidateModelPayload>("config.validate_model", config);
-    return { ok: true, payload };
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    return { ok: false, error: message };
-  }
-}
-
-async function persistModelConfig(
-  ctx: Parameters<SlashCommand["action"]>[0],
-  config: InitModelConfig,
-): Promise<void> {
-  await ctx.request("config.set", config);
-}
-
-async function askRequiredText(
-  ctx: Parameters<SlashCommand["action"]>[0],
-  header: string,
-  question: string,
-): Promise<string> {
-  while (true) {
-    const [answer] = await ctx.askQuestions(
-      [
-        {
-          header,
-          question,
-          options: [],
-        },
-      ],
-      "local_command",
-    );
-    const value = extractAnswerText(answer).trim();
-    if (value) {
-      return value;
-    }
-    ctx.addItem(addError(ctx.sessionId, `${header} is required.`));
-  }
-}
-
-async function askYesNo(
-  ctx: Parameters<SlashCommand["action"]>[0],
-  header: string,
-  question: string,
-  yesLabel: string,
-  noLabel: string,
-): Promise<boolean> {
-  const [answer] = await ctx.askQuestions(
-    [
-      {
-        header,
-        question,
-        options: [{ label: yesLabel }, { label: noLabel }],
-      },
-    ],
-    "local_command",
-  );
-  return extractAnswerText(answer) === yesLabel;
-}
-
-function extractAnswerText(answer: UserAnswer | undefined): string {
-  if (!answer) return "";
-  return String(answer.custom_input ?? answer.selected_options[0] ?? "").trim();
-}
-
-function buildTextPrompt(base: string, currentValue: string, hint?: string): string {
-  const lines = [base];
-  if (currentValue.trim()) {
-    lines.push(`Current value: ${currentValue.trim()}`);
-  }
-  if (hint) {
-    lines.push(hint);
-  }
-  return lines.join("\n");
 }

@@ -45,7 +45,10 @@ pnpm-debug.log*
 *.swo
 .DS_Store
 .claude
-CLAUDE.md
+**/CLAUDE.md
+**/CLAUDE.local.md
+**/JIUWENCLAW.local.md
+**/JIUWENCLAW.md
 workspace/agent-data.json
 
 # reference

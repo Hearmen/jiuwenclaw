@@ -49,20 +49,16 @@ from openjiuwen.harness import (
     VisionModelConfig,
 )
 from openjiuwen.harness.factory import create_deep_agent
-from openjiuwen.harness.lsp import InitializeOptions
 from openjiuwen.harness.prompts import resolve_language
 from openjiuwen.harness.rails import SkillUseRail, TaskPlanningRail, SecurityRail, SkillEvolutionRail
 from openjiuwen.harness.rails.subagent_rail import SubagentRail
-from openjiuwen.harness.rails.lsp_rail import LspRail
 from openjiuwen.harness.rails.context_engineer.context_assemble_rail import ContextAssembleRail
 from openjiuwen.harness.rails.context_engineer.context_processor_rail import ContextProcessorRail
 from openjiuwen.harness.rails.filesystem_rail import FileSystemRail
 from openjiuwen.harness.rails.heartbeat_rail import HeartbeatRail
 from openjiuwen.agent_evolving.signal import SignalDetector
 from openjiuwen.harness.rails.memory_rail import MemoryRail
-from openjiuwen.harness.rails.coding_memory_rail import CodingMemoryRail
 from openjiuwen.harness.subagents.browser_agent import build_browser_agent_config
-from openjiuwen.harness.subagents.code_agent import build_code_agent_config, create_code_agent
 from openjiuwen.harness.subagents.research_agent import build_research_agent_config
 from openjiuwen.harness.tools import (
     WebFetchWebpageTool,
@@ -208,7 +204,7 @@ _ACP_BLOCKED_DEFAULT_TOOL_NAMES = frozenset(
 )
 
 
-def _parse_int(value: Any, default: int) -> int:
+def parse_int(value: Any, default: int) -> int:
     """Parse integer-like values safely."""
     try:
         if value is None or value == "":
@@ -357,7 +353,6 @@ class JiuWenClawDeepAdapter:
         self._memory_rail: MemoryRail | None = None
         self._external_memory_rail: Any = None
         self._external_memory_rail_registered: bool = False
-        self._lsp_rail: LspRail | None = None
         self._heartbeat_rail: HeartbeatRail | None = None
         self._skill_evolution_rail: SkillEvolutionRail | None = None
         self._subagent_rail: SubagentRail | None = None
@@ -517,13 +512,20 @@ class JiuWenClawDeepAdapter:
         """Treat only explicit `enabled: true` as enabled."""
         return isinstance(subagent_cfg, dict) and bool(subagent_cfg.get("enabled", False))
 
+    @staticmethod
+    def _is_subagent_default_enabled(subagent_cfg: Any) -> bool:
+        """Default-enabled subagent: enabled unless explicitly set to false."""
+        if not isinstance(subagent_cfg, dict):
+            return True  # no config → default enabled
+        return subagent_cfg.get("enabled", True) is not False
+
     def _build_configured_subagents(
             self,
             model: Model,
             config: dict[str, Any],
             config_base: dict[str, Any] | None = None,
     ) -> list[Any] | None:
-        """Build configured code/research subagents plus default browser subagent."""
+        """Build configured research + browser subagents (agent 模式)."""
         react_cfg = config if isinstance(config, dict) else {}
         subagents_cfg = react_cfg.get("subagents")
 
@@ -532,27 +534,6 @@ class JiuWenClawDeepAdapter:
         subagents: list[Any] = []
 
         if isinstance(subagents_cfg, dict):
-            code_agent_cfg = subagents_cfg.get("code_agent")
-            if self._is_subagent_enabled(code_agent_cfg):
-                code_agent_rails = None
-                if get_memory_mode(get_config()) == "local":
-                    coding_memory_rail = self._build_coding_memory_rail()
-                    if coding_memory_rail is not None:
-                        # FileSystemRail 是 create_code_agent 的默认 rail，传 rails 会覆盖默认值，需显式带上
-                        code_agent_rails = [FileSystemRail(), coding_memory_rail]
-                subagents.append(
-                    build_code_agent_config(
-                        model,
-                        workspace=workspace,
-                        language=resolved_language,
-                        rails=code_agent_rails,
-                        max_iterations=_parse_int(
-                            code_agent_cfg.get("max_iterations"),
-                            react_cfg.get("max_iterations", 15),
-                        ),
-                    )
-                )
-
             research_agent_cfg = subagents_cfg.get("research_agent")
             if self._is_subagent_enabled(research_agent_cfg):
                 subagents.append(
@@ -560,7 +541,7 @@ class JiuWenClawDeepAdapter:
                         model,
                         workspace=workspace,
                         language=resolved_language,
-                        max_iterations=_parse_int(
+                        max_iterations=parse_int(
                             research_agent_cfg.get("max_iterations"),
                             react_cfg.get("max_iterations", 15),
                         ),
@@ -589,7 +570,7 @@ class JiuWenClawDeepAdapter:
                     model,
                     workspace=workspace,
                     language=resolved_language,
-                    max_iterations=_parse_int(
+                    max_iterations=parse_int(
                         browser_agent_cfg.get("max_iterations") if isinstance(browser_agent_cfg, dict) else None,
                         react_cfg.get("max_iterations", 15),
                     )
@@ -829,7 +810,7 @@ class JiuWenClawDeepAdapter:
             api_key=api_key,
             base_url=base_url,
             model=model_name,
-            max_retries=_parse_int(os.getenv("VISION_MAX_RETRIES"), 3),
+            max_retries=parse_int(os.getenv("VISION_MAX_RETRIES"), 3),
         )
 
     def _build_audio_model_config(
@@ -868,9 +849,9 @@ class JiuWenClawDeepAdapter:
         config_kwargs: dict[str, Any] = {
             "api_key": api_key,
             "base_url": base_url,
-            "max_retries": _parse_int(os.getenv("AUDIO_MAX_RETRIES"), 3),
-            "http_timeout": _parse_int(os.getenv("AUDIO_HTTP_TIMEOUT"), 20),
-            "max_audio_bytes": _parse_int(
+            "max_retries": parse_int(os.getenv("AUDIO_MAX_RETRIES"), 3),
+            "http_timeout": parse_int(os.getenv("AUDIO_HTTP_TIMEOUT"), 20),
+            "max_audio_bytes": parse_int(
                 os.getenv("AUDIO_MAX_AUDIO_BYTES"),
                 25 * 1024 * 1024,
             ),
@@ -1395,59 +1376,6 @@ class JiuWenClawDeepAdapter:
             memory_rail = None
         return memory_rail
 
-    def _build_coding_memory_rail(self) -> CodingMemoryRail | None:
-        """构建 CodingMemoryRail.
-
-        Returns:
-            CodingMemoryRail 实例，失败返回 None
-        """
-        try:
-            config = get_config()
-            embed_config = config.get("embed") if isinstance(config, dict) else None
-
-            # 检查 embedding 配置
-            has_api_key = embed_config.get("embed_api_key") if isinstance(embed_config, dict) else None
-            has_base_url = embed_config.get("embed_base_url") if isinstance(embed_config, dict) else None
-            has_model = embed_config.get("embed_model") if isinstance(embed_config, dict) else None
-            if not all([has_api_key, has_base_url, has_model]):
-                logger.warning("[JiuWenClawDeepAdapter] CodingMemoryRail: no embedding config, skipping")
-                return None
-
-            # 获取语言和 workspace 目录
-            language = config.get("preferred_language", "zh")
-            coding_memory_dir = os.path.join(self._workspace_dir, "coding_memory")
-
-            # 确保目录存在
-            os.makedirs(coding_memory_dir, exist_ok=True)
-
-            # 创建 CodingMemoryRail
-            coding_memory_rail = CodingMemoryRail(
-                coding_memory_dir=coding_memory_dir,
-                embedding_config=EmbeddingConfig(
-                    model_name=embed_config.get("embed_model"),
-                    base_url=embed_config.get("embed_base_url"),
-                    api_key=embed_config.get("embed_api_key"),
-                ),
-                language="cn" if language == "zh" else "en",
-            )
-            logger.info("[JiuWenClawDeepAdapter] CodingMemoryRail create success")
-            return coding_memory_rail
-
-        except Exception as exc:
-            logger.warning("[JiuWenClawDeepAdapter] CodingMemoryRail create failed: %s", exc)
-            return None
-
-    @staticmethod
-    def _build_lsp_rail(workspace_dir: str = None) -> LspRail | None:
-        """Build LspRail."""
-        try:
-            lsp_rail = LspRail(InitializeOptions(cwd=workspace_dir))
-            logger.info("[JiuWenClawDeepAdapter] LspRail create success")
-        except Exception as exc:
-            logger.warning("[JiuWenClawDeepAdapter] LspRail create failed: %s", exc)
-            lsp_rail = None
-        return lsp_rail
-
     def _build_heartbeat_rail(self) -> HeartbeatRail | None:
         """Build HeartbeatRail."""
         try:
@@ -1521,10 +1449,6 @@ class JiuWenClawDeepAdapter:
         # 智能模式下关闭自演进，plan 模式下按配置启用
 
         # MemoryRail 不在冷启动时挂载，由 _update_rails_for_mode 按 mode 按需注册/注销
-
-        # LspRail 仅在 code 模式下挂载
-        if mode == "code":
-            rail_infos.append(_RailBuildInfo("_lsp_rail", self._build_lsp_rail))
 
         if self._filesystem_rail_enabled_for_profile():
             rail_infos.insert(1, _RailBuildInfo("_filesystem_rail", self._build_filesystem_rail))
@@ -1651,8 +1575,6 @@ class JiuWenClawDeepAdapter:
             rails_list.append(self._context_processor_rail)
         if self._memory_rail is not None:
             rails_list.append(self._memory_rail)
-        if self._lsp_rail is not None:
-            rails_list.append(self._lsp_rail)
         if self._avatar_rail is not None:
             rails_list.append(self._avatar_rail)
         if self._permission_rail is not None:
@@ -1805,7 +1727,7 @@ class JiuWenClawDeepAdapter:
                 - agent_name: Agent 名称，默认 "main_agent"。
                 - workspace_dir: 工作区目录，默认 "workspace/agent"。
                 - 其余字段透传给 DeepAgentConfig。
-            mode: 实例化模式，支持 "claw"（默认，使用 create_deep_agent）和 "code"（使用 create_code_agent）。
+            mode: 实例化模式，默认 "agent.plan"，使用 create_deep_agent。
         """
         await self.set_checkpoint()
 
@@ -1868,16 +1790,13 @@ class JiuWenClawDeepAdapter:
             language=self._resolve_runtime_language(),
         )
 
-        if mode == "code":
-            self._instance = create_code_agent(**common_kwargs)
-        else:
-            self._instance = create_deep_agent(
-                **common_kwargs,
-                context_engine_config=_deep_agent_context_engine_config(config),
-                vision_model_config=self._vision_model_config,
-                audio_model_config=self._audio_model_config,
-                completion_timeout=config.get("completion_timeout", 3600.0),
-            )
+        self._instance = create_deep_agent(
+            **common_kwargs,
+            context_engine_config=_deep_agent_context_engine_config(config),
+            vision_model_config=self._vision_model_config,
+            audio_model_config=self._audio_model_config,
+            completion_timeout=config.get("completion_timeout", 3600.0),
+        )
         self._registered_mcp_server_ids.clear()
         self._registered_mcp_servers.clear()
         await self._register_mcp_servers_from_config(config_base, tag=f"agent.{mode}")
@@ -2016,10 +1935,8 @@ class JiuWenClawDeepAdapter:
         """按 mode 注册或卸载 rails。"""
         if mode == "agent.plan":
             await self._update_plan_mode_rails()
-        elif mode in ("code.plan", "code.normal"):
-            logger.info("[JiuWenClawDeepAdapter] skip agent mode rail update for code mode")
         else:
-            await self._update_agent_mode_rails()
+            await self._update_agent_mode_rails(mode)  # 透传 mode
 
     async def _update_plan_mode_rails(self) -> None:
         """plan 模式：注册 plan 专属 rails，卸载 agent 专属资源。"""
@@ -2075,19 +1992,27 @@ class JiuWenClawDeepAdapter:
                 await self._instance.register_rail(self._subagent_rail)
                 logger.info("[JiuWenClawDeepAdapter] SubagentRail registered for plan mode")
 
-    async def _update_agent_mode_rails(self) -> None:
+    async def _update_agent_mode_rails(self, mode: str | None = None) -> None:
         """agent 模式：卸载 plan 专属 rails，按需注册 agent 专属 rails。"""
-        for attr, label in (
-                ("_task_planning_rail", "TaskPlanningRail"),
-                ("_skill_evolution_rail", "SkillEvolutionRail"),
-                ("_subagent_rail", "SubagentRail"),
-        ):
+        # 卸载 plan 专属 rails
+        rail_specs = (
+            ("_task_planning_rail", "TaskPlanningRail"),
+            ("_skill_evolution_rail", "SkillEvolutionRail"),
+            ("_subagent_rail", "SubagentRail"),
+        )
+
+        for attr, label in rail_specs:
             rail = getattr(self, attr)
             if rail is not None:
                 await self._instance.unregister_rail(rail)
                 setattr(self, attr, None)
-                logger.info("[JiuWenClawDeepAdapter] %s unregistered for agent mode", label)
-        # agent 模式，根据config选择是否注册或者卸载memory rail
+                logger.info(
+                    "[JiuWenClawDeepAdapter] %s unregistered for %s mode",
+                    label,
+                    mode or "agent",
+                )
+
+        # agent 模式，根据 config 选择是否注册或者卸载 memory rail
         await self._handle_memory_rail_by_config("fast")
         # 外接记忆 rail（mode-independent，注册一次，跨 reload 持久）
         await self._handle_external_memory_rail_by_config()

@@ -417,6 +417,7 @@ export class CliPiAppState {
       setTrustedDir: setTrustedDir,
       removeTrustedDir: removeTrustedDir,
       clearTrustedDirs: clearTrustedDirs,
+      getWorkspaceDir: () => process.cwd(),
       enterConfigEditor: undefined, // AppScreen injects the real handler when executing slash commands.
     };
   }
@@ -597,6 +598,7 @@ readonly request = async <T = Record<string, unknown>>(
     content: string,
     attachments?: FileAttachment[],
     modeOverride?: "agent.plan" | "agent.fast" | "code.plan" | "code.normal" | "team",
+    options?: { logAsUser?: boolean },
   ): string | null => {
     if (this.connectionStatus !== "connected") return null;
     const mode = modeOverride ?? this.mode;
@@ -610,16 +612,18 @@ readonly request = async <T = Record<string, unknown>>(
       ...(attachments?.length ? { attachments } : {}),
     });
     this.lastError = null;
-    this.entries = [
-      ...this.entries,
-      {
-        kind: "user",
-        id: `user-${requestId}`,
-        sessionId: this.sessionId,
-        content,
-        at: new Date().toISOString(),
-      },
-    ];
+    if (options?.logAsUser !== false) {
+      this.entries = [
+        ...this.entries,
+        {
+          kind: "user",
+          id: `user-${requestId}`,
+          sessionId: this.sessionId,
+          content,
+          at: new Date().toISOString(),
+        },
+      ];
+    }
     this.streamingState = StreamingState.Responding;
     this.emitChange();
     return requestId;

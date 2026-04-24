@@ -67,14 +67,16 @@ def test_resolve_skill_mode_accepts_all_and_auto_list():
     assert JiuWenClawDeepAdapter._resolve_skill_mode({"skill_mode": "invalid"}) == "all"
 
 
-def test_build_configured_subagents_includes_optional_browser_and_configured_code_research():
+# DeepAdapter only builds research_agent + browser_agent (agent mode).
+# code_agent / explore_agent belong to CodeAdapter.
+
+def test_deep_adapter_subagents_includes_optional_browser_and_configured_research():
     adapter = _TestableJiuWenClawDeepAdapter()
     adapter.set_workspace_dir("/tmp/jiuwenclaw-workspace")
     model = object()
     config = {
         "max_iterations": 9,
         "subagents": {
-            "code_agent": {"enabled": True, "max_iterations": 5},
             "research_agent": {"enabled": True},
             "browser_agent": {"max_iterations": 7},
         },
@@ -83,10 +85,6 @@ def test_build_configured_subagents_includes_optional_browser_and_configured_cod
     with (
         patch.object(adapter, "_resolve_runtime_language", return_value="cn"),
         patch.object(adapter, "_browser_runtime_enabled", return_value=True),
-        patch(
-            "jiuwenclaw.agentserver.deep_agent.interface_deep.build_code_agent_config",
-            return_value="code_spec",
-        ) as mock_code,
         patch(
             "jiuwenclaw.agentserver.deep_agent.interface_deep.build_research_agent_config",
             return_value="research_spec",
@@ -98,14 +96,7 @@ def test_build_configured_subagents_includes_optional_browser_and_configured_cod
     ):
         subagents = adapter.build_configured_subagents(model, config)
 
-    assert subagents == ["code_spec", "research_spec", "browser_spec"]
-    mock_code.assert_called_once_with(
-        model,
-        workspace="/tmp/jiuwenclaw-workspace",
-        language="cn",
-        rails=None,
-        max_iterations=5,
-    )
+    assert subagents == ["research_spec", "browser_spec"]
     mock_research.assert_called_once_with(
         model,
         workspace="/tmp/jiuwenclaw-workspace",
@@ -120,7 +111,7 @@ def test_build_configured_subagents_includes_optional_browser_and_configured_cod
     )
 
 
-def test_build_configured_subagents_omits_code_research_without_explicit_enable():
+def test_deep_adapter_subagents_omits_research_without_explicit_enable():
     adapter = _TestableJiuWenClawDeepAdapter()
     adapter.set_workspace_dir("/tmp/jiuwenclaw-workspace")
     model = object()
@@ -129,10 +120,6 @@ def test_build_configured_subagents_omits_code_research_without_explicit_enable(
     with (
         patch.object(adapter, "_resolve_runtime_language", return_value="cn"),
         patch.object(adapter, "_browser_runtime_enabled", return_value=True),
-        patch(
-            "jiuwenclaw.agentserver.deep_agent.interface_deep.build_code_agent_config",
-            return_value="code_spec",
-        ) as mock_code,
         patch(
             "jiuwenclaw.agentserver.deep_agent.interface_deep.build_research_agent_config",
             return_value="research_spec",
@@ -144,7 +131,7 @@ def test_build_configured_subagents_omits_code_research_without_explicit_enable(
     ):
         subagents = adapter.build_configured_subagents(model, config)
 
+    # DeepAdapter: no research_agent configured, browser enabled
     assert subagents == ["browser_spec"]
-    mock_code.assert_not_called()
     mock_research.assert_not_called()
     mock_browser.assert_called_once()
