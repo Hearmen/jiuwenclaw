@@ -18,19 +18,30 @@ from typing import Any
 from openjiuwen.core.foundation.tool import ToolCard
 from openjiuwen.core.foundation.store.base_embedding import EmbeddingConfig
 from openjiuwen.core.runner import Runner
+from openjiuwen.core.foundation.llm import Model
 from openjiuwen.core.single_agent import AgentCard
 from openjiuwen.core.sys_operation import SysOperation
 from openjiuwen.harness import DeepAgent, VisionModelConfig, AudioModelConfig
 from openjiuwen.harness.factory import create_deep_agent
 from openjiuwen.harness.prompts import resolve_language
-from openjiuwen.harness.rails import SkillUseRail, TaskPlanningRail, SecurityRail, SkillEvolutionRail
+from openjiuwen.harness.rails import (
+    AgentModeRail,
+    AskUserRail,
+    ConfirmInterruptRail,
+    SkillUseRail,
+    SkillEvolutionRail,
+    SecurityRail,
+    TaskPlanningRail,
+)
 from openjiuwen.harness.rails.lsp_rail import LspRail
 from openjiuwen.harness.rails.context_engineering_rail import ContextEngineeringRail
 from openjiuwen.harness.rails.filesystem_rail import FileSystemRail
 from openjiuwen.harness.rails.heartbeat_rail import HeartbeatRail
 from openjiuwen.harness.rails.memory_rail import MemoryRail
 from openjiuwen.harness.rails.subagent_rail import SubagentRail
-from openjiuwen.harness.subagents.code_agent import build_code_agent_config
+from openjiuwen.harness.schema.config import SubAgentConfig
+from openjiuwen.harness.subagents.explore_agent import build_explore_agent_config
+from openjiuwen.harness.subagents.plan_agent import build_plan_agent_config
 from openjiuwen.harness.tools import WebFetchWebpageTool, WebFreeSearchTool, WebPaidSearchTool
 from openjiuwen.harness.workspace.workspace import Workspace
 
@@ -70,6 +81,45 @@ _TOOL_BUILD_NAMES: dict[str, str] = {
     "user_todos": "_build_user_todos_tool",
     "skill_toolkit": "_build_skill_toolkit",
 }
+
+
+def _subagent_list_has_name(
+    subagents: list[SubAgentConfig | DeepAgent], name: str
+) -> bool:
+    for spec in subagents:
+        if isinstance(spec, SubAgentConfig):
+            if spec.agent_card.name == name:
+                return True
+        else:
+            card = getattr(spec, "card", None)
+            if getattr(card, "name", None) == name:
+                return True
+    return False
+
+
+def _append_explore_and_plan_subagents(
+    subagents: list[SubAgentConfig | DeepAgent],
+    resolved_language: str,
+    model: Model,
+) -> list[SubAgentConfig | DeepAgent]:
+    effective = list(subagents)
+    if not _subagent_list_has_name(effective, "explore_agent"):
+        effective.append(
+            build_explore_agent_config(
+                model=model,
+                language=resolved_language,
+                max_iterations=25,
+            )
+        )
+    if not _subagent_list_has_name(effective, "plan_agent"):
+        effective.append(
+            build_plan_agent_config(
+                model=model,
+                language=resolved_language,
+                max_iterations=25,
+            )
+        )
+    return effective
 
 
 class JiuwenClawCodeAdapter(JiuWenClawDeepAdapter):
@@ -119,7 +169,12 @@ class JiuwenClawCodeAdapter(JiuWenClawDeepAdapter):
             raise RuntimeError("sys_operation is not available, maybe task is not running")
         self._sys_operation = sys_operation
 
-        configured_subagents = self._build_configured_subagents(model, config, config_base)
+        raw_subagents = self._build_configured_subagents(model, config, config_base) or []
+        configured_subagents = _append_explore_and_plan_subagents(
+            raw_subagents,
+            resolved_language=self._resolve_runtime_language(),
+            model=model,
+        )
 
         self._instance = create_deep_agent(
             model=model,
@@ -143,6 +198,7 @@ class JiuwenClawCodeAdapter(JiuWenClawDeepAdapter):
             ),
             sys_operation=sys_operation,
             language=self._resolve_runtime_language(),
+            enable_task_planning=True
         )
         # code 模式不传: vision_model_config, audio_model_config,
         # context_engine_config, completion_timeout
@@ -185,6 +241,14 @@ class JiuwenClawCodeAdapter(JiuWenClawDeepAdapter):
                         "default", {}
                     ).get("model_client_config", {}).get("model_name", "gpt-4"),
                 },
+            ),
+            _RailBuildInfo("_code_filesystem_rail", FileSystemRail, {}),
+            _RailBuildInfo("_code_agent_mode_rail", AgentModeRail, {}),
+            _RailBuildInfo("_code_ask_user_rail", AskUserRail, {}),
+            _RailBuildInfo(
+                "_code_confirm_interrupt_rail",
+                ConfirmInterruptRail,
+                {"tool_names": ["switch_mode"]},
             ),
         ]
 

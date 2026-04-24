@@ -49,7 +49,6 @@ from openjiuwen.harness import (
 )
 from openjiuwen.harness.factory import create_deep_agent
 from openjiuwen.harness.lsp import InitializeOptions
-from openjiuwen.harness.subagents.code_agent import create_code_agent
 from openjiuwen.harness.prompts import resolve_language
 from openjiuwen.harness.rails import SkillUseRail, TaskPlanningRail, SecurityRail, SkillEvolutionRail
 from openjiuwen.harness.rails.subagent_rail import SubagentRail
@@ -62,7 +61,7 @@ from openjiuwen.agent_evolving.signal import SignalDetector
 from openjiuwen.harness.rails.memory_rail import MemoryRail
 from openjiuwen.harness.rails.coding_memory_rail import CodingMemoryRail
 from openjiuwen.harness.subagents.browser_agent import build_browser_agent_config
-from openjiuwen.harness.subagents.code_agent import build_code_agent_config
+from openjiuwen.harness.subagents.code_agent import build_code_agent_config, create_code_agent
 from openjiuwen.harness.subagents.research_agent import build_research_agent_config
 from openjiuwen.harness.tools import (
     WebFetchWebpageTool,
