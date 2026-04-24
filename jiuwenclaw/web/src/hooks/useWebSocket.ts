@@ -426,8 +426,8 @@ export function useWebSocket(options: UseWebSocketOptions): UseWebSocketReturn {
   const sendUserAnswer = useCallback(
     async (sessionId: string, requestId: string, answers: UserAnswer[], source?: string) => {
       try {
-        // 工具权限、ask_user 续跑：流式 chat.send，服务端组 InteractiveInput
-        if (source === 'permission_interrupt' || source === 'ask_user') {
+        // 如果是工具权限确认，发送 chat.send
+        if (source === 'permission_interrupt') {
           await request('chat.send', {
             session_id: sessionId,
             query: '',

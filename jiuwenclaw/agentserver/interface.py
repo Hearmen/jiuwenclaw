@@ -313,40 +313,25 @@ class JiuWenClaw:
         selected_options = answer.get("selected_options", []) if isinstance(answer, dict) else []
         custom_input = answer.get("custom_input", "") if isinstance(answer, dict) else ""
 
-        perm_labels = ("本次允许", "总是允许", "拒绝")
-        if any(label in selected_options for label in perm_labels):
-            if "本次允许" in selected_options:
-                confirm_payload = {"approved": True, "auto_confirm": False, "feedback": ""}
-            elif "总是允许" in selected_options:
-                confirm_payload = {
-                    "approved": True,
-                    "auto_confirm": True,
-                    "persist_allow": True,
-                    "feedback": "",
-                }
-            else:
-                confirm_payload = {
-                    "approved": False,
-                    "auto_confirm": False,
-                    "feedback": custom_input or "用户拒绝",
-                }
-            interactive_input.update(request_id, confirm_payload)
-            logger.info(
-                "[JiuWenClaw] InteractiveInput.update (permission): request_id=%s payload=%s",
-                request_id,
-                confirm_payload,
-            )
+        if "本次允许" in selected_options:
+            confirm_payload = {"approved": True, "auto_confirm": False, "feedback": ""}
+        elif "总是允许" in selected_options:
+            confirm_payload = {
+                "approved": True,
+                "auto_confirm": True,
+                "persist_allow": True,
+                "feedback": "",
+            }
+        elif "拒绝" in selected_options:
+            confirm_payload = {"approved": False, "auto_confirm": False, "feedback": custom_input or "用户拒绝"}
         else:
-            # ask_user / free-form: AskUserRail accepts str or {"answer": ...}
-            text = (custom_input or "").strip()
-            if not text and selected_options:
-                text = str(selected_options[0]).strip()
-            interactive_input.update(request_id, text)
-            logger.info(
-                "[JiuWenClaw] InteractiveInput.update (ask_user): request_id=%s text_len=%s",
-                request_id,
-                len(text),
-            )
+            confirm_payload = {"approved": False, "auto_confirm": False, "feedback": "未知选项"}
+
+        interactive_input.update(request_id, confirm_payload)
+        logger.info(
+            "[JiuWenClaw] InteractiveInput.update: request_id=%s payload=%s",
+            request_id, confirm_payload
+        )
 
         return interactive_input
 
