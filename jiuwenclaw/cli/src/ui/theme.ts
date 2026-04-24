@@ -1,5 +1,6 @@
 import { Chalk } from "chalk";
 import type { EditorTheme, MarkdownTheme, SelectListTheme } from "@mariozechner/pi-tui";
+import { loadTuiConfig, saveTuiConfig } from "../core/tui-config-store.js";
 
 export const chalk = new Chalk({ level: 3 });
 
@@ -120,10 +121,9 @@ const ACCENT_COLORS: Record<Exclude<AccentColorName, "default">, string> = {
   yellow: "#ca8a04",
 };
 
-let currentThemeName: ThemeName = "system";
-let currentAccentColor: AccentColorName = "default";
-
-// TODO: Persist theme/accent across CLI restarts after the broader config/settings story is finalized.
+const _initConfig = loadTuiConfig();
+let currentThemeName: ThemeName = _initConfig.theme ?? "system";
+let currentAccentColor: AccentColorName = _initConfig.accentColor ?? "default";
 
 function detectSystemTheme(): "light" | "dark" {
   const colorfgbg = process.env.COLORFGBG;
@@ -190,10 +190,12 @@ export function getCurrentAccentColor(): AccentColorName {
 
 export function setCurrentThemeName(theme: ThemeName): void {
   currentThemeName = theme;
+  saveTuiConfig({ theme });
 }
 
 export function setCurrentAccentColor(color: AccentColorName): void {
   currentAccentColor = color;
+  saveTuiConfig({ accentColor: color });
 }
 
 export const palette = {

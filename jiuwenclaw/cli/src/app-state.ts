@@ -45,6 +45,8 @@ import {
   type ThemeName,
 } from "./ui/theme.js";
 import { type ConnectionStatus, WsClient } from "./core/ws-client.js";
+import { loadTuiWorkspaceDir, saveTuiWorkspaceDir } from "./core/tui-workspace-dir-store.js";
+import { loadTuiConfig } from "./core/tui-config-store.js";
 import {
   getTrustedDirs,
   addTrustedDir,
@@ -233,6 +235,15 @@ export class CliPiAppState {
     cliSession?: string,
   ) {
     this.sessionId = cliSession || generateSessionId();
+    const config = loadTuiConfig();
+    if (config.theme) {
+      setCurrentThemeName(config.theme);
+      this.themeName = config.theme;
+    }
+    if (config.accentColor) {
+      setCurrentAccentColor(config.accentColor);
+      this.accentColor = config.accentColor;
+    }
   }
 
   start(): void {
