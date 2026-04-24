@@ -180,6 +180,9 @@ class CronTools:
             return CronTargetChannel.XIAOYI.value
         if channel.startswith("whatsapp"):
             return CronTargetChannel.WHATSAPP.value
+        if channel.startswith("wechat"):
+            return CronTargetChannel.WECHAT.value
+        
         return CronTargetChannel.WEB.value
 
     def _resolve_channel_id(self) -> str:
