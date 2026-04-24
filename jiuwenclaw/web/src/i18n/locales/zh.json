@@ -396,11 +396,31 @@
     "selectModelProvider": "请选择模型提供商",
     "enterValue": "请输入配置值",
     "keys": {
-      "freeSearchProxyUrl": "\u4ee3\u7406\u5730\u5740",
+      "freeSearchProxyUrl": "代理地址",
       "freeSearchProxyUrlPlaceholder": "http://username:password@proxyhk.huawei.com:8080",
       "memoryForbiddenEnabled": "启用",
       "memoryForbiddenDescription": "禁止记忆内容描述",
-      "memoryForbiddenDescriptionPlaceholder": "例如：密码、API密钥、Secret、Token、信用卡号、身份证号、手机号等敏感信息"
+      "memoryForbiddenDescriptionPlaceholder": "例如：密码、API密钥、Secret、Token、信用卡号、身份证号、手机号等敏感信息",
+      "agentSkillsPlaceholder": "技能用逗号隔开",
+      "agentName": "名称",
+      "agentModel": "模型",
+      "agentSkills": "技能",
+      "agentMaxIterations": "最大迭代次数",
+      "agentCompletionTimeout": "完成超时时间",
+      "teamName": "团队名称",
+      "teamLifecycle": "生命周期",
+      "teamTeammateMode": "成员模式",
+      "teamSpawnMode": "启动模式",
+      "teamLeaderMemberName": "成员名称",
+      "teamLeaderDisplayName": "显示名称",
+      "teamLeaderPersona": "人设",
+      "teamLeaderAgentKey": "Agent Key",
+      "teamMemberName": "成员名称",
+      "teamMemberDisplayName": "显示名称",
+      "teamMemberRoleType": "角色类型",
+      "teamMemberPersona": "人设",
+      "teamMemberPromptHint": "提示词",
+      "teamMemberAgentKey": "Agent Key"
     },
     "hideValue": "隐藏明文",
     "showValue": "显示明文",
@@ -422,6 +442,18 @@
       "default": "默认",
       "setDefault": "设为默认"
     },
+    "agentList": {
+      "addAgent": "添加Agent",
+      "removeAgent": "删除",
+      "untitled": "未命名"
+    },
+    "team": {
+      "leader": "Leader",
+      "teammate": "Teammate",
+      "predefinedMembers": "Predefined Members",
+      "addMember": "添加成员",
+      "addTeam": "添加Team"
+    },
     "groups": {
       "modelDefault": { "label": "默认模型（主对话）", "hint": "主对话模型服务与鉴权参数" },
       "modelVideo": { "label": "视频模型", "hint": "视频理解（可选）" },
@@ -432,6 +464,8 @@
       "thirdParty": { "label": "第三方服务配置", "hint": "API Key 配置" },
       "freeSearch": { "label": "免费搜索引擎配置", "hint": "控制搜索引擎启用和企业内网代理" },
       "evolution": { "label": "自演进配置", "hint": "Skills 在线自演进参数" },
+      "agents": { "label": "多Agent配置", "hint": "仅供集群模式使用" },
+      "team": { "label": "Team配置", "hint": "多智能体团队配置" },
       "contextEngine": { "label": "上下文压缩", "hint": "控制对话上下文是否启用压缩" },
       "permissions": { "label": "工具安全护栏", "hint": "控制工具调用时的权限检查" },
       "memory": { "label": "记忆系统敏感信息过滤", "hint": "配置禁止写入记忆的敏感信息类型" },

@@ -493,6 +493,41 @@ function AppContent() {
     }
   }, [clearRestartAutoCloseTimer, closeRestartModal, request]);
 
+  const handleAgentsTeamsSave = useCallback(async (payload: {
+    agents: Record<string, {
+      model: { provider: string; api_base: string; api_key: string; model: string };
+      skills: string[];
+      max_iterations: string;
+      completion_timeout: string;
+    }>;
+    team: Array<{
+      team_name: string;
+      lifecycle: string;
+      teammate_mode: string;
+      spawn_mode: string;
+      leader: { member_name: string; display_name: string; persona: string; agent_key: string };
+      teammate: { member_name: string; display_name: string; persona: string; agent_key: string };
+      predefined_members: Array<{ member_name: string; display_name: string; role_type: string; persona: string; prompt_hint: string; agent_key: string }>;
+    }>;
+  }) => {
+    const result = await request<{ updated?: string[]; applied_without_restart?: boolean }>(
+      'config.set',
+      payload as unknown as Record<string, string>
+    );
+    setConfigError(null);
+    setRestartModalOpen(true);
+    setRestartSuccess(false);
+    setRestartSeenDisconnect(false);
+    setAppliedWithoutRestart(result?.applied_without_restart === true);
+    clearRestartAutoCloseTimer();
+    if (result?.applied_without_restart === true) {
+      setRestartSuccess(true);
+      restartAutoCloseTimerRef.current = window.setTimeout(() => {
+        closeRestartModal();
+      }, 5000);
+    }
+  }, [clearRestartAutoCloseTimer, closeRestartModal, request]);
+
   useEffect(() => {
     if (!restartModalOpen || restartSuccess) {
       return;
@@ -1083,6 +1118,7 @@ function AppContent() {
               onModelValidate={validateModelConfig}
               onModelsRefresh={handleModelsRefresh}
               onSetActiveModel={handleSetActiveModel}
+              onAgentsTeamsSave={handleAgentsTeamsSave}
             />
           </div>
         )}

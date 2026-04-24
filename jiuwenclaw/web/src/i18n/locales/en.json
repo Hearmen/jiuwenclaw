@@ -401,7 +401,27 @@
       "freeSearchProxyUrlPlaceholder": "http://username:password@proxyhk.huawei.com:8080",
       "memoryForbiddenEnabled": "Enable",
       "memoryForbiddenDescription": "Forbidden memory content description",
-      "memoryForbiddenDescriptionPlaceholder": "e.g. passwords, API keys, secrets, tokens, credit card numbers, ID numbers, phone numbers"
+      "memoryForbiddenDescriptionPlaceholder": "e.g. passwords, API keys, secrets, tokens, credit card numbers, ID numbers, phone numbers",
+      "agentSkillsPlaceholder": "Separate skills with commas",
+      "agentName": "Name",
+      "agentModel": "Model",
+      "agentSkills": "Skills",
+      "agentMaxIterations": "Max Iterations",
+      "agentCompletionTimeout": "Completion Timeout",
+      "teamName": "Team Name",
+      "teamLifecycle": "Lifecycle",
+      "teamTeammateMode": "Teammate Mode",
+      "teamSpawnMode": "Spawn Mode",
+      "teamLeaderMemberName": "Member Name",
+      "teamLeaderDisplayName": "Display Name",
+      "teamLeaderPersona": "Persona",
+      "teamLeaderAgentKey": "Agent Key",
+      "teamMemberName": "Member Name",
+      "teamMemberDisplayName": "Display Name",
+      "teamMemberRoleType": "Role Type",
+      "teamMemberPersona": "Persona",
+      "teamMemberPromptHint": "Prompt Hint",
+      "teamMemberAgentKey": "Agent Key"
     },
     "hideValue": "Hide value",
     "showValue": "Show value",
@@ -423,6 +443,18 @@
       "default": "Default",
       "setDefault": "Set as Default"
     },
+    "agentList": {
+      "addAgent": "Add Agent",
+      "removeAgent": "Remove",
+      "untitled": "Untitled"
+    },
+    "team": {
+      "leader": "Leader",
+      "teammate": "Teammate",
+      "predefinedMembers": "Predefined Members",
+      "addMember": "Add Member",
+      "addTeam": "Add Team"
+    },
     "groups": {
       "modelDefault": { "label": "Default Model (Main Chat)", "hint": "Primary chat model service and auth" },
       "modelVideo": { "label": "Video Model", "hint": "Video understanding/generation model (optional)" },
@@ -433,6 +465,8 @@
       "thirdParty": { "label": "Third-Party Services", "hint": "API key settings" },
       "freeSearch": { "label": "Free Search Engines", "hint": "Enable engines and optional proxy for enterprise intranet" },
       "evolution": { "label": "Evolution Settings", "hint": "Online skill evolution settings" },
+      "agents": { "label": "Multi-Agent Configuration", "hint": "For cluster mode only" },
+      "team": { "label": "Team Configuration", "hint": "Multi-agent team settings" },
       "contextEngine": { "label": "Context Compression", "hint": "Enable or disable dialogue context compression" },
       "permissions": { "label": "Tool Safety Guardrail", "hint": "Enable or disable permission checks for tool calls" },
       "memory": { "label": "Memory Sensitive Info Filter", "hint": "Configure sensitive content types forbidden from memory" },

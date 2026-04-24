@@ -4,6 +4,47 @@ import { useChatStore, useSessionStore } from '../../stores';
 import type { ModelEntry } from '../../types';
 import { PermissionsToolsEditor } from "./PermissionsToolsEditor";
 
+interface AgentModel {
+  provider: string;
+  api_base: string;
+  api_key: string;
+  model: string;
+}
+
+interface AgentEntry {
+  name: string;
+  model: AgentModel;
+  skills: string[];
+  max_iterations: string;
+  completion_timeout: string;
+}
+
+interface Teammate {
+  member_name: string;
+  display_name: string;
+  persona: string;
+  agent_key: string;
+}
+
+interface TeamMember {
+  member_name: string;
+  display_name: string;
+  role_type: string;
+  persona: string;
+  prompt_hint: string;
+  agent_key: string;
+}
+
+interface TeamEntry {
+  team_name: string;
+  lifecycle: string;
+  teammate_mode: string;
+  spawn_mode: string;
+  leader: Teammate;
+  teammate: Teammate;
+  predefined_members: TeamMember[];
+}
+
 interface ConfigPanelProps {
   config: Record<string, unknown> | null;
   isConnected: boolean;
@@ -23,6 +64,24 @@ interface ConfigPanelProps {
   onModelValidate?: (fields: { api_base: string; api_key: string; model: string; model_provider: string }) => Promise<void>;
   onModelsRefresh?: () => Promise<void>;
   onSetActiveModel?: (modelName: string) => Promise<void>;
+  /** 多Agent和Teams操作回调 */
+  onAgentsTeamsSave?: (payload: {
+    agents: Record<string, {
+      model: { provider: string; api_base: string; api_key: string; model: string };
+      skills: string[];
+      max_iterations: string;
+      completion_timeout: string;
+    }>;
+    team: Array<{
+      team_name: string;
+      lifecycle: string;
+      teammate_mode: string;
+      spawn_mode: string;
+      leader: { member_name: string; display_name: string; persona: string; agent_key: string };
+      teammate: { member_name: string; display_name: string; persona: string; agent_key: string };
+      predefined_members: Array<{ member_name: string; display_name: string; role_type: string; persona: string; prompt_hint: string; agent_key: string }>;
+    }>;
+  }) => Promise<void>;
 }
 
 interface ConfigGroup {
@@ -48,6 +107,8 @@ const THIRD_PARTY_API_KEYS = new Set([
 const REQUIRED_MODEL_FIELDS = ["api_base", "api_key", "model", "model_provider"] as const;
 const REQUIRED_MODEL_FIELD_SET = new Set<string>(REQUIRED_MODEL_FIELDS);
 const EVOLUTION_KEYS = new Set(["evolution_auto_scan"]);
+const AGENT_KEYS = new Set(["name", "model", "skills", "max_iterations", "completion_timeout"]);
+const TEAM_KEYS = new Set(["team_name", "lifecycle", "teammate_mode", "spawn_mode"]);
 const FREE_SEARCH_BOOLEAN_KEYS = new Set(["free_search_ddg_enabled", "free_search_bing_enabled"]);
 const FREE_SEARCH_KEYS = new Set([...FREE_SEARCH_BOOLEAN_KEYS, "free_search_proxy_url"]);
 const MEMORY_KEYS = new Set(["memory_forbidden_enabled", "memory_forbidden_description"]);
@@ -111,6 +172,8 @@ function classifyKey(key: string): string {
   if (THIRD_PARTY_API_KEYS.has(key)) return "third_party_api";
   if (EMAIL_KEYS.has(key)) return "email";
   if (EVOLUTION_KEYS.has(key)) return "evolution";
+  if (AGENT_KEYS.has(key)) return "agents";
+  if (TEAM_KEYS.has(key)) return "team";
   if (FREE_SEARCH_KEYS.has(key)) return "free_search";
   if (MEMORY_KEYS.has(key)) return "memory";
   if (key === "context_engine_enabled" || key === "kv_cache_affinity_enabled") return "context_engine";
@@ -168,6 +231,20 @@ function getGroupIcon(tag: string) {
       </svg>
     );
   }
+  if (tag === "agents") {
+    return (
+      <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={1.8}>
+        <path strokeLinecap="round" strokeLinejoin="round" d="M15.042 21.672L13.684 16.6m0 0l-2.51 2.225.569-9.47 2.51 2.225a4.5 4.5 0 00-6.286-3.774l-.53.938a4.5 4.5 0 002.024 2.024l4.286-.572zm-7.97-3.043l-2.51-2.225.569 9.47-2.51-2.225a4.5 4.5 0 016.286 3.774l.53-.938a4.5 4.5 0 00-2.024-2.024z" />
+      </svg>
+    );
+  }
+  if (tag === "team") {
+    return (
+      <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={1.8}>
+        <path strokeLinecap="round" strokeLinejoin="round" d="M18 18.72a9.094 9.094 0 003.741-.479 3 3 0 00-4.682-2.72m.94 3.198l.001.031c0 .225-.012.447-.037.666A11.944 11.944 0 0112 21c-2.17 0-4.207-.576-5.963-1.584A6.062 6.062 0 016 18.719m12 0a5.971 5.971 0 00-.941-3.197m0 0A5.995 5.995 0 0012 12.75a5.995 5.995 0 00-5.058 2.772m0 0a3 3 0 00-4.681 2.72 8.986 8.986 0 003.74.477m.94-3.197a5.971 5.971 0 00-.94 3.197M15 6.75a3 3 0 11-6 0 3 3 0 016 0zm6 3a2.25 2.25 0 11-4.5 0 2.25 2.25 0 014.5 0zm-13.5 0a2.25 2.25 0 11-4.5 0 2.25 2.25 0 014.5 0z" />
+      </svg>
+    );
+  }
   if (tag === "context_engine") {
     return (
       <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={1.8}>
@@ -198,6 +275,8 @@ function getGroupToneClass(tag: string): string {
   if (tag === "third_party_api") return "text-indigo-500 bg-indigo-500/10 border-indigo-500/20";
   if (tag === "free_search") return "text-lime-500 bg-lime-500/10 border-lime-500/20";
   if (tag === "evolution") return "text-amber-500 bg-amber-500/10 border-amber-500/20";
+  if (tag === "agents") return "text-pink-500 bg-pink-500/10 border-pink-500/20";
+  if (tag === "team") return "text-fuchsia-500 bg-fuchsia-500/10 border-fuchsia-500/20";
   if (tag === "memory") return "text-purple-500 bg-purple-500/10 border-purple-500/20";
   if (tag === "context_engine") return "text-sky-500 bg-sky-500/10 border-sky-500/20";
   if (tag === "permissions") return "text-rose-500 bg-rose-500/10 border-rose-500/20";
@@ -277,6 +356,8 @@ function getGroupMeta(t: (key: string) => string): Record<string, { label: strin
     third_party_api: { label: t('config.groups.thirdParty.label'), order: 5, hint: t('config.groups.thirdParty.hint') },
     free_search: { label: t('config.groups.freeSearch.label'), order: 6, hint: t('config.groups.freeSearch.hint') },
     evolution: { label: t('config.groups.evolution.label'), order: 7, hint: t('config.groups.evolution.hint') },
+    agents: { label: t('config.groups.agents.label'), order: 7.5, hint: t('config.groups.agents.hint') },
+    team: { label: t('config.groups.team.label'), order: 7.6, hint: t('config.groups.team.hint') },
     context_engine: { label: t('config.groups.contextEngine.label'), order: 8, hint: t('config.groups.contextEngine.hint') },
     permissions: { label: t('config.groups.permissions.label'), order: 9, hint: t('config.groups.permissions.hint') },
     memory: { label: t('config.groups.memory.label'), order: 10, hint: t('config.groups.memory.hint') },
@@ -338,6 +419,11 @@ const KEY_DISPLAY_I18N: Record<string, string> = {
   free_search_proxy_url: "config.keys.freeSearchProxyUrl",
   memory_forbidden_enabled: "config.keys.memoryForbiddenEnabled",
   memory_forbidden_description: "config.keys.memoryForbiddenDescription",
+  name: "config.keys.agentName",
+  model: "config.keys.agentModel",
+  skills: "config.keys.agentSkills",
+  max_iterations: "config.keys.agentMaxIterations",
+  completion_timeout: "config.keys.agentCompletionTimeout",
 };
 const KEY_PLACEHOLDER_I18N: Record<string, string> = {
   free_search_proxy_url: "config.keys.freeSearchProxyUrlPlaceholder",
@@ -351,6 +437,10 @@ const KEY_SORT_PRIORITY: Record<string, number> = {
   free_search_proxy_url: 2,
   memory_forbidden_enabled: 0,
   memory_forbidden_description: 1,
+  model: 0,
+  skills: 1,
+  max_iterations: 2,
+  completion_timeout: 3,
 };
 
 function getKeyDisplayLabel(key: string, t: (key: string) => string): string {
@@ -821,6 +911,625 @@ function MultiModelSection({
   );
 }
 
+/** 多Agent管理（受控组件，编辑状态由父组件持有） */
+function MultiAgentSection({
+  agents,
+  onAgentsChange,
+  availableModels,
+  t,
+}: {
+  agents: AgentEntry[];
+  onAgentsChange: (agents: AgentEntry[]) => void;
+  availableModels: ModelEntry[];
+  t: (key: string, options?: Record<string, unknown>) => string;
+}) {
+  const [expandedIdx, setExpandedIdx] = useState<number | null>(null);
+  const [addingNew, setAddingNew] = useState(false);
+  const [newAgent, setNewAgent] = useState<AgentEntry>({
+    name: "",
+    model: { provider: "", api_base: "", api_key: "", model: "" },
+    skills: [],
+    max_iterations: "",
+    completion_timeout: "",
+  });
+
+  const updateAgentField = (idx: number, field: keyof AgentEntry, value: string) => {
+    const copy = [...agents];
+    if (field === "model") return;
+    copy[idx] = { ...copy[idx], [field]: value };
+    onAgentsChange(copy);
+  };
+
+  const handleModelSelect = (idx: number, modelName: string) => {
+    const selectedModel = availableModels.find((m) => m.model_name === modelName);
+    if (!selectedModel) return;
+    const copy = [...agents];
+    copy[idx] = {
+      ...copy[idx],
+      model: {
+        provider: selectedModel.model_provider || "",
+        api_base: selectedModel.api_base || "",
+        api_key: selectedModel.api_key || "",
+        model: selectedModel.model_name || "",
+      },
+    };
+    onAgentsChange(copy);
+  };
+
+  const removeAgent = (idx: number) => {
+    onAgentsChange(agents.filter((_, i) => i !== idx));
+    setExpandedIdx((prev) => {
+      if (prev === null) return null;
+      if (idx === prev) return null;
+      if (idx < prev) return prev - 1;
+      return prev;
+    });
+  };
+
+  const handleAddNew = () => {
+    const name = newAgent.name.trim();
+    if (!name) return;
+    if (agents.some((a) => a.name === name)) return;
+    onAgentsChange([...agents, { ...newAgent, name }]);
+    setExpandedIdx(agents.length);
+    setAddingNew(false);
+    setNewAgent({ name: "", model: { provider: "", api_base: "", api_key: "", model: "" }, skills: [], max_iterations: "", completion_timeout: "" });
+  };
+
+  const agentFields: (keyof AgentEntry)[] = ["name", "skills", "max_iterations", "completion_timeout"];
+
+  const getAgentFieldLabel = (field: string): string => {
+    const labels: Record<string, string> = {
+      name: t("config.keys.agentName"),
+      model: t("config.keys.agentModel"),
+      skills: t("config.keys.agentSkills"),
+      max_iterations: t("config.keys.agentMaxIterations"),
+      completion_timeout: t("config.keys.agentCompletionTimeout"),
+    };
+    return labels[field] || field;
+  };
+
+  return (
+    <div className="space-y-2">
+      {agents.map((agent, idx) => {
+        const isExpanded = expandedIdx === idx;
+        return (
+          <div key={idx} className="rounded-lg border border-border bg-secondary/20">
+            <div className="flex items-center justify-between px-3 py-2">
+              <button
+                type="button"
+                className="flex items-center gap-2 text-sm font-medium text-text truncate flex-1 text-left"
+                onClick={() => setExpandedIdx(isExpanded ? null : idx)}
+              >
+                <svg className={`w-3 h-3 transition-transform ${isExpanded ? "rotate-90" : ""}`} fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" />
+                </svg>
+                <span className="truncate">{agent.name || t("config.agentList.untitled")}</span>
+              </button>
+              <div className="flex items-center gap-1 ml-2">
+                <button
+                  type="button"
+                  onClick={() => removeAgent(idx)}
+                  className="text-[11px] px-2 py-0.5 rounded border border-border hover:bg-danger-subtle hover:text-danger disabled:opacity-40"
+                >
+                  {t("config.agentList.removeAgent")}
+                </button>
+              </div>
+            </div>
+            {isExpanded && (
+              <div className="border-t border-border px-3 py-2 space-y-2">
+                <div className="flex items-center gap-2 text-xs">
+                  <label className="w-28 text-text-muted shrink-0">{t("config.keys.agentModel")}</label>
+                  <select
+                    value={agent.model.model ?? ""}
+                    onChange={(e) => handleModelSelect(idx, e.target.value)}
+                    className="flex-1 rounded border border-border bg-bg px-2 py-1 text-text text-xs"
+                  >
+                    <option value="">-- Select Model --</option>
+                    {availableModels.map((m) => (
+                      <option key={m.model_name} value={m.model_name}>{m.model_name}</option>
+                    ))}
+                  </select>
+                </div>
+                {agentFields.map((field) => (
+                  <div key={field} className="flex items-center gap-2 text-xs">
+                    <label className="w-28 text-text-muted shrink-0">{getAgentFieldLabel(field)}</label>
+                    {field === "skills" ? (
+                      <input
+                        type="text"
+                        value={(agent.skills || []).join(", ")}
+                        onChange={(e) => {
+                          const copy = [...agents];
+                          copy[idx] = { ...copy[idx], skills: e.target.value.split(/[,，]/).map((s) => s.trim()).filter(Boolean) };
+                          onAgentsChange(copy);
+                        }}
+                        className="flex-1 rounded border border-border bg-bg px-2 py-1 text-text text-xs"
+                        placeholder={t("config.keys.agentSkillsPlaceholder")}
+                      />
+                    ) : (
+                      <input
+                        type="text"
+                        value={(agent[field] as string) ?? ""}
+                        onChange={(e) => updateAgentField(idx, field, e.target.value)}
+                        className="flex-1 rounded border border-border bg-bg px-2 py-1 text-text text-xs"
+                      />
+                    )}
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        );
+      })}
+
+      {addingNew ? (
+        <div className="rounded-lg border border-accent/40 bg-accent/5 px-3 py-2 space-y-2">
+          <div className="flex items-center gap-2 text-xs">
+            <label className="w-28 text-text-muted shrink-0">{t("config.keys.agentModel")}</label>
+            <select
+              value={newAgent.model.model ?? ""}
+              onChange={(e) => {
+                const selectedModel = availableModels.find((m) => m.model_name === e.target.value);
+                if (!selectedModel) return;
+                setNewAgent((p) => ({
+                  ...p,
+                  model: {
+                    provider: selectedModel.model_provider || "",
+                    api_base: selectedModel.api_base || "",
+                    api_key: selectedModel.api_key || "",
+                    model: selectedModel.model_name || "",
+                  },
+                }));
+              }}
+              className="flex-1 rounded border border-border bg-bg px-2 py-1 text-text text-xs"
+            >
+              <option value="">-- Select Model --</option>
+              {availableModels.map((m) => (
+                <option key={m.model_name} value={m.model_name}>{m.model_name}</option>
+              ))}
+            </select>
+          </div>
+          {agentFields.map((field) => (
+            <div key={field} className="flex items-center gap-2 text-xs">
+              <label className="w-28 text-text-muted shrink-0">{getAgentFieldLabel(field)}</label>
+              {field === "skills" ? (
+                <input
+                  type="text"
+                  value={(newAgent.skills || []).join(", ")}
+                  onChange={(e) => setNewAgent((p) => ({ ...p, skills: e.target.value.split(/[,，]/).map((s) => s.trim()).filter(Boolean) }))}
+                  className="flex-1 rounded border border-border bg-bg px-2 py-1 text-text text-xs"
+                  placeholder={t("config.keys.agentSkillsPlaceholder")}
+                />
+              ) : (
+                <input
+                  type="text"
+                  value={newAgent[field] as string}
+                  onChange={(e) => setNewAgent((p) => ({ ...p, [field]: e.target.value }))}
+                  className="flex-1 rounded border border-border bg-bg px-2 py-1 text-text text-xs"
+                />
+              )}
+            </div>
+          ))}
+          <div className="flex justify-end gap-2 pt-1">
+            <button type="button" onClick={() => setAddingNew(false)} className="btn !px-3 !py-1 text-xs">{t("common.cancel")}</button>
+            <button type="button" onClick={handleAddNew} disabled={!newAgent.name.trim()} className="btn primary !px-3 !py-1 text-xs">{t("common.confirm")}</button>
+          </div>
+        </div>
+      ) : (
+        <button
+          type="button"
+          onClick={() => setAddingNew(true)}
+          className="w-full rounded-lg border border-dashed border-border py-2 text-xs text-text-muted hover:bg-secondary/40 hover:border-accent/40"
+        >
+          + {t("config.agentList.addAgent")}
+        </button>
+      )}
+    </div>
+  );
+}
+
+/** TeamItem：单个Team的配置 */
+function TeamItemSection({
+  team,
+  onTeamChange,
+  agents,
+  t,
+}: {
+  team: TeamEntry;
+  onTeamChange: (team: TeamEntry) => void;
+  agents: AgentEntry[];
+  t: (key: string, options?: Record<string, unknown>) => string;
+}) {
+  const [openLeader, setOpenLeader] = useState(false);
+  const [openTeammate, setOpenTeammate] = useState(false);
+  const [openMembers, setOpenMembers] = useState(false);
+  const [expandedMemberIdx, setExpandedMemberIdx] = useState<number | null>(null);
+
+  const updateLeader = (field: keyof Teammate, value: string) => {
+    onTeamChange({ ...team, leader: { ...team.leader, [field]: value } });
+  };
+
+  const updateTeammate = (field: keyof Teammate, value: string) => {
+    onTeamChange({ ...team, teammate: { ...team.teammate, [field]: value } });
+  };
+
+  const updateTeamField = (field: keyof TeamEntry, value: string) => {
+    onTeamChange({ ...team, [field]: value });
+  };
+
+  const removeMember = (idx: number) => {
+    const updated = team.predefined_members.filter((_, i) => i !== idx);
+    onTeamChange({ ...team, predefined_members: updated });
+    setExpandedMemberIdx((prev) => {
+      if (prev === null) return null;
+      if (idx === prev) return null;
+      if (idx < prev) return prev - 1;
+      return prev;
+    });
+  };
+
+  const teamStringFields: (keyof TeamEntry)[] = ["team_name", "lifecycle", "teammate_mode", "spawn_mode"];
+  const teammateFields: (keyof Teammate)[] = ["member_name", "display_name", "persona", "agent_key"];
+  const memberFields: (keyof TeamMember)[] = ["member_name", "display_name", "role_type", "persona", "prompt_hint", "agent_key"];
+
+  const getTeamFieldLabel = (field: string): string => {
+    const labels: Record<string, string> = {
+      team_name: t("config.keys.teamName"),
+      lifecycle: t("config.keys.teamLifecycle"),
+      teammate_mode: t("config.keys.teamTeammateMode"),
+      spawn_mode: t("config.keys.teamSpawnMode"),
+    };
+    return labels[field] || field;
+  };
+
+  const getLeaderFieldLabel = (field: string): string => {
+    const labels: Record<string, string> = {
+      member_name: t("config.keys.teamLeaderMemberName"),
+      display_name: t("config.keys.teamLeaderDisplayName"),
+      persona: t("config.keys.teamLeaderPersona"),
+      agent_key: t("config.keys.teamLeaderAgentKey"),
+    };
+    return labels[field] || field;
+  };
+
+  const getMemberFieldLabel = (field: string): string => {
+    const labels: Record<string, string> = {
+      member_name: t("config.keys.teamMemberName"),
+      display_name: t("config.keys.teamMemberDisplayName"),
+      role_type: t("config.keys.teamMemberRoleType"),
+      persona: t("config.keys.teamMemberPersona"),
+      prompt_hint: t("config.keys.teamMemberPromptHint"),
+      agent_key: t("config.keys.teamMemberAgentKey"),
+    };
+    return labels[field] || field;
+  };
+
+  return (
+    <div className="space-y-3">
+      {/* 基础配置 */}
+      <div className="space-y-2">
+        {teamStringFields.map((field) => (
+          <div key={field} className="flex items-center gap-2 text-xs">
+            <label className="w-28 text-text-muted shrink-0">{getTeamFieldLabel(field)}</label>
+            <input
+              type="text"
+              value={(team[field] as string) ?? ""}
+              onChange={(e) => updateTeamField(field, e.target.value)}
+              className="flex-1 rounded border border-border bg-bg px-2 py-1 text-text text-xs"
+            />
+          </div>
+        ))}
+      </div>
+
+      {/* Leader配置 */}
+      <div className="rounded-lg border border-border bg-secondary/20">
+        <button
+          type="button"
+          onClick={() => setOpenLeader(!openLeader)}
+          className="w-full flex items-center justify-between px-3 py-2 text-xs font-medium text-text"
+        >
+          <span>{t("config.team.leader")}</span>
+          <svg className={`w-3 h-3 transition-transform ${openLeader ? "rotate-180" : ""}`} fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2}>
+            <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
+          </svg>
+        </button>
+        {openLeader && (
+          <div className="border-t border-border px-3 py-2 space-y-2">
+            {teammateFields.map((field) => (
+              <div key={field} className="flex items-center gap-2 text-xs">
+                <label className="w-28 text-text-muted shrink-0">{getLeaderFieldLabel(field)}</label>
+                {field === "agent_key" ? (
+                  <select
+                    value={team.leader[field] ?? ""}
+                    onChange={(e) => updateLeader(field, e.target.value)}
+                    className="flex-1 rounded border border-border bg-bg px-2 py-1 text-text text-xs"
+                  >
+                    <option value="">-- Select Agent --</option>
+                    {agents.map((agent) => (
+                      <option key={agent.name} value={agent.name}>{agent.name || "(unnamed)"}</option>
+                    ))}
+                  </select>
+                ) : (
+                  <input
+                    type="text"
+                    value={team.leader[field] ?? ""}
+                    onChange={(e) => updateLeader(field, e.target.value)}
+                    className="flex-1 rounded border border-border bg-bg px-2 py-1 text-text text-xs"
+                  />
+                )}
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
+      {/* Teammate配置 */}
+      <div className="rounded-lg border border-border bg-secondary/20">
+        <button
+          type="button"
+          onClick={() => setOpenTeammate(!openTeammate)}
+          className="w-full flex items-center justify-between px-3 py-2 text-xs font-medium text-text"
+        >
+          <span>{t("config.team.teammate")}</span>
+          <svg className={`w-3 h-3 transition-transform ${openTeammate ? "rotate-180" : ""}`} fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2}>
+            <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
+          </svg>
+        </button>
+        {openTeammate && (
+          <div className="border-t border-border px-3 py-2 space-y-2">
+            {teammateFields.map((field) => (
+              <div key={field} className="flex items-center gap-2 text-xs">
+                <label className="w-28 text-text-muted shrink-0">{getLeaderFieldLabel(field)}</label>
+                {field === "agent_key" ? (
+                  <select
+                    value={team.teammate[field] ?? ""}
+                    onChange={(e) => updateTeammate(field, e.target.value)}
+                    className="flex-1 rounded border border-border bg-bg px-2 py-1 text-text text-xs"
+                  >
+                    <option value="">-- Select Agent --</option>
+                    {agents.map((agent) => (
+                      <option key={agent.name} value={agent.name}>{agent.name || "(unnamed)"}</option>
+                    ))}
+                  </select>
+                ) : (
+                  <input
+                    type="text"
+                    value={team.teammate[field] ?? ""}
+                    onChange={(e) => updateTeammate(field, e.target.value)}
+                    className="flex-1 rounded border border-border bg-bg px-2 py-1 text-text text-xs"
+                  />
+                )}
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
+      {/* Predefined Members配置 */}
+      <div className="rounded-lg border border-border bg-secondary/20">
+        <button
+          type="button"
+          onClick={() => setOpenMembers(!openMembers)}
+          className="w-full flex items-center justify-between px-3 py-2 text-xs font-medium text-text"
+        >
+          <span>{t("config.team.predefinedMembers")} ({team.predefined_members.length})</span>
+          <svg className={`w-3 h-3 transition-transform ${openMembers ? "rotate-180" : ""}`} fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2}>
+            <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
+          </svg>
+        </button>
+        {openMembers && (
+          <div className="border-t border-border p-3 space-y-2">
+            {team.predefined_members.map((member, idx) => {
+              const isExpanded = expandedMemberIdx === idx;
+              return (
+                <div key={idx} className="rounded border border-border bg-secondary/20">
+                  <div className="flex items-center justify-between px-3 py-2">
+                    <button
+                      type="button"
+                      className="flex items-center gap-2 text-xs font-medium text-text truncate flex-1 text-left"
+                      onClick={() => setExpandedMemberIdx(isExpanded ? null : idx)}
+                    >
+                      <svg className={`w-3 h-3 transition-transform ${isExpanded ? "rotate-90" : ""}`} fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2}>
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" />
+                      </svg>
+                      <span className="truncate">{member.member_name || t("config.agentList.untitled")}</span>
+                    </button>
+                    <div className="flex items-center gap-1 ml-2">
+                      <button
+                        type="button"
+                        onClick={() => removeMember(idx)}
+                        className="text-[11px] px-2 py-0.5 rounded border border-border hover:bg-danger-subtle hover:text-danger disabled:opacity-40"
+                      >
+                        {t("config.agentList.removeAgent")}
+                      </button>
+                    </div>
+                  </div>
+                  {isExpanded && (
+                    <div className="border-t border-border px-3 py-2 space-y-2">
+                      {memberFields.map((field) => (
+                        <div key={field} className="flex items-center gap-2 text-xs">
+                          <label className="w-28 text-text-muted shrink-0">{getMemberFieldLabel(field)}</label>
+                          {field === "agent_key" ? (
+                            <select
+                              value={member[field] ?? ""}
+                              onChange={(e) => {
+                                const updated = [...team.predefined_members];
+                                updated[idx] = { ...updated[idx], [field]: e.target.value };
+                                onTeamChange({ ...team, predefined_members: updated });
+                              }}
+                              className="flex-1 rounded border border-border bg-bg px-2 py-1 text-text text-xs"
+                            >
+                              <option value="">-- Select Agent --</option>
+                              {agents.map((agent) => (
+                                <option key={agent.name} value={agent.name}>{agent.name || "(unnamed)"}</option>
+                              ))}
+                            </select>
+                          ) : (
+                            <input
+                              type="text"
+                              value={member[field] ?? ""}
+                              onChange={(e) => {
+                                const updated = [...team.predefined_members];
+                                updated[idx] = { ...updated[idx], [field]: e.target.value };
+                                onTeamChange({ ...team, predefined_members: updated });
+                              }}
+                              className="flex-1 rounded border border-border bg-bg px-2 py-1 text-text text-xs"
+                            />
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+            <button
+              type="button"
+              onClick={() => {
+                onTeamChange({
+                  ...team,
+                  predefined_members: [...team.predefined_members, { member_name: "", display_name: "", role_type: "", persona: "", prompt_hint: "", agent_key: "" }],
+                });
+              }}
+              className="w-full rounded border border-dashed border-border py-1 text-xs text-text-muted hover:bg-secondary/40"
+            >
+              + {t("config.team.addMember")}
+            </button>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+/** TeamsSection：管理多个Team配置 */
+function TeamsSection({
+  teams,
+  onTeamsChange,
+  agents,
+  t,
+}: {
+  teams: TeamEntry[];
+  onTeamsChange: (teams: TeamEntry[]) => void;
+  agents: AgentEntry[];
+  t: (key: string, options?: Record<string, unknown>) => string;
+}) {
+  const [expandedIdx, setExpandedIdx] = useState<number | null>(null);
+  const [addingNew, setAddingNew] = useState(false);
+  const [newTeam, setNewTeam] = useState<TeamEntry>({
+    team_name: "",
+    lifecycle: "",
+    teammate_mode: "",
+    spawn_mode: "",
+    leader: { member_name: "", display_name: "", persona: "", agent_key: "" },
+    teammate: { member_name: "", display_name: "", persona: "", agent_key: "" },
+    predefined_members: [],
+  });
+
+  const updateTeam = (idx: number, team: TeamEntry) => {
+    const copy = [...teams];
+    copy[idx] = team;
+    onTeamsChange(copy);
+  };
+
+  const removeTeam = (idx: number) => {
+    onTeamsChange(teams.filter((_, i) => i !== idx));
+    setExpandedIdx((prev) => {
+      if (prev === null) return null;
+      if (idx === prev) return null;
+      if (idx < prev) return prev - 1;
+      return prev;
+    });
+  };
+
+  const handleAddNew = () => {
+    const name = newTeam.team_name.trim();
+    if (!name) return;
+    if (teams.some((t) => t.team_name === name)) return;
+    onTeamsChange([...teams, { ...newTeam, team_name: name }]);
+    setExpandedIdx(teams.length);
+    setAddingNew(false);
+    setNewTeam({
+      team_name: "",
+      lifecycle: "",
+      teammate_mode: "",
+      spawn_mode: "",
+      leader: { member_name: "", display_name: "", persona: "", agent_key: "" },
+      teammate: { member_name: "", display_name: "", persona: "", agent_key: "" },
+      predefined_members: [],
+    });
+  };
+
+  return (
+    <div className="space-y-2">
+      {teams.map((team, idx) => {
+        const isExpanded = expandedIdx === idx;
+        return (
+          <div key={idx} className="rounded-lg border border-border bg-secondary/20">
+            <div className="flex items-center justify-between px-3 py-2">
+              <button
+                type="button"
+                className="flex items-center gap-2 text-sm font-medium text-text truncate flex-1 text-left"
+                onClick={() => setExpandedIdx(isExpanded ? null : idx)}
+              >
+                <svg className={`w-3 h-3 transition-transform ${isExpanded ? "rotate-90" : ""}`} fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" />
+                </svg>
+                <span className="truncate">{team.team_name || t("config.agentList.untitled")}</span>
+              </button>
+              <div className="flex items-center gap-1 ml-2">
+                <button
+                  type="button"
+                  onClick={() => removeTeam(idx)}
+                  className="text-[11px] px-2 py-0.5 rounded border border-border hover:bg-danger-subtle hover:text-danger"
+                >
+                  {t("config.agentList.removeAgent")}
+                </button>
+              </div>
+            </div>
+            {isExpanded && (
+              <div className="border-t border-border p-3">
+                <TeamItemSection
+                  team={team}
+                  onTeamChange={(t) => updateTeam(idx, t)}
+                  agents={agents}
+                  t={t}
+                />
+              </div>
+            )}
+          </div>
+        );
+      })}
+
+      {addingNew ? (
+        <div className="rounded-lg border border-accent/40 bg-accent/5 px-3 py-2 space-y-2">
+          <div className="flex items-center gap-2 text-xs">
+            <label className="w-28 text-text-muted shrink-0">{t("config.keys.teamName")}</label>
+            <input
+              type="text"
+              value={newTeam.team_name}
+              onChange={(e) => setNewTeam((p) => ({ ...p, team_name: e.target.value }))}
+              className="flex-1 rounded border border-border bg-bg px-2 py-1 text-text text-xs"
+            />
+          </div>
+          <div className="flex justify-end gap-2 pt-1">
+            <button type="button" onClick={() => setAddingNew(false)} className="btn !px-3 !py-1 text-xs">{t("common.cancel")}</button>
+            <button type="button" onClick={handleAddNew} disabled={!newTeam.team_name.trim()} className="btn primary !px-3 !py-1 text-xs">{t("common.confirm")}</button>
+          </div>
+        </div>
+      ) : (
+        <button
+          type="button"
+          onClick={() => setAddingNew(true)}
+          className="w-full rounded-lg border border-dashed border-border py-2 text-xs text-text-muted hover:bg-secondary/40 hover:border-accent/40"
+        >
+          + {t("config.team.addTeam")}
+        </button>
+      )}
+    </div>
+  );
+}
+
 /** 模型配置父级：把默认/视频/音频/视觉四个子分组收拢在「模型配置」下 */
 function ModelConfigSection({
   modelGroups,
@@ -915,12 +1624,25 @@ export function ConfigPanel({
   onModelValidate,
   onModelsRefresh,
   onSetActiveModel,
+  onAgentsTeamsSave,
 }: ConfigPanelProps) {
   const { t } = useTranslation();
   const isProcessing = useChatStore((s) => s.isProcessing);
-  const { availableModels } = useSessionStore();
-  const [draftValues, setDraftValues] = useState<Record<string, string>>({});
-  const [draftModels, setDraftModels] = useState<ModelEntry[]>([]);
+  const { availableModels: storeAvailableModels } = useSessionStore();
+  const [draftValues, setDraftValues] = useState<Record<string, string>>(() => {
+    if (!config) return {};
+    const next: Record<string, string> = {};
+    for (const [key, value] of Object.entries(config)) {
+      next[key] = normalizeConfigValue(value);
+    }
+    return next;
+  });
+  const [draftModels, setDraftModels] = useState<ModelEntry[]>(() => storeAvailableModels.map((m) => ({ ...m })));
+  const [draftAgents, setDraftAgents] = useState<AgentEntry[]>([]);
+  const [openAgents, setOpenAgents] = useState(true);
+  const [draftTeams, setDraftTeams] = useState<TeamEntry[]>([]);
+  const [openTeams, setOpenTeams] = useState(true);
+  const [agentsTeamsEdited, setAgentsTeamsEdited] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -939,8 +1661,71 @@ export function ConfigPanel({
   }, [normalizedConfig]);
 
   useEffect(() => {
-    setDraftModels(availableModels.map((m) => ({ ...m })));
-  }, [availableModels]);
+    setDraftModels(storeAvailableModels.map((m) => ({ ...m })));
+  }, [storeAvailableModels]);
+
+  const agentsFromConfig = useMemo<AgentEntry[]>(() => {
+    const agents: AgentEntry[] = [];
+    for (let i = 0; i < 10; i++) {
+      const name = normalizedConfig[`agent_name_${i}`] || normalizedConfig[`agent_${i}_name`];
+      if (!name) continue;
+      const modelName = normalizedConfig[`agent_model_${i}`] || normalizedConfig[`agent_${i}_model`] || "";
+      const matchedModel = storeAvailableModels.find((m) => m.model_name === modelName);
+      agents.push({
+        name,
+        model: matchedModel ? {
+          provider: matchedModel.model_provider || "",
+          api_base: matchedModel.api_base || "",
+          api_key: matchedModel.api_key || "",
+          model: matchedModel.model_name || "",
+        } : { provider: "", api_base: "", api_key: "", model: modelName },
+        skills: (normalizedConfig[`agent_skills_${i}`] || normalizedConfig[`agent_${i}_skills`] || "").split(/[,，]/).map((s: string) => s.trim()).filter(Boolean),
+        max_iterations: normalizedConfig[`agent_max_iterations_${i}`] || normalizedConfig[`agent_${i}_max_iterations`] || "",
+        completion_timeout: normalizedConfig[`agent_completion_timeout_${i}`] || normalizedConfig[`agent_${i}_completion_timeout`] || "",
+      });
+    }
+    return agents;
+  }, [normalizedConfig, storeAvailableModels]);
+
+  const teamsFromConfig = useMemo<TeamEntry[]>(() => {
+    const teams: TeamEntry[] = [];
+    for (let i = 0; i < 10; i++) {
+      const teamName = normalizedConfig[`team_name_${i}`] || normalizedConfig[`team_${i}_name`];
+      if (!teamName) continue;
+      teams.push({
+        team_name: teamName,
+        lifecycle: normalizedConfig[`team_lifecycle_${i}`] || normalizedConfig[`team_${i}_lifecycle`] || "",
+        teammate_mode: normalizedConfig[`team_teammate_mode_${i}`] || normalizedConfig[`team_${i}_teammate_mode`] || "",
+        spawn_mode: normalizedConfig[`team_spawn_mode_${i}`] || normalizedConfig[`team_${i}_spawn_mode`] || "",
+        leader: {
+          member_name: normalizedConfig[`team_leader_member_name_${i}`] || normalizedConfig[`team_${i}_leader_member_name`] || "",
+          display_name: normalizedConfig[`team_leader_display_name_${i}`] || normalizedConfig[`team_${i}_leader_display_name`] || "",
+          persona: normalizedConfig[`team_leader_persona_${i}`] || normalizedConfig[`team_${i}_leader_persona`] || "",
+          agent_key: normalizedConfig[`team_leader_agent_key_${i}`] || normalizedConfig[`team_${i}_leader_agent_key`] || "",
+        },
+        teammate: {
+          member_name: normalizedConfig[`team_teammate_member_name_${i}`] || normalizedConfig[`team_${i}_teammate_member_name`] || "",
+          display_name: normalizedConfig[`team_teammate_display_name_${i}`] || normalizedConfig[`team_${i}_teammate_display_name`] || "",
+          persona: normalizedConfig[`team_teammate_persona_${i}`] || normalizedConfig[`team_${i}_teammate_persona`] || "",
+          agent_key: normalizedConfig[`team_teammate_agent_key_${i}`] || normalizedConfig[`team_${i}_teammate_agent_key`] || "",
+        },
+        predefined_members: [],
+      });
+    }
+    return teams;
+  }, [normalizedConfig]);
+
+  useEffect(() => {
+    if (draftAgents.length === 0 && agentsFromConfig.length > 0) {
+      setDraftAgents(agentsFromConfig);
+    }
+  }, [agentsFromConfig, draftAgents.length]);
+
+  useEffect(() => {
+    if (draftTeams.length === 0 && teamsFromConfig.length > 0) {
+      setDraftTeams(teamsFromConfig);
+    }
+  }, [teamsFromConfig, draftTeams.length]);
 
   const groups = useMemo<ConfigGroup[]>(() => {
     if (!Object.keys(normalizedConfig).length) return [];
@@ -993,15 +1778,17 @@ export function ConfigPanel({
     return keys.some((key) => (draftValues[key] ?? "") !== normalizedConfig[key]);
   }, [draftValues, normalizedConfig]);
   const hasModelChanges = useMemo(() => {
-    if (draftModels.length !== availableModels.length) return true;
+    if (draftModels.length !== storeAvailableModels.length) return true;
     return draftModels.some((dm, i) => {
-      const om = availableModels[i];
+      const om = storeAvailableModels[i];
       if (!om) return true;
       return dm.model_name !== om.model_name || dm.api_base !== om.api_base
         || dm.api_key !== om.api_key || dm.model_provider !== om.model_provider;
     });
-  }, [draftModels, availableModels]);
-  const hasChanges = hasConfigChanges || hasModelChanges;
+  }, [draftModels, storeAvailableModels]);
+
+  const hasAgentsTeamsChanges = agentsTeamsEdited;
+  const hasChanges = hasConfigChanges || hasModelChanges || hasAgentsTeamsChanges;
   const missingRequiredModelFields = useMemo(
     () => REQUIRED_MODEL_FIELDS.filter((key) => !(draftValues[key] ?? "").trim()),
     [draftValues],
@@ -1018,7 +1805,10 @@ export function ConfigPanel({
   const handleCancel = () => {
     if (!hasChanges) return;
     setDraftValues(normalizedConfig);
-    setDraftModels(availableModels.map((m) => ({ ...m })));
+    setDraftModels(storeAvailableModels.map((m) => ({ ...m })));
+    setDraftAgents(agentsFromConfig);
+    setDraftTeams(teamsFromConfig);
+    setAgentsTeamsEdited(false);
     setError(null);
   };
 
@@ -1032,13 +1822,13 @@ export function ConfigPanel({
     setSaving(true);
     setError(null);
     try {
-      // 先计算改名检测所需的值（在 availableModels 可能被更新之前）
-      const originalNames = new Set(availableModels.map((m) => m.model_name));
+      // 先计算改名检测所需的值（在 storeAvailableModels 可能被更新之前）
+      const originalNames = new Set(storeAvailableModels.map((m) => m.model_name));
       const draftNames = new Set(draftModels.map((m) => m.model_name));
       const removedNames = [...originalNames].filter((n) => !draftNames.has(n));
       const addedNames = [...draftNames].filter((n) => !originalNames.has(n));
       const isRename = removedNames.length === 1 && addedNames.length === 1
-        && draftModels.length === availableModels.length;
+        && draftModels.length === storeAvailableModels.length;
 
       // 保存非模型配置（视频/音频/embed/第三方等）
       await onSaveConfig(draftValues);
@@ -1055,7 +1845,7 @@ export function ConfigPanel({
           // 处理同次保存中其他模型的字段变更
           for (const other of draftModels) {
             if (other.model_name === newName) continue;
-            const original = availableModels.find((m) => m.model_name === other.model_name);
+            const original = storeAvailableModels.find((m) => m.model_name === other.model_name);
             const isChanged = original && (
               other.api_base !== original.api_base || other.api_key !== original.api_key
               || other.model_provider !== original.model_provider
@@ -1068,7 +1858,7 @@ export function ConfigPanel({
           // 非改名场景：先 save 再 delete
           for (const dm of draftModels) {
             if (!dm.model_name) continue;
-            const original = availableModels.find((m) => m.model_name === dm.model_name);
+            const original = storeAvailableModels.find((m) => m.model_name === dm.model_name);
             const isNew = !originalNames.has(dm.model_name);
             const isChanged = original && (
               dm.api_base !== original.api_base || dm.api_key !== original.api_key
@@ -1087,11 +1877,34 @@ export function ConfigPanel({
         }
         // 默认模型变化时同步后端排序
         const newDefault = draftModels[0]?.model_name;
-        const oldDefault = availableModels[0]?.model_name;
+        const oldDefault = storeAvailableModels[0]?.model_name;
         if (newDefault && newDefault !== oldDefault && onSetActiveModel) {
           await onSetActiveModel(newDefault);
         }
         if (onModelsRefresh) await onModelsRefresh();
+      }
+      // 保存 agents 和 teams
+      if (hasAgentsTeamsChanges && onAgentsTeamsSave) {
+        const agentsPayload: Record<string, {
+          model: { provider: string; api_base: string; api_key: string; model: string };
+          skills: string[];
+          max_iterations: string;
+          completion_timeout: string;
+        }> = {};
+        for (const agent of draftAgents) {
+          if (!agent.name) continue;
+          agentsPayload[agent.name] = {
+            model: { ...agent.model },
+            skills: agent.skills,
+            max_iterations: agent.max_iterations,
+            completion_timeout: agent.completion_timeout,
+          };
+        }
+        await onAgentsTeamsSave({
+          agents: agentsPayload,
+          team: draftTeams.map((t) => ({ ...t })),
+        });
+        setAgentsTeamsEdited(false);
       }
     } catch (saveError) {
       const message = saveError instanceof Error ? saveError.message : t('config.errors.saveFailed');
@@ -1166,7 +1979,7 @@ export function ConfigPanel({
                 isConnected={isConnected}
               />
             )}
-            {otherGroups.map((group) => (
+            {otherGroups.filter((g) => g.tag !== "agents" && g.tag !== "team").map((group) => (
               <GroupSection
                 key={group.tag}
                 group={group}
@@ -1183,6 +1996,88 @@ export function ConfigPanel({
                 }
               />
             ))}
+            {otherGroups.some((g) => g.tag === "agents") && (
+              <div id="config-group-agents" className="rounded-xl border border-border bg-card/70 backdrop-blur-sm overflow-hidden shadow-sm">
+                <button
+                  onClick={() => setOpenAgents(!openAgents)}
+                  className="w-full flex items-center justify-between transition-colors text-sm px-4 py-3 bg-secondary/30 hover:bg-secondary/60"
+                >
+                  <span className="flex items-center gap-3 min-w-0">
+                    <span className="inline-flex items-center justify-center rounded-md border w-7 h-7 text-pink-500 bg-pink-500/10 border-pink-500/20">
+                      <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={1.8}>
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M15.042 21.672L13.684 16.6m0 0l-2.51 2.225.569-9.47 2.51 2.225a4.5 4.5 0 00-6.286-3.774l-.53.938a4.5 4.5 0 002.024 2.024l4.286-.572zm-7.97-3.043l-2.51-2.225.569 9.47-2.51-2.225a4.5 4.5 0 016.286 3.774l.53-.938a4.5 4.5 0 00-2.024-2.024z" />
+                      </svg>
+                    </span>
+                    <span className="min-w-0 text-left">
+                      <span className="block font-medium text-text">{t('config.groups.agents.label')}</span>
+                      <span className="block text-xs text-text-muted truncate">{t('config.groups.agents.hint')}</span>
+                    </span>
+                  </span>
+                  <span className="flex items-center gap-2 text-text-muted ml-3">
+                    <span className="text-[11px] px-2 py-0.5 rounded-full border border-border bg-secondary/60">
+                      {t('config.itemsCount', { count: draftAgents.length })}
+                    </span>
+                    <svg
+                      className={`w-4 h-4 transition-transform ${openAgents ? "rotate-180" : ""}`}
+                      fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2}
+                    >
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
+                    </svg>
+                  </span>
+                </button>
+                {openAgents && (
+                  <div className="border-t border-border p-4">
+                    <MultiAgentSection
+                      agents={draftAgents}
+                      onAgentsChange={(agents) => { setDraftAgents(agents); setAgentsTeamsEdited(true); }}
+                      availableModels={draftModels}
+                      t={t}
+                    />
+                  </div>
+                )}
+              </div>
+            )}
+            {otherGroups.some((g) => g.tag === "team") && (
+              <div id="config-group-team" className="rounded-xl border border-border bg-card/70 backdrop-blur-sm overflow-hidden shadow-sm">
+                <button
+                  onClick={() => setOpenTeams(!openTeams)}
+                  className="w-full flex items-center justify-between transition-colors text-sm px-4 py-3 bg-secondary/30 hover:bg-secondary/60"
+                >
+                  <span className="flex items-center gap-3 min-w-0">
+                    <span className="inline-flex items-center justify-center rounded-md border w-7 h-7 text-fuchsia-500 bg-fuchsia-500/10 border-fuchsia-500/20">
+                      <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={1.8}>
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M18 18.72a9.094 9.094 0 003.741-.479 3 3 0 00-4.682-2.72m.94 3.198l.001.031c0 .225-.012.447-.037.666A11.944 11.944 0 0112 21c-2.17 0-4.207-.576-5.963-1.584A6.062 6.062 0 016 18.719m12 0a5.971 5.971 0 00-.941-3.197m0 0A5.995 5.995 0 0012 12.75a5.995 5.995 0 00-5.058 2.772m0 0a3 3 0 00-4.681 2.72 8.986 8.986 0 003.74.477m.94-3.197a5.971 5.971 0 00-.94 3.197M15 6.75a3 3 0 11-6 0 3 3 0 016 0zm6 3a2.25 2.25 0 11-4.5 0 2.25 2.25 0 014.5 0zm-13.5 0a2.25 2.25 0 11-4.5 0 2.25 2.25 0 014.5 0z" />
+                      </svg>
+                    </span>
+                    <span className="min-w-0 text-left">
+                      <span className="block font-medium text-text">{t('config.groups.team.label')}</span>
+                      <span className="block text-xs text-text-muted truncate">{t('config.groups.team.hint')}</span>
+                    </span>
+                  </span>
+                  <span className="flex items-center gap-2 text-text-muted ml-3">
+                    <span className="text-[11px] px-2 py-0.5 rounded-full border border-border bg-secondary/60">
+                      {t('config.itemsCount', { count: draftTeams.length })}
+                    </span>
+                    <svg
+                      className={`w-4 h-4 transition-transform ${openTeams ? "rotate-180" : ""}`}
+                      fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2}
+                    >
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
+                    </svg>
+                  </span>
+                </button>
+                {openTeams && (
+                  <div className="border-t border-border p-4">
+                    <TeamsSection
+                      teams={draftTeams}
+                      onTeamsChange={(teams) => { setDraftTeams(teams); setAgentsTeamsEdited(true); }}
+                      agents={draftAgents}
+                      t={t}
+                    />
+                  </div>
+                )}
+              </div>
+            )}
           </div>
         )}
       </div>

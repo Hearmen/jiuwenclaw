@@ -198,6 +198,21 @@ _CONFIG_SET_ENV_MAP = {
     "free_search_ddg_enabled": "FREE_SEARCH_DDG_ENABLED",
     "free_search_bing_enabled": "FREE_SEARCH_BING_ENABLED",
     "free_search_proxy_url": "FREE_SEARCH_PROXY_URL",
+    # agents
+    "skills": "SKILLS",
+    "max_iterations": "MAX_ITERATIONS",
+    "completion_timeout": "COMPLETION_TIMEOUT",
+    # team
+    "team_name": "TEAM_NAME",
+    "lifecycle": "LIFECYCLE",
+    "teammate_mode": "TEAMATE_MODE",
+    "spawn_mode": "SPAWN_MODE",
+    "member_name": "MEMBER_NAME",
+    "display_name": "DISPLAY_NAME",
+    "persona": "PERSONA",
+    "agent_key": "AGENT_KEY",
+    "role_type": "ROLE_TYPE",
+    "prompt_hint": "PROMPT_HINT",
 }
 # 配置项键名列表，用于日志等说明
 CONFIG_KEYS = tuple(_CONFIG_SET_ENV_MAP.keys())
