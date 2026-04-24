@@ -415,7 +415,7 @@ After completing the basic WeCom bot setup, you can enable the digital avatar fe
 
 ### Configuration steps
 
-1. In the JiuwenClaw channel management page, open the WeCom channel settings and enable the **`group_digital_avatar`** toggle. Configure **`my_user_id`** and **`bot_name`**.
+1. In the JiuwenClaw channel management page, open the WeCom channel settings and enable the **`group_digital_avatar`** toggle. Configure **`my_user_id`** and **`bot_name`**. Before enabling the digital avatar, you need to have a private chat with the robot once; otherwise, an error message `[AiBotSDK] [WARN] Reply ack error` will be reported.
 
    ![WeCom digital avatar toggle](../assets/images/wecom/14_group_avatar.png)
 
