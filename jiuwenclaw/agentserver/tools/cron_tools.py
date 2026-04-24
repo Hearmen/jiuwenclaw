@@ -235,10 +235,9 @@ class CronTools:
             targets_str,
         )
         session_kw: dict[str, Any] = {}
-        if str(targets_str).strip().startswith("feishu_enterprise:"):
-            sid = self._route().session_id
-            if isinstance(sid, str) and sid.strip():
-                session_kw["session_id"] = sid.strip()
+        sid = self._route().session_id
+        if isinstance(sid, str) and sid.strip():
+            session_kw["session_id"] = sid.strip()
         chat_type = self._route().chat_type
         if chat_type:
             session_kw["chat_type"] = chat_type

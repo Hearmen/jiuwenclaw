@@ -490,6 +490,8 @@ class CronSchedulerService:
         metadata: dict | None = None
         msg_session_id: str | None = None
         routing_sid = str(getattr(job, "session_id", None) or "").strip()
+        if routing_sid:
+            msg_session_id = routing_sid
         if channel_id.startswith("feishu_enterprise:") and routing_sid and "::" in routing_sid:
             parts = routing_sid.split("::")
             if len(parts) >= 3 and parts[0] == "feishu":

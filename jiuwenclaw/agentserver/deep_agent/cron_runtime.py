@@ -305,6 +305,14 @@ def _extract_legacy_params(
         if "deleteAfterRun" in data:
             out["delete_after_run"] = bool(data.get("deleteAfterRun"))
 
+        context_session_id = getattr(context, "session_id", None)
+        if isinstance(context_session_id, str) and context_session_id.strip():
+            out["session_id"] = context_session_id.strip()
+            logger.info(
+                "[CronRuntimeBridge] _extract_legacy_params: added session_id=%s from context",
+                out["session_id"],
+            )
+
         context_mode = getattr(context, "mode", None)
         mode_resolved = (
             context_mode
