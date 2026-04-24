@@ -46,7 +46,9 @@ def main() -> int:
         action="store_true",
         help="Force clean initialization: delete entire ~/.jiuwenclaw before init",
     )
-    args = parser.parse_args()
+    # Use parse_known_args so that calling main() under pytest (which leaves
+    # test paths in sys.argv) does not fail with SystemExit on unknown args.
+    args, _ = parser.parse_known_args()
     return run_init(force=args.force)
 
 
