@@ -53,7 +53,7 @@ logger = logging.getLogger(__name__)
 _RAIL_BUILD_NAMES: dict[str, str] = {
     "FileSystemRail": "_build_filesystem_rail",
     "SkillUseRail": "_build_skill_rail_via_config",
-    "LspRail": "_build_lsp_rail",
+    "LspRail": "_build_lsp_rail_via_config",
     "HeartbeatRail": "_build_heartbeat_rail",
     "AvatarPromptRail": "_build_avatar_rail",
     "TaskPlanningRail": "_build_task_planning_rail",
@@ -97,9 +97,7 @@ class JiuwenClawCodeAdapter(JiuWenClawDeepAdapter):
         self._agent_name = self._instance_overrides.get(
             "agent_name", config.get("agent_name", "main_agent")
         )
-        self._workspace_dir = self._instance_overrides.get(
-            "workspace_dir", config.get("workspace_dir", "workspace")
-        )
+        self._project_dir = config.get("workspace_dir")
 
         model = self._create_model(config_base)
         agent_card = AgentCard(name=self._agent_name, id='jiuwenclaw')
@@ -140,7 +138,7 @@ class JiuwenClawCodeAdapter(JiuWenClawDeepAdapter):
             enable_task_loop=config.get("enable_task_loop", True),
             max_iterations=config.get("max_iterations", 15),
             workspace=Workspace(
-                root_path=self._workspace_dir or "./",
+                root_path=self._project_dir or "./",
                 language=self._resolve_runtime_language(),
             ),
             sys_operation=sys_operation,
@@ -252,6 +250,14 @@ class JiuwenClawCodeAdapter(JiuWenClawDeepAdapter):
         if method is None:
             return None
         return method()
+
+    def _build_lsp_rail_via_config(self) -> Any:
+        """构建 LspRail（带 project_dir 参数）."""
+        logger.info(
+            "[JiuwenClawCodeAdapter] Building LspRail with project_dir=%s",
+            self._project_dir,
+        )
+        return self._build_lsp_rail(workspace_dir=self._project_dir)
 
     def _build_skill_rail_via_config(self) -> Any:
         """构建 SkillUseRail（从 config 读取参数）."""

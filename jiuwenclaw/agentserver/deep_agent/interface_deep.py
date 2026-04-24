@@ -48,6 +48,7 @@ from openjiuwen.harness import (
     VisionModelConfig,
 )
 from openjiuwen.harness.factory import create_deep_agent
+from openjiuwen.harness.lsp import InitializeOptions
 from openjiuwen.harness.subagents.code_agent import create_code_agent
 from openjiuwen.harness.prompts import resolve_language
 from openjiuwen.harness.rails import SkillUseRail, TaskPlanningRail, SecurityRail, SkillEvolutionRail
@@ -1241,10 +1242,10 @@ class JiuWenClawDeepAdapter:
             return None
 
     @staticmethod
-    def _build_lsp_rail() -> LspRail | None:
+    def _build_lsp_rail(workspace_dir: str = None) -> LspRail | None:
         """Build LspRail."""
         try:
-            lsp_rail = LspRail()
+            lsp_rail = LspRail(InitializeOptions(cwd=workspace_dir))
             logger.info("[JiuWenClawDeepAdapter] LspRail create success")
         except Exception as exc:
             logger.warning("[JiuWenClawDeepAdapter] LspRail create failed: %s", exc)
