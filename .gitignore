@@ -75,3 +75,6 @@ jiuwenclaw/resources/agent/workspace/
 jiuwenclaw/resources/tui/bin/
 packages/jiuwenclaw-tui/jiuwenclaw_tui/resources/tui/bin/
 packages/jiuwenclaw-tui/jiuwenclaw_tui/resources/tui-bin/
+
+.crossnote/
+.trae/

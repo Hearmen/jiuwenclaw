@@ -29,6 +29,7 @@ parse_dotenv_early("jiuwenclaw-agentserver")
 # --- Now safe to import jiuwenclaw modules ---
 from jiuwenclaw.utils import (
     get_env_file,
+    get_root_dir,
     get_user_workspace_dir,
     logger,
     prepare_workspace,
@@ -45,8 +46,13 @@ _old_workspace = _workspace_dir / "agent" / "workspace"
 if not _config_file.exists() or (_old_workspace.exists() and not _new_workspace.exists()):
     prepare_workspace(overwrite=False)
 
-for _lg in LogManager.get_all_loggers().values():
-    _lg.set_level(logging.CRITICAL)
+_logging_yaml = get_root_dir() / "config" / "logging.yaml"
+if _logging_yaml.exists():
+    from openjiuwen.core.common.logging.log_config import configure_log
+    configure_log(str(_logging_yaml))
+else:
+    for _lg in LogManager.get_all_loggers().values():
+        _lg.set_level(logging.CRITICAL)
 
 # Load env from user workspace config/.env
 load_dotenv(dotenv_path=get_env_file(), override=True)
