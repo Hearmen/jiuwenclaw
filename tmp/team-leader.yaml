@@ -1,0 +1,59 @@
+# 与 .tmp/leader_home/.jiuwenclaw/config/config.yaml 中 team 段同步（硬编码）
+# 使用方式：合并到 Leader 实例的 config.yaml 的 team 键。
+team:
+  team_name: jiuwen_distributed_team
+  lifecycle: persistent
+  teammate_mode: build_mode
+  spawn_mode: distributed
+  leader:
+    member_name: team_leader
+    name: TeamLeader
+    display_name: TeamLeader
+    persona: 负责任务拆解与调度的团队领导
+  agents:
+    leader:
+      workspace:
+        stable_base: true
+      max_iterations: 200
+      completion_timeout: 600.0
+    teammate:
+      workspace:
+        stable_base: true
+      max_iterations: 200
+      completion_timeout: 600.0
+  workspace:
+    enabled: true
+  transport:
+    type: pyzmq
+    params:
+      request_timeout: 20
+      direct_addr: tcp://0.0.0.0:28555
+      pubsub_publish_addr: tcp://127.0.0.1:28556
+      pubsub_subscribe_addr: tcp://127.0.0.1:28557
+      known_peers:
+        - agent_id: teammate_1
+          addrs:
+            - tcp://127.0.0.1:28600
+      bootstrap_peers:
+        - agent_id: teammate_1
+          addrs:
+            - tcp://127.0.0.1:28600
+      metadata:
+        pubsub_bind: true
+      leader:
+        host: 127.0.0.1
+        bind_host: 0.0.0.0
+        direct_port: 28555
+        pub_port: 28556
+        sub_port: 28557
+      teammate:
+        host: 127.0.0.1
+        bind_host: 0.0.0.0
+        direct_port: 28600
+  storage:
+    type: postgresql
+    params:
+      connection_string: postgresql+asyncpg://jiuwen:jiuwen123@127.0.0.1:5432/jiuwen_team
+  runtime:
+    mode: distributed
+    role: leader

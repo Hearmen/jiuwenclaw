@@ -11,7 +11,7 @@ import logging
 import shutil
 from pathlib import Path
 from types import SimpleNamespace
-from typing import Any, Callable
+from typing import Any, AsyncIterator, Callable
 
 from openjiuwen.agent_teams.agent.team_agent import TeamAgent
 from openjiuwen.agent_teams.schema.blueprint import TeamAgentSpec
@@ -25,6 +25,19 @@ configure_agent_teams_home()
 from jiuwenclaw.agentserver.team.config_loader import (
     load_team_spec_dict,
 )
+from jiuwenclaw.agentserver.team.distributed_runtime import (
+    ensure_postgresql_for_leader,
+    extract_pg_endpoint,
+    is_distributed_mode,
+    is_pg_available,
+    is_postgresql_storage,
+    normalize_distributed_transport_fields,
+    parse_port,
+    run_command,
+    runtime_member_name,
+    runtime_role,
+    try_start_pg_cluster,
+)
 from jiuwenclaw.agentserver.team.monitor_handler import TeamMonitorHandler
 from jiuwenclaw.config import get_config
 from jiuwenclaw.agentserver.team.team_runtime_inheritance import (
@@ -35,6 +48,15 @@ from jiuwenclaw.agentserver.team.team_runtime_inheritance import (
 )
 
 logger = logging.getLogger(__name__)
+
+# Wall-clock cap for a single external command (pg_isready, systemctl, etc.).
+_SUBPROCESS_TIMEOUT_SEC = 120.0
+# After pg_ctlcluster/systemd reports start, the server may still be initializing.
+_PG_POST_START_READY_MAX_SEC = 30.0
+_PG_POST_START_READY_INIT_SLEEP = 0.4
+_PG_POST_START_READY_MAX_SLEEP = 2.0
+_PG_POST_START_READY_BACKOFF = 1.45
+_PG_POST_START_LOG_EVERY_SEC = 5.0
 
 
 async def cleanup_team_runtime_state_once() -> tuple[list[str], list[str]]:
@@ -71,36 +93,39 @@ class TeamManager:
 
     @staticmethod
     def _is_distributed_mode(config_base: dict[str, Any]) -> bool:
-        team_cfg = config_base.get("team", {}) if isinstance(config_base.get("team"), dict) else {}
-        runtime_cfg = team_cfg.get("runtime", {}) if isinstance(team_cfg.get("runtime"), dict) else {}
-        runtime_mode = str(runtime_cfg.get("mode", "")).strip().lower()
-        if runtime_mode == "distributed":
-            return True
-        transport_cfg = team_cfg.get("transport", {}) if isinstance(team_cfg.get("transport"), dict) else {}
-        transport_type = str(transport_cfg.get("type", "")).strip().lower()
-        return transport_type == "pyzmq"
+        return is_distributed_mode(config_base)
 
     @staticmethod
     def _runtime_role(config_base: dict[str, Any]) -> str:
-        team_cfg = config_base.get("team", {}) if isinstance(config_base.get("team"), dict) else {}
-        runtime_cfg = team_cfg.get("runtime", {}) if isinstance(team_cfg.get("runtime"), dict) else {}
-        role = str(runtime_cfg.get("role", "leader")).strip().lower()
-        return role if role in ("leader", "teammate") else "leader"
+        return runtime_role(config_base)
 
     @staticmethod
     def _runtime_member_name(config_base: dict[str, Any], team_cfg: dict[str, Any]) -> str | None:
-        runtime_cfg = team_cfg.get("runtime", {}) if isinstance(team_cfg.get("runtime"), dict) else {}
-        configured = str(runtime_cfg.get("member_name", "")).strip()
-        if configured:
-            return configured
-        predefined = team_cfg.get("predefined_members", [])
-        if isinstance(predefined, list):
-            for item in predefined:
-                if isinstance(item, dict):
-                    member_name = str(item.get("member_name", "")).strip()
-                    if member_name:
-                        return member_name
-        return None
+        return runtime_member_name(config_base, team_cfg)
+
+    @staticmethod
+    def _normalize_distributed_transport_fields(
+        config_base: dict[str, Any],
+        team_cfg: dict[str, Any],
+    ) -> dict[str, Any]:
+        return normalize_distributed_transport_fields(config_base, team_cfg)
+
+    @staticmethod
+    def normalize_distributed_transport_fields(
+        config_base: dict[str, Any],
+        team_cfg: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Public wrapper for distributed transport normalization."""
+        return TeamManager._normalize_distributed_transport_fields(config_base, team_cfg)
+
+    @staticmethod
+    def _parse_port(value: Any, default: int, field_name: str) -> int:
+        return parse_port(value, default, field_name)
+
+    @staticmethod
+    def parse_port(value: Any, default: int, field_name: str) -> int:
+        """Public wrapper for validated port parsing."""
+        return TeamManager._parse_port(value, default, field_name)
 
     @staticmethod
     def _normalize_team_identity_fields(team_cfg: dict[str, Any]) -> dict[str, Any]:
@@ -126,120 +151,6 @@ class TeamManager:
                 elif name and not display_name:
                     member["display_name"] = name
         return normalized_cfg
-
-    @staticmethod
-    def _normalize_distributed_transport_fields(
-        config_base: dict[str, Any],
-        team_cfg: dict[str, Any],
-    ) -> dict[str, Any]:
-        normalized_cfg = copy.deepcopy(team_cfg)
-        transport_cfg = normalized_cfg.get("transport", {})
-        if not isinstance(transport_cfg, dict):
-            return normalized_cfg
-        if str(transport_cfg.get("type", "")).strip().lower() != "pyzmq":
-            return normalized_cfg
-        params = transport_cfg.get("params", {})
-        if not isinstance(params, dict):
-            return normalized_cfg
-        if params.get("pubsub_publish_addr") and params.get("pubsub_subscribe_addr"):
-            return normalized_cfg
-
-        role = TeamManager._runtime_role(config_base)
-        leader_cfg = params.get("leader", {}) if isinstance(params.get("leader"), dict) else {}
-        teammate_cfg = params.get("teammate", {}) if isinstance(params.get("teammate"), dict) else {}
-        leader_host = str(leader_cfg.get("host", "127.0.0.1")).strip() or "127.0.0.1"
-        leader_direct_port = TeamManager._parse_port(
-            leader_cfg.get("direct_port"),
-            18555,
-            "team.transport.params.leader.direct_port",
-        )
-        leader_pub_port = TeamManager._parse_port(
-            leader_cfg.get("pub_port"),
-            18556,
-            "team.transport.params.leader.pub_port",
-        )
-        leader_sub_port = TeamManager._parse_port(
-            leader_cfg.get("sub_port"),
-            18557,
-            "team.transport.params.leader.sub_port",
-        )
-        teammate_host = str(teammate_cfg.get("host", "127.0.0.1")).strip() or "127.0.0.1"
-        teammate_direct_port = TeamManager._parse_port(
-            teammate_cfg.get("direct_port"),
-            18600,
-            "team.transport.params.teammate.direct_port",
-        )
-
-        local_member_name = TeamManager._runtime_member_name(config_base, normalized_cfg) or "teammate_1"
-        leader_member_name = "team_leader"
-        leader_identity_cfg = normalized_cfg.get("leader", {})
-        if isinstance(leader_identity_cfg, dict):
-            leader_member_name = str(leader_identity_cfg.get("member_name", "")).strip() or leader_member_name
-
-        if role == "leader":
-            local_direct_addr = f"tcp://0.0.0.0:{leader_direct_port}"
-            known_peers = [
-                {
-                    "agent_id": local_member_name,
-                    "addrs": [f"tcp://{teammate_host}:{teammate_direct_port}"],
-                }
-            ]
-            pubsub_bind = True
-        else:
-            local_direct_addr = f"tcp://0.0.0.0:{teammate_direct_port}"
-            known_peers = [
-                {
-                    "agent_id": leader_member_name,
-                    "addrs": [f"tcp://{leader_host}:{leader_direct_port}"],
-                }
-            ]
-            pubsub_bind = False
-
-        params["direct_addr"] = local_direct_addr
-        params["pubsub_publish_addr"] = f"tcp://{leader_host}:{leader_pub_port}"
-        params["pubsub_subscribe_addr"] = f"tcp://{leader_host}:{leader_sub_port}"
-        params["known_peers"] = known_peers
-        params["bootstrap_peers"] = known_peers
-        metadata = params.get("metadata", {})
-        if not isinstance(metadata, dict):
-            metadata = {}
-        metadata["pubsub_bind"] = pubsub_bind
-        params["metadata"] = metadata
-        return normalized_cfg
-
-    @staticmethod
-    def normalize_distributed_transport_fields(
-        config_base: dict[str, Any],
-        team_cfg: dict[str, Any],
-    ) -> dict[str, Any]:
-        """Public wrapper for distributed transport normalization."""
-        return TeamManager._normalize_distributed_transport_fields(config_base, team_cfg)
-
-    @staticmethod
-    def _parse_port(value: Any, default: int, field_name: str) -> int:
-        if value is None:
-            return default
-        if isinstance(value, str):
-            stripped = value.strip()
-            if not stripped:
-                return default
-            raw = stripped
-        else:
-            raw = value
-
-        try:
-            port = int(raw)
-        except (TypeError, ValueError) as exc:
-            raise ValueError(f"Invalid {field_name}: {value!r}. Expected an integer in range 1..65535.") from exc
-
-        if port < 1 or port > 65535:
-            raise ValueError(f"Invalid {field_name}: {value!r}. Expected an integer in range 1..65535.")
-        return port
-
-    @staticmethod
-    def parse_port(value: Any, default: int, field_name: str) -> int:
-        """Public wrapper for validated port parsing."""
-        return TeamManager._parse_port(value, default, field_name)
 
     @staticmethod
     def _load_team_spec(session_id: str) -> TeamAgentSpec:
@@ -585,6 +496,35 @@ class TeamManager:
 
         return customizer
 
+    @staticmethod
+    def _is_postgresql_storage(team_cfg: dict[str, Any]) -> bool:
+        return is_postgresql_storage(team_cfg)
+
+    @staticmethod
+    def _extract_pg_endpoint(team_cfg: dict[str, Any]) -> tuple[str, int]:
+        return extract_pg_endpoint(team_cfg)
+
+    @staticmethod
+    async def _run_command(*args: str) -> tuple[int, str]:
+        return await run_command(*args, subprocess_timeout_sec=_SUBPROCESS_TIMEOUT_SEC)
+
+    async def _is_pg_available(self, host: str, port: int) -> bool:
+        return await is_pg_available(host, port, subprocess_timeout_sec=_SUBPROCESS_TIMEOUT_SEC)
+
+    async def _try_start_pg_cluster(self) -> bool:
+        return await try_start_pg_cluster(subprocess_timeout_sec=_SUBPROCESS_TIMEOUT_SEC)
+
+    async def _ensure_postgresql_for_leader(self, config_base: dict[str, Any]) -> None:
+        await ensure_postgresql_for_leader(
+            config_base,
+            subprocess_timeout_sec=_SUBPROCESS_TIMEOUT_SEC,
+            post_start_ready_max_sec=_PG_POST_START_READY_MAX_SEC,
+            post_start_ready_init_sleep=_PG_POST_START_READY_INIT_SLEEP,
+            post_start_ready_max_sleep=_PG_POST_START_READY_MAX_SLEEP,
+            post_start_ready_backoff=_PG_POST_START_READY_BACKOFF,
+            post_start_log_every_sec=_PG_POST_START_LOG_EVERY_SEC,
+        )
+
     async def create_team(
         self,
         session_id: str,
@@ -593,6 +533,8 @@ class TeamManager:
         channel_id: str | None = None,
         request_metadata: dict[str, Any] | None = None,
     ) -> TeamAgent:
+        config_base = get_config()
+        await self._ensure_postgresql_for_leader(config_base)
         logger.info("[TeamManager] building TeamAgentSpec: session_id=%s", session_id)
         spec = self._load_team_spec(session_id)
 

@@ -1,8 +1,11 @@
-"""Unit tests for TeamManager config normalization helpers."""
+"""Unit tests for distributed runtime config normalization helpers."""
 
 import pytest
 
-from jiuwenclaw.agentserver.team.team_manager import TeamManager
+from jiuwenclaw.agentserver.team.distributed_runtime import (
+    normalize_distributed_transport_fields,
+    parse_port,
+)
 
 
 def test_normalize_distributed_transport_fields_does_not_mutate_input():
@@ -23,7 +26,7 @@ def test_normalize_distributed_transport_fields_does_not_mutate_input():
         "predefined_members": [{"member_name": "teammate_1"}],
     }
 
-    normalized = TeamManager.normalize_distributed_transport_fields(config_base, team_cfg)
+    normalized = normalize_distributed_transport_fields(config_base, team_cfg)
 
     # Ensure helper keeps input immutable for better determinism in repeated calls.
     assert "direct_addr" not in team_cfg["transport"]["params"]
@@ -36,14 +39,14 @@ def test_normalize_distributed_transport_fields_does_not_mutate_input():
 
 
 def test_parse_port_uses_default_for_blank_string():
-    assert TeamManager.parse_port("  ", 18555, "team.transport.params.leader.direct_port") == 18555
+    assert parse_port("  ", 18555, "team.transport.params.leader.direct_port") == 18555
 
 
 def test_parse_port_raises_for_non_numeric_value():
     with pytest.raises(ValueError, match="team\\.transport\\.params\\.leader\\.pub_port"):
-        TeamManager.parse_port("abc", 18556, "team.transport.params.leader.pub_port")
+        parse_port("abc", 18556, "team.transport.params.leader.pub_port")
 
 
 def test_parse_port_raises_for_out_of_range_value():
     with pytest.raises(ValueError, match="1\\.\\.65535"):
-        TeamManager.parse_port(70000, 18557, "team.transport.params.leader.sub_port")
+        parse_port(70000, 18557, "team.transport.params.leader.sub_port")
