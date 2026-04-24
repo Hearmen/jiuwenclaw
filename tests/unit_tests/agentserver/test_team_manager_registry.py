@@ -47,10 +47,14 @@ async def test_team_manager_keeps_single_session_per_channel(monkeypatch: pytest
             destroyed_sessions.append(self.session_id)
             return True
 
+    class _FakeWorkspace:
+        root_path = None
+
     def fake_load_team_spec(session_id: str):
         class _Spec:
             team_name = f"team-{session_id}"
             agent_customizer = None
+            workspace = _FakeWorkspace()
 
             @staticmethod
             def build() -> _FakeTeamAgent:
@@ -60,6 +64,12 @@ async def test_team_manager_keeps_single_session_per_channel(monkeypatch: pytest
         return _Spec()
 
     monkeypatch.setattr(TeamManager, "_load_team_spec", staticmethod(fake_load_team_spec))
+    # Mock _copy_global_skills_to_team_shared_dir to avoid file operations
+    monkeypatch.setattr(
+        TeamManager,
+        "_copy_global_skills_to_team_shared_dir",
+        lambda self, spec: None,
+    )
 
     web_manager = get_team_manager("web")
     feishu_manager = get_team_manager("feishu")
@@ -79,10 +89,14 @@ async def test_team_manager_keeps_single_session_per_channel(monkeypatch: pytest
 async def test_create_team_does_not_run_global_runtime_cleanup(monkeypatch: pytest.MonkeyPatch) -> None:
     cleanup_called = False
 
+    class _FakeWorkspace:
+        root_path = None
+
     def fake_load_team_spec(_session_id: str):
         class _Spec:
             team_name = "demo-team"
             agent_customizer = None
+            workspace = _FakeWorkspace()
 
             @staticmethod
             def build():
@@ -91,6 +105,12 @@ async def test_create_team_does_not_run_global_runtime_cleanup(monkeypatch: pyte
         return _Spec()
 
     monkeypatch.setattr(TeamManager, "_load_team_spec", staticmethod(fake_load_team_spec))
+    # Mock _copy_global_skills_to_team_shared_dir to avoid file operations
+    monkeypatch.setattr(
+        TeamManager,
+        "_copy_global_skills_to_team_shared_dir",
+        lambda self, spec: None,
+    )
     manager = TeamManager()
 
     async def fail_cleanup(*_args, **_kwargs):
