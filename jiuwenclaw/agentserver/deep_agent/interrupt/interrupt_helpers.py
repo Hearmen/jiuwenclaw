@@ -70,42 +70,44 @@ def build_permission_rail(
     return permission_rail
 
 
-def build_ask_user_rail() -> Any | None:
-    """Build AskUserRail for user input requests.
-
-    Returns:
-        AskUserRail instance or None if creation failed
-    """
-    from openjiuwen.harness.rails.interrupt.ask_user_rail import AskUserRail
-
-    try:
-        ask_user_rail = AskUserRail()
-        logger.info("[InterruptHelpers] AskUserRail created successfully")
-    except Exception as exc:
-        logger.warning("[InterruptHelpers] AskUserRail create failed: %s", exc)
-        ask_user_rail = None
-    return ask_user_rail
-
 
 def convert_interactions_to_ask_user_question(state_outputs: list) -> dict | None:
     """Convert __interaction__ list to frontend chat.ask_user_question format.
 
-    Args:
-        state_outputs: List of OutputSchema(type=__interaction__, payload=InteractionOutput)
-                      Note: In streaming mode, this list contains only one element per chunk
+    AskUserRail 中断: value 有 questions 字段 → source="ask_user_interrupt"
+    PermissionRail 中断: value 无 questions 字段 → source="permission_interrupt"
 
-    Returns:
-        Frontend expected chat.ask_user_question format dict
+    state_outputs 中的元素可能是:
+    - InteractionOutput 对象 (有 id, value 属性, value 是 ToolCallInterruptRequest)
+    - dict (有 id, value 键)
     """
     if not state_outputs:
         return None
 
-    payload = state_outputs[0].payload if hasattr(state_outputs[0], 'payload') else state_outputs[0]
-    question_data = extract_question_from_interaction(payload)
-    if not question_data:
+    interaction = state_outputs[0]
+    if hasattr(interaction, "id"):
+        request_id = interaction.id
+        value_obj = interaction.value
+    elif isinstance(interaction, dict):
+        request_id = interaction.get("id", "")
+        value_obj = interaction.get("value", {})
+    else:
         return None
 
-    request_id = getattr(payload, 'id', '') if hasattr(payload, 'id') else payload.get('id', '')
+    questions_raw = _extract_questions_from_value(value_obj)
+
+    if questions_raw is not None:
+        questions = _build_multi_questions(questions_raw)
+        return {
+            "event_type": "chat.ask_user_question",
+            "request_id": request_id,
+            "questions": questions,
+            "source": "ask_user_interrupt",
+        }
+
+    question_data = extract_question_from_interaction(interaction)
+    if not question_data:
+        return None
 
     return {
         "event_type": "chat.ask_user_question",
@@ -113,6 +115,47 @@ def convert_interactions_to_ask_user_question(state_outputs: list) -> dict | Non
         "questions": [question_data],
         "source": "permission_interrupt",
     }
+
+
+def _extract_questions_from_value(value_obj: Any) -> list | None:
+    """从 value 对象中提取 questions 列表.
+
+    AskUserRail 的 value (ToolCallInterruptRequest) 有 questions 属性.
+    如果 questions 存在且非空, 返回列表; 否则返回 None 表示不是 AskUserRail 中断.
+    """
+    if hasattr(value_obj, "questions"):
+        qs = value_obj.questions
+        if qs and len(qs) > 0:
+            return qs
+    elif isinstance(value_obj, dict):
+        qs = value_obj.get("questions", [])
+        if qs and len(qs) > 0:
+            return qs
+    return None
+
+
+def _build_multi_questions(questions_data: list) -> list:
+    """Build frontend PendingQuestionItem list from questions data.
+
+    有选项的问题: 保留原始选项 + 追加 __other__ (自定义输入)
+    无选项的问题: 不追加 __other__, 前端应直接进入自由输入模式
+    """
+    questions = []
+    for q in questions_data:
+        raw_options = q.get("options", [])
+        if raw_options:
+            options = [{"label": opt["label"], "description": opt.get("description", "")}
+                       for opt in raw_options]
+            options.append({"label": "Other", "description": "Custom input"})
+        else:
+            options = []
+        questions.append({
+            "question": q["question"],
+            "header": q["header"],
+            "options": options,
+            "multi_select": q.get("multi_select", False),
+        })
+    return questions
 
 
 def extract_question_from_interaction(payload: Any) -> dict | None:

@@ -251,7 +251,8 @@ class JiuWenClaw:
             answers = request.params.get("answers", [])
             if answers:
                 request_id = request.params.get("request_id", "")
-                interactive_input = self._build_interactive_input_from_answers(request_id, answers)
+                source = request.params.get("source", "")
+                interactive_input = self._build_interactive_input_from_answers(request_id, answers, source)
                 final_query = interactive_input if interactive_input is not None else build_user_prompt(
                     query,
                     files=request.params.get("files", {}),
@@ -294,13 +295,14 @@ class JiuWenClaw:
         return inputs, memory_mode, query
 
     def _build_interactive_input_from_answers(
-            self, request_id: str, answers: list[dict]
+            self, request_id: str, answers: list[dict], source: str = ""
     ) -> Any:
         """从用户答案构建 InteractiveInput.
 
         Args:
             request_id: 工具调用 ID
             answers: 用户答案列表，每个答案对应一个问题
+            source: 中断来源，用于区分 PermissionRail 和 AskUserRail
 
         Returns:
             InteractiveInput 实例
@@ -308,6 +310,22 @@ class JiuWenClaw:
         from openjiuwen.core.session.interaction.interactive_input import InteractiveInput
 
         interactive_input = InteractiveInput()
+
+        if source == "ask_user_interrupt":
+            answers_dict = {}
+            for answer in answers:
+                if isinstance(answer, dict):
+                    question_text = answer.get("question", "")
+                    selected_options = answer.get("selected_options", [])
+                    answer_value = selected_options[0] if selected_options else ""
+                    if question_text and answer_value:
+                        answers_dict[question_text] = answer_value
+            interactive_input.update(request_id, {"answers": answers_dict})
+            logger.info(
+                "[JiuWenClaw] AskUserRail InteractiveInput.update: request_id=%s payload=%s",
+                request_id, {"answers": answers_dict}
+            )
+            return interactive_input
 
         answer = answers[0] if answers else {}
         selected_options = answer.get("selected_options", []) if isinstance(answer, dict) else []
@@ -329,7 +347,7 @@ class JiuWenClaw:
 
         interactive_input.update(request_id, confirm_payload)
         logger.info(
-            "[JiuWenClaw] InteractiveInput.update: request_id=%s payload=%s",
+            "[JiuWenClaw] PermissionRail InteractiveInput.update: request_id=%s payload=%s",
             request_id, confirm_payload
         )
 

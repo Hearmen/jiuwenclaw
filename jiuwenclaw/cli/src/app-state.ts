@@ -676,11 +676,13 @@ readonly request = async <T = Record<string, unknown>>(
       this.emitChange();
       return;
     }
-    if (this.pendingQuestion.source === "permission_interrupt") {
+    const source = this.pendingQuestion.source;
+    if (source === "permission_interrupt" || source === "ask_user_interrupt") {
       this.sendEventOnly("chat.send", {
         query: "",
         request_id: this.pendingQuestion.requestId,
         answers,
+        source,
         mode: this.mode,
       });
     } else {

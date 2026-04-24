@@ -336,6 +336,7 @@ export class AppScreen implements Component, Focusable {
   private syncingComposerInput = false;
   private pendingQuestionAnswers = new Map<number, string>();
   private questionList: SelectList | null = null;
+  private otherInputMode = false;
   private resumeSessionList: ResumeSessionListState | null = null;
   private modelList: ModelListState | null = null;
   private configEditorState: ConfigEditorState | null = null;
@@ -606,6 +607,18 @@ export class AppScreen implements Component, Focusable {
       return;
     }
 
+    if (snapshot.pendingQuestion && this.otherInputMode) {
+      if (matchesKey(data, "escape")) {
+        this.otherInputMode = false;
+        this.syncQuestionList(this.state.getSnapshot());
+        this.tui.requestRender();
+        return;
+      }
+      this.editor.handleInput(data);
+      this.tui.requestRender();
+      return;
+    }
+
     // Detect pasted file paths (drag-and-drop) in the terminal
     // When files are dragged in, they arrive as a pasted string.
     // Windows/PowerShell may not send bracketed paste markers,
@@ -694,6 +707,30 @@ export class AppScreen implements Component, Focusable {
     const snapshot = this.state.getSnapshot();
     if (snapshot.pendingQuestion) {
       if (this.questionList === null) {
+        if (this.otherInputMode) {
+          this.pendingQuestionAnswers.set(this.activeQuestionIndex, text);
+          this.otherInputMode = false;
+
+          const pendingQuestion = snapshot.pendingQuestion;
+          if (this.activeQuestionIndex < pendingQuestion.questions.length - 1) {
+            this.activeQuestionIndex += 1;
+            this.syncQuestionList(this.state.getSnapshot());
+            this.editor.setText("");
+            this.tui.requestRender();
+            return;
+          }
+
+          const answers = pendingQuestion.questions.map((question, index) => {
+            const answerValue = this.pendingQuestionAnswers.get(index) ?? question.options[0]?.label ?? "";
+            return {
+              question: question.question,
+              selected_options: [answerValue],
+            };
+          });
+          this.state.submitQuestionAnswers(answers);
+          this.editor.setText("");
+          return;
+        }
         this.state.answerQuestion(text);
       }
       this.editor.setText("");
@@ -1560,6 +1597,28 @@ export class AppScreen implements Component, Focusable {
       const summary = parsePermissionSummary(question.question);
       const title = progress ? `Permission ${this.activeQuestionIndex + 1}/${total}` : "Permission";
       lines.push(...renderPermissionBlock(width, summary, title));
+    } else if (this.otherInputMode) {
+      lines.push(
+        ...wrapPlainText(
+          `[${question.header || "Question"}${progress}] ${question.question}`,
+          width,
+        ).map((line) => padToWidth(palette.status.warning(line), width)),
+      );
+      if (question.options.length > 0) {
+        lines.push("");
+        for (const opt of question.options) {
+          const optLine = `  ${opt.label}${opt.description ? ` - ${opt.description}` : ""}`;
+          lines.push(padToWidth(palette.text.dim(optLine), width));
+        }
+      }
+      lines.push("");
+      lines.push(
+        ...wrapPlainText(
+          `[Answer] Please enter your answer:`,
+          width,
+        ).map((line) => padToWidth(palette.status.info(line), width)),
+      );
+      lines.push(padToWidth(palette.text.dim("Type your answer · Enter submit · Esc back to options"), width));
     } else {
       lines.push(
         ...wrapPlainText(
@@ -1638,6 +1697,13 @@ export class AppScreen implements Component, Focusable {
       return;
     }
 
+    if (label === "Other") {
+      this.otherInputMode = true;
+      this.questionList = null;
+      this.tui.requestRender();
+      return;
+    }
+
     this.pendingQuestionAnswers.set(this.activeQuestionIndex, label);
     if (this.activeQuestionIndex < pendingQuestion.questions.length - 1) {
       this.activeQuestionIndex += 1;
@@ -1646,11 +1712,13 @@ export class AppScreen implements Component, Focusable {
       return;
     }
 
-    const answers = pendingQuestion.questions.map((question, index) => ({
-      selected_options: [
-        this.pendingQuestionAnswers.get(index) ?? question.options[0]?.label ?? "",
-      ].filter((value) => value.length > 0),
-    }));
+    const answers = pendingQuestion.questions.map((question, index) => {
+      const answerValue = this.pendingQuestionAnswers.get(index) ?? question.options[0]?.label ?? "";
+      return {
+        question: question.question,
+        selected_options: [answerValue],
+      };
+    });
     this.state.submitQuestionAnswers(answers);
   }
 }
