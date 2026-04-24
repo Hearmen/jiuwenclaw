@@ -37,6 +37,7 @@ Identified by Gateway and forwarded to AgentServer and other backend capabilitie
 | `/switch` | Switch second-level mode within current mode family |
 | `/skills` | Skills list (see "IM vs TUI Differences") |
 | `/model` | Model view, add, switch (see below) |
+| `/mcp` | MCP server management (see below) |
 | `/diff` | View session changes by turn (see below) |
 
 ---
@@ -123,6 +124,32 @@ Manages directories AI can access for file read, edit, and execute operations.
   - Without changes: Shows `No file changes in this session`.
 - Scope: For viewing uncommitted per-turn change traces in current session, not a replacement for `git diff` full version control perspective.
 
+### `/mcp` (MCP Server Management)
+
+- Usage:
+  - `/mcp list`: List all MCP servers (name, transport, enabled status);
+  - `/mcp show [name]`: Show MCP config; without `name` shows enabled items, with `name` shows one server detail;
+  - `/mcp add --name <name> --transport <stdio|sse> ...`: Add a new MCP server;
+  - `/mcp update --name <name> ...`: Update MCP server config (transport / params / enabled status);
+  - `/mcp enable <name>`: Enable a specific MCP server;
+  - `/mcp disable <name>`: Disable a specific MCP server;
+  - `/mcp remove <name>`: Remove a specific MCP server.
+- Transport parameters:
+  - `stdio`: requires `--command`; optional `--args`, `--cwd`, `--env`;
+  - `sse`: requires `--url`; optional `--headers`, `--timeout_s`.
+- Examples:
+  - `/mcp list`
+  - `/mcp show`
+  - `/mcp show playwright`
+  - `/mcp add --name playwright --transport stdio --command python --args "server.py --transport stdio"`
+  - `/mcp update --name playwright --transport sse --url http://127.0.0.1:9000/sse --headers "Authorization=Bearer xxx"`
+  - `/mcp add --name local-sse --transport sse --url http://127.0.0.1:9000/sse`
+  - `/mcp disable playwright`
+  - `/mcp remove local-sse`
+- Config and effect:
+  - Changes are written to `config.yaml` under `mcp.servers`;
+  - After write, Agent config reload is triggered, and runtime MCP server bindings are synced accordingly.
+
 ---
 
 ## `/skills`: IM vs TUI Differences
@@ -147,6 +174,5 @@ Conclusion: IM uses `/skills list`, TUI uses `/skills`, current syntax differs (
 | `/btw` | Ask question |
 | `/context` | Context status view |
 | `/export` | Export related files |
-| `/mcp` | MCP management |
 | `/memory` | Memory management |
 | `/permissions` | Permission management |

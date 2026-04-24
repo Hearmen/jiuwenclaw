@@ -17,6 +17,7 @@ import { createHelpCommand } from "./builtins/help.js";
 import { createHotkeyCommand } from "./builtins/hotkey.js";
 import { createInitCommand } from "./builtins/init.js";
 import { createModelCommand } from "./builtins/model.js";
+import { createMcpCommand } from "./builtins/mcp.js";
 import { createModeCommand } from "./builtins/mode.js";
 import { createPermissionsCommand } from "./builtins/permissions.js";
 import { createPlanCommand } from "./builtins/plan.js";
@@ -43,6 +44,7 @@ export function createBuiltinCommands(): SlashCommand[] {
     createEvolveSimplifyCommand(),
     createExitCommand(),
     createModelCommand(),
+    createMcpCommand(),
     createModeCommand(),
     createPermissionsCommand(),
     createPlanCommand(),

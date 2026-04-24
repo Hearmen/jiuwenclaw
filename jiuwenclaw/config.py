@@ -841,6 +841,104 @@ def replace_teams_in_config(front_payload: dict[str, Any]) -> None:
     _dump_yaml_round_trip(_CONFIG_YAML_PATH, data)
 
 
+def get_mcp_servers() -> list[dict[str, Any]]:
+    """读取 config.yaml 中的 mcp.servers（原始结构，不解析环境变量）。"""
+    data = get_config_raw()
+    mcp_cfg = data.get("mcp", {})
+    if not isinstance(mcp_cfg, dict):
+        return []
+    servers = mcp_cfg.get("servers", [])
+    if not isinstance(servers, list):
+        return []
+    return [item for item in servers if isinstance(item, dict)]
+
+
+def upsert_mcp_server_in_config(server: dict[str, Any]) -> tuple[dict[str, Any], bool]:
+    """新增或更新 mcp.servers 条目，返回（条目, 是否创建）。"""
+    name = str(server.get("name", "")).strip()
+    if not name:
+        raise ValueError("MCP server name is required")
+    data = _load_yaml_round_trip(_CONFIG_YAML_PATH)
+    if "mcp" not in data or not isinstance(data["mcp"], dict):
+        data["mcp"] = {}
+    mcp_cfg = data["mcp"]
+    servers = mcp_cfg.get("servers")
+    if not isinstance(servers, list):
+        servers = []
+        mcp_cfg["servers"] = servers
+
+    created = True
+    for idx, item in enumerate(servers):
+        if not isinstance(item, dict):
+            continue
+        if str(item.get("name", "")).strip() != name:
+            continue
+        servers[idx] = server
+        created = False
+        break
+    else:
+        servers.append(server)
+    _dump_yaml_round_trip(_CONFIG_YAML_PATH, data)
+    return server, created
+
+
+def set_mcp_server_enabled_in_config(name: str, enabled: bool) -> dict[str, Any]:
+    """切换 mcp.servers 指定 name 的 enabled 状态并返回更新后的条目。"""
+    target = str(name or "").strip()
+    if not target:
+        raise ValueError("MCP server name is required")
+    data = _load_yaml_round_trip(_CONFIG_YAML_PATH)
+    if "mcp" not in data or not isinstance(data["mcp"], dict):
+        raise KeyError(f"MCP server '{target}' not found")
+    servers = data["mcp"].get("servers", [])
+    if not isinstance(servers, list):
+        raise KeyError(f"MCP server '{target}' not found")
+    for item in servers:
+        if not isinstance(item, dict):
+            continue
+        if str(item.get("name", "")).strip() != target:
+            continue
+        item["enabled"] = bool(enabled)
+        _dump_yaml_round_trip(_CONFIG_YAML_PATH, data)
+        return dict(item)
+    raise KeyError(f"MCP server '{target}' not found")
+
+
+def get_mcp_server_config(name: str) -> dict[str, Any] | None:
+    """按名称读取单个 mcp server 配置（原始结构）。"""
+    target = str(name or "").strip()
+    if not target:
+        return None
+    for item in get_mcp_servers():
+        if str(item.get("name", "")).strip() == target:
+            return item
+    return None
+
+
+def remove_mcp_server_in_config(name: str) -> dict[str, Any]:
+    """删除指定 mcp server 配置并返回被删除的条目。"""
+    target = str(name or "").strip()
+    if not target:
+        raise ValueError("MCP server name is required")
+    data = _load_yaml_round_trip(_CONFIG_YAML_PATH)
+    mcp_cfg = data.get("mcp")
+    if not isinstance(mcp_cfg, dict):
+        raise KeyError(f"MCP server '{target}' not found")
+    servers = mcp_cfg.get("servers", [])
+    if not isinstance(servers, list):
+        raise KeyError(f"MCP server '{target}' not found")
+    for idx, item in enumerate(servers):
+        if not isinstance(item, dict):
+            continue
+        if str(item.get("name", "")).strip() != target:
+            continue
+        removed = dict(item)
+        del servers[idx]
+        _dump_yaml_round_trip(_CONFIG_YAML_PATH, data)
+        return removed
+    raise KeyError(f"MCP server '{target}' not found")
+
+
 def update_memory_forbidden_enabled_in_config(value: bool) -> None:
     """更新 memory.forbidden_memory_definition.enabled（记忆系统敏感信息过滤开关）并写回。"""
     data = _load_yaml_round_trip(_CONFIG_YAML_PATH)

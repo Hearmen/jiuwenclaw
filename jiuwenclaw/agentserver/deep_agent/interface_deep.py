@@ -9,6 +9,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import os
 import platform
@@ -23,7 +24,7 @@ from dotenv import load_dotenv
 from openjiuwen.core.context_engine.schema.config import ContextEngineConfig
 from openjiuwen.core.foundation.llm import ModelRequestConfig, ModelClientConfig, Model
 from openjiuwen.core.foundation.store.base_embedding import EmbeddingConfig
-from openjiuwen.core.foundation.tool import ToolCard
+from openjiuwen.core.foundation.tool import ToolCard, McpServerConfig
 from openjiuwen.core.runner import Runner
 from openjiuwen.core.session.checkpointer import CheckpointerFactory
 from openjiuwen.core.session.checkpointer.checkpointer import CheckpointerConfig
@@ -382,6 +383,8 @@ class JiuWenClawDeepAdapter:
         self._is_proactive_memory: bool | None = None
         self._model_cache: dict[str, Model] = {}
         self._default_model_name: str = ""
+        self._registered_mcp_server_ids: set[str] = set()
+        self._registered_mcp_servers: dict[str, McpServerConfig] = {}
 
     def set_skill_manager(self, skill_manager: SkillManager) -> None:
         """Inject shared SkillManager from facade for tool reuse."""
@@ -599,6 +602,200 @@ class JiuWenClawDeepAdapter:
             )
 
         return subagents or None
+
+    @staticmethod
+    def _build_mcp_server_config(entry: dict[str, Any]) -> McpServerConfig | None:
+        name = str(entry.get("name", "")).strip()
+        if not name:
+            return None
+        transport = str(entry.get("transport", "")).strip().lower()
+        if transport not in {"stdio", "sse"}:
+            return None
+        payload: dict[str, Any] = {
+            "server_name": name,
+            "client_type": transport,
+        }
+        if transport == "stdio":
+            command = str(entry.get("command", "")).strip()
+            if not command:
+                return None
+            params: dict[str, Any] = {"command": command}
+            args = entry.get("args")
+            if isinstance(args, list):
+                params["args"] = [str(item) for item in args]
+            cwd = entry.get("cwd")
+            if isinstance(cwd, str) and cwd.strip():
+                params["cwd"] = cwd.strip()
+            env = entry.get("env")
+            if isinstance(env, dict):
+                params["env"] = {str(k): str(v) for k, v in env.items()}
+            timeout_s = entry.get("timeout_s")
+            if isinstance(timeout_s, (int, float)) and int(timeout_s) > 0:
+                params["timeout_s"] = int(timeout_s)
+            payload["server_path"] = f"stdio://{name}"
+            payload["params"] = params
+        else:
+            url = str(entry.get("url", "")).strip()
+            if not url:
+                return None
+            payload["server_path"] = url
+            params: dict[str, Any] = {}
+            headers = entry.get("headers")
+            if isinstance(headers, dict):
+                params["headers"] = {str(k): str(v) for k, v in headers.items()}
+            timeout_s = entry.get("timeout_s")
+            if isinstance(timeout_s, (int, float)) and int(timeout_s) > 0:
+                params["timeout_s"] = int(timeout_s)
+            if params:
+                payload["params"] = params
+        return McpServerConfig(**payload)
+
+    @staticmethod
+    def _extract_enabled_mcp_server_entries(config_base: dict[str, Any]) -> list[dict[str, Any]]:
+        if not isinstance(config_base, dict):
+            return []
+        mcp_cfg = config_base.get("mcp", {})
+        if not isinstance(mcp_cfg, dict):
+            return []
+        servers = mcp_cfg.get("servers", [])
+        if not isinstance(servers, list):
+            return []
+        result: list[dict[str, Any]] = []
+        for item in servers:
+            if not isinstance(item, dict):
+                continue
+            if not bool(item.get("enabled", True)):
+                continue
+            result.append(item)
+        return result
+
+    async def _register_mcp_server(self, cfg: McpServerConfig, *, tag: str) -> bool:
+        if self._instance is None:
+            return False
+        try:
+            result = await Runner.resource_mgr.add_mcp_server(cfg, tag=tag)
+            ok = True
+            if result is not None:
+                is_ok = getattr(result, "is_ok", None)
+                if callable(is_ok):
+                    ok = bool(is_ok())
+                elif isinstance(result, bool):
+                    ok = result
+            if ok:
+                server_id = str(getattr(cfg, "server_id", "") or "").strip()
+                if not server_id:
+                    logger.warning("[JiuWenClawDeepAdapter] MCP server_id missing after registration: %s", cfg)
+                    return False
+                self._instance.ability_manager.add(cfg)
+                self._registered_mcp_server_ids.add(server_id)
+                self._registered_mcp_servers[server_id] = cfg
+                return True
+            logger.warning("[JiuWenClawDeepAdapter] MCP server register failed: %s", cfg.server_name)
+            return False
+        except Exception as exc:
+            logger.warning("[JiuWenClawDeepAdapter] MCP server register failed: %s", exc)
+            return False
+
+    async def _unregister_mcp_server(self, server_id: str) -> None:
+        if self._instance is None:
+            return
+        cfg = self._registered_mcp_servers.get(server_id)
+        server_name = getattr(cfg, "server_name", "") if cfg is not None else ""
+        try:
+            await Runner.resource_mgr.remove_mcp_server(server_id)
+        except Exception as exc:
+            logger.warning("[JiuWenClawDeepAdapter] MCP server remove failed: %s", exc)
+        if server_name:
+            try:
+                self._instance.ability_manager.remove(server_name)
+            except Exception as exc:
+                logger.warning("[JiuWenClawDeepAdapter] MCP ability remove failed: %s", exc)
+        self._registered_mcp_server_ids.discard(server_id)
+        self._registered_mcp_servers.pop(server_id, None)
+
+    async def _register_mcp_servers_from_config(
+            self, config_base: dict[str, Any], *, tag: str = "agent.main"
+    ) -> None:
+        enabled_entries = self._extract_enabled_mcp_server_entries(config_base)
+        for entry in enabled_entries:
+            cfg = self._build_mcp_server_config(entry)
+            if cfg is None:
+                logger.warning(
+                    "[JiuWenClawDeepAdapter] skip invalid mcp server entry: %s",
+                    entry.get("name", "<unknown>"),
+                )
+                continue
+            await self._register_mcp_server(cfg, tag=tag)
+
+    async def _sync_mcp_servers_for_runtime(
+            self, config_base: dict[str, Any], *, tag: str = "agent.reload"
+    ) -> None:
+        if self._instance is None:
+            return
+        enabled_entries = self._extract_enabled_mcp_server_entries(config_base)
+        desired_by_name: dict[str, McpServerConfig] = {}
+        for entry in enabled_entries:
+            cfg = self._build_mcp_server_config(entry)
+            if cfg is None:
+                logger.warning(
+                    "[JiuWenClawDeepAdapter] skip invalid mcp server entry: %s",
+                    entry.get("name", "<unknown>"),
+                )
+                continue
+            server_name = str(getattr(cfg, "server_name", "") or "").strip()
+            if not server_name:
+                logger.warning(
+                    "[JiuWenClawDeepAdapter] skip mcp server without server_name: %s",
+                    entry.get("name", "<unknown>"),
+                )
+                continue
+            desired_by_name[server_name] = cfg
+
+        current_by_name: dict[str, tuple[str, McpServerConfig]] = {}
+        for server_id, cfg in self._registered_mcp_servers.items():
+            server_name = str(getattr(cfg, "server_name", "") or "").strip()
+            if not server_name or server_name in current_by_name:
+                continue
+            current_by_name[server_name] = (server_id, cfg)
+
+        current_names = set(current_by_name.keys())
+        desired_names = set(desired_by_name.keys())
+        to_remove = current_names - desired_names
+        to_add = desired_names - current_names
+        to_check = current_names & desired_names
+
+        for server_name in to_remove:
+            server_id = current_by_name[server_name][0]
+            await self._unregister_mcp_server(server_id)
+
+        for server_name in to_add:
+            await self._register_mcp_server(desired_by_name[server_name], tag=tag)
+
+        for server_name in to_check:
+            server_id, current_cfg = current_by_name[server_name]
+            desired_cfg = desired_by_name[server_name]
+            current_sig = {
+                "server_name": getattr(current_cfg, "server_name", None),
+                "client_type": getattr(current_cfg, "client_type", None),
+                "server_path": getattr(current_cfg, "server_path", None),
+                "params": getattr(current_cfg, "params", None),
+                "auth_headers": getattr(current_cfg, "auth_headers", None),
+                "auth_query_params": getattr(current_cfg, "auth_query_params", None),
+            }
+            desired_sig = {
+                "server_name": getattr(desired_cfg, "server_name", None),
+                "client_type": getattr(desired_cfg, "client_type", None),
+                "server_path": getattr(desired_cfg, "server_path", None),
+                "params": getattr(desired_cfg, "params", None),
+                "auth_headers": getattr(desired_cfg, "auth_headers", None),
+                "auth_query_params": getattr(desired_cfg, "auth_query_params", None),
+            }
+            if json.dumps(current_sig, sort_keys=True, default=str) == json.dumps(
+                desired_sig, sort_keys=True, default=str
+            ):
+                continue
+            await self._unregister_mcp_server(server_id)
+            await self._register_mcp_server(desired_cfg, tag=tag)
 
     def _build_vision_model_config(
             self,
@@ -1681,6 +1878,9 @@ class JiuWenClawDeepAdapter:
                 audio_model_config=self._audio_model_config,
                 completion_timeout=config.get("completion_timeout", 3600.0),
             )
+        self._registered_mcp_server_ids.clear()
+        self._registered_mcp_servers.clear()
+        await self._register_mcp_servers_from_config(config_base, tag=f"agent.{mode}")
         logger.info("[JiuWenClawDeepAdapter] 初始化完成: agent_name=%s, mode=%s", self._agent_name, mode)
 
         # 动态加载用户自定义的 Rail 扩展
@@ -1775,6 +1975,7 @@ class JiuWenClawDeepAdapter:
             rails=rails_list,
         )
         self._instance.configure(deep_cfg)
+        await self._sync_mcp_servers_for_runtime(config_base, tag="agent.reload")
 
         logger.info("[JiuWenClawDeepAdapter] 配置已热更新（configure），未重启进程")
 

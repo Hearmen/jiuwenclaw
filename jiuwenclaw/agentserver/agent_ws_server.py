@@ -34,6 +34,14 @@ from jiuwenclaw.agentserver.permissions.patterns import persist_cli_trusted_dire
 from jiuwenclaw.schema.hooks_context import AgentServerChatHookContext
 from jiuwenclaw.agentserver.agent_manager import AgentManager, ACP_DEFAULT_CAPABILITIES
 from jiuwenclaw.agentserver.permissions.config_rpc import get_permissions_config_req_methods
+from jiuwenclaw.config import (
+    get_config,
+    get_mcp_server_config,
+    get_mcp_servers,
+    remove_mcp_server_in_config,
+    set_mcp_server_enabled_in_config,
+    upsert_mcp_server_in_config,
+)
 from jiuwenclaw.security.ws_origin import (
     extract_handshake_request,
     forbidden_origin_response,
@@ -378,6 +386,9 @@ class AgentWebSocketServer:
                 return
             if request.req_method == ReqMethod.COMMAND_MODEL:
                 await self._handle_command_model(ws, request, send_lock)
+                return
+            if request.req_method == ReqMethod.COMMAND_MCP:
+                await self._handle_command_mcp(ws, request, send_lock)
                 return
             if request.req_method == ReqMethod.COMMAND_RESUME:
                 await self._handle_command_resume(ws, request, send_lock)
@@ -1000,6 +1011,252 @@ class AgentWebSocketServer:
                 channel_id=request.channel_id,
                 ok=False,
                 payload={"error": str(e)},
+            )
+        wire = encode_agent_response_for_wire(resp, response_id=request.request_id)
+        async with send_lock:
+            await ws.send(json.dumps(wire, ensure_ascii=False))
+
+    @staticmethod
+    def _mask_sensitive_fields(payload: Any) -> Any:
+        if isinstance(payload, dict):
+            masked: dict[str, Any] = {}
+            for key, value in payload.items():
+                key_text = str(key).lower()
+                value_text = value.lower() if isinstance(value, str) else ""
+                key_sensitive = any(
+                    token in key_text for token in ("api_key", "token", "authorization", "secret")
+                )
+                value_sensitive = any(token in value_text for token in ("bearer ", "api-key ", "secret-"))
+                if key_sensitive or value_sensitive:
+                    masked[key] = "***"
+                else:
+                    masked[key] = AgentWebSocketServer._mask_sensitive_fields(value)
+            return masked
+        if isinstance(payload, list):
+            return [AgentWebSocketServer._mask_sensitive_fields(item) for item in payload]
+        return payload
+
+    @staticmethod
+    def _normalize_mcp_payload(
+        params: dict[str, Any], current: dict[str, Any] | None = None
+    ) -> dict[str, Any]:
+        merged = dict(current or {})
+        merged.update(params)
+        name = str(merged.get("name", "")).strip()
+        transport = str(merged.get("transport", "")).strip().lower()
+        if not name:
+            raise ValueError("MCP server name is required")
+        if transport not in {"stdio", "sse"}:
+            raise ValueError("transport must be one of stdio|sse")
+
+        payload: dict[str, Any] = {
+            "name": name,
+            "enabled": bool(merged.get("enabled", True)),
+            "transport": transport,
+        }
+        if transport == "stdio":
+            command = str(merged.get("command", "")).strip()
+            if not command:
+                raise ValueError("stdio transport requires command")
+            payload["command"] = command
+            args = merged.get("args")
+            if isinstance(args, list):
+                payload["args"] = [str(item) for item in args]
+            cwd = merged.get("cwd")
+            if isinstance(cwd, str) and cwd.strip():
+                payload["cwd"] = cwd.strip()
+            env = merged.get("env")
+            if isinstance(env, dict):
+                payload["env"] = {str(k): str(v) for k, v in env.items()}
+        else:
+            url = str(merged.get("url", "")).strip()
+            if not url:
+                raise ValueError(f"{transport} transport requires url")
+            payload["url"] = url
+            headers = merged.get("headers")
+            if isinstance(headers, dict):
+                payload["headers"] = {str(k): str(v) for k, v in headers.items()}
+            timeout_s = merged.get("timeout_s")
+            if isinstance(timeout_s, (int, float)):
+                payload["timeout_s"] = int(timeout_s)
+        return payload
+
+    def _normalize_mcp_add_payload(self, params: dict[str, Any]) -> dict[str, Any]:
+        return self._normalize_mcp_payload(params)
+
+    def _normalize_mcp_update_payload(self, params: dict[str, Any]) -> dict[str, Any]:
+        name = str(params.get("name", "")).strip()
+        if not name:
+            raise ValueError("MCP server name is required")
+        current = get_mcp_server_config(name)
+        if current is None:
+            raise KeyError(f"MCP server '{name}' not found")
+        return self._normalize_mcp_payload(params, current=current)
+
+    async def _handle_command_mcp(self, ws: Any, request: AgentRequest, send_lock: asyncio.Lock) -> None:
+        try:
+            params = request.params or {}
+            action = str(params.get("action", "list")).strip().lower()
+
+            if action == "list":
+                items = [self._mask_sensitive_fields(item) for item in get_mcp_servers()]
+                resp = AgentResponse(
+                    request_id=request.request_id,
+                    channel_id=request.channel_id,
+                    ok=True,
+                    payload={"type": "list", "items": items},
+                )
+            elif action == "show":
+                name = str(params.get("name", "")).strip()
+                if name:
+                    item = get_mcp_server_config(name)
+                    if item is None:
+                        raise KeyError(f"MCP server '{name}' not found")
+                    resp = AgentResponse(
+                        request_id=request.request_id,
+                        channel_id=request.channel_id,
+                        ok=True,
+                        payload={"type": "detail", "item": self._mask_sensitive_fields(item)},
+                    )
+                else:
+                    enabled_items = [
+                        self._mask_sensitive_fields(item)
+                        for item in get_mcp_servers()
+                        if bool(item.get("enabled", True))
+                    ]
+                    resp = AgentResponse(
+                        request_id=request.request_id,
+                        channel_id=request.channel_id,
+                        ok=True,
+                        payload={"type": "list", "items": enabled_items},
+                    )
+            elif action == "add":
+                server_payload = self._normalize_mcp_add_payload(params)
+                _, created = upsert_mcp_server_in_config(server_payload)
+                applied = True
+                error_message = ""
+                try:
+                    await self._agent_manager.reload_agents_config(get_config(), None)
+                except Exception as reload_exc:  # noqa: BLE001
+                    applied = False
+                    error_message = str(reload_exc)
+                    logger.warning("[command.mcp] reload after add failed: %s", reload_exc)
+                resp_payload: dict[str, Any] = {
+                    "type": "added" if created else "updated",
+                    "name": server_payload["name"],
+                    "applied": applied,
+                }
+                if error_message:
+                    resp_payload["error"] = error_message
+                resp = AgentResponse(
+                    request_id=request.request_id,
+                    channel_id=request.channel_id,
+                    ok=True,
+                    payload=resp_payload,
+                )
+            elif action in {"enable", "disable"}:
+                name = str(params.get("name", "")).strip()
+                if not name:
+                    raise ValueError("MCP server name is required")
+                enabled = action == "enable"
+                item = set_mcp_server_enabled_in_config(name, enabled)
+                applied = True
+                error_message = ""
+                try:
+                    await self._agent_manager.reload_agents_config(get_config(), None)
+                except Exception as reload_exc:  # noqa: BLE001
+                    applied = False
+                    error_message = str(reload_exc)
+                    logger.warning("[command.mcp] reload after %s failed: %s", action, reload_exc)
+                payload = {
+                    "type": "enabled" if enabled else "disabled",
+                    "name": name,
+                    "applied": applied,
+                    "item": self._mask_sensitive_fields(item),
+                }
+                if error_message:
+                    payload["error"] = error_message
+                resp = AgentResponse(
+                    request_id=request.request_id,
+                    channel_id=request.channel_id,
+                    ok=True,
+                    payload=payload,
+                )
+            elif action in {"remove", "delete"}:
+                name = str(params.get("name", "")).strip()
+                if not name:
+                    raise ValueError("MCP server name is required")
+                removed = remove_mcp_server_in_config(name)
+                applied = True
+                error_message = ""
+                try:
+                    await self._agent_manager.reload_agents_config(get_config(), None)
+                except Exception as reload_exc:  # noqa: BLE001
+                    applied = False
+                    error_message = str(reload_exc)
+                    logger.warning("[command.mcp] reload after remove failed: %s", reload_exc)
+                payload = {
+                    "type": "removed",
+                    "name": name,
+                    "applied": applied,
+                    "item": self._mask_sensitive_fields(removed),
+                }
+                if error_message:
+                    payload["error"] = error_message
+                resp = AgentResponse(
+                    request_id=request.request_id,
+                    channel_id=request.channel_id,
+                    ok=True,
+                    payload=payload,
+                )
+            elif action == "update":
+                normalized = self._normalize_mcp_update_payload(params)
+                _, _created = upsert_mcp_server_in_config(normalized)
+                applied = True
+                error_message = ""
+                try:
+                    await self._agent_manager.reload_agents_config(get_config(), None)
+                except Exception as reload_exc:  # noqa: BLE001
+                    applied = False
+                    error_message = str(reload_exc)
+                    logger.warning("[command.mcp] reload after update failed: %s", reload_exc)
+                payload = {
+                    "type": "updated",
+                    "name": normalized["name"],
+                    "applied": applied,
+                    "item": self._mask_sensitive_fields(normalized),
+                }
+                if error_message:
+                    payload["error"] = error_message
+                resp = AgentResponse(
+                    request_id=request.request_id,
+                    channel_id=request.channel_id,
+                    ok=True,
+                    payload=payload,
+                )
+            else:
+                raise ValueError("Unsupported action, must be one of list|show|add|update|enable|disable|remove")
+        except KeyError as exc:
+            resp = AgentResponse(
+                request_id=request.request_id,
+                channel_id=request.channel_id,
+                ok=False,
+                payload={"error": str(exc), "code": "MCP_NOT_FOUND"},
+            )
+        except ValueError as exc:
+            resp = AgentResponse(
+                request_id=request.request_id,
+                channel_id=request.channel_id,
+                ok=False,
+                payload={"error": str(exc), "code": "MCP_BAD_REQUEST"},
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.exception("[AgentWebSocketServer] command.mcp failed: %s", exc)
+            resp = AgentResponse(
+                request_id=request.request_id,
+                channel_id=request.channel_id,
+                ok=False,
+                payload={"error": str(exc), "code": "MCP_INTERNAL"},
             )
         wire = encode_agent_response_for_wire(resp, response_id=request.request_id)
         async with send_lock:

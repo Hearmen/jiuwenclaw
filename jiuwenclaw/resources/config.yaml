@@ -677,6 +677,26 @@ team:
   storage:
     type: sqlite
 
+mcp:
+  servers: []
+  # 示例：
+  # servers:
+  #   - name: playwright
+  #     enabled: true
+  #     transport: stdio
+  #     command: python
+  #     args: ["path/to/server.py", "--transport", "stdio"]
+  #     cwd: .
+  #     env:
+  #       LOG_LEVEL: INFO
+  #   - name: local-sse
+  #     enabled: false
+  #     transport: sse
+  #     url: http://127.0.0.1:9000/sse
+  #     headers:
+  #       Authorization: Bearer ${MCP_TOKEN}
+  #     timeout_s: 30
+
 modes:
   # 一级模式 agent / code / team
   agent:

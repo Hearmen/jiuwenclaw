@@ -203,6 +203,9 @@ class JiuwenClawCodeAdapter(JiuWenClawDeepAdapter):
         # code 模式不传: vision_model_config, audio_model_config,
         # context_engine_config, completion_timeout
 
+        self._registered_mcp_server_ids.clear()
+        self._registered_mcp_servers.clear()
+        await self._register_mcp_servers_from_config(config_base, tag="code")
         logger.info("[JiuwenClawCodeAdapter] 初始化完成: agent_name=%s", self._agent_name)
 
         await self.load_user_rails()
