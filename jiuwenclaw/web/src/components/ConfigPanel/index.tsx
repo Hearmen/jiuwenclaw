@@ -1628,7 +1628,7 @@ export function ConfigPanel({
 }: ConfigPanelProps) {
   const { t } = useTranslation();
   const isProcessing = useChatStore((s) => s.isProcessing);
-  const { availableModels: storeAvailableModels } = useSessionStore();
+  const { availableModels: storeAvailableModels, mode } = useSessionStore();
   const [draftValues, setDraftValues] = useState<Record<string, string>>(() => {
     if (!config) return {};
     const next: Record<string, string> = {};
@@ -1925,7 +1925,7 @@ export function ConfigPanel({
             </p>
           </div>
           <div className="flex items-center gap-2">
-            {isProcessing ? (
+            {isProcessing && mode !== 'team' ? (
               <span className="text-xs text-amber-600 dark:text-amber-400">{t('config.errors.processingDisabled')}</span>
             ) : null}
             <button
@@ -1939,7 +1939,7 @@ export function ConfigPanel({
             <button
               type="button"
               onClick={() => void handleSaveAndRestart()}
-              disabled={!hasChanges || saving || !isConnected || hasMissingRequiredModelFields || isProcessing}
+              disabled={!hasChanges || saving || hasMissingRequiredModelFields || (isProcessing && mode !== 'team')}
               className="btn primary !px-3 !py-1.5 disabled:opacity-50 disabled:cursor-not-allowed"
             >
               {saving ? t('common.saving') : t('common.save')}

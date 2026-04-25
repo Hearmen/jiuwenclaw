@@ -98,6 +98,82 @@ function renderScheduleSummary(job: CronJob): string {
   return job.cron_expr || '';
 }
 
+function isValidCronField(value: string, min: number, max: number, stepDivisor: number | null): { valid: boolean; error?: string } {
+  if (value === '*') return { valid: true };
+  const parts = value.split(',');
+  for (const part of parts) {
+    if (part.includes('/')) {
+      const [range, stepStr] = part.split('/');
+      const step = parseInt(stepStr, 10);
+      if (isNaN(step) || step <= 0) return { valid: false, error: getStepRangeError(min, max) };
+      if (stepDivisor !== null && stepDivisor % step !== 0) return { valid: false, error: getStepRangeError(min, max) };
+      if (range === '*') continue;
+      const rangeValid = isValidCronRange(range, min, max);
+      if (!rangeValid) return { valid: false, error: getFieldError(min, max) };
+    } else if (part.includes('-')) {
+      if (!isValidCronRange(part, min, max)) return { valid: false, error: getFieldError(min, max) };
+    } else {
+      const num = parseInt(part, 10);
+      if (isNaN(num) || num < min || num > max) return { valid: false, error: getFieldError(min, max) };
+    }
+  }
+  return { valid: true };
+}
+
+function getFieldError(min: number, max: number): string {
+  if (min === 0 && max === 59) return 'cron.errors.cronMinute';
+  if (min === 0 && max === 23) return 'cron.errors.cronHour';
+  if (min === 1 && max === 31) return 'cron.errors.cronDay';
+  if (min === 1 && max === 12) return 'cron.errors.cronMonth';
+  if (min === 0 && max === 6) return 'cron.errors.cronWeek';
+  return 'cron.errors.cronFormat';
+}
+
+function getStepRangeError(min: number, max: number): string {
+  if (min === 0 && max === 59) return 'cron.errors.cronMinuteStep';
+  if (min === 0 && max === 23) return 'cron.errors.cronHourStep';
+  return getFieldError(min, max);
+}
+
+function isValidCronRange(range: string, min: number, max: number): boolean {
+  const [startStr, endStr] = range.split('-');
+  if (!startStr || !endStr) return false;
+  const start = parseInt(startStr, 10);
+  const end = parseInt(endStr, 10);
+  if (isNaN(start) || isNaN(end)) return false;
+  if (start < min || end > max || start > end) return false;
+  return true;
+}
+
+function validateCronExpr(expr: string): { valid: boolean; error?: string } {
+  const parts = expr.trim().split(/\s+/);
+  if (parts.length !== 5) {
+    return { valid: false, error: 'cron.errors.cronFormat' };
+  }
+  const [minute, hour, day, month, week] = parts;
+  const minuteResult = isValidCronField(minute, 0, 59, 60);
+  if (!minuteResult.valid) {
+    return { valid: false, error: minuteResult.error };
+  }
+  const hourResult = isValidCronField(hour, 0, 23, 24);
+  if (!hourResult.valid) {
+    return { valid: false, error: hourResult.error };
+  }
+  const dayResult = isValidCronField(day, 1, 31, null);
+  if (!dayResult.valid) {
+    return { valid: false, error: dayResult.error };
+  }
+  const monthResult = isValidCronField(month, 1, 12, null);
+  if (!monthResult.valid) {
+    return { valid: false, error: monthResult.error };
+  }
+  const weekResult = isValidCronField(week, 0, 6, null);
+  if (!weekResult.valid) {
+    return { valid: false, error: weekResult.error };
+  }
+  return { valid: true };
+}
+
 function resolveCronExpr(job: CronJob): string {
   if (job.schedule?.kind === 'cron') {
     return (job.schedule.expr || job.cron_expr || '').trim();
@@ -239,6 +315,11 @@ export default function CronPanel({ sessionId }: CronPanelProps) {
       setError(t('cron.errors.cronRequired'));
       return;
     }
+    const cronValidation = validateCronExpr(newJob.cron_expr);
+    if (!cronValidation.valid) {
+      setError(t(cronValidation.error || 'cron.errors.cronFormat'));
+      return;
+    }
     if (!newJob.timezone) {
       setError(t('cron.errors.timezoneRequired'));
       return;
@@ -358,6 +439,11 @@ export default function CronPanel({ sessionId }: CronPanelProps) {
     }
     if (!editJob.cron_expr) {
       setError(t('cron.errors.cronRequired'));
+      return;
+    }
+    const cronValidationEdit = validateCronExpr(editJob.cron_expr);
+    if (!cronValidationEdit.valid) {
+      setError(t(cronValidationEdit.error || 'cron.errors.cronFormat'));
       return;
     }
     if (!editJob.timezone) {
