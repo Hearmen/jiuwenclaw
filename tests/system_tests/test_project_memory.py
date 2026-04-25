@@ -300,6 +300,7 @@ class TestCodeModeIntegration:
         with tempfile.TemporaryDirectory() as td:
             adapter = JiuwenClawCodeAdapter()
             adapter._workspace_dir = td
+            adapter._project_dir = td
             adapter._instance_overrides = {}
             adapter._config_cache = {}
 
@@ -322,6 +323,7 @@ class TestCodeModeIntegration:
 
             adapter = JiuwenClawCodeAdapter()
             adapter._workspace_dir = td
+            adapter._project_dir = td
             adapter._instance_overrides = {}
             adapter._config_cache = {}
 
@@ -375,6 +377,7 @@ class TestExploreAgentSubagentIntegration:
 
         adapter = JiuwenClawCodeAdapter()
         adapter._workspace_dir = "/tmp/test-workspace"
+        adapter._project_dir = "/tmp/test-workspace"
         monkeypatch.setattr(
             JiuwenClawCodeAdapter,
             "_browser_runtime_enabled",
@@ -406,6 +409,7 @@ class TestExploreAgentSubagentIntegration:
 
         adapter = JiuwenClawCodeAdapter()
         adapter._workspace_dir = "/tmp/test-workspace"
+        adapter._project_dir = "/tmp/test-workspace"
         monkeypatch.setattr(
             JiuwenClawCodeAdapter,
             "_browser_runtime_enabled",
@@ -439,6 +443,7 @@ class TestExploreAgentSubagentIntegration:
 
         adapter = JiuwenClawCodeAdapter()
         adapter._workspace_dir = "/tmp/test-workspace"
+        adapter._project_dir = "/tmp/test-workspace"
         monkeypatch.setattr(
             JiuwenClawCodeAdapter,
             "_browser_runtime_enabled",
@@ -558,6 +563,7 @@ class TestProjectMemoryRailModeSwitching:
         with tempfile.TemporaryDirectory() as td:
             adapter = JiuwenClawCodeAdapter()
             adapter._workspace_dir = td
+            adapter._project_dir = td
             adapter._instance_overrides = {}
             adapter._config_cache = {}
 

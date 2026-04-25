@@ -49,6 +49,7 @@ pnpm-debug.log*
 **/CLAUDE.local.md
 **/JIUWENCLAW.local.md
 **/JIUWENCLAW.md
+.jiuwen/settings.local.json
 workspace/agent-data.json
 
 # reference

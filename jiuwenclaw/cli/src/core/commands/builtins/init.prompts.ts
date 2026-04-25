@@ -55,7 +55,7 @@ These files are auto-loaded into every coding-mode session by ProjectMemoryRail,
    Never use relative paths. When writing or editing, always construct \`${rootDir}/<filename>\`.
 2. **Do NOT use the \`coding_memory_read\` / \`coding_memory_write\` / \`coding_memory_edit\` tools in this command.** Those are for session-level auto-memory, a different system. /init produces static project documents via the file write tools only.
 3. **Existing files pre-detected in workspace root**:
-  - JIUWENCLAW.md: ${yesNo(existing.jiuwenclawMd)} ${existing.jiuwenclawMd ? "— you MUST read it first, propose a diff, then use \`ask_user\` tool to ask the user whether to apply. Offer options: \"Apply update\" / \"Skip (keep current)\". If user chooses apply, use Edit to apply the diff; if skip, leave the file unchanged and continue. NEVER silently overwrite." : ""}
+  - JIUWENCLAW.md: ${yesNo(existing.jiuwenclawMd)} ${existing.jiuwenclawMd ? "— you MUST read it first, propose a diff, then use `ask_user` with `questions` to ask the user whether to apply. Example: `ask_user(query='Update JIUWENCLAW.md?', questions=[{question: 'JIUWENCLAW.md already exists. What would you like to do?', header: 'Update', options: [{label: 'Apply update', description: 'Merge the proposed changes into the existing file'}, {label: 'Skip (keep current)', description: 'Leave the file unchanged and continue'}], multi_select: false}])`. If user chooses 'Apply update', use Edit to apply the diff; if 'Skip', leave the file unchanged and continue. NEVER silently overwrite." : ""}
    - JIUWENCLAW.local.md: ${yesNo(existing.jiuwenclawLocalMd)} ${existing.jiuwenclawLocalMd ? "— propose additions via Edit only, never overwrite." : ""}
    - Legacy reference files (do NOT delete or rewrite; you may link to them): CLAUDE.md=${yesNo(existing.claudeMd)}, CLAUDE.local.md=${yesNo(existing.claudeLocalMd)}, AGENTS.md=${yesNo(existing.agentsMd)}, OPENJIUWEN.md=${yesNo(existing.openjiuwenMd)}, .cursorrules=${yesNo(existing.cursorRules)}, .github/copilot-instructions.md=${yesNo(existing.copilotInstructions)}
 4. **When the explore sub-agent runs bash commands**, always prefix with \`cd ${rootDir} && ...\` or use \`git -C ${rootDir}\` — sub-agent CWD is not guaranteed to equal \`${rootDir}\`.
@@ -97,9 +97,27 @@ Fallback (no task_tool): do the same yourself with \`glob\` and \`read_file\`; f
 
 ## Step 3: Fill gaps + build proposal
 
-Gather info code can't answer. Preferred: use the \`ask_user\` tool.
-- If \`ask_user\` supports \`questions: [...]\` multi-choice schema, use it.
-- Otherwise, write the questions as plain text in your reply and wait for the user's next turn.
+Gather info code can't answer. Use the \`ask_user\` tool with structured \`questions\` parameter.
+
+The \`ask_user\` tool supports a \`questions\` parameter for presenting selectable options:
+\`\`\`
+ask_user(
+  query="Brief description of what you're asking",
+  questions=[
+    {
+      question: "The full question text",
+      header: "ShortTag",
+      options: [
+        {label: "Option A", description: "What option A means"},
+        {label: "Option B", description: "What option B means"},
+      ],
+      multi_select: false,
+    }
+  ]
+)
+\`\`\`
+
+Use selectable options when they help clarify the question, or ask open-ended questions to gather free-form input. The user can always choose "Other" for custom input.
 
 For scope \`project\` / \`both\`: ask about team practices —
   non-obvious commands, branch/PR conventions, env setup, testing quirks, common pitfalls.
@@ -118,7 +136,7 @@ Steps 4–5 consume this queue.
 
 Target: \`${rootDir}/JIUWENCLAW.md\`
 
-${existing.jiuwenclawMd ? "File EXISTS — read it, propose a merged diff, WAIT for user confirmation, then apply via Edit. DO NOT use Write to overwrite silently." : "File is absent — use Write to create it."}
+${existing.jiuwenclawMd ? "File EXISTS — read it, propose a merged diff, use `ask_user` with `questions` to get user confirmation (options: 'Apply update' / 'Skip (keep current)'), then apply via Edit if confirmed. DO NOT use Write to overwrite silently." : "File is absent — use Write to create it."}
 
 Consume queue entries whose \`target == "JIUWENCLAW.md"\`.
 
@@ -209,7 +227,7 @@ function buildInitPromptZh({ rootDir, scopeKey, existing }: BuildInitPromptArgs)
    永远不要用相对路径。写入或编辑时总是构造 \`${rootDir}/<文件名>\`。
 2. **禁止使用 \`coding_memory_read\` / \`coding_memory_write\` / \`coding_memory_edit\` 工具。** 那是会话级自动记忆，和 /init 是两套系统。/init 只通过文件写入工具产出静态项目文档。
 3. **工作区根目录现有文件（已预探测）**：
-   - JIUWENCLAW.md：${yesNoZh(existing.jiuwenclawMd)} ${existing.jiuwenclawMd ? "—— 必须先读取、生成 diff，然后用 \`ask_user\` 工具询问用户是否应用更新。提供选项：「应用更新」 / 「跳过（保留当前）」。若用户选应用，用 Edit 执行 diff；若选跳过，保持文件不变继续后续步骤。严禁静默覆盖。" : ""}
+   - JIUWENCLAW.md：${yesNoZh(existing.jiuwenclawMd)} ${existing.jiuwenclawMd ? "—— 必须先读取、生成 diff，然后用 \`ask_user\` 的 \`questions\` 参数让用户选择。示例：\`ask_user(query='更新 JIUWENCLAW.md？', questions=[{question: 'JIUWENCLAW.md 已存在，你想怎么处理？', header: '更新', options: [{label: '应用更新', description: '把提议的变更合并到现有文件'}, {label: '跳过（保留当前）', description: '保持文件不变，继续后续步骤'}], multi_select: false}])\`。若用户选「应用更新」，用 Edit 执行 diff；若选「跳过」，保持文件不变继续。严禁静默覆盖。" : ""}
    - JIUWENCLAW.local.md：${yesNoZh(existing.jiuwenclawLocalMd)} ${existing.jiuwenclawLocalMd ? "— 只能通过 Edit 追加，不要覆盖。" : ""}
    - 遗留参考文件（不要删改，可用 markdown 链接引用）：CLAUDE.md=${yesNoZh(existing.claudeMd)}, CLAUDE.local.md=${yesNoZh(existing.claudeLocalMd)}, AGENTS.md=${yesNoZh(existing.agentsMd)}, OPENJIUWEN.md=${yesNoZh(existing.openjiuwenMd)}, .cursorrules=${yesNoZh(existing.cursorRules)}, .github/copilot-instructions.md=${yesNoZh(existing.copilotInstructions)}
 4. **子代理 bash 命令必须加前缀**：\`cd ${rootDir} && ...\` 或用 \`git -C ${rootDir}\`，因为子代理的 CWD 不保证等于 \`${rootDir}\`。
@@ -251,9 +269,26 @@ task_description: |
 
 ## 步骤 3：补齐信息 + 生成提案
 
-收集代码无法回答的问题。优先用 \`ask_user\` 工具：
-- 若 \`ask_user\` 支持 \`questions: [...]\` 多选 schema，就用它；
-- 否则把问题写进你的回复里，等用户下一轮回答。
+收集代码无法回答的问题。用 \`ask_user\` 工具的 \`questions\` 参数提供可选项：
+
+\`\`\`
+ask_user(
+  query="简要说明你在问什么",
+  questions=[
+    {
+      question: "完整的问题文本",
+      header: "短标签",
+      options: [
+        {label: "选项 A", description: "选项 A 的含义"},
+        {label: "选项 B", description: "选项 B 的含义"},
+      ],
+      multi_select: false,
+    }
+  ]
+)
+\`\`\`
+
+根据问题性质选择选项式提问或直接输入式提问；用户始终可以选择「其他」进行自定义输入。
 
 对 \`project\` / \`both\` 范围：询问团队实践 —
   非显而易见的命令、分支 / PR 约定、环境初始化、测试习惯、常见坑位。
@@ -272,7 +307,7 @@ task_description: |
 
 目标：\`${rootDir}/JIUWENCLAW.md\`
 
-${existing.jiuwenclawMd ? "文件已存在 —— 先读取，生成合并 diff，等用户确认，然后用 Edit 应用。绝不要用 Write 静默覆盖。" : "文件不存在 —— 用 Write 创建。"}
+${existing.jiuwenclawMd ? "文件已存在 —— 先读取，生成合并 diff，用 \`ask_user\` 的 \`questions\` 参数获取用户确认（选项：「应用更新」 / 「跳过（保留当前）」），确认后用 Edit 应用。绝不要用 Write 静默覆盖。" : "文件不存在 —— 用 Write 创建。"}
 
 消费队列中 \`target == "JIUWENCLAW.md"\` 的条目。
 

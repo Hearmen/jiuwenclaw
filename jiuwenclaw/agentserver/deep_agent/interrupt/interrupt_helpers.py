@@ -7,6 +7,7 @@ and building permission rails.
 """
 from __future__ import annotations
 
+import json
 from typing import Any
 
 from jiuwenclaw.agentserver.permissions.checker import collect_permission_rail_tool_names
@@ -122,8 +123,12 @@ def _extract_questions_from_value(value_obj: Any) -> list | None:
 
     AskUserRail 的 value (ToolCallInterruptRequest) 有 questions 属性.
     如果 questions 存在且非空, 返回列表; 否则返回 None 表示不是 AskUserRail 中断.
+
+    Additional source: StructuredAskUserRail puts `questions` in the tool call
+    arguments, which are preserved in ToolCallInterruptRequest.tool_args.
     """
-    if hasattr(value_obj, "questions"):
+    # 1. Direct questions attribute on value_obj
+    if hasattr(value_obj, 'questions'):
         qs = value_obj.questions
         if qs and len(qs) > 0:
             return qs
@@ -131,6 +136,22 @@ def _extract_questions_from_value(value_obj: Any) -> list | None:
         qs = value_obj.get("questions", [])
         if qs and len(qs) > 0:
             return qs
+
+    # 2. questions embedded in tool_args (StructuredAskUserRail path)
+    # ToolCallInterruptRequest.tool_args preserves the original tool call
+    # arguments, including the `questions` parameter.
+    tool_args = getattr(value_obj, 'tool_args', None)
+    if tool_args is not None:
+        if isinstance(tool_args, str):
+            try:
+                tool_args = json.loads(tool_args)
+            except (ValueError, TypeError):
+                pass
+        if isinstance(tool_args, dict):
+            qs = tool_args.get("questions", [])
+            if qs and len(qs) > 0:
+                return qs
+
     return None
 
 

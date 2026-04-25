@@ -590,7 +590,18 @@ class GatewayServer:
             if session_key is not None:
                 self._session_to_client[session_key] = ws
 
-            mode = Mode.from_raw(params.get("mode"), default=Mode.AGENT_PLAN)
+            default_mode = Mode.CODE_NORMAL if route.channel_id == "tui" else Mode.AGENT_PLAN
+            mode = Mode.from_raw(params.get("mode"), default=default_mode)
+
+            # 确保 mode 被设置到 params 中，以便后续转发到 AgentServer
+            params = dict(params)
+            params.setdefault("mode", mode.value)
+
+            # 从 params 中提取 cwd，注入到 metadata 中以便 message_handler 解析 @file 引用
+            metadata = {"method": method}
+            cwd = params.get("cwd")
+            if cwd and isinstance(cwd, str) and cwd.strip():
+                metadata["cwd"] = cwd.strip()
 
             msg = Message(
                 id=req_id,
@@ -602,7 +613,7 @@ class GatewayServer:
                 ok=True,
                 req_method=req_method,
                 mode=mode,
-                metadata={"method": method},
+                metadata=metadata,
             )
 
             if self._on_message_cb is not None:

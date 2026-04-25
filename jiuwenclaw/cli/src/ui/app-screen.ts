@@ -32,7 +32,7 @@ import {
 import type { SessionListPayload, SessionMeta } from "../core/commands/builtins/resume.js";
 import type { ConfigItemSchema } from "../core/commands/builtins/config.js";
 import { buildModeAutocompleteItems } from "../core/commands/builtins/mode.js";
-import { addTrustedDir } from "../core/tui-trusted-dirs-store.js";
+import { addTrustedDir, getTrustedDirs, isTrustedDir } from "../core/tui-trusted-dirs-store.js";
 import { handleAppScreenKeyInput } from "./keymap.js";
 import { buildAppScreenLines } from "./screen-layout.js";
 import {
@@ -365,7 +365,7 @@ export class AppScreen implements Component, Focusable {
     this.editor = new Editor(tui, editorTheme, { paddingX: 1, autocompleteMaxVisible: 6 });
     this.composerAutocompleteProvider = new CombinedAutocompleteProvider(
       this.buildSlashCommands(),
-      process.cwd(),
+      getTrustedDirs()[0] || process.cwd(),
       resolveFdBinary(),
     );
     this.editor.setAutocompleteProvider(this.composerAutocompleteProvider);
@@ -384,6 +384,9 @@ export class AppScreen implements Component, Focusable {
 
   private initStartupPrompt(): void {
     const cwd = process.cwd();
+    if (isTrustedDir(cwd)) {
+      return;
+    }
     const items: SelectItem[] = [
       {
         label: "Yes, I trust this folder",
@@ -1404,7 +1407,9 @@ export class AppScreen implements Component, Focusable {
   }
 
   private collectComposerAttachments(text: string): FileAttachment[] {
+    const cwd = getTrustedDirs()[0] || process.cwd();
     return extractAttachmentsFromText(text, {
+      cwd,
       classifyAttachment: (path) => (this.isAcceptedAttachment(path) ? (isImageAttachment(path) ? "image" : "file") : null),
     }).map(({ resolvedPath, ...attachment }) => attachment);
   }

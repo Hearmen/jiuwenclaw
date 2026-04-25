@@ -50,6 +50,19 @@ export function createModeCommand(): SlashCommand {
     completion: async () => [...directModes],
     action: async (ctx, args) => {
       const requestedMode = args.trim();
+      // 无参数时显示当前 mode
+      if (!requestedMode) {
+        const currentMode = ctx.mode ?? "unknown";
+        ctx.addItem(
+          makeItem(
+            ctx.sessionId,
+            "info",
+            `Current mode: ${currentMode}`,
+            "m",
+          ),
+        );
+        return;
+      }
       const nextMode = modeAlias[requestedMode];
       if (!nextMode) {
         ctx.addItem(

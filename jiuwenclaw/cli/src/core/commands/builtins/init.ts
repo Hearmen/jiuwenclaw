@@ -106,6 +106,7 @@ export function createInitCommand(): SlashCommand {
       }
 
       // ---- Guard 3: workspace root ----
+      // ctx.getWorkspaceDir() 现在优先返回 trustedDirs[0]，fallback process.cwd()
       const rootDir =
         ctx.getWorkspaceDir() ||
         (typeof process !== "undefined" ? process.cwd() : "");
@@ -114,8 +115,8 @@ export function createInitCommand(): SlashCommand {
           addError(
             ctx.sessionId,
             language === "zh"
-              ? "无法识别工作目录，请先用 /workspace-dir <path> 指定。"
-              : "Cannot resolve workspace directory. Use /workspace-dir <path> first.",
+              ? "无法识别工作目录，请先用 /workspace set <path> 指定。"
+              : "Cannot resolve workspace directory. Use /workspace set <path> first.",
           ),
         );
         return;

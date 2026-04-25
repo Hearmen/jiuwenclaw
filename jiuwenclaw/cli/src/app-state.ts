@@ -94,7 +94,7 @@ export class CliPiAppState {
   private sessionId: string;
   private sessionTitle: string = "";
   private mode: "agent.plan" | "agent.fast" | "code.plan" | "code.normal" | "team" =
-    "agent.plan";
+    "code.normal";
   private themeName: ThemeName = getCurrentThemeName();
   private accentColor: AccentColorName = getCurrentAccentColor();
   private transcriptMode: "compact" | "detailed" = "compact";
@@ -417,7 +417,7 @@ export class CliPiAppState {
       setTrustedDir: setTrustedDir,
       removeTrustedDir: removeTrustedDir,
       clearTrustedDirs: clearTrustedDirs,
-      getWorkspaceDir: () => process.cwd(),
+      getWorkspaceDir: () => getTrustedDirs()[0] || process.cwd(),
       enterConfigEditor: undefined, // AppScreen injects the real handler when executing slash commands.
     };
   }
@@ -425,6 +425,7 @@ export class CliPiAppState {
   readonly sendEventOnly = (method: string, params: Record<string, unknown>): string => {
     const id = `tui_${Date.now().toString(16)}_${Math.random().toString(36).slice(2, 6)}`;
     const trustedDirs = getTrustedDirs();
+    const workspaceDir = trustedDirs[0] || process.cwd();
     this.wsClient.send({
       type: "req",
       id,
@@ -433,6 +434,7 @@ export class CliPiAppState {
         ...params,
         session_id: (params.session_id as string | undefined) ?? this.sessionId,
         ...(trustedDirs.length > 0 ? { trusted_dirs: trustedDirs } : {}),
+        ...(workspaceDir ? { cwd: workspaceDir } : {}),
       },
     });
     return id;
@@ -444,9 +446,13 @@ readonly request = async <T = Record<string, unknown>>(
     timeoutMs?: number,
   ): Promise<T> => {
     const id = `tui_${Date.now().toString(16)}_${Math.random().toString(36).slice(2, 6)}`;
+    const trustedDirs = getTrustedDirs();
+    const workspaceDir = trustedDirs[0] || process.cwd();
     const response = await this.wsClient.request(id, method, {
       ...params,
       session_id: params.session_id ?? this.sessionId,
+      ...(trustedDirs.length > 0 ? { trusted_dirs: trustedDirs } : {}),
+      ...(workspaceDir ? { cwd: workspaceDir } : {}),
     }, timeoutMs ?? 30000);
     return response.payload as T;
   };

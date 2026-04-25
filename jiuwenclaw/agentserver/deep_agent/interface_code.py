@@ -26,25 +26,16 @@ from openjiuwen.core.runner import Runner
 from openjiuwen.core.single_agent import AgentCard
 from openjiuwen.harness import DeepAgent
 from openjiuwen.harness.factory import create_deep_agent
-from openjiuwen.harness.prompts import resolve_language
 from openjiuwen.harness.rails import (
     AgentModeRail,
-    AskUserRail,
     ConfirmInterruptRail,
-    SkillUseRail,
-    SkillEvolutionRail,
-    SecurityRail,
-    TaskPlanningRail,
 )
 from openjiuwen.harness.rails.coding_memory_rail import CodingMemoryRail
 from openjiuwen.harness.rails.context_engineer.context_assemble_rail import ContextAssembleRail
 from openjiuwen.harness.rails.context_engineer.context_processor_rail import ContextProcessorRail
 from openjiuwen.harness.rails.filesystem_rail import FileSystemRail
-from openjiuwen.harness.rails.heartbeat_rail import HeartbeatRail
 from openjiuwen.harness.lsp import InitializeOptions
 from openjiuwen.harness.rails.lsp_rail import LspRail
-from openjiuwen.harness.rails.memory_rail import MemoryRail
-from openjiuwen.harness.rails.subagent_rail import SubagentRail
 from openjiuwen.harness.schema.config import SubAgentConfig
 from openjiuwen.harness.subagents.browser_agent import build_browser_agent_config
 from openjiuwen.harness.subagents.code_agent import build_code_agent_config
@@ -61,6 +52,7 @@ from jiuwenclaw.agentserver.deep_agent.interrupt.interrupt_helpers import build_
 from jiuwenclaw.agentserver.deep_agent.prompt_builder import build_identity_prompt
 from jiuwenclaw.agentserver.deep_agent.rails import (
     ProjectMemoryRail,
+    StructuredAskUserRail,
 )
 from jiuwenclaw.agentserver.memory.config import get_memory_mode
 from jiuwenclaw.agentserver.permissions.core import init_permission_engine
@@ -113,12 +105,14 @@ def _append_explore_and_plan_subagents(
     subagents: list[SubAgentConfig | DeepAgent],
     resolved_language: str,
     model: Model,
+    workspace: str | None = None,
 ) -> list[SubAgentConfig | DeepAgent]:
     effective = list(subagents)
     if not _subagent_list_has_name(effective, "explore_agent"):
         effective.append(
             build_explore_agent_config(
                 model=model,
+                workspace=workspace,
                 language=resolved_language,
                 max_iterations=25,
             )
@@ -127,6 +121,7 @@ def _append_explore_and_plan_subagents(
         effective.append(
             build_plan_agent_config(
                 model=model,
+                workspace=workspace,
                 language=resolved_language,
                 max_iterations=25,
             )
@@ -170,7 +165,9 @@ class JiuwenClawCodeAdapter(JiuWenClawDeepAdapter):
         self._agent_name = self._instance_overrides.get(
             "agent_name", config.get("agent_name", "main_agent")
         )
-        self._project_dir = config.get("workspace_dir")
+        self._project_dir = self._instance_overrides.get(
+            "workspace_dir", config.get("workspace_dir")
+        )
 
         model = self._create_model(config_base)
         agent_card = AgentCard(name=self._agent_name, id='jiuwenclaw')
@@ -197,6 +194,7 @@ class JiuwenClawCodeAdapter(JiuWenClawDeepAdapter):
             raw_subagents,
             resolved_language=self._resolve_runtime_language(),
             model=model,
+            workspace=self._project_dir or self._workspace_dir or "./",
         )
 
         self._instance = create_deep_agent(
@@ -283,7 +281,7 @@ class JiuwenClawCodeAdapter(JiuWenClawDeepAdapter):
             ),
             _RailBuildInfo("_code_filesystem_rail", FileSystemRail, {}),
             _RailBuildInfo("_code_agent_mode_rail", AgentModeRail, {}),
-            _RailBuildInfo("_code_ask_user_rail", AskUserRail, {}),
+            _RailBuildInfo("_code_ask_user_rail", StructuredAskUserRail, {}),
             _RailBuildInfo(
                 "_code_confirm_interrupt_rail",
                 ConfirmInterruptRail,
