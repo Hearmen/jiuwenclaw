@@ -619,6 +619,7 @@ channels:
 
 - You are an **Android** or **iOS** user.
 - Or, you are a **HarmonyOS** user and can use **ZhuoYiTong**.
+- Due to restrictions on WeChat, long-term inactivity in WeChat has prevented scheduled tasks from being sent. It is recommended to set up scheduled tasks via alternative channels.
 
 ## 2. Android / iOS Setup
 
