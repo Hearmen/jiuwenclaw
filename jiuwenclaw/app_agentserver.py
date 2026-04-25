@@ -167,7 +167,7 @@ def main() -> None:
         # Early parsing failed - error was already printed
         raise SystemExit(1)
 
-    host = os.getenv("AGENT_SERVER_HOST", "0.0.0.0")
+    host = os.getenv("AGENT_SERVER_HOST", "127.0.0.1")
     port = args.port
     if port is None:
         for key in ("AGENT_SERVER_PORT", "AGENT_PORT"):
