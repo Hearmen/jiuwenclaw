@@ -262,6 +262,7 @@ def load_team_spec_dict(session_id: str) -> dict[str, Any]:
     spec_dict["spawn_mode"] = team_raw.get("spawn_mode", "inprocess")
     spec_dict["leader"] = _build_leader_spec(team_raw)
     spec_dict["agents"] = agents
+    spec_dict["language"] = str(config_base.get("preferred_language", "zh")).strip().lower()
 
     workspace_spec = _build_workspace_spec(team_raw)
     if workspace_spec is not None:
