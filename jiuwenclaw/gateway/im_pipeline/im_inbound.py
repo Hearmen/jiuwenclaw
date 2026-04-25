@@ -17,7 +17,7 @@ from jiuwenclaw.config import _parse_custom_headers
 from jiuwenclaw.gateway.interaction_context import PendingInteraction
 from jiuwenclaw.schema.message import Message, ReqMethod
 from jiuwenclaw.gateway.slash_command import CONTROL_MESSAGE_TEXTS
-from jiuwenclaw.utils import get_root_dir, logger
+from jiuwenclaw.utils import get_deepagent_user_md_path, logger
 SYSTEM_PROMPT_TEMPLATE = """
 你是{principal_name}的数字分身，活跃在即时通讯群聊中。当群里有其他用户发送与{principal_name}相关的消息时，你的任务是改写这条消息，使其更清晰、更完整，以便后续帮助{principal_name}生成恰当的回复。
 
@@ -145,7 +145,7 @@ class IMConversationProcessor:
         self._user_profile_path = (
             user_profile_path
             if user_profile_path is not None
-            else get_root_dir() / "workspace" / "agent" / "memory" / "USER.md"
+            else get_deepagent_user_md_path()
         )
         self._model_name, self._model_client_raw = self._load_model_config(model_name)
         self._llm: Model | None = None

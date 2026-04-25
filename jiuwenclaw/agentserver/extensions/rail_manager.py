@@ -14,6 +14,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, List
 
+from jiuwenclaw.utils import get_agent_workspace_dir
+
 logger = logging.getLogger(__name__)
 
 
@@ -65,8 +67,7 @@ class RailManager:
         if hasattr(self, "_initialized"):
             return
 
-        home_dir = Path.home()
-        self._extensions_dir = home_dir / ".jiuwenclaw" / "agent" / "jiuwenclaw_workspace" / "extensions"
+        self._extensions_dir = get_agent_workspace_dir() / "extensions"
         self._config_file = self._extensions_dir / "extensions_config.json"
 
         # 确保目录存在

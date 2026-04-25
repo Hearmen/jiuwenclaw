@@ -232,20 +232,26 @@ def _resolve_logging_levels(
     return LoggingLevels(logger_level, console, gateway, channel, agent_server, full)
 
 
-# 用户数据根（config、agent、.logs 等）。供 config 模块在 import 时读取；仅依赖 os/path，不引用本包其它模块。
-_raw_data_dir = os.environ.get("JIUWENCLAW_DATA_DIR", "").strip()
-JIUWENCLAW_DATA_DIR = (
-    Path(_raw_data_dir).expanduser().resolve() if _raw_data_dir else Path.home() / ".jiuwenclaw"
-)
-
 _user_home: Path | None = None
+_workspace_base_dir: Path | None = None
 
 
 def get_user_home() -> Path:
-    """Get the current user home directory."""
+    """Get the current user home directory.
+
+    Priority:
+    1. Cached value (if already set via set_user_home or previous call)
+    2. JIUWENCLAW_HOME environment variable
+    3. System default Path.home()
+    """
     global _user_home
-    if _user_home is None:
-        _user_home = Path.home()
+    if _user_home is not None:
+        return _user_home
+    env_home = os.getenv("JIUWENCLAW_HOME")
+    if env_home:
+        _user_home = Path(env_home)
+        return _user_home
+    _user_home = Path.home()
     return _user_home
 
 
@@ -253,7 +259,7 @@ def set_user_home(path: Path, initialized: bool = False) -> None:
     """Set a custom user home directory.
 
     After calling this function, all path getters will return paths based on the new home directory.
-    
+
     Args:
         path: The new user home directory path.
         initialized: If True, skip cache reset (use when paths are already initialized elsewhere).
@@ -269,10 +275,24 @@ def set_user_home(path: Path, initialized: bool = False) -> None:
 
 
 def get_user_workspace_dir() -> Path:
-    """用户数据根目录：若设置 ``JIUWENCLAW_DATA_DIR`` 则为其解析路径，否则为 ``<user home>/.jiuwenclaw``。"""
-    if _raw_data_dir:
-        return JIUWENCLAW_DATA_DIR
-    return get_user_home() / ".jiuwenclaw"
+    """Get the user workspace directory path (~/.jiuwenclaw or custom path).
+
+    Priority:
+    1. Cached value (if already set via set_user_workspace_dir or previous call)
+    2. JIUWENCLAW_DATA_DIR environment variable (for multi-instance isolation)
+    3. get_user_home() / ".jiuwenclaw" (default instance)
+    """
+    global _workspace_base_dir
+    if _workspace_base_dir is not None:
+        return _workspace_base_dir
+    env_workspace = os.getenv("JIUWENCLAW_DATA_DIR")
+    if env_workspace:
+        _workspace_base_dir = Path(env_workspace)
+        return _workspace_base_dir
+    _workspace_base_dir = get_user_home() / ".jiuwenclaw"
+    return _workspace_base_dir
+
+
 
 
 # Cache for resolved paths
@@ -805,6 +825,21 @@ def prepare_workspace(
     set_preferred_language_in_config_file(config_yaml_dest, resolved_lang)
 
 
+def _close_log_handlers() -> None:
+    """Close all jiuwenclaw log handlers to release file locks.
+
+    This is needed before deleting workspace directory in init -f mode,
+    because setup_logger() runs at module import time and opens log files.
+    """
+    root = logging.getLogger("jiuwenclaw")
+    for handler in root.handlers[:]:
+        try:
+            handler.close()
+            root.removeHandler(handler)
+        except Exception:
+            pass  # Ignore errors during cleanup
+
+
 def init_user_workspace(overwrite: bool = True) -> Path | Literal["cancelled"]:
     """Initialize ~/.jiuwenclaw from package or source resources.
 
@@ -833,8 +868,8 @@ def init_user_workspace(overwrite: bool = True) -> Path | Literal["cancelled"]:
         if overwrite:
             # Force mode: explain both modes and ask for confirmation
             print(
-                "[jiuwenclaw-init] With -f/--force flag, "
-                "entire ~/.jiuwenclaw will be deleted for clean initialization."
+                f"[jiuwenclaw-init] With -f/--force flag, "
+                f"entire {workspace_dir} will be deleted for clean initialization."
             )
             print("[jiuwenclaw-init] WARNING: This will delete all historical configuration and memory information.")
             print("[jiuwenclaw-init] This action cannot be undone.")
@@ -846,12 +881,14 @@ def init_user_workspace(overwrite: bool = True) -> Path | Literal["cancelled"]:
                 print("[jiuwenclaw-init] Initialization cancelled. Exiting.")
                 return "cancelled"
 
+            # Close all log handlers to release file locks before deleting
+            _close_log_handlers()
+
             # Delete entire workspace directory for clean initialization
             try:
                 shutil.rmtree(workspace_dir)
-                logger.info(f"Removed workspace directory: {workspace_dir}")
+                print(f"[jiuwenclaw-init] Removed workspace directory: {workspace_dir}")
             except OSError as e:
-                logger.error(f"Failed to remove workspace directory: {e}")
                 print(f"[jiuwenclaw-init] ERROR: Failed to remove workspace: {e}")
                 return "cancelled"
         else:

@@ -24,6 +24,12 @@ function resolveProjectRootDir(): string {
   }
   const home = process.env.USERPROFILE || process.env.HOME || ''
   if (home) {
+    // 优先检查多实例环境变量
+    const envWorkspace = process.env.JIUWENCLAW_DATA_DIR
+    if (envWorkspace) {
+      console.log('[file-api] 使用 JIUWENCLAW_DATA_DIR:', path.resolve(envWorkspace))
+      return path.resolve(envWorkspace)
+    }
     const userWorkspace = path.join(home, '.jiuwenclaw')
     if (fs.existsSync(userWorkspace)) {
       console.log('[file-api] 使用用户工作区:', path.resolve(userWorkspace))

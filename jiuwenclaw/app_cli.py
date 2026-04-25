@@ -1,5 +1,10 @@
 from __future__ import annotations
 
+"""JiuWenClaw CLI entrypoint (subcommand dispatcher).
+
+Supports ``--dotenv <path>`` for multi-instance isolation.
+"""
+
 import argparse
 import json
 import logging
@@ -8,6 +13,11 @@ import subprocess
 import sys
 import uuid
 
+# --- Early --dotenv parsing (before jiuwenclaw imports) ---
+from jiuwenclaw.dotenv_early import parse_dotenv_early, get_parsed_dotenv
+parse_dotenv_early("jiuwenclaw-cli")
+
+# --- Now safe to import jiuwenclaw modules ---
 from jiuwenclaw.e2a.adapters import (
     e2a_response_to_acp_jsonrpc_response,
     envelope_from_acp_jsonrpc,
@@ -16,6 +26,9 @@ from jiuwenclaw.e2a.constants import E2A_RESPONSE_KIND_E2A_CHUNK
 from jiuwenclaw.e2a.models import E2AResponse
 
 logger = logging.getLogger(__name__)
+
+# Record the parsed dotenv path for subprocess spawning
+_parsed_dotenv_path = get_parsed_dotenv()
 
 
 def write_json_stdout(payload: dict) -> None:
@@ -70,6 +83,10 @@ def run_acp(args: argparse.Namespace) -> int:
     gateway_url = getattr(args, "gateway_url", None) or getattr(args, "agent_server_url", None)
     if gateway_url:
         cmd.extend(["--gateway-url", str(gateway_url)])
+
+    # Pass --dotenv to subprocess for multi-instance isolation
+    if _parsed_dotenv_path is not None:
+        cmd.extend(["--dotenv", str(_parsed_dotenv_path)])
 
     logger.info("[CLI] starting ACP stdio gateway: %s", cmd)
     child_env = dict(os.environ)

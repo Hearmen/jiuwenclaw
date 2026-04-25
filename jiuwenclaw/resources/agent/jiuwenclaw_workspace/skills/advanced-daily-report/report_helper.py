@@ -23,6 +23,13 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+# 尝试从 jiuwenclaw.utils 导入，如果失败则使用环境变量或硬编码路径
+try:
+    from jiuwenclaw.utils import get_agent_root_dir
+    _has_jiuwenclaw = True
+except ImportError:
+    _has_jiuwenclaw = False
+
 # 修复 Windows 控制台编码问题
 if sys.platform == "win32":
     sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8")
@@ -30,17 +37,37 @@ if sys.platform == "win32":
 
 
 def get_workspace_dir() -> Path:
-    """获取 Agent 根目录（含 memory/、sessions/、skills/）。"""
+    """获取 Agent 根目录（含 memory/、sessions/、skills/）。
+
+    优先级：
+    1. jiuwenclaw.utils.get_agent_root_dir()（如果可用）
+    2. JIUWENCLAW_DATA_DIR 环境变量 / agent
+    3. JIUWENCLAW_AGENT_ROOT 环境变量
+    4. 默认 ~/.jiuwenclaw/agent
+    """
+    if _has_jiuwenclaw:
+        return get_agent_root_dir()
+
+    # 检查多实例环境变量
+    env_workspace = os.getenv("JIUWENCLAW_DATA_DIR")
+    if env_workspace:
+        return Path(env_workspace) / "agent"
+
+    # 检查旧的 AGENT_ROOT 环境变量
     if "JIUWENCLAW_AGENT_ROOT" in os.environ:
         return Path(os.environ["JIUWENCLAW_AGENT_ROOT"])
+
+    # 默认路径
     home_agent = Path.home() / ".jiuwenclaw" / "agent"
     if home_agent.is_dir():
         return home_agent
-    # 开发：包内 resources/agent
+
+    # 开发模式：包内 resources/agent
     script_dir = Path(__file__).resolve()
     pkg_agent = script_dir.parent.parent.parent  # daily-report -> skills -> agent
     if (pkg_agent / "memory").is_dir() or (pkg_agent / "skills").is_dir():
         return pkg_agent
+
     return home_agent
 
 

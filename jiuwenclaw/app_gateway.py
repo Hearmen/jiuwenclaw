@@ -8,6 +8,8 @@ This process starts:
 - Cron scheduler service (triggers remote AgentServer via ws)
 
 It connects to a remote/local AgentServer WebSocket endpoint.
+
+Supports ``--dotenv <path>`` for multi-instance isolation.
 """
 
 from __future__ import annotations
@@ -27,6 +29,11 @@ from urllib.parse import urlparse
 from dotenv import load_dotenv
 from openjiuwen.core.common.logging import LogManager
 
+# --- Early --dotenv parsing (before jiuwenclaw imports) ---
+from jiuwenclaw.dotenv_early import parse_dotenv_early
+parse_dotenv_early("jiuwenclaw-gateway")
+
+# --- Now safe to import jiuwenclaw modules ---
 import jiuwenclaw.channel.acp_channel as acp_channel_module
 from jiuwenclaw.channel.acp_channel import AcpGatewayBridge
 from jiuwenclaw.gateway.route_binding import GatewayRouteBinding
@@ -1632,6 +1639,8 @@ async def _run(
 
 
 def main() -> None:
+    from jiuwenclaw.dotenv_early import get_parsed_dotenv
+
     parser = argparse.ArgumentParser(
         prog="jiuwenclaw-gateway",
         description="Start JiuwenClaw Gateway + Channels (split deployment; connects to jiuwenclaw-agentserver).",
@@ -1664,7 +1673,25 @@ def main() -> None:
         metavar="PATH",
         help="WebChannel ws path (default: WEB_PATH or /ws).",
     )
+    parser.add_argument(
+        "--name",
+        metavar="<name>",
+        help="Start a named instance from instances.yaml.",
+    )
+    parser.add_argument(
+        "--dotenv",
+        metavar="<path>",
+        help="Load environment from .env file (processed at startup, not used here).",
+    )
     args = parser.parse_args()
+
+    # Handle --name: check if bootstrap .env was loaded successfully
+    # (parse_dotenv_early() already processed it, this is just a fallback check)
+    if args.name:
+        if get_parsed_dotenv() is None:
+            # Early parsing failed - instance not found or workspace missing
+            # Error was already printed by parse_dotenv_early()
+            raise SystemExit(1)
 
     default_host = os.getenv("AGENT_SERVER_HOST", "127.0.0.1")
     default_port = os.getenv("AGENT_SERVER_PORT") or os.getenv("AGENT_PORT", "18092")

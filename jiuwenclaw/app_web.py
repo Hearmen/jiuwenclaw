@@ -1,6 +1,9 @@
 # Copyright (c) Huawei Technologies Co., Ltd. 2025. All rights reserved.
 
-"""Serve built frontend static files with optional reverse proxy."""
+"""Serve built frontend static files with optional reverse proxy.
+
+Supports ``--dotenv <path>`` for multi-instance isolation.
+"""
 
 from __future__ import annotations
 
@@ -13,12 +16,18 @@ import os
 import select
 import socket
 import ssl
+import sys
 from functools import partial
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
 from urllib.parse import unquote, urlparse
 
+# --- Early --dotenv parsing (before jiuwenclaw imports) ---
+from jiuwenclaw.dotenv_early import parse_dotenv_early
+parse_dotenv_early("jiuwenclaw-web")
+
+# --- Now safe to import jiuwenclaw modules ---
 from jiuwenclaw.agentserver.tools.ssl_config import get_insecure_ssl_context, get_ssl_verify
 from jiuwenclaw.utils import get_agent_root_dir, get_logs_dir, \
     get_root_dir, get_user_workspace_dir, is_package_installation
@@ -788,9 +797,31 @@ def _setup_logger(logs_root: Path, log_level: str) -> logging.Logger:
 
 
 def main() -> None:
+    from jiuwenclaw.dotenv_early import get_parsed_dotenv
+
+    # Check if --name bootstrap .env was loaded successfully
+    # (parse_dotenv_early() already processed it at module import time)
+    # This is just a fallback check for error handling
+    _early_name = None
+    for i, arg in enumerate(sys.argv):
+        if arg == "--name" and i + 1 < len(sys.argv):
+            _early_name = sys.argv[i + 1]
+
+    if _early_name and get_parsed_dotenv() is None:
+        # Early parsing failed - error was already printed
+        raise SystemExit(1)
+
+    # Read defaults from environment variables (for multi-instance support)
+    # FRONTEND_PORT is used for this HTTP static server
+    # WEB_PORT is the WebChannel websocket endpoint that this server proxies to
+    default_host = os.getenv("FRONTEND_HOST", "localhost")
+    default_port = int(os.getenv("FRONTEND_PORT", "5173"))
+    web_port = os.getenv("WEB_PORT", "19000")  # WebChannel websocket port (proxy target)
+    default_proxy = os.getenv("GATEWAY_URL", f"http://127.0.0.1:{web_port}")
+
     parser = argparse.ArgumentParser(description="Serve JiuwenClaw frontend static files.")
-    parser.add_argument("--host", default="localhost", help="Host to bind.")
-    parser.add_argument("--port", type=int, default=5173, help="Port to bind.")
+    parser.add_argument("--host", default=default_host, help="Host to bind.")
+    parser.add_argument("--port", type=int, default=default_port, help="Port to bind.")
     parser.add_argument(
         "--dist",
         default=str(_default_dist_dir()),
@@ -798,7 +829,7 @@ def main() -> None:
     )
     parser.add_argument(
         "--proxy-target",
-        default="http://127.0.0.1:19000",
+        default=default_proxy,
         help="Backend base URL for proxy (used as default for api/ws).",
     )
     parser.add_argument(
@@ -820,6 +851,16 @@ def main() -> None:
         "--ws-disable-compress",
         action="store_true",
         help="Disable websocket compression for easier ws req/res/event debug logging.",
+    )
+    parser.add_argument(
+        "--name",
+        metavar="<name>",
+        help="Start a named instance from instances.yaml.",
+    )
+    parser.add_argument(
+        "--dotenv",
+        metavar="<path>",
+        help="Load environment from .env file (processed at startup, not used here).",
     )
     args = parser.parse_args()
 

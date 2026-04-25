@@ -15,7 +15,7 @@ import yaml
 logger = logging.getLogger(__name__)
 from ruamel.yaml import YAML
 
-from jiuwenclaw.utils import JIUWENCLAW_DATA_DIR, get_config_file
+from jiuwenclaw.utils import get_config_dir, get_config_file
 
 _CONFIG_MODULE_DIR = Path(__file__).parent
 _CONFIG_YAML_PATH = get_config_file()
@@ -24,8 +24,8 @@ _CONFIG_YAML_PATH = get_config_file()
 _user_config = os.getenv("JIUWENCLAW_CONFIG_DIR")
 if _user_config:
     _CONFIG_MODULE_DIR = Path(_user_config)
-elif (JIUWENCLAW_DATA_DIR / "config").exists():
-    _CONFIG_MODULE_DIR = JIUWENCLAW_DATA_DIR / "config"
+elif get_config_dir().exists():
+    _CONFIG_MODULE_DIR = get_config_dir()
 
 # Ensure config directory is in sys.path
 if str(_CONFIG_MODULE_DIR) not in sys.path:

@@ -20,8 +20,18 @@ generate();
 
 // 监听 agent 目录的变化
 const chokidar = require('chokidar');
+
+// 优先使用环境变量，支持多实例
+const envWorkspace = process.env.JIUWENCLAW_DATA_DIR;
 const homeDir = process.env.USERPROFILE || process.env.HOME || '';
-const userAgentDir = homeDir ? path.join(homeDir, '.jiuwenclaw', 'agent') : '';
+
+let userAgentDir = '';
+if (envWorkspace) {
+  userAgentDir = path.join(envWorkspace, 'agent');
+} else if (homeDir) {
+  userAgentDir = path.join(homeDir, '.jiuwenclaw', 'agent');
+}
+
 const fallbackRepoAgentDir = path.join(__dirname, '../resources/agent');
 const watchTarget = userAgentDir || fallbackRepoAgentDir;
 const watcher = chokidar.watch(watchTarget, {

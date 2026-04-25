@@ -20,6 +20,7 @@ from jiuwenclaw.agentserver.permissions.shell_ast import (
     ShellAstParseResult,
     parse_shell_for_permission,
 )
+from jiuwenclaw.utils import get_config_dir
 
 logger = logging.getLogger(__name__)
 
@@ -82,7 +83,7 @@ def _resolve_builtin_rules_yaml_path() -> Path | None:
         user_path = Path(user_dir) / "builtin_rules.yaml"
         if user_path.is_file():
             return user_path
-    fallback_user_path = Path.home() / ".jiuwenclaw" / "config" / "builtin_rules.yaml"
+    fallback_user_path = get_config_dir() / "builtin_rules.yaml"
     if fallback_user_path.is_file():
         return fallback_user_path
     pkg_path = _package_builtin_rules_path()

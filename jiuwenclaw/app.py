@@ -3,6 +3,8 @@
 
 Runs ``jiuwenclaw.app_agentserver`` then ``jiuwenclaw.app_gateway`` with the same
 environment as a normal CLI launch. Web RPC handlers live in ``app_web_handlers``.
+
+Supports ``--dotenv <path>`` for multi-instance isolation.
 """
 
 from __future__ import annotations
@@ -13,6 +15,11 @@ import time
 
 from dotenv import load_dotenv
 
+# --- Early --dotenv parsing (before jiuwenclaw imports) ---
+from jiuwenclaw.dotenv_early import parse_dotenv_early, get_parsed_dotenv
+parse_dotenv_early("jiuwenclaw-app")
+
+# --- Now safe to import jiuwenclaw modules ---
 from jiuwenclaw.utils import (
     cleanup_team_files,
     get_env_file,
@@ -20,6 +27,9 @@ from jiuwenclaw.utils import (
     prepare_workspace,
     reset_free_search_runtime_flags,
 )
+
+# Record the parsed dotenv path for subprocess spawning
+_parsed_dotenv_path = get_parsed_dotenv()
 
 
 _workspace_dir = get_user_workspace_dir()
@@ -39,13 +49,47 @@ reset_free_search_runtime_flags()
 
 
 def main() -> None:
+    import argparse
+
+    parser = argparse.ArgumentParser(
+        prog="jiuwenclaw-app",
+        description="Start JiuWenClaw AgentServer + Gateway (split layout, one command).",
+    )
+    parser.add_argument(
+        "--dotenv",
+        metavar="<path>",
+        help="Load environment from .env file (processed at startup, not used here).",
+    )
+    parser.add_argument(
+        "--name",
+        metavar="<name>",
+        help="Start a named instance from instances.yaml.",
+    )
+    args = parser.parse_args()
+
+    # Handle --name: check if bootstrap .env was loaded successfully
+    # (parse_dotenv_early() already processed it at module import time)
+    dotenv_path = _parsed_dotenv_path
+    if args.name and dotenv_path is None:
+        # Early parsing failed - error was already printed
+        raise SystemExit(1)
+
     python = sys.executable
 
-    agent = subprocess.Popen([python, "-m", "jiuwenclaw.app_agentserver"])
+    # Build subprocess commands with --dotenv if parsed
+    agent_cmd = [python, "-m", "jiuwenclaw.app_agentserver"]
+    gateway_cmd = [python, "-m", "jiuwenclaw.app_gateway"]
+
+    # Pass --dotenv to subprocesses for multi-instance isolation
+    if dotenv_path is not None:
+        agent_cmd.extend(["--dotenv", str(dotenv_path)])
+        gateway_cmd.extend(["--dotenv", str(dotenv_path)])
+
+    agent = subprocess.Popen(agent_cmd)
     gateway = None
     try:
         time.sleep(0.4)
-        gateway = subprocess.Popen([python, "-m", "jiuwenclaw.app_gateway"])
+        gateway = subprocess.Popen(gateway_cmd)
     except Exception:
         if agent.poll() is None:
             agent.terminate()

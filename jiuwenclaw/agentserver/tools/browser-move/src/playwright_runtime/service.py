@@ -35,10 +35,12 @@ from playwright_runtime.config import BrowserRunGuardrails, resolve_playwright_m
 from playwright_runtime.drivers.managed_browser import ManagedBrowserDriver, _default_chrome_user_data_dir
 from playwright_runtime.hooks import BrowserCancellationMiddleware, BrowserRunCancelled
 from playwright_runtime.profiles import BrowserProfile, BrowserProfileStore
+
 from jiuwenclaw.browser_timeout_policy import (
     allow_short_timeout_override,
     resolve_browser_task_timeout,
 )
+from jiuwenclaw.utils import get_user_workspace_dir
 
 MAX_ITERATION_MESSAGE = "Max iterations reached without completion"
 
@@ -166,7 +168,7 @@ class BrowserService:
         configured = (os.getenv("BROWSER_RUNTIME_STATE_DIR") or "").strip()
         if configured:
             return Path(configured).expanduser()
-        return Path.home() / ".jiuwenclaw" / "browser-move"
+        return get_user_workspace_dir() / "browser-move"
 
     def _resolve_profile_store_path(self) -> Path:
         configured = (os.getenv("BROWSER_PROFILE_STORE_PATH") or "").strip()

@@ -4,6 +4,7 @@ import argparse
 import json
 import locale
 import logging
+import os
 import re
 import sys
 import warnings
@@ -11,6 +12,13 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
+
+# 尝试从 jiuwenclaw.utils 导入，如果失败则使用环境变量或硬编码路径
+try:
+    from jiuwenclaw.utils import get_agent_sessions_dir
+    _has_jiuwenclaw = True
+except ImportError:
+    _has_jiuwenclaw = False
 
 try:
     from zoneinfo import ZoneInfo
@@ -72,8 +80,13 @@ class Hit:
 
 
 def _default_sessions_root() -> Path:
-    home = Path.home()
-    return home / ".jiuwenclaw" / "agent" / "sessions"
+    if _has_jiuwenclaw:
+        return get_agent_sessions_dir()
+    # Fallback: check environment variable or use hardcoded path
+    env_workspace = os.getenv("JIUWENCLAW_DATA_DIR")
+    if env_workspace:
+        return Path(env_workspace) / "agent" / "sessions"
+    return Path.home() / ".jiuwenclaw" / "agent" / "sessions"
 
 
 def _to_float_ts(v: Any, tz: timezone) -> float | None:

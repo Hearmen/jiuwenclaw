@@ -1558,9 +1558,10 @@ class FeishuChannel(BaseChannel):
         seen: set[str] = set()
         result: list[str] = []
 
-        # 模式1：完整路径
-        abs_pattern = r"(/home/[^\s\[\]\"']+\.jiuwenclaw/agent/workspace/[^\s\[\]\"']+\.\w+)"
-        for m in re.findall(abs_pattern, text):
+        # 模式1：完整路径 - 动态匹配当前 workspace 目录
+        # 支持 Linux (/home/xxx/.jiuwenclaw/...) 和 Windows (C:\Users\xxx\.jiuwenclaw\...)
+        workspace_pattern = re.escape(workspace_dir) + r"[^\s\[\]\"']+\.\w+"
+        for m in re.findall(workspace_pattern, text):
             m = m.rstrip(".,;:!?)")
             if m not in seen and os.path.isfile(m):
                 seen.add(m)

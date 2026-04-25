@@ -16,6 +16,7 @@ import httpx
 from jiuwenclaw.channel.base import RobotMessageRouter, BaseChannel
 from jiuwenclaw.channel.dingtalk_file_service import DingTalkFileService
 from jiuwenclaw.schema.message import Message, ReqMethod
+from jiuwenclaw.utils import get_agent_workspace_dir
 
 logger = logging.getLogger(__name__)
 
@@ -354,7 +355,7 @@ class DingTalkChannel(BaseChannel):
             self._http = httpx.AsyncClient()
 
             # 初始化文件服务
-            workspace_dir = self.config.workspace_dir or os.path.expanduser("~/.jiuwenclaw/agent/workspace")
+            workspace_dir = self.config.workspace_dir or str(get_agent_workspace_dir())
             self._file_service = DingTalkFileService(
                 client_id=self.config.client_id,
                 get_token_func=self._get_access_token,
@@ -1088,7 +1089,7 @@ class DingTalkChannel(BaseChannel):
         if not self._file_service or not self.config.send_file_allowed:
             return
 
-        workspace_dir = self.config.workspace_dir or os.path.expanduser("~/.jiuwenclaw/agent/workspace")
+        workspace_dir = self.config.workspace_dir or str(get_agent_workspace_dir())
         if not os.path.isdir(workspace_dir):
             return
 

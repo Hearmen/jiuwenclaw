@@ -19,11 +19,25 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
-# 加载 ~/.jiuwenclaw/config/.env
+# 尝试从 jiuwenclaw.utils 导入，如果失败则使用环境变量或硬编码路径
+try:
+    from jiuwenclaw.utils import get_agent_root_dir, get_env_file
+    _has_jiuwenclaw = True
+except ImportError:
+    _has_jiuwenclaw = False
+
+# 加载配置环境变量
 try:
     from dotenv import load_dotenv
 
-    _cfg_env = Path.home() / ".jiuwenclaw" / "config" / ".env"
+    if _has_jiuwenclaw:
+        _cfg_env = get_env_file()
+    else:
+        env_workspace = os.getenv("JIUWENCLAW_DATA_DIR")
+        if env_workspace:
+            _cfg_env = Path(env_workspace) / "config" / ".env"
+        else:
+            _cfg_env = Path.home() / ".jiuwenclaw" / "config" / ".env"
     if _cfg_env.exists():
         load_dotenv(_cfg_env)
 except ImportError:
@@ -53,10 +67,26 @@ except ImportError:
 SKILL_DIR = Path(__file__).parent
 PACKAGE_ROOT = SKILL_DIR.parent.parent.parent.parent
 REPO_ROOT = PACKAGE_ROOT.parent
-AGENT_ROOT = Path(
-    os.environ.get("JIUWENCLAW_AGENT_ROOT", str(Path.home() / ".jiuwenclaw" / "agent"))
-)
-CONFIG_ENV = Path.home() / ".jiuwenclaw" / "config" / ".env"
+
+# Agent 根目录：优先使用 jiuwenclaw.utils，其次环境变量，最后硬编码
+if _has_jiuwenclaw:
+    AGENT_ROOT = get_agent_root_dir()
+else:
+    env_workspace = os.getenv("JIUWENCLAW_DATA_DIR")
+    if env_workspace:
+        AGENT_ROOT = Path(env_workspace) / "agent"
+    else:
+        AGENT_ROOT = Path(os.environ.get("JIUWENCLAW_AGENT_ROOT", str(Path.home() / ".jiuwenclaw" / "agent")))
+
+# 配置环境文件路径
+if _has_jiuwenclaw:
+    CONFIG_ENV = get_env_file()
+else:
+    env_workspace = os.getenv("JIUWENCLAW_DATA_DIR")
+    if env_workspace:
+        CONFIG_ENV = Path(env_workspace) / "config" / ".env"
+    else:
+        CONFIG_ENV = Path.home() / ".jiuwenclaw" / "config" / ".env"
 
 # 报告用「日历日/当前年月」与项目 cron 默认时区一致（避免 naive datetime）
 _REPORT_TZ = ZoneInfo("Asia/Shanghai")

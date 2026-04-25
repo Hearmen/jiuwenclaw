@@ -21,6 +21,7 @@ from pydantic import BaseModel, Field
 from jiuwenclaw.channel.base import BaseChannel, ChannelMetadata, RobotMessageRouter
 from jiuwenclaw.channel.platform_adapter.message import MessageStore
 from jiuwenclaw.schema.message import Message, ReqMethod, EventType
+from jiuwenclaw.utils import get_agent_workspace_dir
 
 logger = logging.getLogger(__name__)
 
@@ -1371,7 +1372,7 @@ class WecomChannel(BaseChannel):
         # 初始化文件服务
         try:
             from jiuwenclaw.channel.wecom_file_service import WecomFileService
-            workspace_dir = self.config.workspace_dir or os.path.expanduser("~/.jiuwenclaw/agent/workspace")
+            workspace_dir = self.config.workspace_dir or str(get_agent_workspace_dir())
             self._file_service = WecomFileService(
                 ws_client=client,
                 max_download_size=self.config.max_download_size,

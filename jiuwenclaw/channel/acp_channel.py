@@ -11,6 +11,11 @@ import uuid
 from dataclasses import dataclass, field
 from typing import Any, Callable
 
+# --- Early --dotenv parsing (before jiuwenclaw imports) ---
+from jiuwenclaw.dotenv_early import parse_dotenv_early
+parse_dotenv_early("jiuwenclaw-acp-channel")
+
+# --- Now safe to import jiuwenclaw modules ---
 from jiuwenclaw.channel.base import BaseChannel, RobotMessageRouter
 from jiuwenclaw.e2a.acp.protocol import (
     build_acp_initialize_result,

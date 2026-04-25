@@ -15,6 +15,8 @@ from openjiuwen.harness.prompts import PromptSection
 from openjiuwen.harness.rails.base import DeepAgentRail
 from jiuwenclaw.utils import get_config_dir
 
+from jiuwenclaw.utils import get_agent_workspace_dir
+
 _CN_WEEKDAYS = ["星期一", "星期二", "星期三", "星期四", "星期五", "星期六", "星期日"]
 
 
@@ -139,7 +141,7 @@ class RuntimePromptRail(DeepAgentRail):
         if self._channel == "tui":
             # Trusted directories policy for TUI mode
             if self._trusted_dirs and len(self._trusted_dirs) > 0:
-                workspace_dir = "~/.jiuwenclaw/agent/jiuwenclaw_workspace"
+                workspace_dir = str(get_agent_workspace_dir())
                 dirs_display = ", ".join(self._trusted_dirs)
                 if self._language == "cn":
                     trusted_dirs_content = (

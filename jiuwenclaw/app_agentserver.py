@@ -7,6 +7,8 @@ This process only starts:
 
 Gateway should be started separately and connect to this ws server.
 Both processes share the same user workspace directory (~/.jiuwenclaw).
+
+Supports ``--dotenv <path>`` for multi-instance isolation.
 """
 
 from __future__ import annotations
@@ -15,10 +17,16 @@ import argparse
 import asyncio
 import logging
 import os
+import sys
 
 from dotenv import load_dotenv
 from openjiuwen.core.common.logging import LogManager
 
+# --- Early --dotenv parsing (before jiuwenclaw imports) ---
+from jiuwenclaw.dotenv_early import parse_dotenv_early
+parse_dotenv_early("jiuwenclaw-agentserver")
+
+# --- Now safe to import jiuwenclaw modules ---
 from jiuwenclaw.utils import (
     get_env_file,
     get_user_workspace_dir,
@@ -111,6 +119,8 @@ async def _run(host: str, port: int) -> None:
 
 
 def main() -> None:
+    from jiuwenclaw.dotenv_early import get_parsed_dotenv
+
     parser = argparse.ArgumentParser(
         prog="jiuwenclaw-agentserver",
         description="Start JiuwenClaw AgentServer (standalone process for Gateway to connect).",
@@ -123,7 +133,23 @@ def main() -> None:
         metavar="PORT",
         help="Bind port (default: AGENT_SERVER_PORT env or 18092).",
     )
+    parser.add_argument(
+        "--name",
+        metavar="<name>",
+        help="Start a named instance from instances.yaml.",
+    )
+    parser.add_argument(
+        "--dotenv",
+        metavar="<path>",
+        help="Load environment from .env file (processed at startup, not used here).",
+    )
     args = parser.parse_args()
+
+    # Handle --name: check if bootstrap .env was loaded successfully
+    # (parse_dotenv_early() already processed it at module import time)
+    if args.name and get_parsed_dotenv() is None:
+        # Early parsing failed - error was already printed
+        raise SystemExit(1)
 
     host = os.getenv("AGENT_SERVER_HOST", "0.0.0.0")
     port = args.port

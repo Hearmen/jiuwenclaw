@@ -37,6 +37,8 @@ from openjiuwen.harness.tools.browser_move.playwright_runtime.profiles import (
     BrowserProfileStore,
 )
 
+from jiuwenclaw.utils import get_user_workspace_dir
+
 
 logger = logging.getLogger(__name__)
 
@@ -56,7 +58,7 @@ def _browser_runtime_state_root() -> Path:
     configured = (os.getenv("BROWSER_RUNTIME_STATE_DIR") or "").strip()
     if configured:
         return Path(configured).expanduser()
-    return Path.home() / ".jiuwenclaw"
+    return get_user_workspace_dir()
 
 
 def _profile_store_path() -> Path:
