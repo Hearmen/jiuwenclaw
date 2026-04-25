@@ -472,12 +472,32 @@ class SkillToolkit:
             logger.info("[SkillToolkit] _list_installed_skills called")
             payload = await self._manager.handle_skills_installed({})
             if not payload.get("plugins"):
-                return {"success": True, "items": [], "detail": ""}
+                plugin_items: list[dict[str, Any]] = []
+            else:
+                plugin_items = []
+                for plugin in payload.get("plugins", []):
+                    name = str(plugin.get("plugin_name", "")).strip()
+                    source = str(plugin.get("marketplace", "")).strip() or "local"
+                    if name:
+                        plugin_items.append(self._build_installed_item(name, source))
 
             items: list[dict[str, Any]] = []
-            for plugin in payload.get("plugins", []):
-                name = str(plugin.get("plugin_name", "")).strip()
-                source = str(plugin.get("marketplace", "")).strip() or "local"
+            seen: set[str] = set()
+            for item in plugin_items:
+                name = str(item.get("name", "")).strip()
+                if not name or name in seen:
+                    continue
+                seen.add(name)
+                items.append(item)
+
+            for local_skill in self._manager.get_local_skills():
+                if not isinstance(local_skill, dict):
+                    continue
+                name = str(local_skill.get("name", "")).strip()
+                if not name or name in seen:
+                    continue
+                source = str(local_skill.get("source", "")).strip() or "local"
+                seen.add(name)
                 items.append(self._build_installed_item(name, source))
             return {"success": True, "items": items, "detail": ""}
         except Exception as exc:  # noqa: BLE001
