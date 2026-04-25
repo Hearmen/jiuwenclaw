@@ -37,7 +37,8 @@ from openjiuwen.harness.rails import (
     TaskPlanningRail,
 )
 from openjiuwen.harness.rails.coding_memory_rail import CodingMemoryRail
-from openjiuwen.harness.rails.context_engineering_rail import ContextEngineeringRail
+from openjiuwen.harness.rails.context_engineer.context_assemble_rail import ContextAssembleRail
+from openjiuwen.harness.rails.context_engineer.context_processor_rail import ContextProcessorRail
 from openjiuwen.harness.rails.filesystem_rail import FileSystemRail
 from openjiuwen.harness.rails.heartbeat_rail import HeartbeatRail
 from openjiuwen.harness.lsp import InitializeOptions
@@ -59,7 +60,6 @@ from jiuwenclaw.agentserver.deep_agent.interface_deep import (
 from jiuwenclaw.agentserver.deep_agent.interrupt.interrupt_helpers import build_permission_rail
 from jiuwenclaw.agentserver.deep_agent.prompt_builder import build_identity_prompt
 from jiuwenclaw.agentserver.deep_agent.rails import (
-    JiuClawContextEngineeringRail,
     ProjectMemoryRail,
 )
 from jiuwenclaw.agentserver.memory.config import get_memory_mode
@@ -79,7 +79,8 @@ _RAIL_BUILD_NAMES: dict[str, str] = {
     "TaskPlanningRail": "_build_task_planning_rail",
     "SubagentRail": "_build_subagent_rail",
     "MemoryRail": "_build_memory_rail_via_config",
-    "ContextEngineeringRail": "_build_context_engineering_rail",
+    "ContextAssembleRail": "_build_context_assemble_rail",
+    "ContextProcessorRail": "_build_context_processor_rail",
     "SkillEvolutionRail": "_build_skill_evolution_rail_via_config",
     "ProjectMemoryRail": "_build_project_memory_rail",
     "CodingMemoryRail": "_build_coding_memory_rail",
@@ -480,9 +481,13 @@ class JiuwenClawCodeAdapter(JiuWenClawDeepAdapter):
         """构建 MemoryRail."""
         return self._build_memory_rail("code")
 
-    def _build_context_engineering_rail(self) -> Any:
+    def _build_context_assemble_rail(self) -> Any:
         """构建 ContextEngineeringRail."""
-        return JiuClawContextEngineeringRail(preset=False)
+        return ContextAssembleRail()
+
+    def _build_context_processor_rail(self) -> Any:
+        """构建 ContextEngineeringRail."""
+        return ContextProcessorRail(preset=False)
 
     def _build_skill_evolution_rail_via_config(self) -> Any:
         """构建 SkillEvolutionRail."""

@@ -95,7 +95,7 @@
   },
   "toolPanel": {
     "status": "状态",
-    "contextCompression": "上下文压缩",
+    "contextCompression": "上下文窗口",
     "memoryUsage": "内存占用",
     "message": "消息",
     "time": "时间",

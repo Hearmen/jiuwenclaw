@@ -101,6 +101,7 @@ class JiuClawStreamEventRail(DeepAgentRail):
         if ctx.context is not None:
             await self._fix_incomplete_tool_context(ctx.context)
 
+    async def after_model_call(self, ctx: AgentCallbackContext) -> None:
         await self._emit_context_compression(ctx)
 
     # ------------------------------------------------------------------
@@ -325,57 +326,70 @@ class JiuClawStreamEventRail(DeepAgentRail):
 
     @staticmethod
     async def _emit_context_compression(ctx: AgentCallbackContext) -> None:
-        """Emit context compression stats if OffloadMixin messages are present."""
+        """Emit context compression stats based on raw_total_tokens and current context tokens."""
+        _model_token = {
+
+            "glm-5": 200000,
+            "glm-4-long": 200000,
+            "glm-4": 128000,
+            "glm-4-9b-chat-1m": 1048576,
+
+            # OpenAI GPT
+            "gpt-5.4": 1100000,
+            "gpt-4o": 128000,
+            "gpt-4o-mini": 128000,
+            "gpt-4-turbo": 128000,
+            "gpt-3.5-turbo": 16384,
+
+            # DeepSeek
+            "deepseek-v3": 128000,
+            "deepseek-chat": 65536,
+
+            # Anthropic Claude
+            "claude-opus-4.6": 1000000,
+            "claude-sonnet-4.6": 1000000,
+            "claude-haiku-4.6": 200000,
+
+            # Google Gemini
+            "gemini-3.1-pro": 2000000,
+            "gemini-2.5-pro": 1000000,
+            "gemini-2.5-flash": 1000000,
+
+            # Meta Llama (开源)
+            "llama-4-maverick": 1000000,
+            "llama-4-scout": 10000000,
+        }
         session = ctx.session
-        if session is None or not hasattr(ctx.inputs, "messages"):
+        if session is None:
             return
 
-        messages = ctx.inputs.messages
-        compression_to_show: List = []
-        uncompressed: List = []
+        context = ctx.context
+        if context is None:
+            return
 
-        for message in messages:
-            if isinstance(message, OffloadMixin):
-                try:
-                    context = ctx.context
-                    if context is not None:
-                        original_message = await context.reloader_tool().invoke(
-                            inputs={
-                                "offload_handle": message.offload_handle,
-                                "offload_type": message.offload_type,
-                            }
-                        )
-                        compression_to_show.append((message, original_message))
-                except Exception:
-                    pass
-            else:
-                uncompressed.append(message)
+        model_name = None
+        try:
+            agent = ctx.agent
+            if agent is not None:
+                config = getattr(agent, '_config', None)
+                if config is not None:
+                    model_name = getattr(config, 'model_name', None)
+        except Exception:
+            logger.debug("Failed to get model_name from ctx.agent", exc_info=True)
 
         try:
-            try:
-                encoding = tiktoken.get_encoding("cl100k_base")
-                tokens_compressed = 0
-                tokens_full = 0
-                token_uncompressed = 0
-                for msg in uncompressed:
-                    token_uncompressed += len(encoding.encode(getattr(msg, "content", "") or ""))
-                for compressed_msg, original_msg in compression_to_show:
-                    tokens_compressed += len(encoding.encode(getattr(compressed_msg, "content", "") or ""))
-                    tokens_full += len(encoding.encode(original_msg if isinstance(original_msg, str) else ""))
-            except Exception:
-                tokens_compressed = 0
-                tokens_full = 0
-                token_uncompressed = 0
-                for msg in uncompressed:
-                    token_uncompressed += len(getattr(msg, "content", "") or "")
-                for compressed_msg, original_msg in compression_to_show:
-                    tokens_compressed += len(getattr(compressed_msg, "content", "") or "")
-                    tokens_full += len(original_msg if isinstance(original_msg, str) else "")
+            # raw_total_tokens: model max context window
+            raw_total_tokens = _model_token.get(model_name, 0)
 
-            pre_compression = tokens_full + token_uncompressed
-            post_compression = tokens_compressed + token_uncompressed
-            if pre_compression > 0:
-                rate = (1 - post_compression / pre_compression) * 100
+            # current_context_tokens: actual usage from usage_metadata
+            response = ctx.inputs.response
+            usage_metadata = {}
+            if response and hasattr(response, 'usage_metadata') and response.usage_metadata:
+                usage_metadata = response.usage_metadata.model_dump()
+            current_context_tokens = usage_metadata.get("total_tokens", 0) if isinstance(usage_metadata, dict) else 0
+
+            if raw_total_tokens != 0:
+                rate = current_context_tokens / raw_total_tokens * 100
             else:
                 rate = 0
 
@@ -385,8 +399,8 @@ class JiuClawStreamEventRail(DeepAgentRail):
                     index=0,
                     payload={
                         "rate": rate,
-                        "before_compressed": pre_compression,
-                        "after_compressed": post_compression,
+                        "before_compressed": raw_total_tokens,
+                        "after_compressed": current_context_tokens,
                     },
                 )
             )

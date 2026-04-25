@@ -104,7 +104,7 @@ export function ToolPanel() {
   if (contextCompressionBefore === 0 || contextCompressionBefore === null) {
     compressionRateDisplay = '--';
   } else if (contextCompressionAfter === contextCompressionBefore) {
-    compressionRateDisplay = '0.0';
+    compressionRateDisplay = '100.0';
   } else {
     compressionRateDisplay = Number.isFinite(contextCompressionRate)
       ? contextCompressionRate.toFixed(1)

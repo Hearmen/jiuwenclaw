@@ -95,7 +95,7 @@
   },
   "toolPanel": {
     "status": "Status",
-    "contextCompression": "Context compression",
+    "contextCompression": "Context window",
     "memoryUsage": "Memory usage",
     "message": "Message",
     "time": "Time",
