@@ -655,12 +655,16 @@ def cleanup_team_files(workspace_dir: Path) -> None:
 def prepare_workspace(
     overwrite: bool = True,
     preferred_language: Optional[str] = None,
+    workspace_dir: Optional[Path] = None,
 ) -> None:
     package_root = _find_package_root()
     if not package_root:
         raise RuntimeError("package root not found")
 
-    workspace_dir = get_user_workspace_dir()
+    if workspace_dir is None:
+        workspace_dir = get_user_workspace_dir()
+    else:
+        workspace_dir = Path(workspace_dir)
     workspace_dir.mkdir(parents=True, exist_ok=True)
 
     # Check for legacy workspace migration or cleanup
@@ -840,7 +844,9 @@ def _close_log_handlers() -> None:
             pass  # Ignore errors during cleanup
 
 
-def init_user_workspace(overwrite: bool = True) -> Path | Literal["cancelled"]:
+def init_user_workspace(
+    overwrite: bool = True, workspace_dir: Optional[Path] = None
+) -> Path | Literal["cancelled"]:
     """Initialize ~/.jiuwenclaw from package or source resources.
 
     资源布局:
@@ -862,8 +868,12 @@ def init_user_workspace(overwrite: bool = True) -> Path | Literal["cancelled"]:
     Args:
         overwrite: True 时强制清理整个工作空间目录后初始化；
                    False 时保留原有数据，执行迁移合并逻辑。
+        workspace_dir: 工作空间目录路径，若不指定则使用 get_user_workspace_dir() 获取。
     """
-    workspace_dir = get_user_workspace_dir()
+    if workspace_dir is None:
+        workspace_dir = get_user_workspace_dir()
+    else:
+        workspace_dir = Path(workspace_dir)
     if workspace_dir.exists():
         if overwrite:
             # Force mode: explain both modes and ask for confirmation
@@ -909,7 +919,7 @@ def init_user_workspace(overwrite: bool = True) -> Path | Literal["cancelled"]:
         print("[jiuwenclaw-init] Initialization cancelled. Exiting.")
         return "cancelled"
     print(f"[jiuwenclaw-init] 将使用语言 / Language: {lang}")
-    prepare_workspace(overwrite, preferred_language=lang)
+    prepare_workspace(overwrite, preferred_language=lang, workspace_dir=workspace_dir)
 
     return workspace_dir
 

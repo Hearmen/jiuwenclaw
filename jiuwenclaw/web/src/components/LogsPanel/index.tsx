@@ -65,7 +65,7 @@ export function LogsPanel({ isConnected: _isConnected }: LogsPanelProps) {
   const fetchLogs = useCallback(async () => {
     setLoading(true);
     try {
-      const filePath = encodeURIComponent('.logs/ws-dev.log');
+      const filePath = encodeURIComponent('agent/.logs/ws-dev.log');
       const response = await fetch(`/file-api/file-content?path=${filePath}`);
       if (!response.ok) {
         const detail = await response.text();
@@ -165,7 +165,7 @@ export function LogsPanel({ isConnected: _isConnected }: LogsPanelProps) {
           <div>
             <h2 className="text-lg font-semibold">{t('logsPanel.title')}</h2>
             <p className="text-sm text-text-muted mt-1">
-              {t('logsPanel.dataSource')}: <span className="mono text-xs">logs/ws-dev.log</span>
+              {t('logsPanel.dataSource')}: <span className="mono text-xs">agent/.logs/ws-dev.log</span>
             </p>
           </div>
           <div className="flex items-center gap-2">

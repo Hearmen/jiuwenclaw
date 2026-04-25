@@ -20,7 +20,6 @@ from __future__ import annotations
 
 import argparse
 import logging
-import os
 import sys
 from typing import Optional
 
@@ -91,10 +90,9 @@ def run_init(force: bool = False, name: Optional[str] = None) -> int:
             print(f"[jiuwenclaw-init] Stop it first with: jiuwenclaw-start --stop default")
             return 1
 
-    # 4. Set environment variable, then call init_user_workspace
+    # 4. Call init_user_workspace with workspace path
     #    (deletion and confirmation handled by init_user_workspace)
-    os.environ["JIUWENCLAW_DATA_DIR"] = str(workspace_path)
-    target = init_user_workspace(overwrite=force)
+    target = init_user_workspace(overwrite=force, workspace_dir=workspace_path)
 
     # 5. Post-init: create bootstrap .env and update instances.yaml for named instance
     if name and target != "cancelled":
