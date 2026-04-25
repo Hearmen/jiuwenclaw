@@ -12,6 +12,8 @@ import json
 import os
 import re
 import shutil
+import ssl
+import tarfile
 import tempfile
 import uuid
 from contextlib import contextmanager
@@ -23,6 +25,9 @@ from urllib.parse import urlparse
 import yaml
 import urllib3
 import httpx
+import requests
+from requests.adapters import HTTPAdapter
+from urllib3.util.ssl_ import create_urllib3_context
 
 from jiuwenclaw.utils import (
     get_agent_root_dir,
@@ -52,6 +57,21 @@ _FREE_SEARCH_DEFAULT_NO_PROXY = "127.0.0.1,.huawei.com,localhost,local,.local,10
 _OPENJIUWEN_MARKET_TIMEOUT: float = float(os.environ.get("OPENJIUWEN_MARKET_TIMEOUT", "60"))
 _OPENJIUWEN_MARKET_BASE_URL_DEFAULT = "https://teamskills.openjiuwen.com"
 _OPENJIUWEN_DEFAULT_ALLOWED_DOWNLOAD_HOSTS: tuple[str, ...] = ("openjiuwen-market.obs.*.myhuaweicloud.com",)
+_IMPORT_LOCAL_REMOTE_TIMEOUT: float = float(os.environ.get("IMPORT_LOCAL_REMOTE_TIMEOUT", "60"))
+_IMPORT_LOCAL_DEFAULT_ALLOWED_DOWNLOAD_HOSTS: tuple[str, ...] = ("*.obs.*.myhuaweicloud.com",)
+
+
+urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+
+
+class _ImportLocalTLSAdapter(HTTPAdapter):
+    def init_poolmanager(self, *args, **kwargs):
+        ctx = create_urllib3_context(ssl_version=ssl.PROTOCOL_TLS_CLIENT)
+        ctx.minimum_version = ssl.TLSVersion.TLSv1_2
+        ctx.check_hostname = False
+        ctx.verify_mode = ssl.CERT_NONE
+        kwargs["ssl_context"] = ctx
+        return super().init_poolmanager(*args, **kwargs)
 
 
 # ---------------------------------------------------------------------------
@@ -1496,23 +1516,44 @@ class SkillManager:
         return {"success": True}
 
     async def handle_skills_import_local(self, params: dict) -> dict:
-        """从本地路径导入 skill.
-
-        params:
-            path: 本地文件或目录路径
-            force: bool (可选, 默认 False)
-        """
+        """从本地路径或远程归档 URL 导入 skill."""
         raw_path = params.get("path", "")
-        force = params.get("force", False)
+        force = bool(params.get("force", False))
+        checksum_sha256 = str(params.get("checksum_sha256", "") or "").strip()
+        logger.info(
+            "[SkillManager] import_local called: path=%r force=%s remote=%s",
+            raw_path,
+            force,
+            self._is_http_download_target(str(raw_path).strip()),
+        )
         if not raw_path:
             return {"success": False, "detail": "缺少参数: path"}
 
-        src = Path(raw_path)
+        remote_url = str(raw_path).strip()
+        if self._is_http_download_target(remote_url):
+            try:
+                return await self._import_skill_from_remote_archive(
+                    download_url=remote_url,
+                    force=force,
+                    checksum_sha256=checksum_sha256,
+                )
+            except Exception as exc:
+                logger.error("remote archive import failed: %s", exc)
+                return {"success": False, "detail": str(exc)[:500]}
+
+        return self._import_local_from_path(Path(raw_path), force=force, origin=str(raw_path))
+
+    def _import_local_from_path(self, src: Path, *, force: bool, origin: str) -> dict[str, Any]:
+        logger.info(
+            "[SkillManager] import_local_from_path start: src=%s origin=%s force=%s",
+            src,
+            origin,
+            force,
+        )
         if not src.exists():
-            return {"success": False, "detail": f"路径不存在: {raw_path}"}
+            return {"success": False, "detail": f"路径不存在: {origin}"}
 
         if src.is_file():
-            # 单文件导入：解析后放入以 name 命名的目录
             meta = self._parse_skill_md(src)
             if meta is None:
                 return {"success": False, "detail": "无法解析 skill 文件"}
@@ -1532,7 +1573,7 @@ class SkillManager:
         elif src.is_dir():
             md = self._try_find_skill_file(src)
             if md is None:
-                return {"success": False, "detail": f"目录中未找到 SKILL.md: {raw_path}"}
+                return {"success": False, "detail": f"目录中未找到 SKILL.md: {origin}"}
             meta = self._parse_skill_md(md) or {}
             raw_skill_name = meta.get("name", src.name)
             try:
@@ -1547,11 +1588,79 @@ class SkillManager:
                 _safe_rmtree(dest)
             shutil.copytree(src, dest)
         else:
-            return {"success": False, "detail": f"不支持的路径类型: {raw_path}"}
+            return {"success": False, "detail": f"不支持的路径类型: {origin}"}
 
-        self._add_local_skill({"name": skill_name, "origin": raw_path, "source": "local"})
+        self._add_local_skill({"name": skill_name, "origin": origin, "source": "local"})
         self._refresh_agent_data_indexes()
+        logger.info(
+            "[SkillManager] import_local_from_path done: skill_name=%s origin=%s dest=%s",
+            skill_name,
+            origin,
+            self._skills_dir / skill_name,
+        )
         return {"success": True, "skill": {"name": skill_name}}
+
+    async def _import_skill_from_remote_archive(
+        self,
+        *,
+        download_url: str,
+        force: bool,
+        checksum_sha256: str = "",
+    ) -> dict[str, Any]:
+        """Download archive by URL, extract by type, then reuse local import flow."""
+        self._assert_import_local_download_url_allowed(download_url)
+        timeout = max(30.0, _IMPORT_LOCAL_REMOTE_TIMEOUT)
+        logger.info(
+            "[SkillManager] remote import start: url=%s force=%s timeout=%s",
+            download_url,
+            force,
+            timeout,
+        )
+
+        def _download_with_requests() -> bytes:
+            with requests.Session() as session:
+                session.mount("https://", _ImportLocalTLSAdapter())
+                logger.info("[SkillManager] remote import downloading: url=%s", download_url)
+                with session.get(
+                    download_url.strip(),
+                    timeout=timeout,
+                    stream=True,
+                    allow_redirects=False,
+                    verify=False,
+                ) as response:
+                    response.raise_for_status()
+                    chunks: list[bytes] = []
+                    for chunk in response.iter_content(chunk_size=8192):
+                        if chunk:
+                            chunks.append(chunk)
+                    body = b"".join(chunks)
+            logger.info(
+                "[SkillManager] remote import downloaded: url=%s bytes=%s",
+                download_url,
+                len(body),
+            )
+            if not body:
+                raise RuntimeError("下载内容为空")
+
+            expected = checksum_sha256.strip().lower()
+            if expected:
+                digest = hashlib.sha256(body).hexdigest().lower()
+                if digest != expected:
+                    raise RuntimeError("下载文件校验失败（SHA256 不匹配）")
+            return body
+
+        artifact_bytes = _download_with_requests()
+
+        with tempfile.TemporaryDirectory(prefix="jiuwenclaw_import_local_") as tmpdir:
+            tmp_path = Path(tmpdir)
+            logger.info("[SkillManager] remote import extracting: url=%s tmpdir=%s", download_url, tmp_path)
+            self._extract_archive_bytes_to_dir(artifact_bytes, tmp_path)
+            skill_dir = self._locate_skill_dir(tmp_path)
+            if skill_dir is None:
+                return {"success": False, "detail": "下载内容不完整，未找到 SKILL.md"}
+            logger.info("[SkillManager] remote import extracted: url=%s skill_dir=%s", download_url, skill_dir)
+            return self._import_local_from_path(skill_dir, force=force, origin=download_url)
+
 
     async def handle_skills_marketplace_add(self, params: dict) -> dict:
         """添加 marketplace 源.
@@ -2168,6 +2277,19 @@ class SkillManager:
         return hosts or list(_OPENJIUWEN_DEFAULT_ALLOWED_DOWNLOAD_HOSTS)
 
     @staticmethod
+    def _get_import_local_allowed_download_hosts() -> list[str]:
+        raw = (os.getenv("IMPORT_LOCAL_ALLOWED_DOWNLOAD_HOSTS") or "").strip()
+        if not raw:
+            return list(_IMPORT_LOCAL_DEFAULT_ALLOWED_DOWNLOAD_HOSTS)
+        hosts: list[str] = []
+        for token in raw.split(","):
+            host = token.strip().lower()
+            if not host:
+                continue
+            hosts.append(host)
+        return hosts or list(_IMPORT_LOCAL_DEFAULT_ALLOWED_DOWNLOAD_HOSTS)
+
+    @staticmethod
     def _assert_openjiuwen_download_url_allowed(download_url: str) -> None:
         parsed = urlparse(download_url)
         if parsed.scheme != "https":
@@ -2186,6 +2308,23 @@ class SkillManager:
         raise RuntimeError(f"OpenJiuwen download_url host 不在白名单: {host}")
 
     @staticmethod
+    def _assert_import_local_download_url_allowed(download_url: str) -> None:
+        parsed = urlparse(download_url)
+        if parsed.scheme != "https":
+            raise RuntimeError("远程导入 URL 必须使用 HTTPS")
+        host = (parsed.hostname or "").strip().lower()
+        if not host:
+            raise RuntimeError("远程导入 URL 缺少主机名")
+        for rule in SkillManager._get_import_local_allowed_download_hosts():
+            if rule.startswith("."):
+                if host.endswith(rule):
+                    return
+                continue
+            if SkillManager._openjiuwen_host_matches_rule(host, rule):
+                return
+        raise RuntimeError(f"远程导入 URL host 不在白名单: {host}")
+
+    @staticmethod
     def _openjiuwen_host_matches_rule(host: str, rule: str) -> bool:
         host_parts = host.split(".")
         rule_parts = rule.split(".")
@@ -2197,6 +2336,11 @@ class SkillManager:
             if host_part != rule_part:
                 return False
         return True
+
+    @staticmethod
+    def _is_http_download_target(value: str) -> bool:
+        parsed = urlparse(str(value or "").strip())
+        return parsed.scheme in {"http", "https"} and bool(parsed.netloc)
 
     async def _openjiuwen_http_get_data(
         self,
@@ -2266,8 +2410,120 @@ class SkillManager:
                 with zf.open(info, "r") as src:
                     dest_path.write_bytes(src.read())
 
-    async def _download_zip_and_verify(self, download_url: str, *, checksum_sha256: str = "") -> bytes:
-        timeout = max(30.0, _OPENJIUWEN_MARKET_TIMEOUT)
+    @staticmethod
+    def _safe_extract_tar_to_dir(tar_path: Path, dest_dir: Path) -> None:
+        """Extract TAR/TAR.GZ/TGZ safely into dest_dir."""
+        dest_root = dest_dir.resolve()
+        dest_root.mkdir(parents=True, exist_ok=True)
+        with tarfile.open(tar_path, "r:*") as tf:
+            for member in tf.getmembers():
+                raw = (member.name or "").replace("\\", "/")
+                if not raw or raw.startswith("/"):
+                    continue
+                if "\0" in raw:
+                    raise RuntimeError("归档包含非法文件名")
+                rel = PurePosixPath(raw.rstrip("/"))
+                if not rel.parts:
+                    continue
+                if rel.is_absolute() or ".." in rel.parts:
+                    raise RuntimeError("归档包含非法路径")
+                if member.islnk() or member.issym():
+                    raise RuntimeError("归档包含链接文件，已拒绝导入")
+                dest_path = dest_root.joinpath(*rel.parts)
+                try:
+                    dest_path = dest_path.resolve()
+                    dest_path.relative_to(dest_root)
+                except ValueError as exc:
+                    raise RuntimeError("归档路径越界") from exc
+                if member.isdir():
+                    dest_path.mkdir(parents=True, exist_ok=True)
+                    continue
+                extracted = tf.extractfile(member)
+                if extracted is None:
+                    continue
+                dest_path.parent.mkdir(parents=True, exist_ok=True)
+                with extracted:
+                    dest_path.write_bytes(extracted.read())
+
+    @staticmethod
+    def _detect_archive_format(body: bytes) -> str:
+        if len(body) >= 4 and body.startswith(b"PK"):
+            return "zip"
+        try:
+            with tarfile.open(fileobj=io.BytesIO(body), mode="r:*"):
+                return "tar"
+        except tarfile.TarError:
+            pass
+        return ""
+
+    def _extract_archive_bytes_to_dir(self, body: bytes, dest_dir: Path) -> None:
+        archive_format = self._detect_archive_format(body)
+        logger.info(
+            "[SkillManager] extract archive: format=%s bytes=%s dest_dir=%s",
+            archive_format or "unknown",
+            len(body),
+            dest_dir,
+        )
+        if archive_format == "zip":
+            archive_path = dest_dir / "artifact.zip"
+            archive_path.write_bytes(body)
+            self._safe_extract_zip_to_dir(archive_path, dest_dir)
+            return
+        if archive_format == "tar":
+            archive_path = dest_dir / "artifact.tar"
+            archive_path.write_bytes(body)
+            self._safe_extract_tar_to_dir(archive_path, dest_dir)
+            return
+        raise RuntimeError("下载内容不是受支持的归档格式，目前仅支持 zip/tar/tar.gz/tgz")
+
+    async def _download_remote_archive_and_verify(
+        self,
+        download_url: str,
+        *,
+        checksum_sha256: str = "",
+        timeout: float | None = None,
+    ) -> bytes:
+        timeout = max(30.0, timeout or _IMPORT_LOCAL_REMOTE_TIMEOUT)
+        async with httpx.AsyncClient(timeout=timeout, follow_redirects=False) as client:
+            resp = await client.get(download_url)
+            resp.raise_for_status()
+            body = resp.content or b""
+
+        if not body:
+            raise RuntimeError("下载内容为空")
+
+        expected = checksum_sha256.strip().lower()
+        if expected:
+            digest = hashlib.sha256(body).hexdigest().lower()
+            if digest != expected:
+                raise RuntimeError("下载文件校验失败（SHA256 不匹配）")
+
+        archive_format = self._detect_archive_format(body)
+        if archive_format == "zip":
+            try:
+                with zipfile.ZipFile(io.BytesIO(body), "r") as zf:
+                    if zf.testzip() is not None:
+                        raise RuntimeError("下载 ZIP 文件已损坏")
+            except zipfile.BadZipFile as exc:
+                raise RuntimeError("下载内容不是有效 ZIP 文件") from exc
+            return body
+        if archive_format == "tar":
+            try:
+                with tarfile.open(fileobj=io.BytesIO(body), mode="r:*"):
+                    pass
+            except tarfile.TarError as exc:
+                raise RuntimeError("下载内容不是有效 TAR 归档") from exc
+            return body
+        raise RuntimeError("下载内容不是受支持的归档格式，目前仅支持 zip/tar/tar.gz/tgz")
+
+    async def _download_zip_and_verify(
+        self,
+        download_url: str,
+        *,
+        checksum_sha256: str = "",
+        timeout: float | None = None,
+    ) -> bytes:
+        timeout = max(30.0, timeout or _OPENJIUWEN_MARKET_TIMEOUT)
         async with httpx.AsyncClient(timeout=timeout, follow_redirects=False) as client:
             resp = await client.get(download_url)
             resp.raise_for_status()
