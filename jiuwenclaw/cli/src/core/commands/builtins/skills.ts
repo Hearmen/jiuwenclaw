@@ -57,8 +57,8 @@ async function listSkills(ctx: import("../types.js").CommandContext): Promise<vo
 export function createSkillsCommand(): SlashCommand {
   return {
     name: "skills",
-    description: "Manage skills (list, install, uninstall, marketplace)",
-    usage: "/skills [list|install|uninstall|marketplace]",
+    description: "Manage skills (list, install, uninstall, marketplace, use)",
+    usage: "/skills [list|install|uninstall|marketplace|use]",
     example: "/skills list",
     kind: CommandKind.BUILT_IN,
     action: async (ctx) => {
@@ -233,6 +233,32 @@ export function createSkillsCommand(): SlashCommand {
             },
           },
         ],
+      },
+      {
+        name: "use",
+        description: "Use a skill to execute a query",
+        usage: "/skills use <skill_name>, <query>",
+        example: "/skills use my-skill, Code and execute a Hello World program.",
+        kind: CommandKind.BUILT_IN,
+        takesArgs: true,
+        action: async (ctx, args) => {
+          const parts = args.trim().split(/\s*,\s*(.*)/);
+          const skill_name = parts[0];
+          const query = parts[1];
+          if (!skill_name || !query) {
+            ctx.addItem(makeItem(ctx.sessionId, "error", "Usage: /skills use <skill_name>, <query>"));
+            return;
+          }
+          const text = `/skills use ${skill_name}, ${query}`
+
+          const requestId = ctx.sendMessage(text)
+          if (!requestId) {
+            ctx.addItem(
+              makeItem(ctx.sessionId, "error", "offline: waiting for reconnect before sending /skills use request"),
+            );
+            return;
+          }
+        },
       },
     ],
   };

@@ -13,6 +13,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import re
 import time
 from typing import Any, AsyncIterator, Tuple
 
@@ -78,15 +79,41 @@ _SKILL_ROUTES: dict[ReqMethod, str] = {
     ReqMethod.SKILLS_EVOLUTION_SAVE: "handle_skills_evolution_save",
 }
 
+_SKILL_COMMAND_REGEX = re.compile(
+    r"^/skills use\s+(?P<skill_names>[^,]+)\s*,\s*(?P<query>.*)$"
+)
+
+
+def _handle_skills_use_slash_command(query: str) -> Tuple[list, str]:
+    """Handle the /skills use slash command"""
+    stripped = query.strip()
+    if not stripped.startswith("/skills use"):
+        return [], query
+    
+    skill_list = []
+    matches = _SKILL_COMMAND_REGEX.match(stripped)
+    if matches:
+        skill_list.append(matches.group("skill_names")) # Currently only extracts one skill
+        new_query = matches.group("query")
+        return skill_list, new_query
+    else:
+        logger.warning(f"Couldn't parse command: {stripped}")
+        return [], query
+
 
 def build_user_prompt(content: str, files: dict, channel: str, language: str, *, 
     trusted_dirs: list[str] | None = None, metadata: dict[str, Any] | None = None) -> str:
     """Build user prompt for the agent."""
+
     interaction_prefix = ""
     if metadata:
         interaction_ctx = str(metadata.get("interaction_context") or "").strip()
         if interaction_ctx:
             interaction_prefix = f"\n{interaction_ctx}\n\n"
+
+    skills_to_use, new_content = _handle_skills_use_slash_command(content)
+    if new_content:
+        content = new_content
 
     if language == "zh":
         prompt = "你收到一条消息：\n"
@@ -119,6 +146,7 @@ def build_user_prompt(content: str, files: dict, channel: str, language: str, *,
 
     now = datetime.now(timezone(timedelta(hours=8)))
     now_str = now.strftime("%Y-%m-%d %H:%M:%S")
+
     user_message_context = {
         "source": channel,
         "timezone": "Asia/Shanghai",
@@ -126,11 +154,14 @@ def build_user_prompt(content: str, files: dict, channel: str, language: str, *,
         "preferred_response_language": language,
         "content": content,
         "files_updated_by_user": json.dumps(files, ensure_ascii=False),
-        "type": "user input"
+        "type": "user input",
     }
+    if skills_to_use:
+        user_message_context["skills_to_use"] = skills_to_use
     if trusted_dirs:
         user_message_context["trusted_dirs"] = json.dumps(trusted_dirs, ensure_ascii=False)
     return interaction_prefix + prompt + json.dumps(user_message_context, ensure_ascii=False)
+
 
 
 class JiuWenClaw:
