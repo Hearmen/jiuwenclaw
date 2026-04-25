@@ -1,0 +1,32 @@
+team:
+  runtime:
+    mode: distributed
+    role: teammate
+    member_name: teammate_1
+
+  team_name: jiuwen_team
+  lifecycle: persistent
+  teammate_mode: build_mode
+  spawn_mode: process
+
+  leader:
+    member_name: team_leader
+    display_name: 团队领导
+    persona: "天才项目管理专家，擅长任务分解和团队协调"
+
+  transport:
+    type: pyzmq
+    params:
+      request_timeout: 20
+      # Teammate data-plane endpoint.
+      direct_addr: tcp://0.0.0.0:28600
+      # Teammate control-plane bootstrap listener endpoint.
+      bootstrap_direct_addr: tcp://0.0.0.0:28610
+      metadata:
+        pubsub_bind: false
+
+  storage:
+    type: postgresql
+    params:
+      # Must point to same shared DB as leader.
+      connection_string: postgresql://postgres:postgres@127.0.0.1:5432/jiuwen_team

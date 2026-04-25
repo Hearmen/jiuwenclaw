@@ -8,6 +8,7 @@ import asyncio
 import copy
 import json
 import logging
+import time
 import shutil
 from pathlib import Path
 from types import SimpleNamespace
@@ -587,10 +588,36 @@ class TeamManager:
             logger.info("[TeamManager] creating TeamAgent from spec")
             team_agent = spec.build()
             self._team_agents[session_id] = team_agent
-
             # After build, copy global skills to team shared directory (only once)
             self._copy_global_skills_to_team_shared_dir(spec)
 
+            try:
+                from jiuwenclaw.agentserver.team.remote_member_bootstrap import (
+                    attach_remote_bootstrap_ack_listener,
+                    attach_remote_teammate_bootstrap_listener,
+                    attach_spawn_member_remote_bootstrap_wrapper,
+                )
+
+                attach_spawn_member_remote_bootstrap_wrapper(
+                    team_agent,
+                    session_id=session_id,
+                    channel_id=channel_id,
+                )
+                attach_remote_bootstrap_ack_listener(
+                    team_agent,
+                    session_id=session_id,
+                    channel_id=channel_id,
+                )
+                attach_remote_teammate_bootstrap_listener(
+                    team_agent,
+                    session_id=session_id,
+                    channel_id=channel_id,
+                )
+            except Exception as exc:
+                logger.warning(
+                    "[TeamManager] remote_member_bootstrap wrapper attach failed: %s",
+                    exc,
+                )
             logger.info(
                 "[TeamManager] Team created: session_id=%s, team_name=%s",
                 session_id,

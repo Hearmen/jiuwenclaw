@@ -17,7 +17,7 @@ English: [Distributed Team](../en/DistributedTeam.md)
 | **传输** | `team.transport.type`: `inprocess \| pyzmq`；分布式联调通常用 `pyzmq` |
 | **入口类** | `TeamManager`（`jiuwenclaw/agentserver/team/team_manager.py`）：构建 `TeamAgentSpec` 前会做 transport/身份字段归一化 |
 | **配置装载** | `load_team_spec_dict()`（`jiuwenclaw/agentserver/team/config_loader.py`）：leader / `predefined_members` 的 name 与 display_name 兼容 |
-| **样例** | 仓库内 `jiuwenclaw/resources/config.team.distributed.yaml`（可复制到本地 config 再改路径与地址） |
+| **样例** | 仓库内 `jiuwenclaw/resources/config.team.distributed.yaml`（通用）以及 `config.team.distributed.leader.yaml` / `config.team.distributed.teammate.yaml`（当前分角色模板） |
 
 **会话语义**：与原 Team 一致倾向 **单活 session**——新建 session 的 Team 前会清理其它 session 的 Team 资源；分布式下不在本文档引入多 session 并发路由层。
 
@@ -25,7 +25,7 @@ English: [Distributed Team](../en/DistributedTeam.md)
 
 ## 2. 你需要关心的配置键
 
-以下为分布式联调最常改动的键（完整模板见仓库 `config.team.distributed.yaml`）。
+以下为分布式联调最常改动的键（完整模板见仓库 `config.team.distributed.yaml`，分角色模板见 `config.team.distributed.leader.yaml` / `config.team.distributed.teammate.yaml`）。
 
 | 键 | 含义 |
 |----|------|
@@ -56,9 +56,54 @@ English: [Distributed Team](../en/DistributedTeam.md)
 - **`_build_leader_spec`**：补齐 `name` 与 `display_name` 的兼容。
 - **`_build_predefined_members`**：必须有 `member_name`，且必须有 **`name` 或 `display_name`**，否则跳过并打日志。
 
+### 3.4 当前分支的控制面 / 数据面实现（重点）
+
+当前实现已按“控制面建连、数据面跑业务”分层：
+
+- **控制面（Control Plane）**：
+  - leader 在 `spawn_member` 后通过 direct ZMQ 发送 `jiuwen.remote_teammate_bootstrap.direct`。
+  - teammate 监听 `bootstrap_direct_addr` 接收 bootstrap，应用 leader 路由并完成接管。
+  - ACK 使用 direct 传输层确认（不再依赖 DB ACK 消息链路）。
+- **数据面（Data Plane）**：
+  - 任务创建、认领、完成、普通团队消息仍走 team 业务链路（共享存储 + team runtime）。
+- **兜底策略（当前）**：
+  - leader 侧 direct bootstrap 发送失败后，**不再 fallback 到 `team_message`**。
+  - teammate 侧 bootstrap 接收也**不再使用 DB 轮询兜底**。
+
 ---
 
-## 4. 本地双目录联调（推荐布局）
+## 4. 当前推荐配置方式（模板）
+
+建议优先使用仓库内分角色模板：
+
+- `jiuwenclaw/resources/config.team.distributed.leader.yaml`
+- `jiuwenclaw/resources/config.team.distributed.teammate.yaml`
+
+用法（建议）：
+
+1. 复制对应模板到各自配置目录（如 `<LEADER_HOME>/.jiuwenclaw/config/config.yaml` 和 `<TEAMMATE_HOME>/.jiuwenclaw/config/config.yaml`）。
+2. 按环境替换以下字段：
+   - `team.transport.params` 中的主机/端口（多机时把 `127.0.0.1` 改成真实地址）。
+   - `team.storage.params.connection_string`（leader 与 teammate 必须一致）。
+   - teammate 的 `team.runtime.member_name`（与 leader 端 peer 配置一致）。
+
+最小可用示例（复制模板到当前运行目录）：
+
+```bash
+# leader
+mkdir -p "<LEADER_HOME>/.jiuwenclaw/config"
+cp "<REPO_ROOT>/jiuwenclaw/resources/config.team.distributed.leader.yaml" \
+  "<LEADER_HOME>/.jiuwenclaw/config/config.yaml"
+
+# teammate
+mkdir -p "<TEAMMATE_HOME>/.jiuwenclaw/config"
+cp "<REPO_ROOT>/jiuwenclaw/resources/config.team.distributed.teammate.yaml" \
+  "<TEAMMATE_HOME>/.jiuwenclaw/config/config.yaml"
+```
+
+---
+
+## 5. 本地双目录联调（推荐布局）
 
 用 **两个独立 HOME**（或两套 `JIUWENCLAW_CONFIG_DIR`）分别模拟 leader 与 teammate，避免配置互相覆盖。
 
@@ -78,7 +123,7 @@ English: [Distributed Team](../en/DistributedTeam.md)
 
 ---
 
-## 5. 启动命令示例（三个终端）
+## 6. 启动命令示例（三个终端）
 
 以下路径请替换为你的本机 `<REPO_ROOT>`、`<LEADER_HOME>`、`<TEAMMATE_HOME>`。
 
@@ -119,7 +164,7 @@ VITE_WS_BASE="ws://localhost:29100" npm run dev -- --host 0.0.0.0 --port 5173
 
 ---
 
-## 6. 验证 Prompt（团队协作闭环）
+## 7. 验证 Prompt（团队协作闭环）
 
 在前端（或等价通道）可用下列指令做强约束联调（可按环境改写）：
 
@@ -150,7 +195,7 @@ VITE_WS_BASE="ws://localhost:29100" npm run dev -- --host 0.0.0.0 --port 5173
 
 ---
 
-## 7. 常见问题排查
+## 8. 常见问题排查
 
 | 现象 | 处理方向 |
 |------|----------|
@@ -161,7 +206,7 @@ VITE_WS_BASE="ws://localhost:29100" npm run dev -- --host 0.0.0.0 --port 5173
 
 ---
 
-## 8. 附录：与原单机 Team 的差异速查
+## 9. 附录：与原单机 Team 的差异速查
 
 | 维度 | 单机 / inprocess 倾向 | 分布式（本指南范围） |
 |------|------------------------|----------------------|

@@ -9,7 +9,7 @@ Test scenario:
 4. Send second message while receiving: "现在从10开始轮流报数，一人说一句，就一轮"
 
 Usage:
-    .venv\Scripts\python.exe tests\system_tests\test_team_continuous_dialog.py
+    uv run python tests/system_tests/test_team_continuous_dialog.py
 """
 
 from __future__ import annotations

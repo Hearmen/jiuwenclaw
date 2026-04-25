@@ -17,7 +17,7 @@ The main config file is usually `~/.jiuwenclaw/config/config.yaml`. Override the
 | **Transport** | `team.transport.type`: `inprocess \| pyzmq`; distributed setups typically use `pyzmq` |
 | **Entry** | `TeamManager` (`jiuwenclaw/agentserver/team/team_manager.py`): normalizes transport / identity before building `TeamAgentSpec` |
 | **Loading** | `load_team_spec_dict()` (`jiuwenclaw/agentserver/team/config_loader.py`): `name` / `display_name` compatibility for leader and `predefined_members` |
-| **Sample** | `jiuwenclaw/resources/config.team.distributed.yaml` in the repo (copy into your local config and adjust paths and hosts) |
+| **Sample** | `jiuwenclaw/resources/config.team.distributed.yaml` (generic) plus `config.team.distributed.leader.yaml` / `config.team.distributed.teammate.yaml` (current role-specific templates) |
 
 **Session semantics**: aligned with regular Team—**single active session** per process: creating a Team for a new session tears down other session Teams first. This document does not add a multi-session routing layer for distributed mode.
 
@@ -25,7 +25,7 @@ The main config file is usually `~/.jiuwenclaw/config/config.yaml`. Override the
 
 ## 2. Config keys you will touch
 
-Typical keys for distributed integration (full template: `config.team.distributed.yaml` in the repo).
+Typical keys for distributed integration (full template: `config.team.distributed.yaml`; role-specific templates: `config.team.distributed.leader.yaml` / `config.team.distributed.teammate.yaml`).
 
 | Key | Meaning |
 |-----|---------|
@@ -56,9 +56,54 @@ When `transport.type == pyzmq` and **`pubsub_publish_addr` / `pubsub_subscribe_a
 - **`_build_leader_spec`**: keeps `name` and `display_name` consistent.
 - **`_build_predefined_members`**: requires `member_name` and **`name` or `display_name`**; otherwise the entry is skipped and logged.
 
+### 3.4 Current branch behavior: control plane vs data plane
+
+The current implementation is explicitly split:
+
+- **Control plane**:
+  - Leader sends bootstrap through direct ZMQ (`jiuwen.remote_teammate_bootstrap.direct`) after `spawn_member`.
+  - Teammate listens on `bootstrap_direct_addr`, applies leader route, and adopts the target member.
+  - ACK is treated as direct transport acknowledgment (not DB-ACK message flow).
+- **Data plane**:
+  - Business messages/tasks (create/claim/complete, normal team messaging) continue through team runtime + shared storage.
+- **Fallback policy (current)**:
+  - Leader no longer falls back to `team_message` when direct bootstrap send fails.
+  - Teammate no longer uses DB polling fallback for bootstrap intake.
+
 ---
 
-## 4. Two config directories (recommended layout)
+## 4. Current recommended config usage (templates)
+
+Use the role templates in the repo:
+
+- `jiuwenclaw/resources/config.team.distributed.leader.yaml`
+- `jiuwenclaw/resources/config.team.distributed.teammate.yaml`
+
+Suggested workflow:
+
+1. Copy each template into the matching config root (`<LEADER_HOME>/.jiuwenclaw/config/config.yaml` and `<TEAMMATE_HOME>/.jiuwenclaw/config/config.yaml`).
+2. Adjust:
+   - host/port fields under `team.transport.params` (replace `127.0.0.1` with real addresses for multi-host).
+   - `team.storage.params.connection_string` (must be shared and identical on both sides).
+   - teammate `team.runtime.member_name` to match peer mappings.
+
+Minimal ready-to-use copy commands:
+
+```bash
+# leader
+mkdir -p "<LEADER_HOME>/.jiuwenclaw/config"
+cp "<REPO_ROOT>/jiuwenclaw/resources/config.team.distributed.leader.yaml" \
+  "<LEADER_HOME>/.jiuwenclaw/config/config.yaml"
+
+# teammate
+mkdir -p "<TEAMMATE_HOME>/.jiuwenclaw/config"
+cp "<REPO_ROOT>/jiuwenclaw/resources/config.team.distributed.teammate.yaml" \
+  "<TEAMMATE_HOME>/.jiuwenclaw/config/config.yaml"
+```
+
+---
+
+## 5. Two config directories (recommended layout)
 
 Use **two separate HOME trees** (or two `JIUWENCLAW_CONFIG_DIR` values) for leader and teammate so configs do not overwrite each other.
 
@@ -78,7 +123,7 @@ Open firewall ports as needed; replace `127.0.0.1` with real IPs for multi-host 
 
 ---
 
-## 5. Example startup (three terminals)
+## 6. Example startup (three terminals)
 
 Replace `<REPO_ROOT>`, `<LEADER_HOME>`, `<TEAMMATE_HOME>` with paths on your machine.
 
@@ -119,7 +164,7 @@ If Git user identity is not configured for the workspace, set `GIT_AUTHOR_*` / `
 
 ---
 
-## 6. Verification prompt (team workflow)
+## 7. Verification prompt (team workflow)
 
 Use a strict prompt in the web UI (or equivalent channel), adapted to your environment:
 
@@ -150,7 +195,7 @@ If any step fails, output FAILED_AT_STEP=<n> and the error.
 
 ---
 
-## 7. Troubleshooting
+## 8. Troubleshooting
 
 | Symptom | What to check |
 |---------|----------------|
@@ -161,7 +206,7 @@ If any step fails, output FAILED_AT_STEP=<n> and the error.
 
 ---
 
-## 8. Appendix: vs single-machine / inprocess Team
+## 9. Appendix: vs single-machine / inprocess Team
 
 | Aspect | Single-machine / inprocess | Distributed (this guide) |
 |--------|----------------------------|---------------------------|

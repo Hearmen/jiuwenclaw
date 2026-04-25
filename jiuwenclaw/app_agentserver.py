@@ -57,6 +57,7 @@ async def _run(host: str, port: int) -> None:
     from openjiuwen.core.runner import Runner
     from jiuwenclaw.agentserver.agent_ws_server import AgentWebSocketServer
     from jiuwenclaw.agentserver.team import cleanup_team_runtime_state_once
+    from jiuwenclaw.agentserver.team.remote_member_bootstrap import run_teammate_bootstrap_daemon
     from jiuwenclaw.extensions.manager import ExtensionManager
     from jiuwenclaw.extensions.registry import ExtensionRegistry
 
@@ -95,6 +96,13 @@ async def _run(host: str, port: int) -> None:
     logger.info("[AgentServer] ready: ws://%s:%s  Ctrl+C to stop", host, port)
 
     stop_event = asyncio.Event()
+    teammate_bootstrap_task: asyncio.Task | None = None
+
+    # Distributed teammate can receive bootstrap before any team-mode request arrives.
+    # Keep a lightweight daemon alive so remote member bootstrap is consumed proactively.
+    teammate_bootstrap_task = asyncio.create_task(
+        run_teammate_bootstrap_daemon(stop_event=stop_event)
+    )
 
     def _on_signal() -> None:
         stop_event.set()
@@ -114,6 +122,14 @@ async def _run(host: str, port: int) -> None:
         pass
     finally:
         logger.info("[AgentServer] stopping…")
+        if teammate_bootstrap_task is not None:
+            teammate_bootstrap_task.cancel()
+            try:
+                await teammate_bootstrap_task
+            except asyncio.CancelledError:
+                pass
+            except Exception as exc:
+                logger.warning("[AgentServer] teammate bootstrap daemon stop failed: %s", exc)
         await server.stop()
         logger.info("[AgentServer] stopped")
 
