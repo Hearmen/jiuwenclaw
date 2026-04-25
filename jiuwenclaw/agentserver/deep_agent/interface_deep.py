@@ -219,6 +219,15 @@ _ACP_BLOCKED_DEFAULT_TOOL_NAMES = frozenset(
         "code",
     }
 )
+_PLACEHOLDER_API_KEYS = frozenset({"sk-xxxxxxxxx", "your-api-key", "your_api_key", "YOUR_API_KEY"})
+_PLACEHOLDER_API_BASES = frozenset({"https://example.com/compatible-mode/v1"})
+
+
+def _mcc_looks_usable(mcc: dict) -> bool:
+    """检查 model_client_config 是否包含有效的 API 凭据（非占位符）。"""
+    api_key = str(mcc.get("api_key", "") or "").strip()
+    api_base = str(mcc.get("api_base", "") or "").strip()
+    return bool(api_key) and api_key not in _PLACEHOLDER_API_KEYS and api_base not in _PLACEHOLDER_API_BASES
 
 
 def parse_int(value: Any, default: int) -> int:
@@ -2654,23 +2663,23 @@ class JiuWenClawDeepAdapter:
                 )
 
     def _has_valid_model_config(self) -> bool:
-        """检查是否有有效的模型配置."""
-        # 检查环境变量中是否有 API_KEY
-        if os.getenv("API_KEY"):
-            return True
+        """检查是否有有效的模型配置。
 
-        # 检查实例的配置
-        if self._instance is not None and hasattr(self._instance, "_react_agent"):
-            react_agent = self._instance.react_agent
-            if react_agent is not None and hasattr(react_agent, "_config"):
-                config = react_agent._config
-                if hasattr(config, "model_client_config") and isinstance(
-                    config.model_client_config, dict
-                ):
-                    mcc = config.model_client_config
-                    api_key = mcc.get("api_key", "")
-                    if api_key:
-                        return True
+        优先用已解析的 self._model，其次从 config.yaml 重新解析。
+        与 _create_model 同源，不独立读取环境变量。
+        """
+        if self._model is not None:
+            mcc = getattr(self._model, "model_client_config", None)
+            if isinstance(mcc, ModelClientConfig):
+                if _mcc_looks_usable({"api_key": mcc.api_key, "api_base": getattr(mcc, "api_base", None)}):
+                    return True
+
+        try:
+            mcc = get_config().get("models", {}).get("default", {}).get("model_client_config", {})
+            if isinstance(mcc, dict) and _mcc_looks_usable(mcc):
+                return True
+        except Exception as e:
+            logger.warning("[JiuWenClawDeepAdapter] _has_valid_model_config config read failed: %s", e)
 
         return False
 

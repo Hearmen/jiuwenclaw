@@ -84,6 +84,14 @@ def _make_config(role: str, *, dataset: str = "", endpoint: str = "") -> dict:
             },
         },
         "permissions": {"enabled": True},
+        "models": {
+            "default": {
+                "model_client_config": {
+                    "api_key": "system-test-key",
+                    "api_base": "http://fake-a2x.local/v1",
+                }
+            }
+        },
     }
 
 
