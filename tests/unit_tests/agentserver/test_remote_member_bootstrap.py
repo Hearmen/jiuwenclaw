@@ -70,7 +70,12 @@ async def test_ack_listener_updates_db_and_marks_read(monkeypatch):
 
     monkeypatch.setattr(
         "jiuwenclaw.config.get_config",
-        lambda: {"team": {"metadata": {"jiuwen_remote_member_names": ["remote1"]}}},
+        lambda: {
+            "team": {
+                "runtime": {"mode": "distributed", "role": "leader"},
+                "metadata": {"jiuwen_remote_member_names": ["remote1"]},
+            }
+        },
     )
 
     listeners: list = []
@@ -120,7 +125,12 @@ async def test_ack_listener_ignores_plain_text_message(monkeypatch):
 
     monkeypatch.setattr(
         "jiuwenclaw.config.get_config",
-        lambda: {"team": {"metadata": {"jiuwen_remote_member_names": ["remote1"]}}},
+        lambda: {
+            "team": {
+                "runtime": {"mode": "distributed", "role": "leader"},
+                "metadata": {"jiuwen_remote_member_names": ["remote1"]},
+            }
+        },
     )
 
     listeners: list = []
@@ -167,7 +177,7 @@ async def test_ack_listener_accepts_any_sender_when_remote_all(monkeypatch):
 
     monkeypatch.setattr(
         "jiuwenclaw.config.get_config",
-        lambda: {"team": {"runtime": {"mode": "distributed"}}},
+        lambda: {"team": {"runtime": {"mode": "distributed", "role": "leader"}}},
     )
 
     listeners: list = []

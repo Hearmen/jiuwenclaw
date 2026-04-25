@@ -31,10 +31,11 @@ Typical keys for distributed integration (full template: `config.team.distribute
 |-----|---------|
 | `team.runtime.mode` | Set to `distributed` for distributed semantics |
 | `team.runtime.role` | Whether this process is `leader` or `teammate` |
-| `team.runtime.member_name` | Recommended on teammate to match `predefined_members` |
+| `team.runtime.member_name` | Default teammate identity; after bootstrap it adopts the member name dynamically requested by the leader |
 | `team.transport.type` | `pyzmq` |
-| `team.transport.params` | Leader/teammate hosts and ports, `direct_addr`, `pubsub_*`, `known_peers`, etc. If `pubsub_publish_addr` / `pubsub_subscribe_addr` are incomplete, `TeamManager` can derive them from the topology block (see below) |
-| `team.predefined_members` | Remote teammates; each entry needs `member_name` and **`name` or `display_name`** |
+| `react.a2x_registry` | Teammates register idle nodes at startup; leaders reserve idle teammates from the registry before teaming |
+| `team.transport.params` | This process' `direct_addr` / `bootstrap_direct_addr`, `pubsub_*`, etc.; leaders do not need static teammate `known_peers` |
+| `team.predefined_members` | Backward-compatible static member declaration; not required for current blank-teammate integration |
 | `team.storage` | For multi-process setups, `connection_string` must point to a **shared** DB (e.g. the same sqlite path visible to all nodes) |
 
 ---
@@ -49,7 +50,7 @@ Distributed mode detection: **`_is_distributed_mode`** (`runtime.mode == distrib
 
 ### 3.2 pyzmq field normalization (bootstrap)
 
-When `transport.type == pyzmq` and **`pubsub_publish_addr` / `pubsub_subscribe_addr` are not both set**, `params.leader` / `params.teammate` (and related fields) are used to fill **`direct_addr`, `pubsub_*`, `known_peers` / `bootstrap_peers`, `metadata.pubsub_bind`** so leader/teammate can start without hand-crafted partial snippets.
+When `transport.type == pyzmq` and **`pubsub_publish_addr` / `pubsub_subscribe_addr` are not both set**, `params.leader` / `params.teammate` (and related fields) are used to fill **`direct_addr`, `pubsub_*`, `metadata.pubsub_bind`**. The current role-specific templates provide runtime-ready fields directly; teammate discovery is handled through the A2X registry instead of static leader-side peer config.
 
 ### 3.3 `config_loader`
 
@@ -61,14 +62,20 @@ When `transport.type == pyzmq` and **`pubsub_publish_addr` / `pubsub_subscribe_a
 The current implementation is explicitly split:
 
 - **Control plane**:
+  - Teammate registers its `bootstrap_direct_addr` as an idle A2X node at startup.
+  - Leader config does not contain concrete teammate names or addresses; it only needs the A2X registry URL and dataset.
+  - Leader calls `reserve_blank_agents` during teaming / `spawn_member`, then sends bootstrap using the returned `service_id` / `endpoint`.
   - Leader sends bootstrap through direct ZMQ (`jiuwen.remote_teammate_bootstrap.direct`) after `spawn_member`.
   - Teammate listens on `bootstrap_direct_addr`, applies leader route, and adopts the target member.
   - ACK is treated as direct transport acknowledgment (not DB-ACK message flow).
+  - Reservation lifecycle: release immediately when bootstrap delivery fails; keep the reservation after successful bootstrap and release it when the Team is dissolved / session runtime is destroyed.
 - **Data plane**:
   - Business messages/tasks (create/claim/complete, normal team messaging) continue through team runtime + shared storage.
 - **Fallback policy (current)**:
   - Leader no longer falls back to `team_message` when direct bootstrap send fails.
   - Teammate no longer uses DB polling fallback for bootstrap intake.
+- **Local-mode isolation**:
+  - `TeamManager` attaches remote bootstrap hooks only for distributed configs; local / inprocess Team does not execute A2X registration, reservation, or remote bootstrap logic.
 
 ---
 
@@ -83,9 +90,10 @@ Suggested workflow:
 
 1. Copy each template into the matching config root (`<LEADER_HOME>/.jiuwenclaw/config/config.yaml` and `<TEAMMATE_HOME>/.jiuwenclaw/config/config.yaml`).
 2. Adjust:
-   - host/port fields under `team.transport.params` (replace `127.0.0.1` with real addresses for multi-host).
+   - `react.a2x_registry.base_url` / `dataset` so leader and teammate use the same registry dataset.
+   - teammate `team.transport.params.bootstrap_direct_addr` or `react.a2x_registry.endpoint` so the registry advertises a reachable address.
    - `team.storage.params.connection_string` (must be shared and identical on both sides).
-   - teammate `team.runtime.member_name` to match peer mappings.
+   - teammate `team.runtime.member_name` as its default local identity; leader no longer uses it for address lookup.
 
 Minimal ready-to-use copy commands:
 
@@ -116,18 +124,31 @@ Both sides must agree on:
 
 - `team.runtime.mode=distributed`
 - `team.runtime.role` as `leader` vs `teammate`
-- The **same** pyzmq topology under `team.transport` (hosts, ports, `known_peers`, …)
+- `react.a2x_registry` pointing at the **same registry dataset**
+- Teammate advertises its own bootstrap endpoint; leader does not need teammate addresses
 - `team.storage.params.connection_string` pointing at the **same** sqlite file (or equivalent shared storage)
 
 Open firewall ports as needed; replace `127.0.0.1` with real IPs for multi-host setups.
 
 ---
 
-## 6. Example startup (three terminals)
+## 6. Example startup (four terminals)
 
 Replace `<REPO_ROOT>`, `<LEADER_HOME>`, `<TEAMMATE_HOME>` with paths on your machine.
 
-### 5.1 Teammate (AgentServer only)
+### 6.1 A2X Registry
+
+For current integration testing, start the registry directly from the `agent-protocol` source tree:
+
+```bash
+cd "/home/ycz/agent-protocol"
+source .venv/bin/activate
+PYTHONPATH=/home/ycz/agent-protocol python -m a2x_registry.backend --host 127.0.0.1 --port 8000
+```
+
+For multi-host setups, bind to an address reachable by leader/teammate and update both sides' `react.a2x_registry.base_url`.
+
+### 6.2 Teammate (AgentServer only)
 
 ```bash
 HOME="<TEAMMATE_HOME>" \
@@ -139,7 +160,9 @@ AGENT_SERVER_PORT=28193 \
 uv run python -m jiuwenclaw.app_agentserver
 ```
 
-### 5.2 Leader (Gateway + AgentServer)
+After startup, the teammate registers its `bootstrap_direct_addr` as a blank agent, for example `endpoint=tcp://127.0.0.1:28610`.
+
+### 6.3 Leader (Gateway + AgentServer)
 
 ```bash
 HOME="<LEADER_HOME>" \
@@ -153,7 +176,9 @@ WEB_PORT=29100 \
 uv run python -m jiuwenclaw.app
 ```
 
-### 5.3 Web UI (optional)
+Leader does not need a static teammate endpoint; `spawn_member` obtains an idle teammate through registry `reserve_blank_agents`.
+
+### 6.4 Web UI (optional)
 
 ```bash
 cd "<REPO_ROOT>/jiuwenclaw/web"
@@ -202,7 +227,9 @@ If any step fails, output FAILED_AT_STEP=<n> and the error.
 | `Address already in use (tcp://0.0.0.0:18555)` | pyzmq bind port in use; free the port or change `direct_port` / topology ports in config. |
 | `git commit failed ... Author identity unknown` | Export `GIT_AUTHOR_*` / `GIT_COMMITTER_*` in the startup command. |
 | UI idle while backends run | Frontend must use `VITE_WS_BASE` (not `VITE_WS_URL`). |
-| Teammate cannot reach leader | Firewall, `known_peers`, replace `127.0.0.1` with real IPs on multi-host. |
+| Teammate cannot reach leader | Firewall, or the leader address sent in bootstrap is still `127.0.0.1` on a multi-host setup. |
+| Leader did not get a teammate from registry | Check registry logs for `POST /api/datasets/<dataset>/reservations 200 OK`; check teammate blank-agent registration succeeded. |
+| Teammate can be reserved twice too early | Check that leader does not release the reservation immediately after successful bootstrap; current behavior releases it when the Team is dissolved. |
 
 ---
 

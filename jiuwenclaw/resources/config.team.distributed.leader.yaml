@@ -1,3 +1,15 @@
+react:
+  a2x_registry:
+    # Leader reserves blank teammates from this registry before sending bootstrap.
+    base_url: "http://127.0.0.1:8000"
+    timeout: 30.0
+    api_key: ""
+    ownership_file: false
+    role: "teamleader"
+    dataset: "team_pool"
+    endpoint: ""
+    reservation_ttl_seconds: 30
+
 team:
   runtime:
     mode: distributed
@@ -17,25 +29,11 @@ team:
     type: pyzmq
     params:
       request_timeout: 20
-      # Leader data/control endpoints
+      # Leader data/control endpoints. Teammates are discovered from A2X registry
+      # at spawn time, so this config does not need static teammate peer routes.
       direct_addr: tcp://0.0.0.0:28555
       pubsub_publish_addr: tcp://127.0.0.1:28556
       pubsub_subscribe_addr: tcp://127.0.0.1:28557
-      # Data-plane route (leader -> teammate TeamAgent)
-      known_peers:
-        - agent_id: teammate_1
-          addrs:
-            - tcp://127.0.0.1:28600
-      # Control-plane bootstrap route (leader -> teammate bootstrap listener)
-      bootstrap_known_peers:
-        - agent_id: teammate_1
-          addrs:
-            - tcp://127.0.0.1:28610
-      # Keep for compatibility with existing messager bootstrap behavior.
-      bootstrap_peers:
-        - agent_id: teammate_1
-          addrs:
-            - tcp://127.0.0.1:28600
       metadata:
         pubsub_bind: true
 

@@ -1,3 +1,16 @@
+react:
+  a2x_registry:
+    # Teammate registers this bootstrap endpoint as a blank agent at startup.
+    base_url: "http://127.0.0.1:8000"
+    timeout: 30.0
+    api_key: ""
+    ownership_file: false
+    role: "teammate"
+    dataset: "team_pool"
+    # Optional: defaults to team.transport.params.bootstrap_direct_addr.
+    endpoint: ""
+    reservation_ttl_seconds: 30
+
 team:
   runtime:
     mode: distributed

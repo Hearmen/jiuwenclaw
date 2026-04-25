@@ -266,8 +266,8 @@ react:
     role: "teammate"
     # When role=teammate, automatic blank-agent registration during agent
     # initialization calls AsyncA2XRegistryClient.register_blank_agent(...).
-    # Both dataset and endpoint must be configured explicitly; if either is
-    # missing, auto-registration is skipped and only a log is recorded.
+    # endpoint may be omitted in distributed mode; it defaults to
+    # team.transport.params.bootstrap_direct_addr when available.
     dataset: "team_pool"
     endpoint: ""
 

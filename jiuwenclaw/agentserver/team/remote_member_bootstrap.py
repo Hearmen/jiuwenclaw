@@ -31,6 +31,7 @@ _WRAPPED_ATTR = "_jiuwen_spawn_member_remote_bootstrap_wrapped"
 _ACK_LISTENER_ATTR = "_jiuwen_remote_bootstrap_ack_listener_attached"
 _TEAMMATE_BOOTSTRAP_LISTENER_ATTR = "_jiuwen_remote_teammate_bootstrap_listener_attached"
 _METADATA_REMOTE_ALL_KEY = "jiuwen_remote_all_spawn_members"
+_A2X_RESERVATIONS_ATTR = "_jiuwen_a2x_blank_agent_reservations"
 
 # Remote claw → leader: JSON body on a normal team P2P message (DB + MESSAGE topic).
 REMOTE_BOOTSTRAP_ACK_TYPE = "jiuwen.remote_bootstrap_ack"
@@ -73,6 +74,14 @@ def remote_all_spawn_members(config_base: dict[str, Any] | None = None) -> bool:
             return bool(raw.get(_METADATA_REMOTE_ALL_KEY))
         return True
     return False
+
+
+def _is_distributed_leader_runtime(config_base: dict[str, Any]) -> bool:
+    team = config_base.get("team") if isinstance(config_base.get("team"), dict) else {}
+    runtime = team.get("runtime") if isinstance(team.get("runtime"), dict) else {}
+    mode = str(runtime.get("mode", "")).strip().lower()
+    role = str(runtime.get("role", "")).strip().lower()
+    return mode == "distributed" and role == "leader"
 
 
 def _spawn_member_tool_id(leader_deep_agent: Any) -> str:
@@ -313,7 +322,26 @@ async def _send_bootstrap_message(team_agent: Any, member_name: str, prompt: str
         )
         return False
     envelope = build_bootstrap_envelope(team_agent, member_name=member_name, prompt=prompt)
-    peer_agent_id, peer_addr = _resolve_bootstrap_peer_for_member(member_name)
+    registry_reservation = None
+    peer_agent_id = ""
+    peer_addr = ""
+    try:
+        from jiuwenclaw.config import get_config as _get_config
+        from jiuwenclaw.agentserver.a2x_registry_runtime import reserve_blank_teammate_agent
+
+        registry_reservation = await reserve_blank_teammate_agent(
+            _get_config(),
+            source="leader-spawn-member",
+        )
+        if registry_reservation is not None:
+            peer_agent_id = registry_reservation.service_id
+            peer_addr = _normalize_leader_direct_addr(registry_reservation.endpoint)
+    except Exception as exc:
+        logger.warning("[RemoteMemberBootstrap] A2X blank teammate reservation failed: %s", exc)
+
+    if not peer_agent_id or not peer_addr:
+        peer_agent_id, peer_addr = _resolve_bootstrap_peer_for_member(member_name)
+
     direct_sent = False
     if messager is not None and peer_agent_id and peer_addr:
         try:
@@ -348,7 +376,27 @@ async def _send_bootstrap_message(team_agent: Any, member_name: str, prompt: str
                 exc,
             )
     if direct_sent:
+        if registry_reservation is not None:
+            logger.info(
+                "[RemoteMemberBootstrap] keeping A2X reservation after bootstrap "
+                "member=%s service_id=%s endpoint=%s",
+                member_name,
+                registry_reservation.service_id,
+                registry_reservation.endpoint,
+            )
+            _remember_a2x_reservation(team_agent, member_name, registry_reservation)
         return True
+
+    if registry_reservation is not None:
+        logger.warning(
+            "[RemoteMemberBootstrap] releasing A2X reservation after bootstrap delivery failure "
+            "member=%s service_id=%s endpoint=%s",
+            member_name,
+            registry_reservation.service_id,
+            registry_reservation.endpoint,
+        )
+        await registry_reservation.release()
+        await registry_reservation.close()
 
     logger.warning(
         "[RemoteMemberBootstrap] direct bootstrap not delivered; DB fallback disabled "
@@ -361,6 +409,43 @@ async def _send_bootstrap_message(team_agent: Any, member_name: str, prompt: str
     return False
 
 
+def _remember_a2x_reservation(team_agent: Any, member_name: str, reservation: Any) -> None:
+    reservations = getattr(team_agent, _A2X_RESERVATIONS_ATTR, None)
+    if not isinstance(reservations, list):
+        reservations = []
+        setattr(team_agent, _A2X_RESERVATIONS_ATTR, reservations)
+    reservations.append((member_name, reservation))
+
+
+async def release_a2x_reservations_for_team(team_agent: Any) -> None:
+    """Release leader-held blank-agent reservations when the team is dissolved."""
+    reservations = getattr(team_agent, _A2X_RESERVATIONS_ATTR, None)
+    if not isinstance(reservations, list) or not reservations:
+        return
+    setattr(team_agent, _A2X_RESERVATIONS_ATTR, [])
+    for member_name, reservation in reservations:
+        try:
+            await reservation.release()
+            logger.info(
+                "[RemoteMemberBootstrap] released A2X reservation on team destroy "
+                "member=%s service_id=%s endpoint=%s",
+                member_name,
+                getattr(reservation, "service_id", ""),
+                getattr(reservation, "endpoint", ""),
+            )
+        except Exception as exc:
+            logger.warning(
+                "[RemoteMemberBootstrap] A2X reservation release on team destroy failed "
+                "member=%s: %s",
+                member_name,
+                exc,
+            )
+        finally:
+            close = getattr(reservation, "close", None)
+            if callable(close):
+                await close()
+
+
 def attach_spawn_member_remote_bootstrap_wrapper(
     team_agent: Any,
     *,
@@ -368,6 +453,13 @@ def attach_spawn_member_remote_bootstrap_wrapper(
     channel_id: str | None,
 ) -> None:
     """Monkey-patch SpawnMemberTool.invoke on the leader's registered tool instance."""
+    from jiuwenclaw.config import get_config as _get_config
+
+    config_base = _get_config()
+    if not _is_distributed_leader_runtime(config_base):
+        logger.debug("[RemoteMemberBootstrap] non-distributed leader runtime; skip spawn_member wrapper")
+        return
+
     from openjiuwen.agent_teams.schema.team import TeamRole
     from openjiuwen.core.runner import Runner
 
@@ -392,10 +484,6 @@ def attach_spawn_member_remote_bootstrap_wrapper(
         return
     if getattr(tool, _WRAPPED_ATTR, False):
         return
-
-    from jiuwenclaw.config import get_config as _get_config
-
-    config_base = _get_config()
     remote_names = remote_member_names(config_base)
     remote_all = remote_all_spawn_members(config_base)
     if not remote_names and not remote_all:
@@ -515,6 +603,13 @@ def attach_remote_bootstrap_ack_listener(
     The published :class:`MessageEvent` has no body; we load content via ``db.get_message``,
     then ``mark_message_read`` so the leader LLM is not fed the control payload.
     """
+    from jiuwenclaw.config import get_config as _get_config
+
+    config_base = _get_config()
+    if not _is_distributed_leader_runtime(config_base):
+        logger.debug("[RemoteMemberBootstrap] non-distributed leader runtime; skip ACK listener")
+        return
+
     from openjiuwen.agent_teams.schema.events import TeamEvent
     from openjiuwen.agent_teams.schema.status import MemberStatus
     from openjiuwen.agent_teams.schema.team import TeamRole
@@ -533,10 +628,6 @@ def attach_remote_bootstrap_ack_listener(
             "[RemoteMemberBootstrap] skip ACK listener: missing team_backend.db or message_manager",
         )
         return
-
-    from jiuwenclaw.config import get_config as _get_config
-
-    config_base = _get_config()
     remote_names = remote_member_names(config_base)
     remote_all = remote_all_spawn_members(config_base)
     if not remote_names and not remote_all:
@@ -929,6 +1020,20 @@ async def run_teammate_bootstrap_daemon(*, stop_event: asyncio.Event, poll_inter
                 direct_bootstrap_addr,
                 local_member,
             )
+            try:
+                from jiuwenclaw.agentserver.a2x_registry_runtime import (
+                    register_teammate_blank_agent_at_startup,
+                )
+
+                await register_teammate_blank_agent_at_startup(
+                    config,
+                    source="teammate-bootstrap-daemon",
+                )
+            except Exception as exc:
+                logger.warning(
+                    "[RemoteMemberBootstrap] teammate startup A2X registration failed: %s",
+                    exc,
+                )
         except Exception as exc:
             bootstrap_router = None
             logger.warning(
@@ -1006,6 +1111,13 @@ def attach_remote_teammate_bootstrap_listener(
     channel_id: str | None = None,
 ) -> None:
     """Teammate: consume remote bootstrap message, adopt member identity, send ACK."""
+    from jiuwenclaw.config import get_config as _get_config
+
+    config_base = _get_config()
+    if not _is_distributed_teammate_runtime(config_base):
+        logger.debug("[RemoteMemberBootstrap] non-distributed teammate runtime; skip teammate listener")
+        return
+
     from openjiuwen.agent_teams.schema.events import TeamEvent
     from openjiuwen.agent_teams.schema.team import TeamRole
 

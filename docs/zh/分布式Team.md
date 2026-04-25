@@ -31,10 +31,11 @@ English: [Distributed Team](../en/DistributedTeam.md)
 |----|------|
 | `team.runtime.mode` | `distributed` 启用分布式语义 |
 | `team.runtime.role` | 本进程是 `leader` 还是 `teammate` |
-| `team.runtime.member_name` | teammate 侧建议显式指定（与 `predefined_members` 对齐） |
+| `team.runtime.member_name` | teammate 侧默认身份；被 bootstrap 后会接管为 leader 动态请求的成员名 |
 | `team.transport.type` | `pyzmq` |
-| `team.transport.params` | `leader` / `teammate` 主机与端口、`direct_addr`、`pubsub_*`、`known_peers` 等；若未填全 pubsub 地址，`TeamManager` 可按拓扑块推导（见下一节） |
-| `team.predefined_members` | 声明远端 teammate；成员需同时具备 `member_name` 与 `name` 或 `display_name` |
+| `react.a2x_registry` | teammate 启动时注册空闲节点；leader 组队时从注册中心预约空闲 teammate |
+| `team.transport.params` | 本进程的 `direct_addr` / `bootstrap_direct_addr`、`pubsub_*` 等；leader 不需要预置 teammate 的 `known_peers` |
+| `team.predefined_members` | 兼容旧静态成员声明；当前 blank teammate 联调不要求 leader 配置该项 |
 | `team.storage` | 多进程场景下 `connection_string` 需指向 **各方可见的同一 DB**（如共享路径下的 sqlite） |
 
 ---
@@ -49,7 +50,7 @@ English: [Distributed Team](../en/DistributedTeam.md)
 
 ### 3.2 pyzmq 字段归一化（bootstrap 语义）
 
-当 `transport.type == pyzmq` 且 **`pubsub_publish_addr` / `pubsub_subscribe_addr` 尚未同时存在** 时，会根据 `params.leader` / `params.teammate` 等拓扑信息补全 **`direct_addr`、`pubsub_*`、`known_peers` / `bootstrap_peers`、`metadata.pubsub_bind`**，避免仅靠手写片段导致 leader/teammate 起不来的情况。
+当 `transport.type == pyzmq` 且 **`pubsub_publish_addr` / `pubsub_subscribe_addr` 尚未同时存在** 时，会根据 `params.leader` / `params.teammate` 等拓扑信息补全 **`direct_addr`、`pubsub_*`、`metadata.pubsub_bind`**。当前推荐分角色模板已直接给出运行时字段；teammate 发现由 A2X 注册中心完成，不要求 leader 配置静态 peer。
 
 ### 3.3 `config_loader`
 
@@ -61,14 +62,20 @@ English: [Distributed Team](../en/DistributedTeam.md)
 当前实现已按“控制面建连、数据面跑业务”分层：
 
 - **控制面（Control Plane）**：
+  - teammate 启动后将自己的 `bootstrap_direct_addr` 注册为 A2X 空闲节点。
+  - leader 配置中不包含具体 teammate 名称或地址；只配置 A2X 注册中心地址和 dataset。
+  - leader 在组队/`spawn_member` 时调用 `reserve_blank_agents` 预约空闲 teammate，并使用注册中心返回的 `service_id` / `endpoint` 发送 bootstrap。
   - leader 在 `spawn_member` 后通过 direct ZMQ 发送 `jiuwen.remote_teammate_bootstrap.direct`。
   - teammate 监听 `bootstrap_direct_addr` 接收 bootstrap，应用 leader 路由并完成接管。
   - ACK 使用 direct 传输层确认（不再依赖 DB ACK 消息链路）。
+  - reservation 生命周期：bootstrap 失败时立即 release；bootstrap 成功后由 leader 持有，直到 Team 解散 / session runtime 销毁时统一 release。
 - **数据面（Data Plane）**：
   - 任务创建、认领、完成、普通团队消息仍走 team 业务链路（共享存储 + team runtime）。
 - **兜底策略（当前）**：
   - leader 侧 direct bootstrap 发送失败后，**不再 fallback 到 `team_message`**。
   - teammate 侧 bootstrap 接收也**不再使用 DB 轮询兜底**。
+- **local 模式隔离**：
+  - `TeamManager` 只在分布式配置下 attach remote bootstrap hooks；local / inprocess Team 不会执行 A2X 注册、预约或远端 bootstrap 逻辑。
 
 ---
 
@@ -83,9 +90,10 @@ English: [Distributed Team](../en/DistributedTeam.md)
 
 1. 复制对应模板到各自配置目录（如 `<LEADER_HOME>/.jiuwenclaw/config/config.yaml` 和 `<TEAMMATE_HOME>/.jiuwenclaw/config/config.yaml`）。
 2. 按环境替换以下字段：
-   - `team.transport.params` 中的主机/端口（多机时把 `127.0.0.1` 改成真实地址）。
+   - `react.a2x_registry.base_url` / `dataset`（leader 和 teammate 指向同一注册中心数据集）。
+   - teammate 的 `team.transport.params.bootstrap_direct_addr` 或 `react.a2x_registry.endpoint`（用于向注册中心发布可连接地址）。
    - `team.storage.params.connection_string`（leader 与 teammate 必须一致）。
-   - teammate 的 `team.runtime.member_name`（与 leader 端 peer 配置一致）。
+   - teammate 的 `team.runtime.member_name`（仅标识本进程默认身份；leader 不再靠它定位地址）。
 
 最小可用示例（复制模板到当前运行目录）：
 
@@ -116,18 +124,31 @@ cp "<REPO_ROOT>/jiuwenclaw/resources/config.team.distributed.teammate.yaml" \
 
 - `team.runtime.mode=distributed`
 - `team.runtime.role` 分别为 `leader` / `teammate`
-- `team.transport` 使用 **同一套** pyzmq 拓扑（主机、端口、`known_peers` 等）
+- `react.a2x_registry` 指向 **同一注册中心数据集**
+- teammate 发布自己的 bootstrap endpoint，leader 不需要知道 teammate 地址
 - `team.storage.params.connection_string` 指向 **同一 sqlite 文件路径**（或等价的共享存储）
 
 端口与防火墙需保证 leader/teammate 机器互通（多机时把示例中的 `127.0.0.1` 换成真实 IP）。
 
 ---
 
-## 6. 启动命令示例（三个终端）
+## 6. 启动命令示例（四个终端）
 
 以下路径请替换为你的本机 `<REPO_ROOT>`、`<LEADER_HOME>`、`<TEAMMATE_HOME>`。
 
-### 5.1 Teammate（仅 AgentServer）
+### 6.1 A2X 注册中心
+
+当前联调可直接从 `agent-protocol` 源码启动注册中心：
+
+```bash
+cd "/home/ycz/agent-protocol"
+source .venv/bin/activate
+PYTHONPATH=/home/ycz/agent-protocol python -m a2x_registry.backend --host 127.0.0.1 --port 8000
+```
+
+多机部署时，把 `--host 127.0.0.1` 改成可被 leader/teammate 访问的地址，并同步修改两侧 `react.a2x_registry.base_url`。
+
+### 6.2 Teammate（仅 AgentServer）
 
 ```bash
 HOME="<TEAMMATE_HOME>" \
@@ -139,7 +160,9 @@ AGENT_SERVER_PORT=28193 \
 uv run python -m jiuwenclaw.app_agentserver
 ```
 
-### 5.2 Leader（Gateway + AgentServer）
+启动成功后，teammate 会把自己的 `bootstrap_direct_addr` 注册为 blank agent，例如 `endpoint=tcp://127.0.0.1:28610`。
+
+### 6.3 Leader（Gateway + AgentServer）
 
 ```bash
 HOME="<LEADER_HOME>" \
@@ -153,7 +176,9 @@ WEB_PORT=29100 \
 uv run python -m jiuwenclaw.app
 ```
 
-### 5.3 Web 前端（可选）
+Leader 不需要配置 teammate 的静态 endpoint；`spawn_member` 时会从注册中心 `reserve_blank_agents` 取得空闲 teammate。
+
+### 6.4 Web 前端（可选）
 
 ```bash
 cd "<REPO_ROOT>/jiuwenclaw/web"
@@ -202,7 +227,9 @@ VITE_WS_BASE="ws://localhost:29100" npm run dev -- --host 0.0.0.0 --port 5173
 | `Address already in use (tcp://0.0.0.0:18555)` | pyzmq 绑定端口被占用；释放端口或改配置中的 `direct_port` / 拓扑端口。 |
 | `git commit failed ... Author identity unknown` | 为启动命令补充 `GIT_AUTHOR_*` / `GIT_COMMITTER_*`。 |
 | 前端无响应但后端已启动 | 确认前端使用 `VITE_WS_BASE`（而不是误用 `VITE_WS_URL`）。 |
-| teammate 连不上 leader | 检查防火墙、`known_peers` / 主机 IP 是否仍为 `127.0.0.1`（多机需改为真实地址）。 |
+| teammate 连不上 leader | 检查防火墙、leader 在 bootstrap 中下发的地址是否仍为 `127.0.0.1`（多机需使用真实地址）。 |
+| leader 没有从注册中心拿到 teammate | 检查注册中心日志是否有 `POST /api/datasets/<dataset>/reservations 200 OK`；检查 teammate 是否已成功注册 blank agent。 |
+| teammate 被重复抢占 | 检查 leader 是否在 bootstrap 成功后过早 release reservation；当前实现应在 Team 解散时 release。 |
 
 ---
 

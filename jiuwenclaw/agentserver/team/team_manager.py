@@ -41,6 +41,7 @@ from jiuwenclaw.agentserver.team.distributed_runtime import (
     try_start_pg_cluster,
 )
 from jiuwenclaw.agentserver.team.monitor_handler import TeamMonitorHandler
+from jiuwenclaw.agentserver.team.remote_member_bootstrap import release_a2x_reservations_for_team
 from jiuwenclaw.config import get_config
 from jiuwenclaw.agentserver.team.team_runtime_inheritance import (
     RAIL_WHITELIST,
@@ -591,33 +592,34 @@ class TeamManager:
             # After build, copy global skills to team shared directory (only once)
             self._copy_global_skills_to_team_shared_dir(spec)
 
-            try:
-                from jiuwenclaw.agentserver.team.remote_member_bootstrap import (
-                    attach_remote_bootstrap_ack_listener,
-                    attach_remote_teammate_bootstrap_listener,
-                    attach_spawn_member_remote_bootstrap_wrapper,
-                )
+            if self._is_distributed_mode(config_base):
+                try:
+                    from jiuwenclaw.agentserver.team.remote_member_bootstrap import (
+                        attach_remote_bootstrap_ack_listener,
+                        attach_remote_teammate_bootstrap_listener,
+                        attach_spawn_member_remote_bootstrap_wrapper,
+                    )
 
-                attach_spawn_member_remote_bootstrap_wrapper(
-                    team_agent,
-                    session_id=session_id,
-                    channel_id=channel_id,
-                )
-                attach_remote_bootstrap_ack_listener(
-                    team_agent,
-                    session_id=session_id,
-                    channel_id=channel_id,
-                )
-                attach_remote_teammate_bootstrap_listener(
-                    team_agent,
-                    session_id=session_id,
-                    channel_id=channel_id,
-                )
-            except Exception as exc:
-                logger.warning(
-                    "[TeamManager] remote_member_bootstrap wrapper attach failed: %s",
-                    exc,
-                )
+                    attach_spawn_member_remote_bootstrap_wrapper(
+                        team_agent,
+                        session_id=session_id,
+                        channel_id=channel_id,
+                    )
+                    attach_remote_bootstrap_ack_listener(
+                        team_agent,
+                        session_id=session_id,
+                        channel_id=channel_id,
+                    )
+                    attach_remote_teammate_bootstrap_listener(
+                        team_agent,
+                        session_id=session_id,
+                        channel_id=channel_id,
+                    )
+                except Exception as exc:
+                    logger.warning(
+                        "[TeamManager] remote_member_bootstrap wrapper attach failed: %s",
+                        exc,
+                    )
             logger.info(
                 "[TeamManager] Team created: session_id=%s, team_name=%s",
                 session_id,
@@ -707,7 +709,10 @@ class TeamManager:
 
             token = set_session_id(session_id)
             try:
-                cleaned = await team_agent.destroy_team(force=True)
+                try:
+                    cleaned = await team_agent.destroy_team(force=True)
+                finally:
+                    await release_a2x_reservations_for_team(team_agent)
             finally:
                 reset_session_id(token)
 

@@ -41,33 +41,16 @@ team:
     type: pyzmq
     params:
       request_timeout: 20
-      # --- Preferred runtime-ready fields (reduces mapping in TeamManager) ---
-      # Leader example:
-      #   role=leader
-      #   direct_addr=tcp://0.0.0.0:18555
-      #   known/bootstrap peer -> teammate_1@tcp://127.0.0.1:18600
-      #   metadata.pubsub_bind=true
-      #
-      # Teammate example:
-      #   role=teammate
-      #   direct_addr=tcp://0.0.0.0:18600
-      #   known/bootstrap peer -> team_leader@tcp://127.0.0.1:18555
-      #   metadata.pubsub_bind=false
+      # --- Preferred runtime-ready fields ---
+      # Leader discovers teammates from A2X registry at spawn time, so no
+      # static known_peers/bootstrap_peers are required in initial config.
       direct_addr: tcp://0.0.0.0:18555
       pubsub_publish_addr: tcp://127.0.0.1:18556
       pubsub_subscribe_addr: tcp://127.0.0.1:18557
-      known_peers:
-        - agent_id: teammate_1
-          addrs:
-            - tcp://127.0.0.1:18600
-      bootstrap_peers:
-        - agent_id: teammate_1
-          addrs:
-            - tcp://127.0.0.1:18600
       metadata:
         pubsub_bind: true
 
-      # --- Backward-compatible topology block (kept for older configs/tools) ---
+      # --- Optional topology block (kept for older configs/tools) ---
       leader:
         # single-machine: keep 127.0.0.1
         # multi-host: set to leader machine IP/DNS

@@ -62,6 +62,12 @@ class _FailingAsyncA2XRegistryClient:
 def _make_config(role: str, *, dataset: str = "", endpoint: str = "") -> dict:
     return {
         "preferred_language": "zh",
+        "team": {
+            "runtime": {
+                "mode": "distributed",
+                "role": role,
+            }
+        },
         "react": {
             "agent_name": "main_agent",
             "workspace_dir": "/tmp/a2x-system-test-workspace",
