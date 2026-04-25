@@ -227,8 +227,7 @@ class JiuClawStreamEventRail(DeepAgentRail):
             return
 
         try:
-            await todo_tool.set_file(session_id)
-            todos_data = await todo_tool.load_todos()
+            todos_data = await todo_tool.load_todos(session_id)
         except Exception as exc:
             logger.debug(
                 "[StreamEventRail] Failed to load todos: %s", exc

@@ -3295,10 +3295,8 @@ class JiuWenClawDeepAdapter:
                 language=self._resolve_runtime_language(),
             )
 
-        modify_tool.set_file(session_id)
-
         try:
-            todos = await modify_tool.load_todos()
+            todos = await modify_tool.load_todos(session_id)
             if not todos:
                 return None
 
@@ -3320,7 +3318,7 @@ class JiuWenClawDeepAdapter:
                 )
 
             # 重新加载并返回前端格式的 todo 列表
-            updated_todos = await modify_tool.load_todos()
+            updated_todos = await modify_tool.load_todos(session_id)
             if updated_todos and self._stream_event_rail is not None:
                 return self._stream_event_rail._format_todos_for_frontend(updated_todos)
             return None
