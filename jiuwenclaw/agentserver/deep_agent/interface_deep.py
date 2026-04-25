@@ -18,6 +18,7 @@ from contextvars import ContextVar, Token
 from dataclasses import dataclass
 from shutil import which
 from typing import Any, AsyncIterator, Callable, List, Tuple
+import urllib.parse
 
 import yaml
 from dotenv import load_dotenv
@@ -382,6 +383,8 @@ class JiuWenClawDeepAdapter:
         self._paid_search_registered: bool = False
         self._paid_search_tool: WebPaidSearchTool | None = None
         self._skill_manager: SkillManager | None = None
+        self._a2x_client: Any | None = None
+        self._a2x_config: dict[str, Any] = {}
         self._cron_runtime = CronRuntimeBridge()
         self._runtime_cron_tool_context = _RuntimeCronToolContext(
             tool_scope=f"runtime_{id(self):x}",
@@ -395,6 +398,135 @@ class JiuWenClawDeepAdapter:
     def set_skill_manager(self, skill_manager: SkillManager) -> None:
         """Inject shared SkillManager from facade for tool reuse."""
         self._skill_manager = skill_manager
+
+    @staticmethod
+    def _get_a2x_config(config_base: dict[str, Any]) -> dict[str, Any]:
+        """Resolve A2X config from ``react.a2x_registry`` with safe defaults."""
+        react_cfg = config_base.get("react", {}) if isinstance(config_base, dict) else {}
+        a2x_cfg = react_cfg.get("a2x_registry", {}) if isinstance(react_cfg, dict) else {}
+
+        base_url = str(a2x_cfg.get("base_url") or "http://127.0.0.1:8000").strip()
+        if not base_url:
+            base_url = "http://127.0.0.1:8000"
+
+        parsed = urllib.parse.urlparse(base_url)
+        if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+            raise ValueError(f"Invalid react.a2x_registry.base_url: {base_url!r}. Expected http(s) URL")
+
+        timeout_raw = a2x_cfg.get("timeout", 30.0)
+        try:
+            timeout = float(timeout_raw)
+        except (TypeError, ValueError):
+            timeout = 30.0
+
+        api_key = str(a2x_cfg.get("api_key") or "").strip() or None
+        ownership_file = a2x_cfg.get("ownership_file", False)
+        dataset = str(a2x_cfg.get("dataset") or "").strip() or None
+        endpoint = str(a2x_cfg.get("endpoint") or "").strip() or None
+
+        role = str(a2x_cfg.get("role") or "teammate").strip().lower()
+        if role not in {"teammate", "teamleader"}:
+            logger.warning(
+                "[JiuWenClawDeepAdapter] invalid a2x_registry.role=%r, fallback to teammate",
+                role,
+            )
+            role = "teammate"
+
+        return {
+            "base_url": base_url,
+            "timeout": timeout,
+            "api_key": api_key,
+            "ownership_file": ownership_file,
+            "dataset": dataset,
+            "endpoint": endpoint,
+            "role": role,
+        }
+
+    async def _close_a2x_client(self) -> None:
+        """Close the mounted A2X client if initialized."""
+        if self._a2x_client is None:
+            self._a2x_config = {}
+            return
+        client = self._a2x_client
+        config = self._a2x_config
+        self._a2x_client = None
+        self._a2x_config = {}
+        close_timeout_raw = config.get("close_timeout", 5.0)
+        try:
+            close_timeout = max(float(close_timeout_raw), 0.1)
+        except (TypeError, ValueError):
+            close_timeout = 5.0
+        try:
+            await asyncio.wait_for(client.aclose(), timeout=close_timeout)
+            logger.info("[JiuWenClawDeepAdapter] A2X Client closed")
+        except TimeoutError:
+            logger.warning(
+                "[JiuWenClawDeepAdapter] A2X Client close timed out after %.1fs",
+                close_timeout,
+            )
+        except Exception as exc:
+            logger.warning(
+                "[JiuWenClawDeepAdapter] A2X Client close failed: %s",
+                exc,
+                exc_info=True,
+            )
+
+    async def _init_a2x_client(self, config_base: dict[str, Any]) -> None:
+        """Initialize and mount AsyncA2XRegistryClient on the adapter instance."""
+        from jiuwenclaw.a2x_registry_client import AsyncA2XRegistryClient
+
+        a2x_config = self._get_a2x_config(config_base)
+        if self._a2x_client is not None:
+            await self._close_a2x_client()
+
+        client = AsyncA2XRegistryClient(
+            base_url=a2x_config["base_url"],
+            timeout=a2x_config["timeout"],
+            api_key=a2x_config["api_key"],
+            ownership_file=a2x_config["ownership_file"],
+        )
+        self._a2x_config = a2x_config
+        self._a2x_client = client
+
+    async def _try_init_a2x_client(self, config_base: dict[str, Any], *, reload: bool = False) -> None:
+        """Best-effort A2X client init that never blocks agent startup."""
+        try:
+            await self._init_a2x_client(config_base)
+            if self._a2x_config.get("role") == "teammate":
+                dataset = self._a2x_config.get("dataset")
+                endpoint = self._a2x_config.get("endpoint")
+                if dataset and endpoint:
+                    result = await self._a2x_client.register_blank_agent(
+                        dataset=dataset,
+                        endpoint=endpoint,
+                    )
+                    logger.info(
+                        "[JiuWenClawDeepAdapter] A2X blank agent registered: dataset=%s service_id=%s endpoint=%s",
+                        dataset,
+                        result.service_id,
+                        endpoint,
+                    )
+                else:
+                    logger.info(
+                        "[JiuWenClawDeepAdapter] A2X blank agent registration skipped for teammate role: "
+                        "missing dataset or endpoint in react.a2x_registry config"
+                    )
+            logger.info(
+                "[JiuWenClawDeepAdapter] A2X Client %s: role=%s base_url=%s",
+                "reinitialized on reload" if reload else "initialized successfully",
+                self._a2x_config.get("role", "teammate"),
+                self._a2x_config.get("base_url", ""),
+            )
+        except Exception as exc:  # noqa: BLE001
+            self._a2x_client = None
+            self._a2x_config = {}
+            logger.warning(
+                "[JiuWenClawDeepAdapter] A2X Client %s failed, agent will continue to %s: %s",
+                "reload initialization" if reload else "initialize",
+                "run" if reload else "start",
+                exc,
+                exc_info=True,
+            )
 
     @staticmethod
     def _is_acp_tool_profile(config: dict[str, Any] | None = None) -> bool:
@@ -1816,7 +1948,8 @@ class JiuWenClawDeepAdapter:
         )
 
         model = self._create_model(config_base)
-        agent_card = AgentCard(name=self._agent_name, id="jiuwenclaw")
+        await self._try_init_a2x_client(config_base)
+        agent_card = AgentCard(name=self._agent_name, id='jiuwenclaw')
 
         tool_cards = await self._get_tool_cards(agent_card.id)
         self._tool_cards = tool_cards
@@ -1942,10 +2075,9 @@ class JiuWenClawDeepAdapter:
         self._config_cache = config.copy()
 
         model = self._create_model(config_base)
-        self._agent_name = self._instance_overrides.get(
-            "agent_name", config.get("agent_name", "main_agent")
-        )
-        agent_card = AgentCard(name=self._agent_name, id="jiuwenclaw")
+        await self._try_init_a2x_client(config_base, reload=True)
+        self._agent_name = self._instance_overrides.get("agent_name", config.get("agent_name", "main_agent"))
+        agent_card = AgentCard(name=self._agent_name, id='jiuwenclaw')
         self._sync_multimodal_tools_for_runtime()
         self._sync_paid_search_tool_for_runtime()
 
@@ -2440,6 +2572,10 @@ class JiuWenClawDeepAdapter:
         if not request_id or not session_id:
             return False
         return has_runtime_capability
+
+    async def cleanup(self) -> None:
+        """Release adapter-owned external runtime resources."""
+        await self._close_a2x_client()
 
     def _collect_registered_ability_names(self) -> set[str]:
         ability_names: set[str] = set()
