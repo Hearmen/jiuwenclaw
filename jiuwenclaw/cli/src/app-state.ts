@@ -45,7 +45,6 @@ import {
   type ThemeName,
 } from "./ui/theme.js";
 import { type ConnectionStatus, WsClient } from "./core/ws-client.js";
-import { loadTuiWorkspaceDir, saveTuiWorkspaceDir } from "./core/tui-workspace-dir-store.js";
 import { loadTuiConfig } from "./core/tui-config-store.js";
 import {
   getTrustedDirs,
