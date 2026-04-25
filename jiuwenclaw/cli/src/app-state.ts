@@ -149,6 +149,7 @@ export class CliPiAppState {
     setMode: (mode) => {
       this.mode = mode;
     },
+    getMode: () => this.mode,
     getEntries: () => this.entries,
     setEntries: (entries) => {
       this.entries = entries;

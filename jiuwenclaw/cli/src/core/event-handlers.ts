@@ -50,6 +50,7 @@ export interface AppEventDelegate {
   getSessionId(): string;
   setSessionId(sessionId: string): void;
   setMode(mode: "agent.plan" | "agent.fast" | "code.plan" | "code.normal" | "team"): void;
+  getMode(): "agent.plan" | "agent.fast" | "code.plan" | "code.normal" | "team";
   getEntries(): HistoryItem[];
   setEntries(entries: HistoryItem[]): void;
   setStreamingState(state: StreamingState): void;
@@ -95,6 +96,56 @@ export interface AppEventDelegate {
   reportHistoryPageMeta(meta: { pageIdx?: number; totalPages?: number }): void;
   /** 某一页 history.get 流已结束（收到 `status: done` 帧），由 app-state 决定是否继续拉下一页。 */
   notifyHistoryPageDone(pageIdx: number): void;
+}
+
+function _handleSwitchModeToolResult(
+  delegate: AppEventDelegate,
+  payload: Record<string, unknown>,
+): void {
+  if (payload.tool_name !== "switch_mode") return;
+
+  const resultRaw = payload.result;
+  let subMode: string | null = null;
+
+  if (typeof resultRaw === "object" && resultRaw !== null) {
+    // result 已经是解析后的对象
+    const data = (resultRaw as Record<string, unknown>).data;
+    if (typeof data === "object" && data !== null) {
+      const cm = (data as Record<string, unknown>).current_mode;
+      if (typeof cm === "string") subMode = cm;
+    }
+  } else if (typeof resultRaw === "string") {
+    // 先尝试 JSON 解析
+    try {
+      const parsed = JSON.parse(resultRaw);
+      if (typeof parsed === "object" && parsed !== null) {
+        const data = (parsed as Record<string, unknown>).data;
+        if (typeof data === "object" && data !== null) {
+          const cm = (data as Record<string, unknown>).current_mode;
+          if (typeof cm === "string") subMode = cm;
+        }
+      }
+    } catch {
+      // JSON 解析失败，尝试从 Python str 表示中提取
+      // 格式如: "success=True data={'current_mode': 'normal', 'message': '...'} error=None"
+      const match = resultRaw.match(/current_mode['"]\s*:\s*['"](\w+)['"]/);
+      if (match) subMode = match[1];
+    }
+  }
+
+  if (!subMode) return;
+
+  const existingMode = delegate.getMode();
+  let newMode: string | null = null;
+  if (existingMode.startsWith("code.")) {
+    newMode = subMode === "plan" ? "code.plan" : "code.normal";
+  } else if (existingMode.startsWith("agent.")) {
+    newMode = subMode === "plan" ? "agent.plan" : "agent.fast";
+  }
+
+  if (newMode && newMode !== existingMode) {
+    delegate.setMode(newMode as "agent.plan" | "agent.fast" | "code.plan" | "code.normal" | "team");
+  }
 }
 
 function appendEntry(delegate: AppEventDelegate, entry: HistoryItem): void {
@@ -599,6 +650,7 @@ export function handleIncomingFrame(delegate: AppEventDelegate, frame: EventFram
       return true;
 
     case "chat.tool_result":
+      _handleSwitchModeToolResult(delegate, payload);
       delegate.addToolResultPayload(
         payload,
         activeSessionId,
