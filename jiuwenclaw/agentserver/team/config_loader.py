@@ -87,7 +87,7 @@ def resolve_team_sqlite_db_path(config_base: dict[str, Any] | None = None) -> Pa
 
 def _build_default_model_dict(config_base: dict[str, Any]) -> dict[str, Any]:
     model_config = config_base.get("models", {}).get("default", {})
-    model_client_config = model_config.get("model_client_config", {})
+    model_client_config = dict(model_config.get("model_client_config", {}))
     model_request_config = dict(model_config.get("model_config_obj", {}))
 
     model_name = model_client_config.get("model_name", "")

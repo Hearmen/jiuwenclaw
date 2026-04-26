@@ -37,7 +37,7 @@ def test_member_skill_state_inherits_marketplaces_and_rebuilds_installed_skills(
     )
 
     monkeypatch.setattr(
-        "jiuwenclaw.utils.get_agent_skills_dir",
+        "jiuwenclaw.agentserver.team.team_manager.get_agent_skills_dir",
         lambda: global_skills_dir,
     )
     monkeypatch.setattr(

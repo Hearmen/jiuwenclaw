@@ -103,6 +103,15 @@ def _parse_typed_chunk(chunk: Any, _has_streamed_content: bool) -> dict[str, Any
     chunk_type = getattr(chunk, "type", "")
     payload = getattr(chunk, "payload", {})
 
+    if isinstance(chunk_type, str) and "." in chunk_type:
+        if isinstance(payload, dict):
+            return {
+                "event_type": chunk_type,
+                **{k: _serialize_chunk_recursive(v) if isinstance(v, (dict, list)) else _serialize_value(v)
+                   for k, v in payload.items()},
+            }
+        return {"event_type": chunk_type, "content": str(payload)}
+
     if chunk_type == "controller_output" and payload is not None:
         inner_t = getattr(payload, "type", None)
         inner_val = (

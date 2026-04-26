@@ -1237,6 +1237,9 @@ class MessageHandler(ABC):
             )
             return
 
+        # Track evolution state on the server_push path as well.
+        self._handle_evolution_chunk(chunk, session_id)
+
         out = self._chunk_to_message(
             chunk, session_id=session_id, metadata=bus_metadata
         )
@@ -1459,10 +1462,13 @@ class MessageHandler(ABC):
 
     @staticmethod
     def _is_evolution_approval_request_id(request_id: Any) -> bool:
-        # Support skill evolution (skill_evolve_*) and new skill creation (skill_create*)
+        # Support skill evolution (skill_evolve_*), new skill creation (skill_create_*),
+        # and team skill evolution/creation (team_skill_evolve_*, team_skill_create_*).
         return isinstance(request_id, str) and (
             request_id.startswith("skill_evolve_") or
-            request_id.startswith("skill_create_")
+            request_id.startswith("skill_create_") or
+            request_id.startswith("team_skill_evolve_") or
+            request_id.startswith("team_skill_create_")
         )
 
     def _queue_supplement_input(
@@ -1507,6 +1513,44 @@ class MessageHandler(ABC):
     def _is_session_evolution_in_progress(self, session_id: str | None) -> bool:
         return isinstance(session_id, str) and session_id in self._session_evolution_in_progress
 
+    def _handle_evolution_chunk(self, chunk, session_id: str | None) -> None:
+        """处理 chunk 中的演进状态和审批事件，更新 Gateway 状态机。
+
+        在 process_stream 和 _handle_agent_server_push 两条路径中复用。
+        """
+        if not isinstance(chunk.payload, dict):
+            return
+        event_type = chunk.payload.get("event_type")
+        if event_type == "chat.evolution_status":
+            status = str(chunk.payload.get("status", "")).strip().lower()
+            if status == "start":
+                self._mark_session_evolution_in_progress(session_id)
+                rid = getattr(chunk, "request_id", "")
+                logger.info(
+                    "[MessageHandler] evolution status start: session_id=%s request_id=%s",
+                    session_id,
+                    rid,
+                )
+            elif status == "end":
+                self._clear_session_evolution_in_progress(session_id)
+                rid = getattr(chunk, "request_id", "")
+                logger.info(
+                    "[MessageHandler] evolution status end: session_id=%s request_id=%s",
+                    session_id,
+                    rid,
+                )
+        approval_request_id = chunk.payload.get("request_id")
+        if (
+            event_type == "chat.ask_user_question"
+            and self._is_evolution_approval_request_id(approval_request_id)
+        ):
+            self._mark_pending_evolution_approval(session_id, approval_request_id)
+            logger.info(
+                "[MessageHandler] evolution approval detected: session_id=%s request_id=%s",
+                session_id,
+                approval_request_id,
+            )
+
     def _clear_session_evolution_states(self, session_id: str | None) -> None:
         self._clear_session_evolution_in_progress(session_id)
         self._clear_pending_evolution_approval(session_id)
@@ -1540,7 +1584,7 @@ class MessageHandler(ABC):
             is_stream=True,
         )
 
-    async def _process_non_stream_request(self, msg: "Message", env: "E2AEnvelope") -> None:
+    async def _process_non_stream_request(self, msg: "Message", env: "E2AEnvelope") -> Any:
         """执行单次非流式 Agent 请求并将结果写入 robot_messages（供串行或后台任务复用）。"""
         try:
             resp = await self._agent_client.send_request(env)
@@ -1555,6 +1599,7 @@ class MessageHandler(ABC):
                 resp.request_id,
                 resp.channel_id,
             )
+            return resp
         except Exception as e:
             logger.exception("AgentServer send_request failed for %s: %s", msg.id, e)
             err_msg = self._build_error_out_message(msg, e)
@@ -1564,6 +1609,7 @@ class MessageHandler(ABC):
                 msg.id,
                 msg.channel_id,
             )
+            return None
 
     # ---------- 入队 -> AgentServer -> 出队 转发循环 ----------
 
@@ -1593,28 +1639,41 @@ class MessageHandler(ABC):
 
                 # 检查是否是中断请求
                 if msg.req_method == ReqMethod.CHAT_ANSWER:
-                    # 先正常转发用户审批答案，再按会话自动派发排队的新输入
                     agent_msg = await self._prepare_agent_dispatch_message(msg)
                     env = self.message_to_e2a(agent_msg)
-                    await self._process_non_stream_request(msg, env)
+                    resp = await self._process_non_stream_request(msg, env)
                     answer_request_id = (msg.params or {}).get("request_id")
                     if self._is_evolution_approval_request_id(answer_request_id):
-                        self._clear_pending_evolution_approval(msg.session_id)
-                        self._clear_session_evolution_in_progress(msg.session_id)
-                        queued_payload = self._pop_queued_supplement_input(msg.session_id)
-                        queued_input = str((queued_payload or {}).get("new_input") or "").strip()
-                        queued_attachments = (queued_payload or {}).get("attachments")
-                        if queued_input:
-                            queued_msg = self._build_queued_chat_send_message(
-                                msg,
-                                queued_input,
-                                queued_attachments if isinstance(queued_attachments, list) else None,
-                            )
-                            self._user_messages.put_nowait(queued_msg)
+                        # Check whether the response indicates the approval was actually resolved.
+                        resolved = False
+                        if resp is not None and hasattr(resp, "payload") and isinstance(resp.payload, dict):
+                            resolved = resp.payload.get("resolved", False) is True
+                        if resolved:
+                            self._clear_pending_evolution_approval(msg.session_id)
+                            self._clear_session_evolution_in_progress(msg.session_id)
+                            queued_payload = self._pop_queued_supplement_input(msg.session_id)
+                            queued_input = str((queued_payload or {}).get("new_input") or "").strip()
+                            queued_attachments = (queued_payload or {}).get("attachments")
+                            if queued_input:
+                                queued_msg = self._build_queued_chat_send_message(
+                                    msg,
+                                    queued_input,
+                                    queued_attachments if isinstance(queued_attachments, list) else None,
+                                )
+                                self._user_messages.put_nowait(queued_msg)
+                                logger.info(
+                                    "[MessageHandler] evolution approval answered (resolved), "
+                                    "queued supplement dispatched: id=%s session_id=%s",
+                                    queued_msg.id,
+                                    msg.session_id,
+                                )
+                        else:
                             logger.info(
-                                "[MessageHandler] evolution approval answered, queued supplement dispatched: id=%s session_id=%s",
-                                queued_msg.id,
+                                "[MessageHandler] evolution approval answered but not resolved: "
+                                "id=%s session_id=%s request_id=%s",
+                                msg.id,
                                 msg.session_id,
+                                answer_request_id,
                             )
                     continue
 
@@ -1873,35 +1932,7 @@ class MessageHandler(ABC):
                         chunk.request_id,
                     )
                     continue
-                if isinstance(chunk.payload, dict):
-                    event_type = chunk.payload.get("event_type")
-                    if event_type == "chat.evolution_status":
-                        status = str(chunk.payload.get("status", "")).strip().lower()
-                        if status == "start":
-                            self._mark_session_evolution_in_progress(session_id)
-                            logger.info(
-                                "[MessageHandler] evolution status start: session_id=%s request_id=%s",
-                                session_id,
-                                rid,
-                            )
-                        elif status == "end":
-                            self._clear_session_evolution_in_progress(session_id)
-                            logger.info(
-                                "[MessageHandler] evolution status end: session_id=%s request_id=%s",
-                                session_id,
-                                rid,
-                            )
-                    approval_request_id = chunk.payload.get("request_id")
-                    if (
-                        event_type == "chat.ask_user_question"
-                        and self._is_evolution_approval_request_id(approval_request_id)
-                    ):
-                        self._mark_pending_evolution_approval(session_id, approval_request_id)
-                        logger.info(
-                            "[MessageHandler] evolution approval detected: session_id=%s request_id=%s",
-                            session_id,
-                            approval_request_id,
-                        )
+                self._handle_evolution_chunk(chunk, session_id)
                 # 携带 request metadata，供 Feishu/Xiaoyi 用平台身份回发
                 # 检查是否是 processing_status=false 事件
                 payload = chunk.payload or {}

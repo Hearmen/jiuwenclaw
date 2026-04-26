@@ -384,6 +384,7 @@ class JiuWenClawDeepAdapter:
         self._permission_rail: Any = None
         self._avatar_rail: Any = None
         self._tool_cards = None
+        self._evolution_watcher_tasks: set[asyncio.Task] = set()
         self._sys_operation = None
         self._vision_model_config: VisionModelConfig | None = None
         self._audio_model_config: AudioModelConfig | None = None
@@ -1398,10 +1399,11 @@ class JiuWenClawDeepAdapter:
                 evolution_auto_scan: bool = _env_auto_scan.lower() in ("true", "1", "yes")
             else:
                 evolution_auto_scan = config.get("evolution", {}).get("auto_scan", False)
+            model_name = self._default_model_name or config.get("model_name", "gpt-4")
             skill_evolution_rail = SkillEvolutionRail(
                 skills_dir=str(get_agent_skills_dir()),
                 llm=self._model,
-                model=config.get("model_name", "gpt-4"),
+                model=model_name,
                 auto_scan=evolution_auto_scan,
                 auto_save=False,
             )
@@ -1681,7 +1683,7 @@ class JiuWenClawDeepAdapter:
         """
         # Apply in-place updates to skill_evolution_rail (no re-init needed).
         if self._skill_evolution_rail is not None:
-            self._skill_evolution_rail.update_llm(self._model, config.get("model_name", "gpt-4"))
+            self._skill_evolution_rail.update_llm(self._model, self._default_model_name)
             _env_auto_scan = os.getenv("EVOLUTION_AUTO_SCAN")
             if _env_auto_scan is not None:
                 self._skill_evolution_rail.auto_scan = _env_auto_scan.lower() in (
@@ -2689,8 +2691,17 @@ class JiuWenClawDeepAdapter:
             request.params.get("request_id", "") if isinstance(request.params, dict) else ""
         )
         answers = request.params.get("answers", []) if isinstance(request.params, dict) else []
+        session_id = request.session_id
         resolved = False
-        if request_id.startswith("skill_evolve_"):
+        if request_id.startswith("team_skill_create_"):
+            resolved = await self._handle_team_skill_create_approval(request_id, answers, session_id)
+        elif request_id.startswith("team_skill_evolve_"):
+            resolved = await self._handle_team_skill_evolve_approval(request_id, answers, session_id)
+        elif request_id.startswith("evolve_simplify_"):
+            resolved = await self._handle_governance_approval(request_id, answers, "simplify")
+        elif request_id.startswith("evolve_rebuild_"):
+            resolved = await self._handle_governance_approval(request_id, answers, "rebuild")
+        elif request_id.startswith("skill_evolve_"):
             resolved = await self._handle_evolution_approval(request_id, answers)
         elif request_id.startswith("skill_create_"):
             resolved = await self._handle_skill_create_approval(request_id, answers)
@@ -2771,6 +2782,96 @@ class JiuWenClawDeepAdapter:
         else:
             await rail.on_reject_new_skill(request_id)
             logger.info("[JiuWenClaw] skill create rejected: request_id=%s", request_id)
+
+        return True
+
+    # ------------------------------------------------------------------
+    # Team Skill approval handlers
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _find_team_skill_rail(request_id: str):
+        """Find TeamSkillRail that owns the given pending request_id."""
+        try:
+            from jiuwenclaw.agentserver.team import get_team_manager
+            return get_team_manager().find_team_skill_rail_for_request(request_id)
+        except Exception:
+            return None
+
+    @staticmethod
+    def _option_matches(answers: list, accept_labels: tuple[str, ...]) -> bool:
+        """Check whether any answer's selected_options matches accept labels.
+
+        Tolerates both Chinese and English labels (case-insensitive) so the
+        agent-core layer can keep neutral English labels while jiuwenclaw UI
+        may localize them.
+        """
+        normalized_accept = {s.strip().lower() for s in accept_labels}
+        for ans in answers:
+            if not isinstance(ans, dict):
+                continue
+            for opt in ans.get("selected_options", []) or []:
+                if isinstance(opt, str) and opt.strip().lower() in normalized_accept:
+                    return True
+        return False
+
+    async def _handle_team_skill_create_approval(
+        self, request_id: str, answers: list, session_id: str | None = None,
+    ) -> bool:
+        rail = JiuWenClawDeepAdapter._find_team_skill_rail(request_id)
+        if rail is None:
+            logger.warning("[JiuWenClaw] team skill create approval failed: no TeamSkillRail")
+            return False
+
+        accepted = self._option_matches(answers, ("create", "创建"))
+
+        logger.info(
+            "[JiuWenClaw] team skill create approval: request_id=%s, answers=%s, accepted=%s",
+            request_id, answers, accepted,
+        )
+
+        if accepted:
+            await rail.on_approve_team_skill(request_id)
+            # Sync newly created team skill from workspace to global team_skills dir.
+            try:
+                from jiuwenclaw.agentserver.team import get_team_manager
+                get_team_manager().sync_team_skills(session_id or "")
+            except Exception as exc:
+                logger.warning("[JiuWenClaw] team skill sync after create failed: %s", exc)
+            logger.info("[JiuWenClaw] team skill create accepted: request_id=%s", request_id)
+        else:
+            await rail.on_reject_team_skill(request_id)
+            logger.info("[JiuWenClaw] team skill create rejected: request_id=%s", request_id)
+
+        return True
+
+    async def _handle_team_skill_evolve_approval(
+        self, request_id: str, answers: list, session_id: str | None = None,
+    ) -> bool:
+        rail = JiuWenClawDeepAdapter._find_team_skill_rail(request_id)
+        if rail is None:
+            logger.warning("[JiuWenClaw] team skill evolve approval failed: no TeamSkillRail")
+            return False
+
+        accepted = self._option_matches(answers, ("accept", "接收", "接受"))
+
+        logger.info(
+            "[JiuWenClaw] team skill evolve approval: request_id=%s, answers=%s, accepted=%s",
+            request_id, answers, accepted,
+        )
+
+        if accepted:
+            await rail.on_approve_patch(request_id)
+            # Sync updated team skill from workspace to global team_skills dir.
+            try:
+                from jiuwenclaw.agentserver.team import get_team_manager
+                get_team_manager().sync_team_skills(session_id or "")
+            except Exception as exc:
+                logger.warning("[JiuWenClaw] team skill sync after patch failed: %s", exc)
+            logger.info("[JiuWenClaw] team skill evolve accepted: request_id=%s", request_id)
+        else:
+            await rail.on_reject_patch(request_id)
+            logger.info("[JiuWenClaw] team skill evolve rejected: request_id=%s", request_id)
 
         return True
 
@@ -2877,7 +2978,7 @@ class JiuWenClawDeepAdapter:
             }
 
         # 5) Drain the buffered approval event
-        events = rail.drain_pending_approval_events()
+        events = await rail.drain_pending_approval_events()
         if not events:
             return {
                 "output": "演进经验生成失败：无法创建审批事件。",
@@ -3095,19 +3196,18 @@ class JiuWenClawDeepAdapter:
         }
 
     async def _handle_evolve_simplify_command(self, query: str) -> dict[str, Any]:
-        """/evolve_simplify <skill_name> [--dry-run] — LLM-based experience cleanup."""
+        """/evolve_simplify <skill_name> [user_intent] — LLM-based experience cleanup with approval."""
         rail = self._skill_evolution_rail
         assert rail is not None
         store = rail.store
-        scorer = rail.scorer
 
-        parts = query.split()
+        parts = query.split(maxsplit=2)
         skill_name = parts[1] if len(parts) > 1 else ""
-        dry_run = "--dry-run" in parts
+        user_intent = parts[2] if len(parts) > 2 else None
 
-        if not skill_name or skill_name.startswith("--"):
+        if not skill_name:
             return {
-                "output": "请指定 Skill 名称：`/evolve_simplify <skill_name> [--dry-run]`",
+                "output": "请指定 Skill 名称：`/evolve_simplify <skill_name> [user_intent]`",
                 "result_type": "error",
             }
 
@@ -3118,53 +3218,184 @@ class JiuWenClawDeepAdapter:
                 "result_type": "error",
             }
 
-        records = await store.get_records_by_score(skill_name)
-        if not records:
-            return {
-                "output": f"Skill '{skill_name}' 暂无演进经验，无需整理。",
-                "result_type": "answer",
-            }
-
-        skill_summary = await store.read_skill_content(skill_name)
         try:
-            actions = await scorer.simplify(skill_name, skill_summary, records)
+            request_id = await rail.request_simplify(skill_name, user_intent)
         except Exception as exc:
             logger.warning("[JiuWenClaw] evolve_simplify failed: %s", exc)
-            return {
-                "output": f"智能整理分析失败：{exc}",
-                "result_type": "error",
-            }
+            return {"output": f"智能整理分析失败：{exc}", "result_type": "error"}
 
-        if not actions:
+        if not request_id:
             return {
                 "output": f"Skill '{skill_name}' 经验库状态良好，无需整理。",
                 "result_type": "answer",
             }
 
-        summary_lines = []
-        for action in actions:
-            op = action.get("action", "KEEP")
-            ids = action.get("target_ids", [])
-            reason = action.get("reason", "")
-            summary_lines.append(f"- **{op}** {', '.join(ids)}: {reason}")
+        approval_chunks = await rail.drain_pending_approval_events()
+        return {
+            "output": f"Skill '{skill_name}' 精简方案已生成，请在审批弹框中确认。",
+            "result_type": "answer",
+            "approval_chunks": approval_chunks,
+        }
 
-        if dry_run:
+    async def _handle_evolve_rebuild_command(self, query: str) -> dict[str, Any]:
+        """/evolve_rebuild <skill_name> [user_intent] — Rebuild skill body with approval."""
+        rail = self._skill_evolution_rail
+        assert rail is not None
+        store = rail.store
+
+        parts = query.split(maxsplit=2)
+        skill_name = parts[1] if len(parts) > 1 else ""
+        user_intent = parts[2] if len(parts) > 2 else None
+
+        if not skill_name:
+            return {
+                "output": "请指定 Skill 名称：`/evolve_rebuild <skill_name> [user_intent]`",
+                "result_type": "error",
+            }
+
+        if not store.skill_exists(skill_name):
+            available = "、".join(store.list_skill_names()) or "（无可用 Skill）"
+            return {
+                "output": f"未找到 Skill '{skill_name}'。当前可用：{available}",
+                "result_type": "error",
+            }
+
+        try:
+            request_id = await rail.request_rebuild(skill_name, user_intent)
+        except Exception as exc:
+            logger.warning("[JiuWenClaw] evolve_rebuild failed: %s", exc)
+            return {"output": f"重建分析失败：{exc}", "result_type": "error"}
+
+        if not request_id:
+            return {
+                "output": f"Skill '{skill_name}' 重建生成失败（LLM 未输出有效内容）。",
+                "result_type": "error",
+            }
+
+        approval_chunks = await rail.drain_pending_approval_events()
+        return {
+            "output": f"Skill '{skill_name}' 重建方案已生成，请在审批弹框中确认。",
+            "result_type": "answer",
+            "approval_chunks": approval_chunks,
+        }
+
+    async def _handle_evolve_rollback_command(self, query: str) -> dict[str, Any]:
+        """/evolve_rollback <skill_name> [version] — Rollback skill to archived version."""
+        rail = self._skill_evolution_rail
+        assert rail is not None
+        store = rail.store
+
+        parts = query.split(maxsplit=2)
+        skill_name = parts[1] if len(parts) > 1 else ""
+        version = parts[2].strip() if len(parts) > 2 else None
+
+        if not skill_name:
+            archives_hint = ""
+            for name in store.list_skill_names():
+                archives = store.list_archives(name)
+                if archives:
+                    body_versions = [a for a in archives if a.startswith("SKILL.v")]
+                    archives_hint += f"\n  - **{name}**: {len(body_versions)} 个版本"
             return {
                 "output": (
-                    f"**Skill '{skill_name}' 整理预览（dry-run，未执行）：**\n\n"
-                    + "\n".join(summary_lines)
+                    "请指定 Skill 名称：`/evolve_rollback <skill_name> [version]`"
+                    + (f"\n\n可回滚的 Skill：{archives_hint}" if archives_hint else "")
+                ),
+                "result_type": "error",
+            }
+
+        if not store.skill_exists(skill_name):
+            available = "、".join(store.list_skill_names()) or "（无可用 Skill）"
+            return {
+                "output": f"未找到 Skill '{skill_name}'。当前可用：{available}",
+                "result_type": "error",
+            }
+
+        archives = store.list_archives(skill_name)
+        body_versions = [a for a in archives if a.startswith("SKILL.v")]
+        if not body_versions:
+            return {
+                "output": f"Skill '{skill_name}' 没有归档版本可回滚。",
+                "result_type": "error",
+            }
+
+        # No version specified → list available versions for user to pick
+        if not version:
+            lines = [f"**Skill '{skill_name}' 可用归档版本（最新在前）：**\n"]
+            for i, v in enumerate(body_versions):
+                ts = v.replace("SKILL.v", "").replace(".md", "")
+                if len(ts) >= 15:
+                    display_ts = f"{ts[:4]}-{ts[4:6]}-{ts[6:8]} {ts[9:11]}:{ts[11:13]}:{ts[13:15]} UTC"
+                else:
+                    display_ts = ts
+                marker = " ← 最近" if i == 0 else ""
+                lines.append(f"  {i+1}. `{v}` ({display_ts}){marker}")
+            lines.append(f"\n用法：`/evolve_rollback {skill_name} SKILL.v<时间戳>.md`")
+            lines.append(f"快捷回滚到最近版本：`/evolve_rollback {skill_name} latest`")
+            return {"output": "\n".join(lines), "result_type": "answer"}
+
+        # "latest" shorthand → pick newest
+        if version == "latest":
+            version = body_versions[0]
+
+        if version not in body_versions:
+            hint = "、".join(f"`{v}`" for v in body_versions[:5])
+            return {
+                "output": f"版本 `{version}` 不存在。可用版本：{hint}",
+                "result_type": "error",
+            }
+
+        try:
+            success = await rail.rollback_skill(skill_name, version)
+        except Exception as exc:
+            logger.warning("[JiuWenClaw] evolve_rollback failed: %s", exc)
+            return {"output": f"回滚失败：{exc}", "result_type": "error"}
+
+        if success:
+            return {
+                "output": (
+                    f"Skill '{skill_name}' 已成功回滚到 `{version}`。\n\n"
+                    f"（当前状态已自动归档，可再次回滚恢复。）"
                 ),
                 "result_type": "answer",
             }
-
-        result_text = await scorer.execute_simplify_actions(store, skill_name, actions)
         return {
-            "output": (
-                f"**Skill '{skill_name}' 整理完成：** {result_text}\n\n"
-                f"**操作详情：**\n" + "\n".join(summary_lines)
-            ),
-            "result_type": "answer",
+            "output": f"Skill '{skill_name}' 回滚失败，请检查归档版本是否有效。",
+            "result_type": "error",
         }
+
+    async def _handle_governance_approval(
+        self, request_id: str, answers: list, kind: str
+    ) -> bool:
+        """Unified handler for simplify/rebuild governance approvals."""
+        rail = self._skill_evolution_rail
+        if rail is None:
+            logger.warning("[JiuWenClaw] governance approval failed: no SkillEvolutionRail")
+            return False
+
+        accept_labels = {"执行", "重建"} if kind in ("simplify", "rebuild") else set()
+        accepted = any(
+            isinstance(ans, dict)
+            and bool(accept_labels & set(ans.get("selected_options", [])))
+            for ans in answers
+        )
+
+        if kind == "simplify":
+            if accepted:
+                await rail.on_approve_simplify(request_id)
+            else:
+                await rail.on_reject_simplify(request_id)
+        elif kind == "rebuild":
+            if accepted:
+                await rail.on_approve_rebuild(request_id)
+            else:
+                await rail.on_reject_rebuild(request_id)
+
+        logger.info(
+            "[JiuWenClaw] governance %s %s: request_id=%s",
+            kind, "accepted" if accepted else "rejected", request_id,
+        )
+        return True
 
     def _ensure_evolution_rail_for_slash(self, mode: str) -> str | None:
         """Check evolution availability for slash commands; lazily init rail if needed.
@@ -3206,6 +3437,18 @@ class JiuWenClawDeepAdapter:
             if err:
                 return {"output": err, "result_type": "error"}
             return await self._handle_evolve_simplify_command(stripped)
+
+        if stripped.startswith("/evolve_rebuild"):
+            err = self._ensure_evolution_rail_for_slash(mode)
+            if err:
+                return {"output": err, "result_type": "error"}
+            return await self._handle_evolve_rebuild_command(stripped)
+
+        if stripped.startswith("/evolve_rollback"):
+            err = self._ensure_evolution_rail_for_slash(mode)
+            if err:
+                return {"output": err, "result_type": "error"}
+            return await self._handle_evolve_rollback_command(stripped)
 
         if stripped.startswith("/evolve_list"):
             err = self._ensure_evolution_rail_for_slash(mode)
@@ -3441,8 +3684,6 @@ class JiuWenClawDeepAdapter:
         has_streamed_content = False
         accumulated_text = ""
         accumulated_reasoning = ""
-        evolution_status_started = False
-        evolution_status_ended = False
         usage_accumulator = {
             "input_tokens": 0,
             "output_tokens": 0,
@@ -3574,19 +3815,6 @@ class JiuWenClawDeepAdapter:
                     continue
 
                 if chunk_type == "answer":
-                    if (
-                        not evolution_status_started
-                        and self._skill_evolution_rail is not None
-                        and request.params.get("mode", "agent.plan") == "agent.plan"
-                    ):
-                        # Mark evolution phase start before after_invoke auto-evolution runs.
-                        yield AgentResponseChunk(
-                            request_id=rid,
-                            channel_id=cid,
-                            payload={"event_type": "chat.evolution_status", "status": "start"},
-                            is_complete=False,
-                        )
-                        evolution_status_started = True
                     if accumulated_text:
                         yield AgentResponseChunk(
                             request_id=rid,
@@ -3666,10 +3894,9 @@ class JiuWenClawDeepAdapter:
                     is_complete=False,
                 )
 
-            # after_invoke 在流关闭后触发，其中缓存的审批事件无法通过
-            # session.write_stream 传递，需手动注入到 stream 输出
             if self._skill_evolution_rail is not None:
-                for evt in self._skill_evolution_rail.drain_pending_approval_events():
+                drained_events = await self._skill_evolution_rail.drain_pending_approval_events(wait=False)
+                for evt in drained_events:
                     parsed = self._parse_stream_chunk(evt)
                     if parsed is not None:
                         yield AgentResponseChunk(
@@ -3678,15 +3905,11 @@ class JiuWenClawDeepAdapter:
                             payload=parsed,
                             is_complete=False,
                         )
-
-            if evolution_status_started and not evolution_status_ended:
-                yield AgentResponseChunk(
-                    request_id=rid,
-                    channel_id=cid,
-                    payload={"event_type": "chat.evolution_status", "status": "end"},
-                    is_complete=False,
+                task = asyncio.create_task(
+                    self._watch_evolution_and_push(rid, cid, session_id)
                 )
-                evolution_status_ended = True
+                task.add_done_callback(self._on_evolution_watcher_done)
+                self._evolution_watcher_tasks.add(task)
         except asyncio.CancelledError:
             logger.info(
                 "[JiuWenClawDeepAdapter] 流式任务被取消: request_id=%s session_id=%s",
@@ -3696,14 +3919,6 @@ class JiuWenClawDeepAdapter:
             raise
         except Exception as exc:
             logger.exception("[JiuWenClawDeepAdapter] 流式任务异常: %s", exc)
-            if evolution_status_started and not evolution_status_ended:
-                yield AgentResponseChunk(
-                    request_id=rid,
-                    channel_id=cid,
-                    payload={"event_type": "chat.evolution_status", "status": "end"},
-                    is_complete=False,
-                )
-                evolution_status_ended = True
             yield AgentResponseChunk(
                 request_id=rid,
                 channel_id=cid,
@@ -4072,3 +4287,91 @@ class JiuWenClawDeepAdapter:
                 }
 
         return response
+    
+    async def _watch_evolution_and_push(self, rid: str, cid: str, session_id: str) -> None:
+        """等待演进后台 task 完成，通过 send_push 推送审批事件。
+
+        审批事件必须先于 evolution_status:end 推送，否则 Gateway 在清除
+        evolution_in_progress 和标记 pending_approval 之间存在竞争窗口。
+        """
+        from jiuwenclaw.agentserver.gateway_push import WebSocketGatewayPushTransport
+
+        transport = WebSocketGatewayPushTransport()
+
+        async def _push_status(status: str, stage: str, message: str = "") -> None:
+            await transport.send_push({
+                "request_id": rid,
+                "channel_id": cid,
+                "session_id": session_id,
+                "payload": {
+                    "event_type": "chat.evolution_status",
+                    "status": status,
+                    "stage": stage,
+                    "message": message,
+                },
+            })
+
+        async def _push_approval(evt) -> None:
+            raw_payload = evt.payload if hasattr(evt, "payload") and isinstance(evt.payload, dict) else evt
+            # Inject event_type from OutputSchema.type so Gateway routes it correctly.
+            payload = dict(raw_payload)
+            evt_type = getattr(evt, "type", None)
+            if evt_type and "event_type" not in payload:
+                payload["event_type"] = evt_type
+            await transport.send_push({
+                "request_id": rid,
+                "channel_id": cid,
+                "session_id": session_id,
+                "payload": payload,
+            })
+
+        timed_out = False
+        try:
+            await _push_status("start", "collecting", "Running evolution analysis...")
+
+            if self._skill_evolution_rail is not None:
+                events = await self._skill_evolution_rail.drain_pending_approval_events(
+                    wait=True, timeout=300
+                )
+                await self._skill_evolution_rail.cleanup_background_tasks()
+            else:
+                events = []
+
+            if not events:
+                timed_out = True
+
+            for evt in events:
+                if self._is_approval_event(evt):
+                    await _push_approval(evt)
+
+            if timed_out:
+                await _push_status("end", "timed_out", "Evolution analysis timed out")
+            else:
+                await _push_status("end", "completed", "Evolution analysis completed")
+        except Exception as exc:
+            logger.warning("[JiuWenClawDeepAdapter] evolution watcher failed: %s", exc)
+            try:
+                await _push_status("end", "failed", f"Evolution analysis failed: {exc}")
+            except Exception:
+                pass
+
+    def _on_evolution_watcher_done(self, task: asyncio.Task) -> None:
+        """Callback when an evolution watcher task completes.
+
+        Discards the task from the tracking set and logs any exception.
+        """
+        self._evolution_watcher_tasks.discard(task)
+        try:
+            task.result()
+        except Exception as exc:
+            logger.warning("[JiuWenClawDeepAdapter] evolution watcher task exception: %s", exc)
+
+    @staticmethod
+    def _is_approval_event(evt) -> bool:
+        """Check whether an OutputSchema event is an approval request."""
+        evt_type = getattr(evt, "type", "")
+        if evt_type == "chat.ask_user_question":
+            return True
+        if hasattr(evt, "payload") and isinstance(evt.payload, dict):
+            return evt.payload.get("event_type") == "chat.ask_user_question"
+        return False

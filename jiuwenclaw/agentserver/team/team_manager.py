@@ -49,6 +49,7 @@ from jiuwenclaw.agentserver.team.team_runtime_inheritance import (
     filter_inheritable_ability_cards,
     get_default_model_name,
 )
+from jiuwenclaw.utils import get_agent_skills_dir
 
 logger = logging.getLogger(__name__)
 
@@ -60,6 +61,29 @@ _PG_POST_START_READY_INIT_SLEEP = 0.4
 _PG_POST_START_READY_MAX_SLEEP = 2.0
 _PG_POST_START_READY_BACKOFF = 1.45
 _PG_POST_START_LOG_EVERY_SEC = 5.0
+
+
+def _sync_skills_dir(source: Path, target: Path) -> None:
+    """Copy every valid skill directory from *source* into *target*.
+
+    A valid skill is a sub-directory containing a ``SKILL.md`` file.
+    Existing skills in *target* are overwritten so the latest version
+    always wins.
+    """
+    if not source.is_dir():
+        return
+    target.mkdir(parents=True, exist_ok=True)
+    synced = 0
+    for skill_dir in source.iterdir():
+        if not skill_dir.is_dir() or not (skill_dir / "SKILL.md").is_file():
+            continue
+        dest = target / skill_dir.name
+        if dest.exists():
+            shutil.rmtree(dest)
+        shutil.copytree(skill_dir, dest)
+        synced += 1
+    if synced:
+        logger.info("[TeamManager] synced %d skills: %s -> %s", synced, source, target)
 
 
 async def cleanup_team_runtime_state_once() -> tuple[list[str], list[str]]:
@@ -87,6 +111,10 @@ class TeamManager:
         self._team_monitors: dict[str, TeamMonitorHandler] = {}
         self._stream_tasks: dict[str, asyncio.Task] = {}
         self._lock = asyncio.Lock()
+        # session_id → TeamSkillRail instance (set by customizer, used for drain/approval)
+        self._team_skill_rails: dict[str, Any] = {}
+        # session_id → (workspace_skills_dir, global_team_skills_dir)
+        self._team_skill_sync_targets: dict[str, tuple[Path, Path]] = {}
 
     def has_stream_task(self, session_id: str) -> bool:
         return session_id in self._stream_tasks
@@ -247,12 +275,19 @@ class TeamManager:
         )
         from jiuwenclaw.agentserver.skill_manager import SkillManager
         from jiuwenclaw.agentserver.extensions.rail_manager import get_rail_manager
-        from jiuwenclaw.utils import get_agent_skills_dir
 
         global_skills_dir = get_agent_skills_dir()
         global_skills_state_path = global_skills_dir / "skills_state.json"
         resolved_channel = channel_id or "default"
         resolved_model_name = get_default_model_name()
+
+        # Resolve team shared workspace skills directory for TeamSkillRail.
+        ws_config = spec.workspace
+        team_ws_root = (
+            ws_config.root_path if ws_config and ws_config.root_path
+            else str(team_home(spec.team_name) / "team-workspace")
+        )
+        team_ws_skills_dir = Path(team_ws_root) / "skills"
 
         def resolve_member_spec(
             member_name: str | None,
@@ -434,8 +469,10 @@ class TeamManager:
             )
 
             member_workspace = agent.deep_config.workspace if agent.deep_config else None
+            member_skills_dir_resolved: Path | None = None
             if member_workspace and member_workspace.root_path:
                 member_skills_dir = Path(member_workspace.root_path) / "skills"
+                member_skills_dir_resolved = member_skills_dir
                 skills_configured, selected_skills = resolve_member_skills(member_name, role)
 
                 # Copy member-configured skills to member's own skills directory
@@ -464,20 +501,43 @@ class TeamManager:
                 except Exception as exc:
                     logger.warning("[TeamManager] MemberSkillToolkitRail setup failed: %s", exc)
 
-                try:
-                    member_rails = build_member_rails(
-                        skills_dir=str(member_skills_dir),
-                        language="cn",
-                        channel=resolved_channel,
+            # Build all member rails (common + skill rails via role).
+            try:
+                member_rails = build_member_rails(
+                    skills_dir=str(member_skills_dir_resolved) if member_skills_dir_resolved else "",
+                    language="cn",
+                    channel=resolved_channel,
+                    agent_name=getattr(agent.card, "name", "team_member"),
+                    model_name=resolved_model_name,
+                    role=role,
+                    team_ws_skills_dir=str(team_ws_skills_dir),
+                )
+                from openjiuwen.harness.rails.team_skill_rail import TeamSkillRail
+                team_skill_rail: Any | None = None
+                for rail in member_rails:
+                    if type(rail).__name__ in RAIL_WHITELIST:
+                        agent.add_rail(rail)
+                    else:
+                        logger.debug("[TeamManager] Skipping non-whitelisted rail: %s", type(rail).__name__)
+                    if isinstance(rail, TeamSkillRail):
+                        team_skill_rail = rail
+                logger.info("[TeamManager] Added %d rails for team member", len(member_rails))
+                # Register TeamSkillRail with TeamManager for approval/sync.
+                if team_skill_rail is not None:
+                    tm = get_team_manager()
+                    tm.register_team_skill_rail(session_id, team_skill_rail)
+                    tm.register_team_skill_sync_target(
+                        session_id,
+                        team_ws_skills_dir,
+                        get_agent_skills_dir(),
                     )
-                    for rail in member_rails:
-                        if type(rail).__name__ in RAIL_WHITELIST:
-                            agent.add_rail(rail)
-                        else:
-                            logger.debug("[TeamManager] Skipping non-whitelisted rail: %s", type(rail).__name__)
-                    logger.info("[TeamManager] Added %d rails for team member", len(member_rails))
-                except Exception as exc:
-                    logger.warning("[TeamManager] build_member_rails failed: %s", exc)
+                    logger.info(
+                        "[TeamManager] TeamSkillRail mounted on leader "
+                        "(skills_dir=%s, sync_target=%s)",
+                        team_ws_skills_dir, get_agent_skills_dir(),
+                    )
+            except Exception as exc:
+                logger.warning("[TeamManager] build_member_rails failed: %s", exc)
 
             rail_manager = get_rail_manager()
             for rail_name in rail_manager.get_registered_rail_names():
@@ -531,8 +591,6 @@ class TeamManager:
     @staticmethod
     def _copy_global_skills_to_team_shared_dir(spec: TeamAgentSpec) -> None:
         """Copy global skills to team shared directory (executed once after team build)."""
-        from jiuwenclaw.utils import get_agent_skills_dir
-
         global_skills_dir = get_agent_skills_dir()
         if not global_skills_dir.exists():
             logger.warning("[TeamManager] global_skills_dir does not exist: %s", global_skills_dir)
@@ -671,6 +729,48 @@ class TeamManager:
             logger.error("[TeamManager] interact failed: session_id=%s, error=%s", session_id, exc)
             return False
 
+    # ── TeamSkillRail accessor ──────────────────────────────────
+
+    def get_team_skill_rail(self, session_id: str) -> Any | None:
+        return self._team_skill_rails.get(session_id)
+
+    def find_team_skill_rail_for_request(self, request_id: str) -> Any | None:
+        """Find the TeamSkillRail that owns a pending proposal/patch with this request_id."""
+        for rail in self._team_skill_rails.values():
+            if request_id in getattr(rail, "_pending_skill_proposals", {}):
+                return rail
+            if request_id in getattr(rail, "_pending_patch_snapshots", {}):
+                return rail
+        return None
+
+    async def drain_team_skill_events(self, session_id: str) -> list[dict]:
+        """Drain buffered approval events from this session's TeamSkillRail."""
+        rail = self._team_skill_rails.get(session_id)
+        if rail is None:
+            return []
+        return await rail.drain_pending_approval_events()
+
+    def register_team_skill_rail(self, session_id: str, rail: Any) -> None:
+        """Register a TeamSkillRail instance for the given session."""
+        self._team_skill_rails[session_id] = rail
+
+    def register_team_skill_sync_target(
+        self, session_id: str, source: Path, target: Path,
+    ) -> None:
+        """Register skill sync directories for the given session."""
+        self._team_skill_sync_targets[session_id] = (source, target)
+
+    # ── Skill sync helpers ──────────────────────────────────────
+
+    def sync_team_skills(self, session_id: str) -> None:
+        """Sync team skills from workspace dir to global team_skills dir after approval."""
+        sync_info = self._team_skill_sync_targets.get(session_id)
+        if sync_info is None:
+            logger.debug("[TeamManager] no sync target for session_id=%s", session_id)
+            return
+        source, target = sync_info
+        _sync_skills_dir(source, target)
+
     async def destroy_team(self, session_id: str) -> bool:
         async with self._lock:
             return await self._destroy_team(session_id)
@@ -705,6 +805,10 @@ class TeamManager:
                     session_id,
                     exc,
                 )
+
+        # Clean up sync state for the team skill rail.
+        self._team_skill_rails.pop(session_id, None)
+        self._team_skill_sync_targets.pop(session_id, None)
 
         team_agent = self._team_agents.pop(session_id, None)
         cleaned = False

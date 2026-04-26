@@ -76,10 +76,32 @@ def resolve_env_vars(value: Any) -> Any:
         return value
 
 
+def _normalize_config(config: dict[str, Any]) -> None:
+    """后处理配置，将需要结构化的字符串字段解析为原生类型。
+
+    例如 custom_headers 在 YAML 中通过环境变量传入时是 JSON 字符串，
+    需要统一解析为 dict。
+    """
+    models = config.get("models", {})
+    if isinstance(models, dict):
+        for entry in models.values():
+            if isinstance(entry, dict):
+                mcc = entry.get("model_client_config")
+                if isinstance(mcc, dict) and "custom_headers" in mcc:
+                    mcc["custom_headers"] = _parse_custom_headers(mcc["custom_headers"])
+
+    react = config.get("react", {})
+    if isinstance(react, dict):
+        mcc = react.get("model_client_config")
+        if isinstance(mcc, dict) and "custom_headers" in mcc:
+            mcc["custom_headers"] = _parse_custom_headers(mcc["custom_headers"])
+
+
 def get_config():
     with open(get_config_file(), "r", encoding="utf-8") as f:
         config_base = yaml.safe_load(f)
     config_base = resolve_env_vars(config_base)
+    _normalize_config(config_base)
 
     return config_base
 

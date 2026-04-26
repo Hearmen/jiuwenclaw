@@ -29,7 +29,24 @@ def _waiter_key(channel_id: str | None, session_id: str) -> tuple[str, str]:
     return _resolve_channel_id(channel_id), session_id
 
 
-def _broadcast_event(channel_id: str | None, session_id: str, event: dict[str, Any]) -> None:
+async def _drain_team_skill_approval_events(
+    channel_id: str | None,
+    session_id: str,
+) -> None:
+    """Drain buffered TeamSkillRail approval events and broadcast them."""
+    try:
+        tm = get_team_manager()
+        for evt in await tm.drain_team_skill_events(session_id):
+            parsed = parse_stream_chunk(evt)
+            if parsed is not None:
+                _broadcast_event(channel_id, session_id, parsed)
+    except Exception as exc:
+        logger.warning("[TeamHelpers] drain team skill events failed: %s", exc)
+
+
+def _broadcast_event(
+    channel_id: str | None, session_id: str, event: dict[str, Any]
+) -> None:
     """Broadcast an event to all request queues waiting on the same channel/session."""
     waiter_key = _waiter_key(channel_id, session_id)
     waiters = _pending_waiters.get(waiter_key, [])
@@ -111,7 +128,9 @@ async def process_team_message_stream(
                     session_id,
                 )
             except Exception as exc:
-                logger.warning("[TeamHelpers] Monitor start failed, continue without it: %s", exc)
+                logger.warning(
+                    "[TeamHelpers] Monitor start failed, continue without it: %s", exc
+                )
 
             stream_task = asyncio.create_task(
                 _consume_stream_with_query(
@@ -143,7 +162,10 @@ async def process_team_message_stream(
                     yield AgentResponseChunk(
                         request_id=rid,
                         channel_id=channel_id,
-                        payload={"event_type": "chat.error", "error": "interact failed"},
+                        payload={
+                            "event_type": "chat.error",
+                            "error": "interact failed",
+                        },
                         is_complete=False,
                     )
                     yield AgentResponseChunk(
@@ -180,7 +202,10 @@ async def process_team_message_stream(
                         payload=event,
                         is_complete=False,
                     )
-                    if isinstance(event, dict) and event.get("event_type") == "team.error":
+                    if (
+                        isinstance(event, dict)
+                        and event.get("event_type") == "team.error"
+                    ):
                         break
                 except asyncio.TimeoutError:
                     if not team_manager.has_stream_task(session_id):
@@ -230,6 +255,22 @@ async def process_team_message_stream(
                 )
 
 
+_DRAIN_INTERVAL_SEC = 5
+
+
+async def _periodic_drain(
+    channel_id: str | None,
+    session_id: str,
+) -> None:
+    """Periodically drain buffered approval events in the background."""
+    while True:
+        await asyncio.sleep(_DRAIN_INTERVAL_SEC)
+        try:
+            await _drain_team_skill_approval_events(channel_id, session_id)
+        except Exception as exc:
+            logger.debug("[TeamHelpers] periodic drain failed: %s", exc)
+
+
 async def _consume_stream_with_query(
     channel_id: str | None,
     session_id: str,
@@ -237,6 +278,10 @@ async def _consume_stream_with_query(
     initial_query: str,
 ) -> None:
     """Consume the team stream in the background and broadcast parsed events."""
+    drain_task = asyncio.create_task(
+        _periodic_drain(channel_id, session_id),
+        name=f"periodic_drain_{session_id}",
+    )
     try:
         logger.info(
             "[TeamHelpers] stream started: channel_id=%s session_id=%s",
@@ -251,6 +296,7 @@ async def _consume_stream_with_query(
             parsed = parse_stream_chunk(chunk)
             if parsed is not None:
                 _broadcast_event(channel_id, session_id, parsed)
+            await _drain_team_skill_approval_events(channel_id, session_id)
 
         logger.warning(
             "[TeamHelpers] stream ended unexpectedly: channel_id=%s session_id=%s",
@@ -281,8 +327,38 @@ async def _consume_stream_with_query(
             },
         )
     finally:
-        team_manager = get_team_manager(channel_id)
-        team_manager.pop_stream_task(session_id)
+        drain_task.cancel()
+        try:
+            await drain_task
+        except asyncio.CancelledError:
+            pass
+
+        # Final drain for any events buffered right before stream exit.
+        try:
+            await _drain_team_skill_approval_events(channel_id, session_id)
+        except Exception as exc:
+            logger.warning("[TeamHelpers] final drain failed: %s", exc)
+
+        # Launch watcher task to await evolution completion and push approval.
+        tm = get_team_manager(channel_id)
+        rail = tm.get_team_skill_rail(session_id)
+        if rail is not None:
+            logger.info(
+                "[TeamHelpers] launching evolution watcher: channel_id=%s session_id=%s",
+                channel_id,
+                session_id,
+            )
+            task = asyncio.create_task(
+                _watch_team_evolution_and_push(channel_id, session_id, rail)
+            )
+            task.add_done_callback(_on_team_watcher_done)
+        else:
+            logger.warning(
+                "[TeamHelpers] no TeamSkillRail found, evolution watcher not launched: session_id=%s",
+                session_id,
+            )
+
+        tm.pop_stream_task(session_id)
 
 
 async def _consume_monitor_events(
@@ -321,3 +397,95 @@ async def _consume_monitor_events(
         )
 
 
+def _on_team_watcher_done(task: asyncio.Task) -> None:
+    """Callback when a team evolution watcher task completes."""
+    exc = task.exception()
+    if exc is not None:
+        logger.warning("[TeamHelpers] evolution watcher task exception: %s", exc)
+
+
+async def _watch_team_evolution_and_push(
+    channel_id: str | None,
+    session_id: str,
+    rail: Any,
+) -> None:
+    """Wait for TeamSkillRail background evolution to complete, push approval via send_push."""
+    from jiuwenclaw.agentserver.gateway_push import WebSocketGatewayPushTransport
+
+    transport = WebSocketGatewayPushTransport()
+    rid = f"team_evolve_{session_id}"
+
+    async def _push_status(status: str, stage: str, message: str = "") -> None:
+        await transport.send_push(
+            {
+                "request_id": rid,
+                "channel_id": channel_id or "default",
+                "session_id": session_id,
+                "payload": {
+                    "event_type": "chat.evolution_status",
+                    "status": status,
+                    "stage": stage,
+                    "message": message,
+                },
+            }
+        )
+
+    async def _push_approval(evt) -> None:
+        raw_payload = (
+            evt.payload
+            if hasattr(evt, "payload") and isinstance(evt.payload, dict)
+            else evt
+        )
+        # Inject event_type from OutputSchema.type so Gateway routes it correctly.
+        payload = dict(raw_payload)
+        evt_type = getattr(evt, "type", None)
+        if evt_type and "event_type" not in payload:
+            payload["event_type"] = evt_type
+        await transport.send_push(
+            {
+                "request_id": rid,
+                "channel_id": channel_id or "default",
+                "session_id": session_id,
+                "payload": payload,
+            }
+        )
+
+    def _is_approval(evt) -> bool:
+        evt_type = getattr(evt, "type", "")
+        if evt_type == "chat.ask_user_question":
+            return True
+        if hasattr(evt, "payload") and isinstance(evt.payload, dict):
+            return evt.payload.get("event_type") == "chat.ask_user_question"
+        return False
+
+    try:
+        # 1. Push evolution start status.
+        await _push_status(
+            "start", "collecting", "Running team skill evolution analysis..."
+        )
+
+        # 2. Wait for SDK background evolution task to complete and retrieve approval events.
+        events = await rail.drain_pending_approval_events(wait=True, timeout=300)
+
+        # 3. Push approval events first (filter out llm_reasoning progress events).
+        for evt in events:
+            if _is_approval(evt):
+                try:
+                    await _push_approval(evt)
+                except Exception as exc:
+                    logger.warning(
+                        "[TeamHelpers] push approval failed for event type=%s: %s",
+                        getattr(evt, "type", "unknown"),
+                        exc,
+                    )
+
+        # 4. Push evolution end status last.
+        await _push_status(
+            "end", "completed", "Team skill evolution analysis completed"
+        )
+    except Exception as exc:
+        logger.warning("[TeamHelpers] evolution watcher failed: %s", exc)
+        try:
+            await _push_status("end", "failed", f"团队技能演进分析失败: {exc}")
+        except Exception as push_exc:
+            logger.warning("[TeamHelpers] push status notification failed: %s", push_exc)
