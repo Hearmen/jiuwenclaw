@@ -21,6 +21,7 @@ remote_all_spawn_members = _mod.remote_all_spawn_members
 parse_remote_bootstrap_ack_json = _mod.parse_remote_bootstrap_ack_json
 build_bootstrap_ack_envelope = _mod.build_bootstrap_ack_envelope
 attach_remote_bootstrap_ack_listener = _mod.attach_remote_bootstrap_ack_listener
+attach_distributed_local_spawn_guard = _mod.attach_distributed_local_spawn_guard
 
 
 def test_remote_member_names_accepts_string():
@@ -214,3 +215,39 @@ async def test_ack_listener_accepts_any_sender_when_remote_all(monkeypatch):
     await listeners[0](ev)
 
     db.update_member_status.assert_awaited_once_with("calculator-1", "tn", "ready")
+
+
+@pytest.mark.asyncio
+async def test_distributed_local_spawn_guard_disables_local_startup(monkeypatch):
+    from openjiuwen.agent_teams.schema.team import TeamRole
+    from openjiuwen.core.runner import Runner
+
+    monkeypatch.setattr(
+        "jiuwenclaw.config.get_config",
+        lambda: {"team": {"runtime": {"mode": "distributed", "role": "leader"}}},
+    )
+
+    send_message_tool = SimpleNamespace(_on_teammate_created=object())
+    resource_mgr = MagicMock()
+    resource_mgr.get_tool = MagicMock(return_value=send_message_tool)
+    monkeypatch.setattr(Runner, "resource_mgr", resource_mgr)
+
+    original_spawn = AsyncMock(return_value="local-handle")
+    ta = SimpleNamespace(
+        role=TeamRole.LEADER,
+        deep_agent=SimpleNamespace(
+            ability_manager=SimpleNamespace(
+                list=lambda: [SimpleNamespace(id="team.send_message", name="send_message")]
+            ),
+            card=SimpleNamespace(id="leader-card"),
+        ),
+        spawn_teammate=original_spawn,
+    )
+
+    attach_distributed_local_spawn_guard(ta, session_id="sid", channel_id="web")
+
+    assert getattr(send_message_tool, "_on_teammate_created") is None
+    assert getattr(ta, "_jiuwen_distributed_local_spawn_guard_attached") is True
+    result = await ta.spawn_teammate(SimpleNamespace(member_name="calculator-1"))
+    assert result is None
+    original_spawn.assert_not_awaited()

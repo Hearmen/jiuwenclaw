@@ -595,11 +595,17 @@ class TeamManager:
             if self._is_distributed_mode(config_base):
                 try:
                     from jiuwenclaw.agentserver.team.remote_member_bootstrap import (
+                        attach_distributed_local_spawn_guard,
                         attach_remote_bootstrap_ack_listener,
                         attach_remote_teammate_bootstrap_listener,
                         attach_spawn_member_remote_bootstrap_wrapper,
                     )
 
+                    attach_distributed_local_spawn_guard(
+                        team_agent,
+                        session_id=session_id,
+                        channel_id=channel_id,
+                    )
                     attach_spawn_member_remote_bootstrap_wrapper(
                         team_agent,
                         session_id=session_id,

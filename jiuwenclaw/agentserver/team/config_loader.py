@@ -44,7 +44,7 @@ def _resolve_team_raw_for_storage(config_base: dict[str, Any]) -> dict[str, Any]
         return selected
 
     legacy_team = config_base.get("team", {})
-    if isinstance(legacy_team, dict):
+    if isinstance(legacy_team, dict) and legacy_team:
         return legacy_team
 
     if any(key in config_base for key in ("team_name", "leader", "agents", "storage", "predefined_members")):

@@ -28,6 +28,8 @@ logger = logging.getLogger(__name__)
 # team.metadata.jiuwen_remote_member_names: str | list[str]
 _METADATA_REMOTE_NAMES_KEY = "jiuwen_remote_member_names"
 _WRAPPED_ATTR = "_jiuwen_spawn_member_remote_bootstrap_wrapped"
+_LOCAL_SPAWN_GUARD_ATTR = "_jiuwen_distributed_local_spawn_guard_attached"
+_SEND_MESSAGE_GUARDED_ATTR = "_jiuwen_distributed_send_message_guarded"
 _ACK_LISTENER_ATTR = "_jiuwen_remote_bootstrap_ack_listener_attached"
 _TEAMMATE_BOOTSTRAP_LISTENER_ATTR = "_jiuwen_remote_teammate_bootstrap_listener_attached"
 _METADATA_REMOTE_ALL_KEY = "jiuwen_remote_all_spawn_members"
@@ -94,6 +96,28 @@ def _spawn_member_tool_id(leader_deep_agent: Any) -> str:
     except Exception as exc:
         logger.warning("[RemoteMemberBootstrap] spawn_member tool id resolve failed: %s", exc)
     return "team.spawn_member"
+
+
+def _team_tool_id(leader_deep_agent: Any, tool_name: str) -> str:
+    """Resolve a registered team tool id by public tool name."""
+    expected = f"team.{tool_name}"
+    try:
+        for card in leader_deep_agent.ability_manager.list() or []:
+            cid = getattr(card, "id", "") or ""
+            name = getattr(card, "name", "") or ""
+            if cid == expected or cid.startswith(f"{expected}.") or name == tool_name:
+                return cid or expected
+    except Exception as exc:
+        logger.warning("[RemoteMemberBootstrap] %s tool id resolve failed: %s", tool_name, exc)
+    return expected
+
+
+def _is_distributed_leader_runtime(config_base: dict[str, Any]) -> bool:
+    team = config_base.get("team") if isinstance(config_base.get("team"), dict) else {}
+    runtime = team.get("runtime") if isinstance(team.get("runtime"), dict) else {}
+    mode = str(runtime.get("mode", "")).strip().lower()
+    role = str(runtime.get("role", "")).strip().lower()
+    return mode == "distributed" and role == "leader"
 
 
 def _messager_bootstrap_dict(team_agent: Any) -> dict[str, Any]:
@@ -589,6 +613,98 @@ def attach_spawn_member_remote_bootstrap_wrapper(
         tool_id,
         sorted(remote_names),
         remote_all,
+    )
+
+
+def attach_distributed_local_spawn_guard(
+    team_agent: Any,
+    *,
+    session_id: str,
+    channel_id: str | None,
+) -> None:
+    """Disable leader-side teammate startup when teammates are remote-managed.
+
+    Some agent-core versions accept ``spawn_mode=distributed`` in config but still
+    wire ``send_message`` auto-start to local ``spawn_teammate``. In distributed
+    leader mode, jiuwenclaw owns remote bootstrap, so local teammate creation must
+    be suppressed at the adapter layer.
+    """
+    from jiuwenclaw.config import get_config as _get_config
+
+    config_base = _get_config()
+    if not _is_distributed_leader_runtime(config_base):
+        logger.debug("[RemoteMemberBootstrap] non-distributed leader runtime; skip local spawn guard")
+        return
+
+    from openjiuwen.agent_teams.schema.team import TeamRole
+    from openjiuwen.core.runner import Runner
+
+    if getattr(team_agent, "role", None) != TeamRole.LEADER:
+        return
+    if getattr(team_agent, _LOCAL_SPAWN_GUARD_ATTR, False):
+        return
+
+    leader = team_agent.deep_agent
+    if leader is None:
+        logger.debug("[RemoteMemberBootstrap] skip local spawn guard: missing leader deep_agent")
+        return
+
+    tool_id = _team_tool_id(leader, "send_message")
+    tag = getattr(getattr(leader, "card", None), "id", None)
+    tool = Runner.resource_mgr.get_tool(tool_id, tag=tag) if tag else None
+    if tool is None:
+        tool = Runner.resource_mgr.get_tool(tool_id)
+    if tool is None:
+        logger.warning(
+            "[RemoteMemberBootstrap] distributed local spawn guard could not find send_message tool "
+            "tool_id=%s session_id=%s channel=%s",
+            tool_id,
+            session_id,
+            channel_id,
+        )
+    elif not getattr(tool, _SEND_MESSAGE_GUARDED_ATTR, False):
+        if hasattr(tool, "_on_teammate_created"):
+            setattr(tool, "_on_teammate_created", None)
+            setattr(tool, _SEND_MESSAGE_GUARDED_ATTR, True)
+            logger.info(
+                "[RemoteMemberBootstrap] distributed local spawn guard disabled send_message auto-start "
+                "tool_id=%s session_id=%s channel=%s",
+                tool_id,
+                session_id,
+                channel_id,
+            )
+        else:
+            logger.warning(
+                "[RemoteMemberBootstrap] send_message tool has no _on_teammate_created field "
+                "tool_id=%s type=%s",
+                tool_id,
+                type(tool).__name__,
+            )
+
+    original_spawn_teammate = getattr(team_agent, "spawn_teammate", None)
+    if callable(original_spawn_teammate):
+
+        async def _skip_local_spawn_teammate(self: Any, ctx: Any, *args: Any, **kwargs: Any) -> None:
+            member_name = getattr(ctx, "member_name", None)
+            logger.info(
+                "[RemoteMemberBootstrap] distributed local spawn guard skipped local spawn_teammate "
+                "member=%s session_id=%s channel=%s",
+                member_name,
+                session_id,
+                channel_id,
+            )
+            return None
+
+        setattr(team_agent, "_jiuwen_original_spawn_teammate", original_spawn_teammate)
+        team_agent.spawn_teammate = types.MethodType(_skip_local_spawn_teammate, team_agent)
+    else:
+        logger.warning("[RemoteMemberBootstrap] team_agent has no callable spawn_teammate to guard")
+
+    setattr(team_agent, _LOCAL_SPAWN_GUARD_ATTR, True)
+    logger.info(
+        "[RemoteMemberBootstrap] distributed local spawn guard attached session_id=%s channel=%s",
+        session_id,
+        channel_id,
     )
 
 
