@@ -19,6 +19,11 @@ from typing import Any
 logger = logging.getLogger(__name__)
 
 _REGISTERED_BLANK_ENDPOINTS: set[tuple[str, str, str]] = set()
+_REGISTERED_BLANK_REGISTRATIONS: dict[tuple[str, str, str], dict[str, str]] = {}
+
+_TEAMMATE_CARD_DESCRIPTION = "Task Planner(team-1)"
+_TEAMMATE_CARD_STATUS = "busy"
+_TEAMMATE_CARD_SKILLS = [{"name": "plan", "description": "子任务拆解"}]
 
 
 def _normalize_connect_addr(raw: Any) -> str:
@@ -76,6 +81,19 @@ class ReservedBlankAgent:
                 self.service_id,
                 exc,
             )
+
+
+def build_teammate_agent_card(member_name: str) -> dict[str, Any]:
+    """Build the AgentCard used after teammate bootstrap."""
+    name = str(member_name or "").strip()
+    if not name:
+        raise ValueError("member_name is required for teammate agent card replacement")
+    return {
+        "name": name,
+        "description": _TEAMMATE_CARD_DESCRIPTION,
+        "status": _TEAMMATE_CARD_STATUS,
+        "skills": [dict(skill) for skill in _TEAMMATE_CARD_SKILLS],
+    }
 
 
 def resolve_a2x_config(config_base: dict[str, Any]) -> dict[str, Any]:
@@ -149,6 +167,27 @@ async def init_a2x_client(config_base: dict[str, Any]) -> tuple[Any, dict[str, A
     return client, config
 
 
+def _remember_blank_registration(
+    client: Any,
+    cache_key: tuple[str, str, str],
+    *,
+    dataset: Any,
+    service_id: Any,
+    endpoint: Any,
+) -> None:
+    """Expose blank registration details on a client and cache them for sibling clients."""
+    registration = {
+        "dataset": str(dataset or "").strip(),
+        "service_id": str(service_id or "").strip(),
+        "endpoint": str(endpoint or "").strip(),
+    }
+    _REGISTERED_BLANK_REGISTRATIONS[cache_key] = registration
+    setattr(client, "_jiuwen_blank_agent_registration", registration)
+    setattr(client, "_jiuwen_blank_agent_dataset", registration["dataset"])
+    setattr(client, "_jiuwen_blank_agent_service_id", registration["service_id"])
+    setattr(client, "_jiuwen_blank_agent_endpoint", registration["endpoint"])
+
+
 async def register_blank_agent_if_teammate(
     client: Any,
     config: dict[str, Any],
@@ -174,16 +213,34 @@ async def register_blank_agent_if_teammate(
 
     cache_key = (str(config.get("base_url") or ""), str(dataset), str(endpoint))
     if cache_key in _REGISTERED_BLANK_ENDPOINTS:
+        cached_registration = _REGISTERED_BLANK_REGISTRATIONS.get(cache_key)
+        if cached_registration:
+            _remember_blank_registration(
+                client,
+                cache_key,
+                dataset=cached_registration.get("dataset"),
+                service_id=cached_registration.get("service_id"),
+                endpoint=cached_registration.get("endpoint"),
+            )
         logger.info(
-            "[A2XRegistryRuntime] blank agent already registered source=%s dataset=%s endpoint=%s",
+            "[A2XRegistryRuntime] blank agent already registered source=%s dataset=%s "
+            "service_id=%s endpoint=%s",
             source,
             dataset,
+            cached_registration.get("service_id", "") if cached_registration else "",
             endpoint,
         )
         return True
 
     result = await client.register_blank_agent(dataset=dataset, endpoint=endpoint)
     _REGISTERED_BLANK_ENDPOINTS.add(cache_key)
+    _remember_blank_registration(
+        client,
+        cache_key,
+        dataset=dataset,
+        service_id=getattr(result, "service_id", ""),
+        endpoint=endpoint,
+    )
     logger.info(
         "[A2XRegistryRuntime] blank agent registered source=%s dataset=%s service_id=%s endpoint=%s",
         source,
@@ -296,6 +353,13 @@ async def restore_teammate_blank_agent_on_destroy(
             _REGISTERED_BLANK_ENDPOINTS.add(
                 (str(config.get("base_url") or ""), resolved_dataset, resolved_endpoint)
             )
+            _REGISTERED_BLANK_REGISTRATIONS[
+                (str(config.get("base_url") or ""), resolved_dataset, resolved_endpoint)
+            ] = {
+                "dataset": resolved_dataset,
+                "service_id": str(restored_service_id or "").strip(),
+                "endpoint": resolved_endpoint,
+            }
             logger.info(
                 "[A2XRegistryRuntime] blank agent restored after team destroy "
                 "source=%s dataset=%s service_id=%s endpoint=%s",
@@ -418,6 +482,67 @@ async def reserve_blank_teammate_agent(
         return None
 
 
+async def replace_teammate_agent_card_after_bootstrap(
+    client: Any,
+    *,
+    dataset: str,
+    service_id: str,
+    member_name: str,
+    source: str = "teammate-bootstrap",
+    description: str | None = None,
+    status: str | None = None,
+    skills: list[dict[str, Any]] | None = None,
+) -> bool:
+    """Replace the teammate's blank card with its runtime planner card."""
+    dataset = str(dataset or "").strip()
+    service_id = str(service_id or "").strip()
+    member_name = str(member_name or "").strip()
+    if not dataset or not service_id or not member_name:
+        raise ValueError(
+            "[A2XRegistryRuntime] replace teammate card failed: "
+            "missing required dataset/service_id/member_name "
+            f"(source={source}, dataset={dataset!r}, service_id={service_id!r}, member_name={member_name!r})"
+        )
+    if client is None:
+        raise RuntimeError(
+            "[A2XRegistryRuntime] replace teammate card failed: missing A2X client "
+            f"(source={source}, dataset={dataset}, service_id={service_id}, member_name={member_name})"
+        )
+
+    agent_card = build_teammate_agent_card(member_name)
+    if description is not None and str(description).strip():
+        agent_card["description"] = str(description).strip()
+    if status is not None and str(status).strip():
+        agent_card["status"] = str(status).strip()
+    if skills is not None:
+        agent_card["skills"] = [dict(skill) for skill in skills if isinstance(skill, dict)]
+
+    try:
+        await client.replace_agent_card(dataset, service_id, agent_card)
+        logger.info(
+            "[A2XRegistryRuntime] teammate agent card replaced source=%s dataset=%s service_id=%s member_name=%s",
+            source,
+            dataset,
+            service_id,
+            member_name,
+        )
+        return True
+    except Exception as exc:
+        logger.warning(
+            "[A2XRegistryRuntime] teammate agent card replace failed source=%s "
+            "dataset=%s service_id=%s member_name=%s: %s",
+            source,
+            dataset,
+            service_id,
+            member_name,
+            exc,
+            exc_info=True,
+        )
+        return False
+
+
+
 def clear_blank_registration_cache_for_tests() -> None:
     """Clear in-process registration cache for isolated tests."""
     _REGISTERED_BLANK_ENDPOINTS.clear()
+    _REGISTERED_BLANK_REGISTRATIONS.clear()

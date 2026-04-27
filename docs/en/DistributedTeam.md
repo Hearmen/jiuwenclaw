@@ -33,7 +33,7 @@ Typical keys for distributed integration (templates: `config.team.distributed.le
 | `team.runtime.role` | Whether this process is `leader` or `teammate` |
 | `team.runtime.member_name` | Default teammate identity; after bootstrap it adopts the member name dynamically requested by the leader |
 | `team.transport.type` | `pyzmq` |
-| `react.a2x_registry` | Teammates register idle nodes at startup; leaders reserve idle teammates from the registry before teaming |
+| `react.a2x_registry` | Teammates register idle nodes at startup; leaders reserve idle teammates from the registry before teaming. **The registry is not bundled with jiuwenclaw**: clone upstream [agent-protocol (`feature/Agentregistry`)](https://gitcode.com/openJiuwen/agent-protocol/tree/feature/Agentregistry) and deploy it as a separate service per that repo's instructions |
 | `team.transport.params` | This process' `direct_addr` / `bootstrap_direct_addr`, `pubsub_*`, etc.; leaders do not need static teammate `known_peers` |
 | `team.predefined_members` | Backward-compatible static member declaration; not required for current blank-teammate integration |
 | `team.storage` | For multi-process setups, `connection_string` must point to a **shared** DB (e.g. the same sqlite path visible to all nodes) |
@@ -116,6 +116,7 @@ The current implementation is explicitly split:
   - Leader calls `reserve_blank_agents` during teaming / `spawn_member`, then sends bootstrap using the returned `service_id` / `endpoint`.
   - Leader sends bootstrap through direct ZMQ (`jiuwen.remote_teammate_bootstrap.direct`) after `spawn_member`.
   - Teammate listens on `bootstrap_direct_addr`, applies leader route, and adopts the target member.
+  - After successful bootstrap, the teammate uses its local A2X `service_id` to call `replace_agent_card`, replacing its registry card from blank/idle to busy/member. This prevents the same teammate from becoming reservable again after the reservation TTL expires.
   - ACK is treated as direct transport acknowledgment (not DB-ACK message flow).
   - Reservation lifecycle: the leader releases immediately when bootstrap delivery fails; after successful bootstrap, the leader does not actively release that reservation.
   - When the Team is dissolved, the leader sends `jiuwen.remote_team_destroy.direct` to each reserved teammate over direct ZMQ. The teammate cleans up its local session/team runtime, then uses A2X `replace_agent_card` to reset its own agent card back to idle teammate state; `bootstrap_direct_addr` stays alive so it can accept the next bootstrap.
@@ -200,15 +201,40 @@ Replace `<REPO_ROOT>`, `<LEADER_HOME>`, `<TEAMMATE_HOME>` with paths on your mac
 
 ### 6.1 A2X Registry
 
-For current integration testing, start the registry directly from the `agent-protocol` source tree:
+Run the registry **as its own process**, separate from leader/teammate:
+
+Follow the [agent-protocol Agent Team quick start](https://gitcode.com/openJiuwen/agent-protocol/blob/feature/Agentregistry/README_forAgentTeam.md). Since `0.1.6`, the default install is the lightweight Agent Team build: SDK, FastAPI, uvicorn, and a few small runtime dependencies only. The registry backend starts empty; it does not need preloaded data or LLM config. Teammate registration, leader lookup/reservation, and reservation leases are handled by the `jiuwenclaw` client-side integration.
+
+Install (Python >= 3.10):
 
 ```bash
-cd "/home/ycz/agent-protocol"
-source .venv/bin/activate
-PYTHONPATH=/home/ycz/agent-protocol python -m a2x_registry.backend --host 127.0.0.1 --port 8000
+git clone -b feature/Agentregistry https://gitcode.com/openJiuwen/agent-protocol.git
+cd agent-protocol
+pip install -e .
 ```
 
-For multi-host setups, bind to an address reachable by leader/teammate and update both sides' `react.a2x_registry.base_url`.
+Single-host setup (registry, leader, and teammate on one machine):
+
+```bash
+a2x-registry
+```
+
+It listens on `127.0.0.1:8000` by default. Configure both leader and teammate with:
+
+```yaml
+react:
+  a2x_registry:
+    base_url: http://127.0.0.1:8000
+```
+
+For multi-host setups, bind the registry to an address reachable from other machines and open the firewall / security group port:
+
+```bash
+a2x-registry --host 0.0.0.0
+a2x-registry --host 0.0.0.0 --port 8080
+```
+
+Then set `react.a2x_registry.base_url` on leader and teammate to the registry host IP, domain, or HTTPS reverse-proxy URL, for example `http://192.168.1.10:8000` or `https://registry.example.com`.
 
 ### 6.2 Teammate (AgentServer only)
 
@@ -291,7 +317,7 @@ If any step fails, output FAILED_AT_STEP=<n> and the error.
 | UI idle while backends run | Frontend must use `VITE_WS_BASE` (not `VITE_WS_URL`). |
 | Teammate cannot reach leader | Firewall, or the leader address sent in bootstrap is still `127.0.0.1` on a multi-host setup. |
 | Leader did not get a teammate from registry | Check registry logs for `POST /api/datasets/<dataset>/reservations 200 OK`; check teammate blank-agent registration succeeded. |
-| Teammate can be reserved twice too early | Check that leader does not release the reservation immediately after successful bootstrap; current design lets teammate restore itself to idle with `replace_agent_card` after receiving destroy. |
+| Teammate can be reserved twice too early | Check teammate logs after bootstrap for `teammate agent card replaced ... member_name=...` / `teammate registry card replace ... replaced=True`; without this, the registry still sees it as blank/idle and may reserve it again after the reservation TTL expires. Also confirm the leader does not release the reservation immediately after successful bootstrap. |
 | Teammate cannot bootstrap again after Team dissolve | Check teammate logs for `teammate applied team destroy notification ... cleaned=True`; `cleaned=False` or `cleanup failed` means the old team runtime / messager may still be partially alive. |
 | `Address already in use (tcp://127.0.0.1:16000)` | The teammate process may still have an auxiliary `TeamAgent` or old dynamic runtime alive. Confirm the bootstrap helper is removed from `TeamManager` cache and its messager is stopped after context construction, and that dynamic runtime retargeted to a fresh `direct_addr`. |
 | Leader and teammate both have `team-workspace/result.txt` with different contents | Default workspace paths are local to each process HOME, not a shared filesystem. Use a jointly visible path or return teammate results through messages/storage. |

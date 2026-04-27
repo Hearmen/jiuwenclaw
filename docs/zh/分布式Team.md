@@ -33,7 +33,7 @@ English: [Distributed Team](../en/DistributedTeam.md)
 | `team.runtime.role` | 本进程是 `leader` 还是 `teammate` |
 | `team.runtime.member_name` | teammate 侧默认身份；被 bootstrap 后会接管为 leader 动态请求的成员名 |
 | `team.transport.type` | `pyzmq` |
-| `react.a2x_registry` | teammate 启动时注册空闲节点；leader 组队时从注册中心预约空闲 teammate |
+| `react.a2x_registry` | teammate 启动时注册空闲节点；leader 组队时从注册中心预约空闲 teammate。**注册中心不是 jiuwenclaw 内置组件**，须从上游 [agent-protocol（feature/Agentregistry）](https://gitcode.com/openJiuwen/agent-protocol/tree/feature/Agentregistry) 单独拉取并按该仓说明独立部署 |
 | `team.transport.params` | 本进程的 `direct_addr` / `bootstrap_direct_addr`、`pubsub_*` 等；leader 不需要预置 teammate 的 `known_peers` |
 | `team.predefined_members` | 兼容旧静态成员声明；当前 blank teammate 联调不要求 leader 配置该项 |
 | `team.storage` | 多进程场景下 `connection_string` 需指向 **各方可见的同一 DB**（如共享路径下的 sqlite） |
@@ -85,7 +85,7 @@ team:
 | 配置 | 值 | 说明 |
 |------|-----|------|
 | `teammate_mode` | `build_mode`（默认） | teammate 通过 build 流程构建 |
-| `spawn_mode` | `inprocess`（默认） | teammate 在同一进程内运行 |
+| `spawn_mode` | `inprocess`（默认） | 指成员 runtime 在**各自进程内部**以内嵌方式创建（不是额外 fork 子进程）；分布式场景下 leader 与 teammate 仍是独立进程/节点，通过 pyzmq + bootstrap 协作 |
 
 ---
 
@@ -116,6 +116,7 @@ team:
   - leader 在组队/`spawn_member` 时调用 `reserve_blank_agents` 预约空闲 teammate，并使用注册中心返回的 `service_id` / `endpoint` 发送 bootstrap。
   - leader 在 `spawn_member` 后通过 direct ZMQ 发送 `jiuwen.remote_teammate_bootstrap.direct`。
   - teammate 监听 `bootstrap_direct_addr` 接收 bootstrap，应用 leader 路由并完成接管。
+  - bootstrap 成功后，teammate 会使用本进程持有的 A2X `service_id` 调用 `replace_agent_card`，把自己的注册中心 card 从 blank/idle 替换为 busy/member，避免 reservation TTL 过期后再次被 leader 当作空闲 teammate 预约。
   - ACK 使用 direct 传输层确认（不再依赖 DB ACK 消息链路）。
   - reservation 生命周期：bootstrap 失败时 leader 立即 release；bootstrap 成功后 leader 不再主动 release 该 reservation。
   - Team 解散时，leader 会通过 direct ZMQ 向已预约 teammate 发送 `jiuwen.remote_team_destroy.direct`。teammate 收到后清理本地 session/team runtime，并通过 A2X `replace_agent_card` 将自己的 agent card 重置为空闲 teammate；`bootstrap_direct_addr` 监听端口保持常驻，用于接收下一次 bootstrap。
@@ -200,15 +201,40 @@ cp "<REPO_ROOT>/jiuwenclaw/resources/config.team.distributed.teammate.yaml" \
 
 ### 6.1 A2X 注册中心
 
-当前联调可直接从 `agent-protocol` 源码启动注册中心：
+注册中心进程与 Leader/Teammate **分离部署**：请从上游代码仓拉取并在独立环境中运行。
+
+参考 [agent-protocol 的 Agent Team 快速启动说明](https://gitcode.com/openJiuwen/agent-protocol/blob/feature/Agentregistry/README_forAgentTeam.md)。`0.1.6` 起默认安装就是 Agent Team 精简版，只包含 SDK、FastAPI、uvicorn 等轻量依赖；注册中心服务端无需预置数据，也不需要配置 LLM。teammate 注册、leader 查询/预约、reservation lease 都由 `jiuwenclaw` 客户端逻辑完成。
+
+安装（要求 Python >= 3.10）：
 
 ```bash
-cd "/home/ycz/agent-protocol"
-source .venv/bin/activate
-PYTHONPATH=/home/ycz/agent-protocol python -m a2x_registry.backend --host 127.0.0.1 --port 8000
+git clone -b feature/Agentregistry https://gitcode.com/openJiuwen/agent-protocol.git
+cd agent-protocol
+pip install -e .
 ```
 
-多机部署时，把 `--host 127.0.0.1` 改成可被 leader/teammate 访问的地址，并同步修改两侧 `react.a2x_registry.base_url`。
+单机部署（注册中心、leader、teammate 在同一台机器）：
+
+```bash
+a2x-registry
+```
+
+默认监听 `127.0.0.1:8000`，leader 和 teammate 配置：
+
+```yaml
+react:
+  a2x_registry:
+    base_url: http://127.0.0.1:8000
+```
+
+多机部署时，让注册中心监听可被其它机器访问的地址，并放行防火墙/安全组端口：
+
+```bash
+a2x-registry --host 0.0.0.0
+a2x-registry --host 0.0.0.0 --port 8080
+```
+
+此时 leader 和 teammate 的 `react.a2x_registry.base_url` 应填写注册中心机器的 IP、域名或 HTTPS 反向代理地址，例如 `http://192.168.1.10:8000` 或 `https://registry.example.com`。
 
 ### 6.2 Teammate（仅 AgentServer）
 
@@ -291,7 +317,7 @@ VITE_WS_BASE="ws://localhost:29100" npm run dev -- --host 0.0.0.0 --port 5173
 | 前端无响应但后端已启动 | 确认前端使用 `VITE_WS_BASE`（而不是误用 `VITE_WS_URL`）。 |
 | teammate 连不上 leader | 检查防火墙、leader 在 bootstrap 中下发的地址是否仍为 `127.0.0.1`（多机需使用真实地址）。 |
 | leader 没有从注册中心拿到 teammate | 检查注册中心日志是否有 `POST /api/datasets/<dataset>/reservations 200 OK`；检查 teammate 是否已成功注册 blank agent。 |
-| teammate 被重复抢占 | 检查 bootstrap 成功后 leader 是否误 release reservation；当前设计是 teammate 在收到 destroy 后通过 `replace_agent_card` 自行恢复空闲。 |
+| teammate 被重复抢占 | 检查 bootstrap 成功后 teammate 日志是否出现 `teammate agent card replaced ... member_name=...` / `teammate registry card replace ... replaced=True`；若缺失，注册中心仍认为它是 blank/idle，reservation TTL 过期后会再次被预约。也需确认 leader 没有在 bootstrap 成功后误 release reservation。 |
 | Team 解散后 teammate 无法再次 bootstrap | 检查 teammate 日志是否出现 `teammate applied team destroy notification ... cleaned=True`；若为 `cleaned=False` 或 `cleanup failed`，旧 team runtime / messager 可能未释放干净。 |
 | `Address already in use (tcp://127.0.0.1:16000)` | teammate 进程内可能存在未清理的辅助 `TeamAgent` 或旧 dynamic runtime；确认 bootstrap helper 构建 context 后已从 `TeamManager` cache 移除并 stop messager，dynamic runtime 已 retarget 到新 `direct_addr`。 |
 | leader 与 teammate 都有 `team-workspace/result.txt` 但内容不同 | 默认 workspace 是各进程 HOME 下的本地目录，不是共享文件系统；需要显式使用共同可见路径或让 teammate 通过消息/存储回传结果。 |

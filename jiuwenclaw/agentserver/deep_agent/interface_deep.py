@@ -416,6 +416,8 @@ class JiuWenClawDeepAdapter:
         self._skill_manager: SkillManager | None = None
         self._a2x_client: Any | None = None
         self._a2x_config: dict[str, Any] = {}
+        self._a2x_blank_service_id: str = ""
+        self._a2x_blank_dataset: str = ""
         self._cron_runtime = CronRuntimeBridge()
         self._runtime_cron_tool_context = _RuntimeCronToolContext(
             tool_scope=f"runtime_{id(self):x}",
@@ -435,15 +437,46 @@ class JiuWenClawDeepAdapter:
         """Resolve A2X config from ``react.a2x_registry`` with safe defaults."""
         return resolve_a2x_config(config_base)
 
+    def _sync_a2x_runtime_state(self) -> None:
+        """Expose A2X runtime state on the underlying DeepAgent instance."""
+        if self._instance is None:
+            return
+        setattr(self._instance, "_jiuwen_a2x_client", self._a2x_client)
+        setattr(self._instance, "_jiuwen_a2x_config", self._a2x_config)
+        setattr(self._instance, "_jiuwen_a2x_blank_service_id", self._a2x_blank_service_id)
+        setattr(self._instance, "_jiuwen_a2x_blank_dataset", self._a2x_blank_dataset)
+
+    def _clear_a2x_runtime_state(self) -> None:
+        """Remove exposed A2X runtime state from the underlying DeepAgent instance."""
+        if self._instance is None:
+            return
+        for attr, value in (
+            ("_jiuwen_a2x_client", None),
+            ("_jiuwen_a2x_config", {}),
+            ("_jiuwen_a2x_blank_service_id", ""),
+            ("_jiuwen_a2x_blank_dataset", ""),
+        ):
+            if hasattr(self._instance, attr):
+                try:
+                    setattr(self._instance, attr, value)
+                except Exception:
+                    pass
+
     async def _close_a2x_client(self) -> None:
         """Close the mounted A2X client if initialized."""
         if self._a2x_client is None:
             self._a2x_config = {}
+            self._a2x_blank_service_id = ""
+            self._a2x_blank_dataset = ""
+            self._clear_a2x_runtime_state()
             return
         client = self._a2x_client
         config = self._a2x_config
         self._a2x_client = None
         self._a2x_config = {}
+        self._a2x_blank_service_id = ""
+        self._a2x_blank_dataset = ""
+        self._clear_a2x_runtime_state()
         close_timeout_raw = config.get("close_timeout", 5.0)
         try:
             close_timeout = max(float(close_timeout_raw), 0.1)
@@ -472,6 +505,8 @@ class JiuWenClawDeepAdapter:
         client, a2x_config = await init_a2x_client(config_base)
         self._a2x_config = a2x_config
         self._a2x_client = client
+        self._a2x_blank_service_id = ""
+        self._a2x_blank_dataset = ""
 
     async def _try_init_a2x_client(self, config_base: dict[str, Any], *, reload: bool = False) -> None:
         """Best-effort A2X client init that never blocks agent startup."""
@@ -482,6 +517,11 @@ class JiuWenClawDeepAdapter:
                 self._a2x_config,
                 source="deep-agent-reload" if reload else "deep-agent-init",
             )
+            registration = getattr(self._a2x_client, "_jiuwen_blank_agent_registration", {})
+            if isinstance(registration, dict):
+                self._a2x_blank_service_id = str(registration.get("service_id") or "").strip()
+                self._a2x_blank_dataset = str(registration.get("dataset") or "").strip()
+            self._sync_a2x_runtime_state()
             logger.info(
                 "[JiuWenClawDeepAdapter] A2X Client %s: role=%s base_url=%s",
                 "reinitialized on reload" if reload else "initialized successfully",
@@ -491,6 +531,9 @@ class JiuWenClawDeepAdapter:
         except Exception as exc:  # noqa: BLE001
             self._a2x_client = None
             self._a2x_config = {}
+            self._a2x_blank_service_id = ""
+            self._a2x_blank_dataset = ""
+            self._clear_a2x_runtime_state()
             logger.warning(
                 "[JiuWenClawDeepAdapter] A2X Client %s failed, agent will continue to %s: %s",
                 "reload initialization" if reload else "initialize",
@@ -2032,6 +2075,7 @@ class JiuWenClawDeepAdapter:
             audio_model_config=self._audio_model_config,
             completion_timeout=config.get("completion_timeout", 3600.0),
         )
+        self._sync_a2x_runtime_state()
         self._registered_mcp_server_ids.clear()
         self._registered_mcp_servers.clear()
         await self._register_mcp_servers_from_config(config_base, tag=f"agent.{mode}")
@@ -2107,6 +2151,7 @@ class JiuWenClawDeepAdapter:
 
         model = self._create_model(config_base)
         await self._try_init_a2x_client(config_base, reload=True)
+        self._sync_a2x_runtime_state()
         self._agent_name = self._instance_overrides.get("agent_name", config.get("agent_name", "main_agent"))
         agent_card = AgentCard(name=self._agent_name, id='jiuwenclaw')
         self._sync_multimodal_tools_for_runtime()

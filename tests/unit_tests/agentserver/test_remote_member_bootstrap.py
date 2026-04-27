@@ -383,15 +383,25 @@ async def test_spawn_member_wrapper_ensures_member_row_on_active_team(monkeypatc
 @pytest.mark.asyncio
 async def test_bootstrap_allows_later_kickoff_for_same_member_after_task_done(monkeypatch):
     kickoff_calls = []
+    card_replace_calls = []
 
     async def fake_ensure_dynamic_member_execution_loop(**kwargs):
         kickoff_calls.append(kwargs)
         return True, True
 
+    async def fake_replace_card_after_direct_bootstrap(**kwargs):
+        card_replace_calls.append(kwargs)
+        return True
+
     monkeypatch.setattr(
         _mod,
         "_ensure_dynamic_member_execution_loop",
         fake_ensure_dynamic_member_execution_loop,
+    )
+    monkeypatch.setattr(
+        _mod,
+        "_replace_teammate_card_after_direct_bootstrap",
+        fake_replace_card_after_direct_bootstrap,
     )
 
     processed = set()
@@ -423,6 +433,7 @@ async def test_bootstrap_allows_later_kickoff_for_same_member_after_task_done(mo
     await asyncio.sleep(0)
 
     assert len(kickoff_calls) == 1
+    assert card_replace_calls == [{"channel_id": "default", "member_name": "calculator"}]
     assert ("sess_1", "calculator") not in loop_kicked_members
 
     envelope["bootstrap_id"] = "boot-2"
@@ -438,6 +449,58 @@ async def test_bootstrap_allows_later_kickoff_for_same_member_after_task_done(mo
     await asyncio.sleep(0)
 
     assert len(kickoff_calls) == 2
+    assert card_replace_calls == [
+        {"channel_id": "default", "member_name": "calculator"},
+        {"channel_id": "default", "member_name": "calculator"},
+    ]
+
+
+@pytest.mark.asyncio
+async def test_replace_teammate_card_after_direct_bootstrap_uses_local_a2x_state(monkeypatch):
+    replace_calls = []
+    client = SimpleNamespace()
+    deep_agent = SimpleNamespace(
+        _jiuwen_a2x_client=client,
+        _jiuwen_a2x_blank_dataset="team_pool_local",
+        _jiuwen_a2x_blank_service_id="sid-local",
+    )
+    agent = SimpleNamespace(get_instance=lambda: deep_agent)
+    agent_manager = SimpleNamespace(
+        get_agent_nowait=lambda channel_id: agent,
+        get_agent=AsyncMock(return_value=agent),
+    )
+    server = SimpleNamespace(get_agent_manager=lambda: agent_manager)
+
+    async def fake_replace_teammate_agent_card_after_bootstrap(*args, **kwargs):
+        replace_calls.append((args, kwargs))
+        return True
+
+    monkeypatch.setattr(
+        "jiuwenclaw.agentserver.agent_ws_server.AgentWebSocketServer.get_instance",
+        lambda: server,
+    )
+    monkeypatch.setattr(
+        "jiuwenclaw.agentserver.a2x_registry_runtime.replace_teammate_agent_card_after_bootstrap",
+        fake_replace_teammate_agent_card_after_bootstrap,
+    )
+    replace_teammate_card = getattr(
+        _mod,
+        "_replace_teammate_card"
+        "_after_direct_bootstrap",
+    )
+
+    replaced = await replace_teammate_card(channel_id="default", member_name="calculator")
+
+    assert replaced is True
+    assert len(replace_calls) == 1
+    args, kwargs = replace_calls[0]
+    assert args == (client,)
+    assert kwargs == {
+        "dataset": "team_pool_local",
+        "service_id": "sid-local",
+        "member_name": "calculator",
+        "source": "teammate-direct-bootstrap",
+    }
 
 
 def test_retarget_teammate_direct_addr_allocates_non_default_port(monkeypatch):

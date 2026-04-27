@@ -410,6 +410,8 @@ async def _send_bootstrap_message(team_agent: Any, member_name: str, prompt: str
         if registry_reservation is not None:
             peer_agent_id = registry_reservation.service_id
             peer_addr = _normalize_leader_direct_addr(registry_reservation.endpoint)
+            envelope["a2x_dataset"] = getattr(registry_reservation, "dataset", "")
+            envelope["a2x_service_id"] = getattr(registry_reservation, "service_id", "")
     except Exception as exc:
         logger.warning("[RemoteMemberBootstrap] A2X blank teammate reservation failed: %s", exc)
 
@@ -914,6 +916,8 @@ def attach_remote_bootstrap_ack_listener(
         logger.debug("[RemoteMemberBootstrap] no jiuwen_remote_member_names; skip ACK listener")
         return
 
+    processed_message_ids: set[str] = set()
+
     async def on_event(event: Any) -> None:
         if getattr(event, "event_type", None) != TeamEvent.MESSAGE:
             return
@@ -974,10 +978,11 @@ def attach_remote_bootstrap_ack_listener(
         ack_applied = ack.get("handshake_applied")
         if isinstance(ack_applied, bool) and not ack_applied:
             logger.warning(
-                "[RemoteMemberBootstrap] ACK: teammate reports handshake route not applied member=%s id=%s",
+                "[RemoteMemberBootstrap] ACK: teammate reports bootstrap not fully applied member=%s id=%s",
                 ack_member,
                 message_id,
             )
+            return
 
         ok = await tb.db.update_member_status(ack_member, team_name, MemberStatus.READY.value)
         if not ok:
@@ -1310,6 +1315,74 @@ async def _ensure_dynamic_member_execution_loop(
         return False, False
 
 
+async def _replace_teammate_card_after_direct_bootstrap(
+    *,
+    channel_id: str,
+    member_name: str,
+) -> bool:
+    """Replace this teammate's A2X card after direct control-plane bootstrap."""
+    member = str(member_name or "").strip()
+    if not member:
+        return False
+    try:
+        from jiuwenclaw.agentserver.agent_ws_server import AgentWebSocketServer
+        from jiuwenclaw.agentserver.a2x_registry_runtime import replace_teammate_agent_card_after_bootstrap
+
+        server = AgentWebSocketServer.get_instance()
+        agent_manager = server.get_agent_manager()
+        agent = agent_manager.get_agent_nowait(channel_id) or await agent_manager.get_agent(channel_id, "agent")
+        deep_agent = agent.get_instance() if agent is not None else None
+        if deep_agent is None:
+            logger.warning(
+                "[RemoteMemberBootstrap] teammate registry card replace skipped: deep_agent unavailable "
+                "channel=%s member=%s",
+                channel_id,
+                member,
+            )
+            return False
+        client = getattr(deep_agent, "_jiuwen_a2x_client", None)
+        dataset = str(getattr(deep_agent, "_jiuwen_a2x_blank_dataset", "") or "").strip()
+        service_id = str(getattr(deep_agent, "_jiuwen_a2x_blank_service_id", "") or "").strip()
+        if client is None or not dataset or not service_id:
+            logger.warning(
+                "[RemoteMemberBootstrap] teammate registry card replace skipped: missing local A2X state "
+                "channel=%s member=%s has_client=%s dataset=%s service_id=%s",
+                channel_id,
+                member,
+                client is not None,
+                dataset,
+                service_id,
+            )
+            return False
+        replaced = await replace_teammate_agent_card_after_bootstrap(
+            client,
+            dataset=dataset,
+            service_id=service_id,
+            member_name=member,
+            source="teammate-direct-bootstrap",
+        )
+        logger.info(
+            "[RemoteMemberBootstrap] teammate registry card replace after direct bootstrap "
+            "channel=%s member=%s dataset=%s service_id=%s replaced=%s",
+            channel_id,
+            member,
+            dataset,
+            service_id,
+            replaced,
+        )
+        return bool(replaced)
+    except Exception as exc:
+        logger.warning(
+            "[RemoteMemberBootstrap] teammate registry card replace after direct bootstrap failed "
+            "channel=%s member=%s: %s",
+            channel_id,
+            member,
+            exc,
+            exc_info=True,
+        )
+        return False
+
+
 async def _apply_bootstrap_envelope_from_control_plane(
     *,
     processed_ids: set[str],
@@ -1348,6 +1421,10 @@ async def _apply_bootstrap_envelope_from_control_plane(
         target_member,
         source_id,
     )
+    card_replaced = await _replace_teammate_card_after_direct_bootstrap(
+        channel_id="default",
+        member_name=target_member,
+    )
     if effective_sid and loop_key not in loop_kicked_members:
         loop_kicked_members.add(loop_key)
 
@@ -1362,19 +1439,21 @@ async def _apply_bootstrap_envelope_from_control_plane(
             if kicked:
                 logger.info(
                     "[RemoteMemberBootstrap] teammate execution kickoff scheduled from bootstrap "
-                    "team=%s session_id=%s member=%s handshake_applied=%s",
+                    "team=%s session_id=%s member=%s handshake_applied=%s card_replaced=%s",
                     envelope_team_name,
                     effective_sid,
                     target_member,
                     route_applied,
+                    card_replaced,
                 )
             else:
                 logger.warning(
                     "[RemoteMemberBootstrap] teammate execution kickoff failed after direct ACK "
-                    "team=%s session_id=%s member=%s",
+                    "team=%s session_id=%s member=%s card_replaced=%s",
                     envelope_team_name,
                     effective_sid,
                     target_member,
+                    card_replaced,
                 )
 
         kickoff_task = asyncio.create_task(
@@ -1670,6 +1749,8 @@ def attach_remote_teammate_bootstrap_listener(
         )
         return
 
+    processed_message_ids: set[str] = set()
+
     async def on_event(event: Any) -> None:
         if getattr(event, "event_type", None) != TeamEvent.MESSAGE:
             return
@@ -1684,6 +1765,9 @@ def attach_remote_teammate_bootstrap_listener(
         if not isinstance(from_name, str) or not from_name.strip():
             return
         if not isinstance(to_name, str) or not to_name.strip():
+            return
+
+        if message_id in processed_message_ids:
             return
 
         row = await tb.db.get_message(message_id)
@@ -1705,6 +1789,26 @@ def attach_remote_teammate_bootstrap_listener(
         _adopt_teammate_member_name(team_agent, target_member)
         route_applied = _apply_leader_route_from_envelope(team_agent, envelope)
 
+        deep_agent = getattr(team_agent, "deep_agent", None)
+        client = getattr(deep_agent, "_jiuwen_a2x_client", None) if deep_agent is not None else None
+        dataset = str(getattr(deep_agent, "_jiuwen_a2x_blank_dataset", "") or "").strip()
+        service_id = str(getattr(deep_agent, "_jiuwen_a2x_blank_service_id", "") or "").strip()
+        card_replaced = False
+        if client is None:
+            raise RuntimeError(
+                "[RemoteMemberBootstrap] teammate bootstrap missing A2X client "
+                f"member={target_member}"
+            )
+        from jiuwenclaw.agentserver.a2x_registry_runtime import replace_teammate_agent_card_after_bootstrap
+
+        card_replaced = await replace_teammate_agent_card_after_bootstrap(
+            client,
+            dataset=dataset,
+            service_id=service_id,
+            member_name=target_member,
+            source="teammate-bootstrap",
+        )
+
         try:
             if old_member_name:
                 await mm.mark_message_read(message_id, old_member_name)
@@ -1712,6 +1816,7 @@ def attach_remote_teammate_bootstrap_listener(
         except Exception as exc:
             logger.warning("[RemoteMemberBootstrap] teammate mark_message_read failed: %s", exc)
 
+        processed_message_ids.add(message_id)
         _tn = getattr(team_agent, "_team_name", None)
         team_name = _tn() if callable(_tn) else None
         ack = build_bootstrap_ack_envelope(
@@ -1719,7 +1824,7 @@ def attach_remote_teammate_bootstrap_listener(
             team_name=team_name,
             leader_agent_id=str(envelope.get("leader_agent_id", "")).strip(),
             leader_direct_addr=str(envelope.get("leader_direct_addr", "")).strip(),
-            handshake_applied=route_applied,
+            handshake_applied=bool(route_applied and card_replaced),
         )
         ack_id = await mm.send_message(
             content=json.dumps(ack, ensure_ascii=False),
@@ -1727,12 +1832,16 @@ def attach_remote_teammate_bootstrap_listener(
         )
         logger.info(
             "[RemoteMemberBootstrap] teammate bootstrap consumed message_id=%s old_member=%s adopted_member=%s "
-            "leader=%s ack_message_id=%s",
+            "leader=%s ack_message_id=%s card_replaced=%s route_applied=%s dataset=%s service_id=%s",
             message_id,
             old_member_name,
             target_member,
             leader_member,
             ack_id,
+            card_replaced,
+            route_applied,
+            dataset,
+            service_id,
         )
 
     team_agent.add_event_listener(on_event)
