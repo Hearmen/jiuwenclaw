@@ -247,6 +247,15 @@ export function mergeHistoryMessagesForRestore(messages: unknown[]): Record<stri
     const role = normalizeHistoryRole(rec.role);
     const et = historyRecordEventType(rec);
     const rid = typeof rec.request_id === "string" ? rec.request_id.trim() : "";
+    if (role === "assistant" && isReasoningStreamRecord(rec)) {
+      continue;
+    }
+    if (
+      role === "assistant" &&
+      et === "chat.reasoning"
+    ) {
+      continue;
+    }
     if (
       role === "assistant" &&
       et === "chat.delta" &&
@@ -613,15 +622,7 @@ export function parseHistoryFrame(frame: EventFrame): HistoryItem | null {
     eventType === "chat.reasoning" ||
     (eventType === "chat.delta" && sourceChunkType === "llm_reasoning")
   ) {
-    const content = pickFirstString(payload, ["content"]) ?? "";
-    if (!content) return null;
-    return {
-      kind: "thinking",
-      id,
-      sessionId,
-      content,
-      at,
-    };
+    return null;
   }
 
   if (eventType === "chat.session_result" || eventType === "session_result") {
