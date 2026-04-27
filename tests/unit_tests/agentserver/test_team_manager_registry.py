@@ -4,6 +4,8 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 
 from jiuwenclaw.agentserver.team.team_manager import (
@@ -11,6 +13,7 @@ from jiuwenclaw.agentserver.team.team_manager import (
     cleanup_team_runtime_state_once,
     get_team_manager,
     reset_team_manager,
+    sync_team_skills_across_managers,
 )
 
 
@@ -155,3 +158,21 @@ async def test_cleanup_team_runtime_state_once_uses_shared_db(monkeypatch: pytes
     assert cleared_tables == ["static_table"]
     assert captured["db_type"] == "sqlite"
     assert str(captured["connection_string"]).endswith("team.db")
+
+
+def test_sync_team_skills_across_managers_uses_public_lookup(monkeypatch: pytest.MonkeyPatch) -> None:
+    manager = get_team_manager("web")
+    source = Path("/tmp/team-source")
+    target = Path("/tmp/team-target")
+    manager.register_team_skill_sync_target("sess-1", source, target)
+
+    called = {"count": 0}
+
+    def fake_sync(session_id: str) -> None:
+        called["count"] += 1
+        assert session_id == "sess-1"
+
+    monkeypatch.setattr(manager, "sync_team_skills", fake_sync)
+
+    assert sync_team_skills_across_managers("sess-1") is True
+    assert called["count"] == 1

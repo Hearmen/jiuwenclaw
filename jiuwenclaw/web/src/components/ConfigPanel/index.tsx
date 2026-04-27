@@ -106,7 +106,7 @@ const THIRD_PARTY_API_KEYS = new Set([
 ]);
 const REQUIRED_MODEL_FIELDS = ["api_base", "api_key", "model", "model_provider"] as const;
 const REQUIRED_MODEL_FIELD_SET = new Set<string>(REQUIRED_MODEL_FIELDS);
-const EVOLUTION_KEYS = new Set(["evolution_auto_scan"]);
+const EVOLUTION_KEYS = new Set(["evolution_auto_scan", "skill_create"]);
 const AGENT_KEYS = new Set(["name", "model", "skills", "max_iterations", "completion_timeout"]);
 const TEAM_KEYS = new Set(["team_name", "lifecycle", "teammate_mode", "spawn_mode"]);
 const FREE_SEARCH_BOOLEAN_KEYS = new Set(["free_search_ddg_enabled", "free_search_bing_enabled"]);
@@ -313,6 +313,7 @@ function parseBoolValue(value: string): boolean {
 function getBooleanKeyLabel(key: string, t: (key: string) => string): string {
   const labels: Record<string, string> = {
     evolution_auto_scan: t('config.booleanLabels.evolutionAutoScan'),
+    skill_create: t('config.booleanLabels.skillCreate'),
     free_search_ddg_enabled: t('config.booleanLabels.freeSearchDdg'),
     free_search_bing_enabled: t('config.booleanLabels.freeSearchBing'),
     context_engine_enabled: t('config.booleanLabels.enabled'),

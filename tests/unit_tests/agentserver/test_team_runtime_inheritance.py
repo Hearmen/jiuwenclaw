@@ -8,7 +8,9 @@ from unittest.mock import patch
 from openjiuwen.core.foundation.tool import ToolCard
 
 from jiuwenclaw.agentserver.team.team_runtime_inheritance import (
+    TeamWorkspaceInfo,
     build_evolution_llm,
+    build_member_rails,
     build_skill_evolution_rail,
     filter_inheritable_ability_cards,
     resolve_model_config,
@@ -159,3 +161,29 @@ def test_build_skill_evolution_rail_returns_none_on_invalid_config(tmp_path):
     )
     # Will fail due to empty model_client_config, returning None
     assert result is None
+
+
+def test_build_member_rails_accepts_team_workspace_info(tmp_path):
+    team_workspace = TeamWorkspaceInfo(
+        skills_dir=str(tmp_path / "skills"),
+        trajectories_dir=str(tmp_path / "trajectories"),
+        team_id="demo-team",
+    )
+
+    with patch(
+        "jiuwenclaw.agentserver.team.team_runtime_inheritance.FileTrajectoryStore",
+        return_value=object(),
+    ):
+        rails = build_member_rails(
+            skills_dir=str(tmp_path / "member-skills"),
+            member_info=SimpleNamespace(agent_name="leader", model_name="demo-model", role="leader"),
+            runtime=SimpleNamespace(channel="web", language="cn"),
+            team_workspace=TeamWorkspaceInfo(
+                skills_dir=team_workspace.skills_dir,
+                trajectories_dir=team_workspace.trajectories_dir,
+                team_id=team_workspace.team_id,
+                config={"evolution": {"skill_create": False}},
+            ),
+        )
+
+    assert isinstance(rails, list)

@@ -280,9 +280,9 @@ class AgentWebSocketServer:
             except Exception:
                 logger.exception("[AgentWebSocketServer] cancel_all_inflight_work failed")
             try:
-                from jiuwenclaw.agentserver.team import get_team_manager
+                from jiuwenclaw.agentserver.team import cancel_all_team_stream_tasks_across_managers
 
-                await get_team_manager().cancel_all_stream_tasks(
+                await cancel_all_team_stream_tasks_across_managers(
                     reason=f"[gateway ws closed {remote}] ",
                 )
             except Exception:

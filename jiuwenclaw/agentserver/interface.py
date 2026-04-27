@@ -490,16 +490,22 @@ class JiuWenClaw:
         await self._session_manager.cancel_session_task(session_id, f"interrupt(intent={intent}): ")
         await self._cancel_team_work_for_session(
             session_id,
+            request.channel_id,
             log_prefix=f"interrupt(intent={intent}): ",
         )
         return await adapter.process_interrupt(request)
 
-    async def _cancel_team_work_for_session(self, session_id: str, log_prefix: str = "") -> bool:
+    async def _cancel_team_work_for_session(
+        self,
+        session_id: str,
+        channel_id: str | None = None,
+        log_prefix: str = "",
+    ) -> bool:
         """终止当前 session 的 Team runtime（若存在）。"""
         from jiuwenclaw.agentserver.team import get_team_manager
 
         try:
-            team_manager = get_team_manager()
+            team_manager = get_team_manager(channel_id)
             return await team_manager.terminate_session_runtime(session_id, reason=log_prefix)
         except Exception:
             logger.exception(

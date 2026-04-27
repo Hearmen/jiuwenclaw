@@ -19,6 +19,7 @@ from jiuwenclaw.schema.agent import AgentResponseChunk
 logger = logging.getLogger(__name__)
 
 _pending_waiters: dict[tuple[str, str], list[tuple[str, asyncio.Queue]]] = {}
+_TEAM_EVOLUTION_REASONING_PREFIX = "[Team Skill Evolution]"
 
 
 def _resolve_channel_id(channel_id: str | None) -> str:
@@ -32,14 +33,21 @@ def _waiter_key(channel_id: str | None, session_id: str) -> tuple[str, str]:
 async def _drain_team_skill_approval_events(
     channel_id: str | None,
     session_id: str,
+    *,
+    allow_launch_watcher: bool = True,
 ) -> None:
     """Drain buffered TeamSkillRail approval events and broadcast them."""
     try:
-        tm = get_team_manager()
+        tm = get_team_manager(channel_id)
+        should_launch_watcher = False
         for evt in await tm.drain_team_skill_events(session_id):
             parsed = parse_stream_chunk(evt)
             if parsed is not None:
+                if _should_launch_team_evolution_watcher(parsed):
+                    should_launch_watcher = True
                 _broadcast_event(channel_id, session_id, parsed)
+        if should_launch_watcher and allow_launch_watcher:
+            _ensure_team_evolution_watcher(channel_id, session_id)
     except Exception as exc:
         logger.warning("[TeamHelpers] drain team skill events failed: %s", exc)
 
@@ -60,6 +68,46 @@ def _broadcast_event(
                 session_id,
                 request_id,
             )
+
+
+def _should_launch_team_evolution_watcher(event: dict[str, Any]) -> bool:
+    """Return True when a drained TeamSkillRail event indicates evolution has started."""
+    if event.get("event_type") != "chat.reasoning":
+        return False
+    content = str(event.get("content", ""))
+    return _TEAM_EVOLUTION_REASONING_PREFIX in content
+
+
+def _ensure_team_evolution_watcher(
+    channel_id: str | None,
+    session_id: str,
+) -> None:
+    """Launch the per-session team evolution watcher once evolution begins."""
+    tm = get_team_manager(channel_id)
+    watcher = tm.get_team_evolution_watcher(session_id)
+    if watcher is not None and not watcher.done():
+        return
+
+    rail = tm.get_team_skill_rail(session_id)
+    if rail is None:
+        logger.warning(
+            "[TeamHelpers] no TeamSkillRail found, evolution watcher not launched: session_id=%s",
+            session_id,
+        )
+        return
+
+    logger.info(
+        "[TeamHelpers] launching evolution watcher: channel_id=%s session_id=%s",
+        channel_id,
+        session_id,
+    )
+    task = asyncio.create_task(
+        _watch_team_evolution_and_push(channel_id, session_id, rail)
+    )
+    setattr(task, "_team_channel_id", channel_id)
+    setattr(task, "_team_session_id", session_id)
+    task.add_done_callback(_on_team_watcher_done)
+    tm.register_team_evolution_watcher(session_id, task)
 
 
 async def process_team_message_stream(
@@ -335,30 +383,14 @@ async def _consume_stream_with_query(
 
         # Final drain for any events buffered right before stream exit.
         try:
-            await _drain_team_skill_approval_events(channel_id, session_id)
-        except Exception as exc:
-            logger.warning("[TeamHelpers] final drain failed: %s", exc)
-
-        # Launch watcher task to await evolution completion and push approval.
-        tm = get_team_manager(channel_id)
-        rail = tm.get_team_skill_rail(session_id)
-        if rail is not None:
-            logger.info(
-                "[TeamHelpers] launching evolution watcher: channel_id=%s session_id=%s",
+            await _drain_team_skill_approval_events(
                 channel_id,
                 session_id,
+                allow_launch_watcher=False,
             )
-            task = asyncio.create_task(
-                _watch_team_evolution_and_push(channel_id, session_id, rail)
-            )
-            task.add_done_callback(_on_team_watcher_done)
-        else:
-            logger.warning(
-                "[TeamHelpers] no TeamSkillRail found, evolution watcher not launched: session_id=%s",
-                session_id,
-            )
-
-        tm.pop_stream_task(session_id)
+        except Exception as exc:
+            logger.warning("[TeamHelpers] final drain failed: %s", exc)
+        get_team_manager(channel_id).pop_stream_task(session_id)
 
 
 async def _consume_monitor_events(
@@ -399,6 +431,14 @@ async def _consume_monitor_events(
 
 def _on_team_watcher_done(task: asyncio.Task) -> None:
     """Callback when a team evolution watcher task completes."""
+    channel_id = getattr(task, "_team_channel_id", None)
+    session_id = getattr(task, "_team_session_id", None)
+    if isinstance(session_id, str):
+        get_team_manager(channel_id).pop_team_evolution_watcher(session_id)
+
+    if task.cancelled():
+        return
+
     exc = task.exception()
     if exc is not None:
         logger.warning("[TeamHelpers] evolution watcher task exception: %s", exc)

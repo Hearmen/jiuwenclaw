@@ -55,6 +55,7 @@ from openjiuwen.harness.rails import (
     TaskPlanningRail,
     SecurityRail,
     SkillEvolutionRail,
+    SkillCreateRail,
 )
 from openjiuwen.harness.rails.subagent_rail import SubagentRail
 from openjiuwen.harness.rails.context_engineer.context_assemble_rail import ContextAssembleRail
@@ -223,6 +224,21 @@ _PLACEHOLDER_API_KEYS = frozenset({"sk-xxxxxxxxx", "your-api-key", "your_api_key
 _PLACEHOLDER_API_BASES = frozenset({"https://example.com/compatible-mode/v1"})
 
 
+def _get_skill_create_enabled(config: dict[str, Any] | None) -> bool:
+    """读取 skill_create 配置，环境变量优先，不存在时从 config.yaml 读取.
+
+    Args:
+        config: 配置字典（包含 evolution.skill_create）
+
+    Returns:
+        True 表示启用 SkillCreateRail，False 表示不启用
+    """
+    env_skill_create = os.getenv("SKILL_CREATE")
+    if env_skill_create is not None:
+        return env_skill_create.lower() in ("true", "1", "yes")
+    return (config or {}).get("evolution", {}).get("skill_create", False)
+
+
 def _mcc_looks_usable(mcc: dict) -> bool:
     """检查 model_client_config 是否包含有效的 API 凭据（非占位符）。"""
     api_key = str(mcc.get("api_key", "") or "").strip()
@@ -380,6 +396,7 @@ class JiuWenClawDeepAdapter:
         self._external_memory_rail_registered: bool = False
         self._heartbeat_rail: HeartbeatRail | None = None
         self._skill_evolution_rail: SkillEvolutionRail | None = None
+        self._skill_create_rail: SkillCreateRail | None = None
         self._subagent_rail: SubagentRail | None = None
         self._permission_rail: Any = None
         self._avatar_rail: Any = None
@@ -1414,6 +1431,34 @@ class JiuWenClawDeepAdapter:
             skill_evolution_rail = None
         return skill_evolution_rail
 
+    def _build_skill_create_rail(self, config: dict[str, Any]) -> SkillCreateRail | None:
+        """Build SkillCreateRail for new skill creation proposals.
+
+        SkillCreateRail requires task-loop mode (enable_task_loop=True) to function
+        because it uses AFTER_TASK_ITERATION event and enqueue_follow_up().
+        Config: evolution.skill_create (bool) - true to register rail with auto_trigger=true.
+        Env: SKILL_CREATE - takes precedence over config.yaml.
+        """
+        try:
+            skill_create_enabled = _get_skill_create_enabled(config)
+            # Check if skill_create is explicitly enabled
+            if not skill_create_enabled:
+                logger.debug("[JiuWenClaw] SkillCreateRail disabled by config")
+                return None
+
+            language = config.get("language", "cn")
+            rail = SkillCreateRail(
+                skills_dir=str(get_agent_skills_dir()),
+                auto_trigger=True,  # When skill_create=true, auto_trigger is always true
+                language=language,
+            )
+            self._skill_create_rail = rail
+            logger.info("[JiuWenClaw] SkillCreateRail created with auto_trigger=True")
+        except Exception as exc:
+            logger.warning("[JiuWenClaw] SkillCreateRail create failed: %s", exc)
+            rail = None
+        return rail
+
     def _build_stream_event_rail(self) -> JiuClawStreamEventRail | None:
         """Build JiuClawStreamEventRail."""
         try:
@@ -1608,6 +1653,37 @@ class JiuWenClawDeepAdapter:
         )
         return rails_list
 
+    @staticmethod
+    def _resolve_enable_task_loop(
+        config: dict[str, Any], config_base: dict[str, Any] | None
+    ) -> bool:
+        """Resolve enable_task_loop considering skill_create requirement.
+
+        SkillCreateRail requires task-loop mode (enable_task_loop=True) to function
+        because it uses AFTER_TASK_ITERATION event and enqueue_follow_up().
+        When skill_create=True, we force enable_task_loop=True regardless of user config.
+
+        Args:
+            config: The react config section.
+            config_base: The full config base (contains evolution.skill_create).
+
+        Returns:
+            True if task-loop should be enabled, False otherwise.
+        """
+        config_base = config_base or get_config()
+        skill_create_enabled = _get_skill_create_enabled(config_base)
+        configured_value = config.get("enable_task_loop", True)
+
+        if skill_create_enabled:
+            if not configured_value:
+                logger.warning(
+                    "[JiuWenClawDeepAdapter] skill_create=True requires enable_task_loop=True; "
+                    "overriding user config (enable_task_loop=%s -> True)",
+                    configured_value,
+                )
+            return True
+        return configured_value
+
     def _make_deep_agent_config(
         self,
         *,
@@ -1637,7 +1713,7 @@ class JiuWenClawDeepAdapter:
                 ),
             ),
             context_engine_config=_deep_agent_context_engine_config(config),
-            enable_task_loop=config.get("enable_task_loop", True),
+            enable_task_loop=self._resolve_enable_task_loop(config, get_config()),
             max_iterations=config.get("max_iterations", 15),
             subagents=self._build_configured_subagents(model, config, config_base),
             tools=normalized_tool_cards,
@@ -1939,7 +2015,7 @@ class JiuWenClawDeepAdapter:
             tools=tool_cards if tool_cards else [],
             subagents=configured_subagents,
             rails=rails_list if rails_list else [],
-            enable_task_loop=config.get("enable_task_loop", True),
+            enable_task_loop=self._resolve_enable_task_loop(config, config_base),
             max_iterations=config.get("max_iterations", 15),
             workspace=Workspace(
                 root_path=self._workspace_dir or "./",
@@ -2152,14 +2228,44 @@ class JiuWenClawDeepAdapter:
                     "[JiuWenClawDeepAdapter] ContextProcessorRail unregistered for plan mode (disabled)"
                 )
 
-        # 恢复自演进 rail（仅配置启用时）
-        if self._skill_evolution_rail is None and self._config_cache.get("evolution", {}).get(
-            "enabled", False
-        ):
-            self._skill_evolution_rail = self._build_skill_evolution_rail(self._config_cache)
+        # SkillEvolutionRail
+        evolution_enabled = self._config_cache.get("evolution", {}).get("enabled", False)
+        if evolution_enabled:
+            if self._skill_evolution_rail is None:
+                self._skill_evolution_rail = self._build_skill_evolution_rail(self._config_cache)
             if self._skill_evolution_rail is not None:
                 await self._instance.register_rail(self._skill_evolution_rail)
                 logger.info("[JiuWenClawDeepAdapter] SkillEvolutionRail registered for plan mode")
+        else:
+            # evolution disabled: unregister if exists
+            if self._skill_evolution_rail is not None:
+                await self._instance.unregister_rail(self._skill_evolution_rail)
+                self._skill_evolution_rail = None
+                logger.info("[JiuWenClawDeepAdapter] SkillEvolutionRail unregistered (evolution.enabled=false)")
+
+        # SkillCreateRail
+        skill_create_enabled = _get_skill_create_enabled(self._config_cache)
+        if skill_create_enabled:
+            # Warn if task_loop is disabled
+            deep_config = getattr(self._instance, "deep_config", None) if self._instance else None
+            if deep_config is not None:
+                if not deep_config.enable_task_loop:
+                    logger.warning(
+                        "[JiuWenClawDeepAdapter] skill_create=true requires task_loop mode, "
+                        "but enable_task_loop=False. SkillCreateRail may not function properly."
+                    )
+            if self._skill_create_rail is None:
+                self._skill_create_rail = self._build_skill_create_rail(self._config_cache)
+            if self._skill_create_rail is not None:
+                await self._instance.register_rail(self._skill_create_rail)
+                logger.info("[JiuWenClawDeepAdapter] SkillCreateRail registered for plan mode")
+        else:
+            # skill_create disabled: unregister if exists
+            if self._skill_create_rail is not None:
+                await self._instance.unregister_rail(self._skill_create_rail)
+                self._skill_create_rail = None
+                logger.info("[JiuWenClawDeepAdapter] SkillCreateRail unregistered (skill_create=false)")
+
         # 注册 subagent rail（plan 模式下启用）
         if self._subagent_rail is None:
             self._subagent_rail = self._build_subagent_rail()
@@ -2173,6 +2279,7 @@ class JiuWenClawDeepAdapter:
         rail_specs = (
             ("_task_planning_rail", "TaskPlanningRail"),
             ("_skill_evolution_rail", "SkillEvolutionRail"),
+            ("_skill_create_rail", "SkillCreateRail"),
             ("_subagent_rail", "SubagentRail"),
         )
 
@@ -2693,18 +2800,19 @@ class JiuWenClawDeepAdapter:
         answers = request.params.get("answers", []) if isinstance(request.params, dict) else []
         session_id = request.session_id
         resolved = False
-        if request_id.startswith("team_skill_create_"):
-            resolved = await self._handle_team_skill_create_approval(request_id, answers, session_id)
-        elif request_id.startswith("team_skill_evolve_"):
-            resolved = await self._handle_team_skill_evolve_approval(request_id, answers, session_id)
+        if request_id.startswith("team_skill_evolve_"):
+            resolved = await self._handle_team_skill_evolve_approval(
+                request_id,
+                answers,
+                session_id,
+                request.channel_id,
+            )
         elif request_id.startswith("evolve_simplify_"):
             resolved = await self._handle_governance_approval(request_id, answers, "simplify")
         elif request_id.startswith("evolve_rebuild_"):
             resolved = await self._handle_governance_approval(request_id, answers, "rebuild")
         elif request_id.startswith("skill_evolve_"):
             resolved = await self._handle_evolution_approval(request_id, answers)
-        elif request_id.startswith("skill_create_"):
-            resolved = await self._handle_skill_create_approval(request_id, answers)
 
         return AgentResponse(
             request_id=request.request_id,
@@ -2760,41 +2868,22 @@ class JiuWenClawDeepAdapter:
 
         return True
 
-    async def _handle_skill_create_approval(self, request_id: str, answers: list) -> bool:
-        """Handle approval for new Skill creation proposals.
-
-        Uses the optimizer path: calls rail.on_approve_new_skill() for accepted
-        proposals which will create the skill, or rail.on_reject_new_skill() to discard.
-        """
-        rail = self._skill_evolution_rail
-        if rail is None:
-            logger.warning("[JiuWenClaw] skill create approval failed: no SkillEvolutionRail")
-            return False
-
-        # Determine if user accepted (any answer contains "Create")
-        accepted = any(
-            isinstance(ans, dict) and "Create" in ans.get("selected_options", []) for ans in answers
-        )
-
-        if accepted:
-            await rail.on_approve_new_skill(request_id)
-            logger.info("[JiuWenClaw] skill create accepted: request_id=%s", request_id)
-        else:
-            await rail.on_reject_new_skill(request_id)
-            logger.info("[JiuWenClaw] skill create rejected: request_id=%s", request_id)
-
-        return True
-
     # ------------------------------------------------------------------
     # Team Skill approval handlers
     # ------------------------------------------------------------------
 
     @staticmethod
-    def _find_team_skill_rail(request_id: str):
+    def _find_team_skill_rail(request_id: str, channel_id: str | None = None):
         """Find TeamSkillRail that owns the given pending request_id."""
         try:
-            from jiuwenclaw.agentserver.team import get_team_manager
-            return get_team_manager().find_team_skill_rail_for_request(request_id)
+            from jiuwenclaw.agentserver.team import (
+                find_team_skill_rail_across_managers,
+                get_team_manager,
+            )
+            rail = get_team_manager(channel_id).find_team_skill_rail_for_request(request_id)
+            if rail is not None:
+                return rail
+            return find_team_skill_rail_across_managers(request_id)
         except Exception:
             return None
 
@@ -2815,40 +2904,14 @@ class JiuWenClawDeepAdapter:
                     return True
         return False
 
-    async def _handle_team_skill_create_approval(
-        self, request_id: str, answers: list, session_id: str | None = None,
-    ) -> bool:
-        rail = JiuWenClawDeepAdapter._find_team_skill_rail(request_id)
-        if rail is None:
-            logger.warning("[JiuWenClaw] team skill create approval failed: no TeamSkillRail")
-            return False
-
-        accepted = self._option_matches(answers, ("create", "创建"))
-
-        logger.info(
-            "[JiuWenClaw] team skill create approval: request_id=%s, answers=%s, accepted=%s",
-            request_id, answers, accepted,
-        )
-
-        if accepted:
-            await rail.on_approve_team_skill(request_id)
-            # Sync newly created team skill from workspace to global team_skills dir.
-            try:
-                from jiuwenclaw.agentserver.team import get_team_manager
-                get_team_manager().sync_team_skills(session_id or "")
-            except Exception as exc:
-                logger.warning("[JiuWenClaw] team skill sync after create failed: %s", exc)
-            logger.info("[JiuWenClaw] team skill create accepted: request_id=%s", request_id)
-        else:
-            await rail.on_reject_team_skill(request_id)
-            logger.info("[JiuWenClaw] team skill create rejected: request_id=%s", request_id)
-
-        return True
-
     async def _handle_team_skill_evolve_approval(
-        self, request_id: str, answers: list, session_id: str | None = None,
+        self,
+        request_id: str,
+        answers: list,
+        session_id: str | None = None,
+        channel_id: str | None = None,
     ) -> bool:
-        rail = JiuWenClawDeepAdapter._find_team_skill_rail(request_id)
+        rail = self._find_team_skill_rail(request_id, channel_id)
         if rail is None:
             logger.warning("[JiuWenClaw] team skill evolve approval failed: no TeamSkillRail")
             return False
@@ -2864,8 +2927,9 @@ class JiuWenClawDeepAdapter:
             await rail.on_approve_patch(request_id)
             # Sync updated team skill from workspace to global team_skills dir.
             try:
-                from jiuwenclaw.agentserver.team import get_team_manager
-                get_team_manager().sync_team_skills(session_id or "")
+                from jiuwenclaw.agentserver.team import sync_team_skills_across_managers
+                if session_id:
+                    sync_team_skills_across_managers(session_id)
             except Exception as exc:
                 logger.warning("[JiuWenClaw] team skill sync after patch failed: %s", exc)
             logger.info("[JiuWenClaw] team skill evolve accepted: request_id=%s", request_id)
@@ -3410,6 +3474,11 @@ class JiuWenClawDeepAdapter:
             self._skill_evolution_rail = self._build_skill_evolution_rail(self._config_cache)
         if self._skill_evolution_rail is None:
             return "演进功能初始化失败。"
+
+        # SkillCreateRail requires skill_create config
+        if _get_skill_create_enabled(self._config_cache):
+            if self._skill_create_rail is None:
+                self._skill_create_rail = self._build_skill_create_rail(self._config_cache)
         return None
 
     async def _handle_slash_command(

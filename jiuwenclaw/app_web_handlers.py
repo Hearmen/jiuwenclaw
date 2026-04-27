@@ -39,7 +39,6 @@ from jiuwenclaw.config import (
 )
 from jiuwenclaw.updater import WindowsUpdaterService
 from jiuwenclaw.utils import (
-    get_user_workspace_dir,
     get_agent_sessions_dir,
     get_env_file,
     get_root_dir,
@@ -195,6 +194,7 @@ _CONFIG_SET_ENV_MAP = {
     "perplexity_api_key": "PERPLEXITY_API_KEY",
     "github_token": "GITHUB_TOKEN",
     "evolution_auto_scan": "EVOLUTION_AUTO_SCAN",
+    "skill_create": "SKILL_CREATE",
     "free_search_ddg_enabled": "FREE_SEARCH_DDG_ENABLED",
     "free_search_bing_enabled": "FREE_SEARCH_BING_ENABLED",
     "free_search_proxy_url": "FREE_SEARCH_PROXY_URL",
@@ -365,6 +365,18 @@ def _register_web_handlers(bind: WebHandlersBindParams) -> None:
             )
             perm_cfg = raw.get("permissions") or {}
             payload["permissions_enabled"] = "true" if perm_cfg.get("enabled", False) else "false"
+            # skill_create / evolution_auto_scan: env var takes precedence, fallback to config.yaml
+            evolution_cfg = (raw.get("react") or {}).get("evolution") or {}
+            skill_create_env = os.getenv("SKILL_CREATE")
+            if skill_create_env is not None:
+                payload["skill_create"] = "true" if skill_create_env.lower() in ("true", "1", "yes") else "false"
+            else:
+                payload["skill_create"] = "true" if evolution_cfg.get("skill_create", False) else "false"
+            auto_scan_env = os.getenv("EVOLUTION_AUTO_SCAN")
+            if auto_scan_env is not None:
+                payload["evolution_auto_scan"] = "true" if auto_scan_env.lower() in ("true", "1", "yes") else "false"
+            else:
+                payload["evolution_auto_scan"] = "true" if evolution_cfg.get("auto_scan", False) else "false"
             memory_cfg = (raw.get("memory") or {}).get("forbidden_memory_definition") or {}
             payload["memory_forbidden_enabled"] = "true" if memory_cfg.get("enabled", False) else "false"
             memory_desc = memory_cfg.get("description") or {}
@@ -378,6 +390,8 @@ def _register_web_handlers(bind: WebHandlersBindParams) -> None:
             payload.setdefault("context_engine_enabled", "false")
             payload.setdefault("kv_cache_affinity_enabled", "false")
             payload.setdefault("permissions_enabled", "false")
+            payload.setdefault("skill_create", "false")
+            payload.setdefault("evolution_auto_scan", "false")
             payload.setdefault("memory_forbidden_enabled", "false")
             payload.setdefault("memory_forbidden_description", "")
             payload.setdefault("free_search_ddg_enabled", "false")

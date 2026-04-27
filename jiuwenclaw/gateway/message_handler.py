@@ -1462,13 +1462,12 @@ class MessageHandler(ABC):
 
     @staticmethod
     def _is_evolution_approval_request_id(request_id: Any) -> bool:
-        # Support skill evolution (skill_evolve_*), new skill creation (skill_create_*),
-        # and team skill evolution/creation (team_skill_evolve_*, team_skill_create_*).
+        # Support skill evolution (skill_evolve_*) and team skill evolution (team_skill_evolve_*).
+        # Note: skill creation (SkillCreateRail/TeamSkillCreateRail) uses ask_user + skill-creator
+        # flow, not the approval-based routing.
         return isinstance(request_id, str) and (
             request_id.startswith("skill_evolve_") or
-            request_id.startswith("skill_create_") or
-            request_id.startswith("team_skill_evolve_") or
-            request_id.startswith("team_skill_create_")
+            request_id.startswith("team_skill_evolve_")
         )
 
     def _queue_supplement_input(

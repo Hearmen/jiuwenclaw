@@ -188,6 +188,7 @@ telemetry:
 
 react:
   agent_name: main_agent
+  enable_task_loop: false
   max_iterations: 100
   model_name: ${MODEL_NAME:-deepseek-chat}
   skill_mode: all
@@ -256,6 +257,7 @@ react:
   evolution:
     enabled: true             # true = 启用在线 Skills 自演进
     auto_scan: false           # true = 每轮对话后自动扫描（建议先用手动 /evolve）
+    skill_create: false        # true = 注册 SkillCreateRail（单 agent）及 TeamSkillCreateRail（leader）
     skill_base_dir: "agent/skills"  # Skill 根目录
   a2x_registry:
     base_url: "http://127.0.0.1:8000"

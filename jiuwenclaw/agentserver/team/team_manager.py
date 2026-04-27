@@ -8,11 +8,10 @@ import asyncio
 import copy
 import json
 import logging
-import time
 import shutil
 from pathlib import Path
 from types import SimpleNamespace
-from typing import Any, AsyncIterator, Callable
+from typing import Any, Callable
 
 from openjiuwen.agent_teams.agent.team_agent import TeamAgent
 from openjiuwen.agent_teams.paths import team_home
@@ -44,7 +43,10 @@ from jiuwenclaw.agentserver.team.monitor_handler import TeamMonitorHandler
 from jiuwenclaw.agentserver.team.remote_member_bootstrap import release_a2x_reservations_for_team
 from jiuwenclaw.config import get_config
 from jiuwenclaw.agentserver.team.team_runtime_inheritance import (
+    MemberInfo,
     RAIL_WHITELIST,
+    RuntimeInfo,
+    TeamWorkspaceInfo,
     build_member_rails,
     filter_inheritable_ability_cards,
     get_default_model_name,
@@ -115,12 +117,23 @@ class TeamManager:
         self._team_skill_rails: dict[str, Any] = {}
         # session_id → (workspace_skills_dir, global_team_skills_dir)
         self._team_skill_sync_targets: dict[str, tuple[Path, Path]] = {}
+        # session_id → evolution watcher task
+        self._team_evolution_watchers: dict[str, asyncio.Task] = {}
 
     def has_stream_task(self, session_id: str) -> bool:
         return session_id in self._stream_tasks
 
     def pop_stream_task(self, session_id: str) -> asyncio.Task | None:
         return self._stream_tasks.pop(session_id, None)
+
+    def get_team_evolution_watcher(self, session_id: str) -> asyncio.Task | None:
+        return self._team_evolution_watchers.get(session_id)
+
+    def register_team_evolution_watcher(self, session_id: str, task: asyncio.Task) -> None:
+        self._team_evolution_watchers[session_id] = task
+
+    def pop_team_evolution_watcher(self, session_id: str) -> asyncio.Task | None:
+        return self._team_evolution_watchers.pop(session_id, None)
 
     @staticmethod
     def _is_distributed_mode(config_base: dict[str, Any]) -> bool:
@@ -288,6 +301,7 @@ class TeamManager:
             else str(team_home(spec.team_name) / "team-workspace")
         )
         team_ws_skills_dir = Path(team_ws_root) / "skills"
+        team_ws_trajectories_dir = Path(team_ws_root) / "trajectories"
 
         def resolve_member_spec(
             member_name: str | None,
@@ -505,12 +519,18 @@ class TeamManager:
             try:
                 member_rails = build_member_rails(
                     skills_dir=str(member_skills_dir_resolved) if member_skills_dir_resolved else "",
-                    language="cn",
-                    channel=resolved_channel,
-                    agent_name=getattr(agent.card, "name", "team_member"),
-                    model_name=resolved_model_name,
-                    role=role,
-                    team_ws_skills_dir=str(team_ws_skills_dir),
+                    member_info=MemberInfo(
+                        agent_name=getattr(agent.card, "name", "team_member"),
+                        model_name=resolved_model_name,
+                        role=role
+                    ),
+                    runtime=RuntimeInfo(channel=resolved_channel),
+                    team_workspace=TeamWorkspaceInfo(
+                        skills_dir=str(team_ws_skills_dir),
+                        trajectories_dir=str(team_ws_trajectories_dir),
+                        team_id=spec.team_name,
+                        config=get_config(),
+                    ),
                 )
                 from openjiuwen.harness.rails.team_skill_rail import TeamSkillRail
                 team_skill_rail: Any | None = None
@@ -524,7 +544,7 @@ class TeamManager:
                 logger.info("[TeamManager] Added %d rails for team member", len(member_rails))
                 # Register TeamSkillRail with TeamManager for approval/sync.
                 if team_skill_rail is not None:
-                    tm = get_team_manager()
+                    tm = get_team_manager(resolved_channel)
                     tm.register_team_skill_rail(session_id, team_skill_rail)
                     tm.register_team_skill_sync_target(
                         session_id,
@@ -735,10 +755,8 @@ class TeamManager:
         return self._team_skill_rails.get(session_id)
 
     def find_team_skill_rail_for_request(self, request_id: str) -> Any | None:
-        """Find the TeamSkillRail that owns a pending proposal/patch with this request_id."""
+        """Find the TeamSkillRail that owns a pending patch with this request_id."""
         for rail in self._team_skill_rails.values():
-            if request_id in getattr(rail, "_pending_skill_proposals", {}):
-                return rail
             if request_id in getattr(rail, "_pending_patch_snapshots", {}):
                 return rail
         return None
@@ -759,6 +777,10 @@ class TeamManager:
     ) -> None:
         """Register skill sync directories for the given session."""
         self._team_skill_sync_targets[session_id] = (source, target)
+
+    def has_team_skill_sync_target(self, session_id: str) -> bool:
+        """Return whether the session has a registered team skill sync target."""
+        return session_id in self._team_skill_sync_targets
 
     # ── Skill sync helpers ──────────────────────────────────────
 
@@ -781,6 +803,20 @@ class TeamManager:
             await self._destroy_team(stale_session_id)
 
     async def _destroy_team(self, session_id: str) -> bool:
+        watcher_task = self._team_evolution_watchers.pop(session_id, None)
+        if watcher_task and not watcher_task.done():
+            watcher_task.cancel()
+            try:
+                await watcher_task
+            except asyncio.CancelledError:
+                pass
+            except Exception as exc:
+                logger.warning(
+                    "[TeamManager] evolution watcher stop failed: session_id=%s error=%s",
+                    session_id,
+                    exc,
+                )
+
         stream_task = self._stream_tasks.pop(session_id, None)
         if stream_task and not stream_task.done():
             stream_task.cancel()
@@ -921,6 +957,30 @@ def get_team_manager(channel_id: str | None = None) -> TeamManager:
         manager = TeamManager()
         _team_managers[resolved_channel_id] = manager
     return manager
+
+
+def find_team_skill_rail_across_managers(request_id: str) -> Any | None:
+    """Find the TeamSkillRail that owns a pending request across all channel managers."""
+    for manager in _team_managers.values():
+        rail = manager.find_team_skill_rail_for_request(request_id)
+        if rail is not None:
+            return rail
+    return None
+
+
+def sync_team_skills_across_managers(session_id: str) -> bool:
+    """Sync team skills for the given session across all channel managers."""
+    for manager in _team_managers.values():
+        if manager.has_team_skill_sync_target(session_id):
+            manager.sync_team_skills(session_id)
+            return True
+    return False
+
+
+async def cancel_all_team_stream_tasks_across_managers(reason: str = "") -> None:
+    """Cancel team stream tasks for all channel managers."""
+    for manager in list(_team_managers.values()):
+        await manager.cancel_all_stream_tasks(reason=reason)
 
 
 def reset_team_manager(channel_id: str | None = None) -> None:

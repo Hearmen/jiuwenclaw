@@ -9,9 +9,11 @@ from __future__ import annotations
 
 import logging
 import os
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from openjiuwen.agent_evolving.trajectory import FileTrajectoryStore, TrajectoryStore
 from openjiuwen.core.foundation.tool import ToolCard
 from openjiuwen.harness.rails.filesystem_rail import FileSystemRail
 from openjiuwen.harness.rails.heartbeat_rail import HeartbeatRail
@@ -19,6 +21,7 @@ from openjiuwen.harness.rails.security_rail import SecurityRail
 from openjiuwen.harness.rails.skill_evolution_rail import SkillEvolutionRail
 from openjiuwen.harness.rails.task_planning_rail import TaskPlanningRail
 from openjiuwen.harness.rails.team_skill_rail import TeamSkillRail
+from openjiuwen.harness.rails.team_skill_create_rail import TeamSkillCreateRail
 
 from jiuwenclaw.agentserver.deep_agent.rails.avatar_rail import AvatarPromptRail
 from jiuwenclaw.agentserver.deep_agent.rails.response_prompt_rail import ResponsePromptRail
@@ -26,6 +29,31 @@ from jiuwenclaw.agentserver.deep_agent.rails.runtime_prompt_rail import RuntimeP
 from jiuwenclaw.agentserver.deep_agent.rails.stream_event_rail import JiuClawStreamEventRail
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass
+class MemberInfo:
+    """成员身份信息."""
+    agent_name: str = "team_member"
+    model_name: str = "gpt-4"
+    role: str | None = None
+
+
+@dataclass
+class RuntimeInfo:
+    """运行时环境信息."""
+    channel: str = "default"
+    language: str = "cn"
+
+
+@dataclass
+class TeamWorkspaceInfo:
+    """Team 共享 workspace 信息."""
+    skills_dir: str | None = None
+    trajectories_dir: str | None = None
+    team_id: str | None = None
+    config: dict[str, Any] | None = None
+
 
 RAIL_WHITELIST = frozenset({
     "RuntimePromptRail",
@@ -37,6 +65,7 @@ RAIL_WHITELIST = frozenset({
     "AvatarPromptRail",
     "FileSystemRail",
     "TeamSkillRail",
+    "TeamSkillCreateRail",
     "SkillEvolutionRail",
 })
 
@@ -84,24 +113,51 @@ TOOL_WHITELIST = frozenset({
 
 def build_member_rails(
     skills_dir: str,
-    language: str = "cn",
-    channel: str = "default",
-    role: str | None = None,
-    team_ws_skills_dir: str | None = None,
+    member_info: MemberInfo | None = None,
+    runtime: RuntimeInfo | None = None,
+    team_workspace: TeamWorkspaceInfo | None = None,
 ) -> list[Any]:
     """为 Team 成员创建 rails 列表.
 
     Args:
         skills_dir: 成员 skills 目录路径，非 leader 时用于 SkillEvolutionRail
-        language: 语言设置
-        channel: 渠道设置（使用真实 channel_id）
-        role: 成员角色，"leader" 时创建 TeamSkillRail
-        team_ws_skills_dir: 团队共享 workspace skills 目录，leader 角色时使用
+        member_info: 成员身份信息（agent_name, role）
+        runtime: 运行时环境信息（channel, language）
+        team_workspace: 团队共享 workspace 信息
 
     Returns:
         rail 实例列表
     """
+    member_info = member_info or MemberInfo()
+    runtime = runtime or RuntimeInfo()
+    team_workspace = team_workspace or TeamWorkspaceInfo()
+
+    # 从 dataclass 提取参数
+    agent_name = member_info.agent_name
+    model_name = member_info.model_name
+    role = member_info.role
+    channel = runtime.channel
+    language = runtime.language
+    team_ws_skills_dir = team_workspace.skills_dir
+    team_trajectories_dir = team_workspace.trajectories_dir
+    team_id = team_workspace.team_id
+    config = team_workspace.config
+
     rails_list = []
+    shared_team_trajectory_store: TrajectoryStore | None = None
+    if team_trajectories_dir:
+        try:
+            shared_team_trajectory_store = FileTrajectoryStore(Path(team_trajectories_dir))
+            logger.info(
+                "[TeamRuntime] Shared team trajectory store created: %s",
+                team_trajectories_dir,
+            )
+        except Exception as exc:
+            logger.warning(
+                "[TeamRuntime] Shared team trajectory store failed: dir=%s error=%s",
+                team_trajectories_dir,
+                exc,
+            )
 
     try:
         rail = RuntimePromptRail(
@@ -172,19 +228,49 @@ def build_member_rails(
                 llm=llm_model,
                 model=actual_model_name,
                 language=language,
+                team_trajectory_store=shared_team_trajectory_store,
                 auto_save=False,
+                team_id=team_id,
+                trajectories_dir=Path(team_trajectories_dir) if team_trajectories_dir else None,
             )
             rails_list.append(team_skill_rail)
             logger.info(
-                "[TeamRuntime] TeamSkillRail created: skills_dir=%s, model=%s",
-                team_ws_skills_dir, actual_model_name,
+                "[TeamRuntime] TeamSkillRail created: skills_dir=%s, model=%s, team_trajectories_dir=%s",
+                team_ws_skills_dir, actual_model_name, team_trajectories_dir,
             )
         except Exception as exc:
             logger.warning("[TeamRuntime] TeamSkillRail failed: %s", exc, exc_info=True)
 
+        # Leader-only: TeamSkillCreateRail for team skill creation proposals.
+        # Requires skill_create config enabled (same as SkillCreateRail for single agent).
+        # Env: SKILL_CREATE takes precedence over config.yaml.
+        env_skill_create = os.getenv("SKILL_CREATE")
+        if env_skill_create is not None:
+            skill_create_enabled = env_skill_create.lower() in ("true", "1", "yes")
+        else:
+            skill_create_enabled = (config or {}).get("evolution", {}).get("skill_create", False)
+        if skill_create_enabled and team_ws_skills_dir:
+            try:
+                team_skill_create_rail = TeamSkillCreateRail(
+                    skills_dir=team_ws_skills_dir,
+                    language=language,
+                    auto_trigger=True,
+                )
+                rails_list.append(team_skill_create_rail)
+                logger.info(
+                    "[TeamRuntime] TeamSkillCreateRail created: skills_dir=%s",
+                    team_ws_skills_dir,
+                )
+            except Exception as exc:
+                logger.warning("[TeamRuntime] TeamSkillCreateRail failed: %s", exc, exc_info=True)
+
     # Non-leader: SkillEvolutionRail for member skill self-evolution.
     if role != "leader" and skills_dir:
-        evo_rail = build_skill_evolution_rail(skills_dir=skills_dir)
+        evo_rail = build_skill_evolution_rail(
+            skills_dir=skills_dir,
+            config=config,
+            team_trajectory_store=shared_team_trajectory_store,
+        )
         if evo_rail is not None:
             rails_list.append(evo_rail)
 
@@ -313,6 +399,7 @@ def build_evolution_llm(
 def build_skill_evolution_rail(
     skills_dir: str,
     config: dict[str, Any] | None = None,
+    team_trajectory_store: TrajectoryStore | None = None,
 ) -> Any | None:
     """为 Team member 构造 SkillEvolutionRail.
 
@@ -337,11 +424,13 @@ def build_skill_evolution_rail(
             model=model_name,
             auto_scan=evolution_auto_scan,
             auto_save=True,
+            team_trajectory_store=team_trajectory_store,
         )
         logger.info(
-            "[TeamRuntime] SkillEvolutionRail created: model=%s, auto_scan=%s",
+            "[TeamRuntime] SkillEvolutionRail created: model=%s, auto_scan=%s, shared_team_store=%s",
             model_name,
             evolution_auto_scan,
+            bool(team_trajectory_store),
         )
         return rail
     except Exception as exc:
