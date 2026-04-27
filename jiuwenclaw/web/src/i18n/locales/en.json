@@ -453,7 +453,11 @@
       "teammate": "Teammate",
       "predefinedMembers": "Predefined Members",
       "addMember": "Add Member",
-      "addTeam": "Add Team"
+      "addTeam": "Add Team",
+      "lifecyclePersistent": "Persistent",
+      "lifecycleTemporary": "Temporary",
+      "teammateModeBuild": "Build Mode",
+      "teammateModePlan": "Plan Mode"
     },
     "groups": {
       "modelDefault": { "label": "Default Model (Main Chat)", "hint": "Primary chat model service and auth" },

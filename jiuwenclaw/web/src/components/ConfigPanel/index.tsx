@@ -15,11 +15,15 @@ interface AgentEntry {
   name: string;
   model: AgentModel;
   skills: string[];
-  max_iterations: string;
-  completion_timeout: string;
+  max_iterations: number;
+  completion_timeout: number;
 }
 
 interface Teammate {
+  agent_key: string;
+}
+
+interface Leader {
   member_name: string;
   display_name: string;
   persona: string;
@@ -40,7 +44,7 @@ interface TeamEntry {
   lifecycle: string;
   teammate_mode: string;
   spawn_mode: string;
-  leader: Teammate;
+  leader: Leader;
   teammate: Teammate;
   predefined_members: TeamMember[];
 }
@@ -69,8 +73,8 @@ interface ConfigPanelProps {
     agents: Record<string, {
       model: { provider: string; api_base: string; api_key: string; model: string };
       skills: string[];
-      max_iterations: string;
-      completion_timeout: string;
+      max_iterations: number;
+      completion_timeout: number;
     }>;
     team: Array<{
       team_name: string;
@@ -78,7 +82,7 @@ interface ConfigPanelProps {
       teammate_mode: string;
       spawn_mode: string;
       leader: { member_name: string; display_name: string; persona: string; agent_key: string };
-      teammate: { member_name: string; display_name: string; persona: string; agent_key: string };
+      teammate: { agent_key: string };
       predefined_members: Array<{ member_name: string; display_name: string; role_type: string; persona: string; prompt_hint: string; agent_key: string }>;
     }>;
   }) => Promise<void>;
@@ -930,11 +934,11 @@ function MultiAgentSection({
     name: "",
     model: { provider: "", api_base: "", api_key: "", model: "" },
     skills: [],
-    max_iterations: "",
-    completion_timeout: "",
+    max_iterations: 0,
+    completion_timeout: 0,
   });
 
-  const updateAgentField = (idx: number, field: keyof AgentEntry, value: string) => {
+  const updateAgentField = (idx: number, field: keyof AgentEntry, value: string | number) => {
     const copy = [...agents];
     if (field === "model") return;
     copy[idx] = { ...copy[idx], [field]: value };
@@ -974,7 +978,7 @@ function MultiAgentSection({
     onAgentsChange([...agents, { ...newAgent, name }]);
     setExpandedIdx(agents.length);
     setAddingNew(false);
-    setNewAgent({ name: "", model: { provider: "", api_base: "", api_key: "", model: "" }, skills: [], max_iterations: "", completion_timeout: "" });
+    setNewAgent({ name: "", model: { provider: "", api_base: "", api_key: "", model: "" }, skills: [], max_iterations: 0, completion_timeout: 0 });
   };
 
   const agentFields: (keyof AgentEntry)[] = ["name", "skills", "max_iterations", "completion_timeout"];
@@ -1047,6 +1051,24 @@ function MultiAgentSection({
                         className="flex-1 rounded border border-border bg-bg px-2 py-1 text-text text-xs"
                         placeholder={t("config.keys.agentSkillsPlaceholder")}
                       />
+                    ) : field === "max_iterations" ? (
+                      <input
+                        type="number"
+                        step="1"
+                        min="0"
+                        value={agent[field] ?? 0}
+                        onChange={(e) => updateAgentField(idx, field, parseInt(e.target.value) || 0)}
+                        className="flex-1 rounded border border-border bg-bg px-2 py-1 text-text text-xs"
+                      />
+                    ) : field === "completion_timeout" ? (
+                      <input
+                        type="number"
+                        step="0.1"
+                        min="0"
+                        value={agent[field] ?? 0}
+                        onChange={(e) => updateAgentField(idx, field, parseFloat(e.target.value) || 0)}
+                        className="flex-1 rounded border border-border bg-bg px-2 py-1 text-text text-xs"
+                      />
                     ) : (
                       <input
                         type="text"
@@ -1101,6 +1123,24 @@ function MultiAgentSection({
                   className="flex-1 rounded border border-border bg-bg px-2 py-1 text-text text-xs"
                   placeholder={t("config.keys.agentSkillsPlaceholder")}
                 />
+              ) : field === "max_iterations" ? (
+                <input
+                  type="number"
+                  step="1"
+                  min="0"
+                  value={newAgent[field] ?? 0}
+                  onChange={(e) => setNewAgent((p) => ({ ...p, [field]: parseInt(e.target.value) || 0 }))}
+                  className="flex-1 rounded border border-border bg-bg px-2 py-1 text-text text-xs"
+                />
+              ) : field === "completion_timeout" ? (
+                <input
+                  type="number"
+                  step="0.1"
+                  min="0"
+                  value={newAgent[field] ?? 0}
+                  onChange={(e) => setNewAgent((p) => ({ ...p, [field]: parseFloat(e.target.value) || 0 }))}
+                  className="flex-1 rounded border border-border bg-bg px-2 py-1 text-text text-xs"
+                />
               ) : (
                 <input
                   type="text"
@@ -1146,7 +1186,7 @@ function TeamItemSection({
   const [openMembers, setOpenMembers] = useState(false);
   const [expandedMemberIdx, setExpandedMemberIdx] = useState<number | null>(null);
 
-  const updateLeader = (field: keyof Teammate, value: string) => {
+  const updateLeader = (field: keyof Leader, value: string) => {
     onTeamChange({ ...team, leader: { ...team.leader, [field]: value } });
   };
 
@@ -1170,7 +1210,8 @@ function TeamItemSection({
   };
 
   const teamStringFields: (keyof TeamEntry)[] = ["team_name", "lifecycle", "teammate_mode", "spawn_mode"];
-  const teammateFields: (keyof Teammate)[] = ["member_name", "display_name", "persona", "agent_key"];
+  const teammateFields: (keyof Teammate)[] = ["agent_key"];
+  const leaderFields: (keyof Leader)[] = ["member_name", "display_name", "persona", "agent_key"];
   const memberFields: (keyof TeamMember)[] = ["member_name", "display_name", "role_type", "persona", "prompt_hint", "agent_key"];
 
   const getTeamFieldLabel = (field: string): string => {
@@ -1212,12 +1253,39 @@ function TeamItemSection({
         {teamStringFields.map((field) => (
           <div key={field} className="flex items-center gap-2 text-xs">
             <label className="w-28 text-text-muted shrink-0">{getTeamFieldLabel(field)}</label>
-            <input
-              type="text"
-              value={(team[field] as string) ?? ""}
-              onChange={(e) => updateTeamField(field, e.target.value)}
-              className="flex-1 rounded border border-border bg-bg px-2 py-1 text-text text-xs"
-            />
+            {field === "lifecycle" ? (
+              <select
+                value={team[field] ?? ""}
+                onChange={(e) => updateTeamField(field, e.target.value)}
+                className="flex-1 rounded border border-border bg-bg px-2 py-1 text-text text-xs"
+              >
+                <option value="persistent">{t("config.team.lifecyclePersistent")}</option>
+                <option value="temporary">{t("config.team.lifecycleTemporary")}</option>
+              </select>
+            ) : field === "teammate_mode" ? (
+              <select
+                value={team[field] ?? ""}
+                onChange={(e) => updateTeamField(field, e.target.value)}
+                className="flex-1 rounded border border-border bg-bg px-2 py-1 text-text text-xs"
+              >
+                <option value="build_mode">{t("config.team.teammateModeBuild")}</option>
+                <option value="plan_mode">{t("config.team.teammateModePlan")}</option>
+              </select>
+            ) : field === "spawn_mode" ? (
+              <input
+                type="text"
+                value="inprocess"
+                readOnly
+                className="flex-1 rounded border border-border bg-bg px-2 py-1 text-text text-xs opacity-60"
+              />
+            ) : (
+              <input
+                type="text"
+                value={(team[field] as string) ?? ""}
+                onChange={(e) => updateTeamField(field, e.target.value)}
+                className="flex-1 rounded border border-border bg-bg px-2 py-1 text-text text-xs"
+              />
+            )}
           </div>
         ))}
       </div>
@@ -1236,7 +1304,7 @@ function TeamItemSection({
         </button>
         {openLeader && (
           <div className="border-t border-border px-3 py-2 space-y-2">
-            {teammateFields.map((field) => (
+            {leaderFields.map((field) => (
               <div key={field} className="flex items-center gap-2 text-xs">
                 <label className="w-28 text-text-muted shrink-0">{getLeaderFieldLabel(field)}</label>
                 {field === "agent_key" ? (
@@ -1423,7 +1491,7 @@ function TeamsSection({
     teammate_mode: "",
     spawn_mode: "",
     leader: { member_name: "", display_name: "", persona: "", agent_key: "" },
-    teammate: { member_name: "", display_name: "", persona: "", agent_key: "" },
+    teammate: { agent_key: "" },
     predefined_members: [],
   });
 
@@ -1456,7 +1524,7 @@ function TeamsSection({
       teammate_mode: "",
       spawn_mode: "",
       leader: { member_name: "", display_name: "", persona: "", agent_key: "" },
-      teammate: { member_name: "", display_name: "", persona: "", agent_key: "" },
+      teammate: { agent_key: "" },
       predefined_members: [],
     });
   };
@@ -1640,9 +1708,9 @@ export function ConfigPanel({
   });
   const [draftModels, setDraftModels] = useState<ModelEntry[]>(() => storeAvailableModels.map((m) => ({ ...m })));
   const [draftAgents, setDraftAgents] = useState<AgentEntry[]>([]);
-  const [openAgents, setOpenAgents] = useState(true);
+  const [openAgents, setOpenAgents] = useState(false);
   const [draftTeams, setDraftTeams] = useState<TeamEntry[]>([]);
-  const [openTeams, setOpenTeams] = useState(true);
+  const [openTeams, setOpenTeams] = useState(false);
   const [agentsTeamsEdited, setAgentsTeamsEdited] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -1681,8 +1749,8 @@ export function ConfigPanel({
           model: matchedModel.model_name || "",
         } : { provider: "", api_base: "", api_key: "", model: modelName },
         skills: (normalizedConfig[`agent_skills_${i}`] || normalizedConfig[`agent_${i}_skills`] || "").split(/[,，]/).map((s: string) => s.trim()).filter(Boolean),
-        max_iterations: normalizedConfig[`agent_max_iterations_${i}`] || normalizedConfig[`agent_${i}_max_iterations`] || "",
-        completion_timeout: normalizedConfig[`agent_completion_timeout_${i}`] || normalizedConfig[`agent_${i}_completion_timeout`] || "",
+        max_iterations: Number(normalizedConfig[`agent_max_iterations_${i}`]) || Number(normalizedConfig[`agent_${i}_max_iterations`]) || 0,
+        completion_timeout: Number(normalizedConfig[`agent_completion_timeout_${i}`]) || Number(normalizedConfig[`agent_${i}_completion_timeout`]) || 0,
       });
     }
     return agents;
@@ -1705,9 +1773,6 @@ export function ConfigPanel({
           agent_key: normalizedConfig[`team_leader_agent_key_${i}`] || normalizedConfig[`team_${i}_leader_agent_key`] || "",
         },
         teammate: {
-          member_name: normalizedConfig[`team_teammate_member_name_${i}`] || normalizedConfig[`team_${i}_teammate_member_name`] || "",
-          display_name: normalizedConfig[`team_teammate_display_name_${i}`] || normalizedConfig[`team_${i}_teammate_display_name`] || "",
-          persona: normalizedConfig[`team_teammate_persona_${i}`] || normalizedConfig[`team_${i}_teammate_persona`] || "",
           agent_key: normalizedConfig[`team_teammate_agent_key_${i}`] || normalizedConfig[`team_${i}_teammate_agent_key`] || "",
         },
         predefined_members: [],
@@ -1889,8 +1954,8 @@ export function ConfigPanel({
         const agentsPayload: Record<string, {
           model: { provider: string; api_base: string; api_key: string; model: string };
           skills: string[];
-          max_iterations: string;
-          completion_timeout: string;
+          max_iterations: number;
+          completion_timeout: number;
         }> = {};
         for (const agent of draftAgents) {
           if (!agent.name) continue;
@@ -1997,7 +2062,7 @@ export function ConfigPanel({
                 }
               />
             ))}
-            {otherGroups.some((g) => g.tag === "agents") && (
+            {false && otherGroups.some((g) => g.tag === "agents") && (
               <div id="config-group-agents" className="rounded-xl border border-border bg-card/70 backdrop-blur-sm overflow-hidden shadow-sm">
                 <button
                   onClick={() => setOpenAgents(!openAgents)}
@@ -2038,7 +2103,7 @@ export function ConfigPanel({
                 )}
               </div>
             )}
-            {otherGroups.some((g) => g.tag === "team") && (
+            {false && otherGroups.some((g) => g.tag === "team") && (
               <div id="config-group-team" className="rounded-xl border border-border bg-card/70 backdrop-blur-sm overflow-hidden shadow-sm">
                 <button
                   onClick={() => setOpenTeams(!openTeams)}

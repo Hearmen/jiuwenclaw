@@ -497,8 +497,8 @@ function AppContent() {
     agents: Record<string, {
       model: { provider: string; api_base: string; api_key: string; model: string };
       skills: string[];
-      max_iterations: string;
-      completion_timeout: string;
+      max_iterations: number;
+      completion_timeout: number;
     }>;
     team: Array<{
       team_name: string;
@@ -506,7 +506,7 @@ function AppContent() {
       teammate_mode: string;
       spawn_mode: string;
       leader: { member_name: string; display_name: string; persona: string; agent_key: string };
-      teammate: { member_name: string; display_name: string; persona: string; agent_key: string };
+      teammate: { agent_key: string };
       predefined_members: Array<{ member_name: string; display_name: string; role_type: string; persona: string; prompt_hint: string; agent_key: string }>;
     }>;
   }) => {

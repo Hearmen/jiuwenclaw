@@ -452,7 +452,11 @@
       "teammate": "Teammate",
       "predefinedMembers": "Predefined Members",
       "addMember": "添加成员",
-      "addTeam": "添加Team"
+      "addTeam": "添加Team",
+      "lifecyclePersistent": "持久化 (persistent)",
+      "lifecycleTemporary": "临时 (temporary)",
+      "teammateModeBuild": "构建模式 (build_mode)",
+      "teammateModePlan": "计划模式 (plan_mode)"
     },
     "groups": {
       "modelDefault": { "label": "默认模型（主对话）", "hint": "主对话模型服务与鉴权参数" },
