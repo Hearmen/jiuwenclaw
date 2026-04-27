@@ -48,6 +48,7 @@ const PERMISSION_TOOL_RE = /工具\s+`([^`]+)`\s+需要授权/;
 const PERMISSION_RISK_RE = /安全风险评估：\**\s*([^\s*]+)?\s*\**([^*\n]+?风险)\**/m;
 const PERMISSION_QUOTE_RE = /^>\s*(.+)$/gm;
 const PERMISSION_JSON_BLOCK_RE = /```json\s*([\s\S]*?)\s*```/i;
+const RUNNING_TIMER_RESET_GRACE_MS = 15_000;
 
 type PermissionSummary = {
   tool?: string;
@@ -350,6 +351,7 @@ export class AppScreen implements Component, Focusable {
   private animationTimer: ReturnType<typeof setInterval> | null = null;
   private animationPhase = 0;
   private runningStartedAtMs: number | null = null;
+  private runningStoppedAtMs: number | null = null;
   private pendingSubmittedInput: string | null = null;
   private pendingSubmittedBaseline = 0;
   private pendingSubmittedSessionId: string | null = null;
@@ -1466,14 +1468,25 @@ export class AppScreen implements Component, Focusable {
     const shouldAnimate =
       !snapshot.isInterrupted && (snapshot.isProcessing || hasRunningTools || teamWorking);
     if (!shouldAnimate) {
+      const nowMs = Date.now();
+      if (this.runningStoppedAtMs === null) {
+        this.runningStoppedAtMs = nowMs;
+      }
       if (this.animationTimer) {
         clearInterval(this.animationTimer);
         this.animationTimer = null;
       }
       this.animationPhase = 0;
-      this.runningStartedAtMs = null;
+      if (
+        this.runningStartedAtMs !== null &&
+        nowMs - this.runningStoppedAtMs >= RUNNING_TIMER_RESET_GRACE_MS
+      ) {
+        this.runningStartedAtMs = null;
+        this.runningStoppedAtMs = null;
+      }
       return;
     }
+    this.runningStoppedAtMs = null;
     if (snapshot.isProcessing) {
       if (this.runningStartedAtMs === null) {
         this.runningStartedAtMs = Date.now();

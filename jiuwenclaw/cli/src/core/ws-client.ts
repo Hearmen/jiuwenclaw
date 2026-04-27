@@ -18,7 +18,7 @@ export class WsClient {
   private handlers: FrameHandler[] = [];
   private pending = new Map<string, PendingRequest>();
   private retryCount = 0;
-  private readonly maxRetries = 5;
+  private readonly maxBackoffRetries = 5;
   private readonly baseDelay = 1000;
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   private _status: ConnectionStatus = "idle";
@@ -182,13 +182,13 @@ export class WsClient {
   }
 
   private handleReconnect(): void {
-    if (this.retryCount >= this.maxRetries) {
-      this.setStatus("idle");
-      return;
-    }
-
     this.setStatus("reconnecting");
-    const delay = Math.min(this.baseDelay * 2 ** this.retryCount, 30000);
+    // Keep behavior aligned with web client:
+    // use exponential backoff for the first retries, then keep retrying
+    // at a fixed interval so long-running tasks can recover automatically.
+    const delay = this.retryCount < this.maxBackoffRetries
+      ? Math.min(this.baseDelay * 2 ** this.retryCount, 30000)
+      : 2000;
     this.retryCount += 1;
     this.reconnectTimer = setTimeout(() => this.doConnect(), delay);
   }
