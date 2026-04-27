@@ -111,7 +111,7 @@ def test_deep_adapter_subagents_includes_optional_browser_and_configured_researc
             return_value="browser_spec",
         ) as mock_browser,
     ):
-        subagents = adapter.build_configured_subagents(model, config)
+        subagents, _ = adapter.build_configured_subagents(model, config)
 
     assert subagents == ["research_spec", "browser_spec"]
     mock_research.assert_called_once_with(
@@ -146,7 +146,7 @@ def test_deep_adapter_subagents_omits_research_without_explicit_enable():
             return_value="browser_spec",
         ) as mock_browser,
     ):
-        subagents = adapter.build_configured_subagents(model, config)
+        subagents, _ = adapter.build_configured_subagents(model, config)
 
     # DeepAdapter: no research_agent configured, browser enabled
     assert subagents == ["browser_spec"]

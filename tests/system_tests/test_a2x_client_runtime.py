@@ -128,7 +128,7 @@ async def _create_adapter_and_run_chat(config_base: dict) -> AsyncMock:
         patch.object(interface_module.JiuWenClawDeepAdapter, "_get_tool_cards", AsyncMock(return_value=[])),
         patch.object(interface_module.JiuWenClawDeepAdapter, "_build_agent_rails", return_value=[]),
         patch.object(interface_module.JiuWenClawDeepAdapter, "_create_sys_operation", return_value=MagicMock()),
-        patch.object(interface_module.JiuWenClawDeepAdapter, "_build_configured_subagents", return_value=None),
+        patch.object(interface_module.JiuWenClawDeepAdapter, "_build_configured_subagents", return_value=(None, False)),
         patch.object(interface_module.JiuWenClawDeepAdapter, "_update_runtime_config", AsyncMock()),
         patch.object(interface_module.JiuWenClawDeepAdapter, "load_user_rails", AsyncMock()),
         patch.object(interface_module, "get_config", return_value=config_base),

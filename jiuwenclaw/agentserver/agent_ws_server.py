@@ -490,11 +490,13 @@ class AgentWebSocketServer:
             return
 
         mode = request.params.get("mode", "agent.plan").split(".")[0]
+        sub_mode = request.params.get("mode", "agent.plan").split(".")[1]
         trusted_dirs = request.params.get("trusted_dirs", None)
         agent = await self._agent_manager.get_agent(
             channel_id=channel_id,
             mode=mode,
             workspace_dir=trusted_dirs[0] if trusted_dirs else None,
+            sub_mode=sub_mode,
         )
         if agent is None:
             raise ValueError("Failed to get agent")
@@ -502,7 +504,6 @@ class AgentWebSocketServer:
         # code 模式：在真实 session 上执行 switch_mode，确保 state 持久化
         if mode == "code":
             from openjiuwen.core.single_agent import create_agent_session
-            sub_mode = request.params.get("mode", "agent.plan").split(".")[1]
             session = create_agent_session(session_id=request.session_id, card=agent.get_instance().card)
             await session.pre_run(inputs=None)  # 从 checkpointer 加载历史 state
             agent.get_instance().switch_mode(session=session, mode=sub_mode)
@@ -525,11 +526,13 @@ class AgentWebSocketServer:
         """流式处理：调用 process_message_stream，逐条发送 E2AResponse 线 JSON。"""
         channel_id = request.channel_id or "default"
         mode = request.params.get("mode", "agent.plan").split(".")[0]
+        sub_mode = request.params.get("mode", "agent.plan").split(".")[1]
         trusted_dirs = request.params.get("trusted_dirs", None)
         agent = await self._agent_manager.get_agent(
             channel_id=channel_id,
             mode=mode,
             workspace_dir=trusted_dirs[0] if trusted_dirs else None,
+            sub_mode=sub_mode,
         )
         if agent is None:
             raise ValueError("Failed to get agent")
@@ -537,7 +540,6 @@ class AgentWebSocketServer:
         # code 模式：在真实 session 上执行 switch_mode，确保 state 持久化
         if mode == "code":
             from openjiuwen.core.single_agent import create_agent_session
-            sub_mode = request.params.get("mode", "agent.plan").split(".")[1]
             session = create_agent_session(session_id=request.session_id, card=agent.get_instance().card)
             await session.pre_run(inputs=None)  # 从 checkpointer 加载历史 state
             agent.get_instance().switch_mode(session=session, mode=sub_mode)

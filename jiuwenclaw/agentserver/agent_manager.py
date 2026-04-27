@@ -54,14 +54,14 @@ class AgentManager:
         self._latest_env_overrides: dict[str, Any] = {}
 
     async def _create_agent(
-        self, agent_key: str, mode: str = "agent", config: dict[str, Any] | None = None
+        self, agent_key: str, mode: str = "agent", config: dict[str, Any] | None = None, sub_mode: str = None
     ) -> "JiuWenClaw":
         """创建 Agent 实例.
 
         Args:
             agent_key: Agent 键（如 "acp" 或 "default"）
             config: 可选配置
-
+            sub_mode: 子模式
         Returns:
             JiuWenClaw 实例
         """
@@ -73,9 +73,9 @@ class AgentManager:
                 os.environ.pop(key, None)
             else:
                 os.environ[key] = str(env_value)
-        logger.info("[AgentManager] Creating %s agent (mode=%s)", agent_key, mode)
+        logger.info("[AgentManager] Creating %s agent (mode=%s, sub_mode=%s)", agent_key, mode, sub_mode)
         agent = JiuWenClaw()
-        await agent.create_instance(config, mode=mode)
+        await agent.create_instance(config, mode=mode, sub_mode=sub_mode)
         self.agents.setdefault(agent_key, {})[mode] = agent
         logger.info("[AgentManager] %s agent created", agent_key)
         return agent
@@ -154,7 +154,8 @@ class AgentManager:
             self,
             channel_id: str = "",
             mode: str = "agent",
-            workspace_dir: str = None
+            workspace_dir: str = None,
+            sub_mode: str = None
     ) -> "JiuWenClaw | None":
         """获取 Agent 实例（自动创建）.
 
@@ -164,6 +165,7 @@ class AgentManager:
             channel_id: 通道 ID
             mode: 每个模式对应的实例
             workspace_dir: project dir
+            sub_mode: 子模式
 
         Returns:
             JiuWenClaw | None: Agent 实例
@@ -177,7 +179,7 @@ class AgentManager:
                     **config,
                     **_build_acp_agent_config()
                 }
-            await self._create_agent(channel_id, mode, config)
+            await self._create_agent(channel_id, mode, config, sub_mode)
         return self.agents.get(channel_id, {}).get(mode)
 
     def get_agent_nowait(self, channel_id: str = "") -> "JiuWenClaw | None":

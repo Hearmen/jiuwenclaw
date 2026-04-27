@@ -227,16 +227,18 @@ class JiuWenClaw:
             logger.info("[JiuWenClaw] Initialized adapter: sdk=%s, mode=%s", self._sdk_name, mode)
         return self._adapter
 
-    async def create_instance(self, config: dict[str, Any] | None = None, *, mode: str = "agent") -> None:
+    async def create_instance(self, config: dict[str, Any] | None = None, *,
+                              mode: str = "agent", sub_mode: str = None) -> None:
         """初始化 Agent 实例.
 
         Args:
             config: 可选配置，透传给底层 adapter.
             mode: 实例化模式，"claw"（默认）或 "code"，透传给底层 adapter.
+            sub_mode: 子模式
         """
         adapter = self._ensure_adapter(mode=mode)
-        await adapter.create_instance(config, mode=mode)
-        logger.info("[JiuWenClaw] Agent instance created: sdk=%s, mode=%s", self._sdk_name, mode)
+        await adapter.create_instance(config, mode=mode, sub_mode=sub_mode)
+        logger.info("[JiuWenClaw] Agent instance created: sdk=%s, mode=%s, sub_mode=%s", self._sdk_name, mode, sub_mode)
 
     async def reload_agent_config(
             self,

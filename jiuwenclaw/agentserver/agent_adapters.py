@@ -29,7 +29,8 @@ class AgentAdapter(Protocol):
     adapter modules implement it without any coupling to each other.
     """
 
-    async def create_instance(self, config: dict[str, Any] | None = None, *, mode: str = "claw") -> None:
+    async def create_instance(self, config: dict[str, Any] | None = None, *,
+                              mode: str = "claw", sub_mode: str = None) -> None:
         """Initialise the underlying SDK agent from config.
 
         Called once on startup and again after skill install/uninstall.

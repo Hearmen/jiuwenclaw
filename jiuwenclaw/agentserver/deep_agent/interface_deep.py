@@ -687,7 +687,7 @@ class JiuWenClawDeepAdapter:
         model: Model,
         config: dict[str, Any],
         config_base: dict[str, Any] | None = None,
-    ) -> list[Any] | None:
+    ) -> tuple[list[Any] | None, bool]:
         """Build configured research + browser subagents (agent 模式)."""
         react_cfg = config if isinstance(config, dict) else {}
         subagents_cfg = react_cfg.get("subagents")
@@ -695,8 +695,13 @@ class JiuWenClawDeepAdapter:
         resolved_language = self._resolve_runtime_language()
         workspace = self._workspace_dir or "./"
         subagents: list[Any] = []
+        should_add_general_purpose = False
 
         if isinstance(subagents_cfg, dict):
+            general_agent_cfg = subagents_cfg.get("general_agent")
+            if self._is_subagent_enabled(general_agent_cfg):
+                should_add_general_purpose = True
+
             research_agent_cfg = subagents_cfg.get("research_agent")
             if self._is_subagent_enabled(research_agent_cfg):
                 subagents.append(
@@ -755,7 +760,7 @@ class JiuWenClawDeepAdapter:
                 "skipping browser subagent registration"
             )
 
-        return subagents or None
+        return subagents or None, should_add_general_purpose
 
     @staticmethod
     def _build_mcp_server_config(entry: dict[str, Any]) -> McpServerConfig | None:
@@ -1743,6 +1748,7 @@ class JiuWenClawDeepAdapter:
         normalized_tool_cards = [
             tool.card if hasattr(tool, "card") else tool for tool in (tool_cards or [])
         ]
+        configured_subagents, should_add_general_agent = self._build_configured_subagents(model, config, config_base)
         return DeepAgentConfig(
             model=model,
             card=agent_card,
@@ -1758,7 +1764,8 @@ class JiuWenClawDeepAdapter:
             context_engine_config=_deep_agent_context_engine_config(config),
             enable_task_loop=self._resolve_enable_task_loop(config, get_config()),
             max_iterations=config.get("max_iterations", 15),
-            subagents=self._build_configured_subagents(model, config, config_base),
+            subagents=configured_subagents,
+            add_general_purpose_agent=should_add_general_agent,
             tools=normalized_tool_cards,
             workspace=workspace_obj,
             skills=None,
@@ -1996,7 +2003,7 @@ class JiuWenClawDeepAdapter:
         return None
 
     async def create_instance(
-        self, config: dict[str, Any] | None = None, *, mode: str = "agent.plan"
+        self, config: dict[str, Any] | None = None, *, mode: str = "agent.plan", sub_mode: str = None
     ) -> None:
         """初始化 DeepAgent 实例.
 
@@ -2006,6 +2013,7 @@ class JiuWenClawDeepAdapter:
                 - workspace_dir: 工作区目录，默认 "workspace/agent"。
                 - 其余字段透传给 DeepAgentConfig。
             mode: 实例化模式，默认 "agent.plan"，使用 create_deep_agent。
+            sub_mode: 子模式
         """
         await self.set_checkpoint()
 
@@ -2042,7 +2050,7 @@ class JiuWenClawDeepAdapter:
             raise RuntimeError("sys_operation is not available, maybe task is not running")
 
         self._sys_operation = sys_operation
-        configured_subagents = self._build_configured_subagents(model, config, config_base)
+        configured_subagents, should_add_general_agent = self._build_configured_subagents(model, config, config_base)
         common_kwargs = dict(
             model=model,
             card=agent_card,
@@ -2059,6 +2067,7 @@ class JiuWenClawDeepAdapter:
             subagents=configured_subagents,
             rails=rails_list if rails_list else [],
             enable_task_loop=self._resolve_enable_task_loop(config, config_base),
+            add_general_purpose_agent=should_add_general_agent if sub_mode == "plan" else False,
             max_iterations=config.get("max_iterations", 15),
             workspace=Workspace(
                 root_path=self._workspace_dir or "./",
@@ -2080,7 +2089,7 @@ class JiuWenClawDeepAdapter:
         self._registered_mcp_servers.clear()
         await self._register_mcp_servers_from_config(config_base, tag=f"agent.{mode}")
         logger.info(
-            "[JiuWenClawDeepAdapter] 初始化完成: agent_name=%s, mode=%s", self._agent_name, mode
+            "[JiuWenClawDeepAdapter] 初始化完成: agent_name=%s, mode=%s, sub_mode=%s", self._agent_name, mode, sub_mode
         )
 
         # 动态加载用户自定义的 Rail 扩展
@@ -4401,7 +4410,7 @@ class JiuWenClawDeepAdapter:
                 }
 
         return response
-    
+
     async def _watch_evolution_and_push(self, rid: str, cid: str, session_id: str) -> None:
         """等待演进后台 task 完成，通过 send_push 推送审批事件。
 

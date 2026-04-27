@@ -107,6 +107,7 @@ def _append_explore_and_plan_subagents(
     model: Model,
     workspace: str | None = None,
 ) -> list[SubAgentConfig | DeepAgent]:
+    # explore_agent / plan_agent 是 code 模式的核心子代理 — 默认启用
     effective = list(subagents)
     if not _subagent_list_has_name(effective, "explore_agent"):
         effective.append(
@@ -149,7 +150,8 @@ class JiuwenClawCodeAdapter(JiuWenClawDeepAdapter):
 
     # ─── 初始化 ──────────────────────────────
 
-    async def create_instance(self, config: dict[str, Any] | None = None, *, mode: str = "code") -> None:
+    async def create_instance(self, config: dict[str, Any] | None = None, *,
+                              mode: str = "code", sub_mode: str = None) -> None:
         """初始化 DeepAgent 实例（code 模式）.
 
         统一使用 create_deep_agent()，不传 vision_model_config /

@@ -145,7 +145,7 @@ def test_deep_adapter_subagents_defaults_to_none_when_unconfigured(
         staticmethod(lambda: False),
     )
     # DeepAdapter: no subagents configured, no browser → None
-    subagents = adapter.build_configured_subagents(
+    subagents, _ = adapter.build_configured_subagents(
         model,
         {"max_iterations": 8},
         {},
@@ -173,7 +173,7 @@ def test_deep_adapter_subagents_includes_browser_by_default_when_runtime_enabled
     )
     monkeypatch.setenv("BROWSER_DRIVER", "managed")
 
-    subagents = adapter.build_configured_subagents(
+    subagents, _ = adapter.build_configured_subagents(
         model,
         {"max_iterations": 8},
         {},
@@ -208,7 +208,7 @@ def test_deep_adapter_subagents_only_includes_explicitly_enabled_agents(
     )
     monkeypatch.setenv("BROWSER_DRIVER", "managed")
 
-    subagents = adapter.build_configured_subagents(
+    subagents, _ = adapter.build_configured_subagents(
         model,
         {
             "max_iterations": 8,
@@ -242,7 +242,7 @@ def test_deep_adapter_subagents_skips_browser_without_runtime(
 
     # When browser runtime is disabled and no other subagents are configured,
     # the result should be None
-    subagents = adapter.build_configured_subagents(
+    subagents, _ = adapter.build_configured_subagents(
         model,
         {
             "subagents": {
