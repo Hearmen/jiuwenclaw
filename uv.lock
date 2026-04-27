@@ -1592,7 +1592,7 @@ requires-dist = [
     { name = "lark-oapi", specifier = ">=1.5.3" },
     { name = "loguru", specifier = ">=0.7.3" },
     { name = "mutagen", specifier = ">=1.47.0" },
-    { name = "openjiuwen", specifier = "==0.1.11.post1" },
+    { name = "openjiuwen", specifier = "==0.1.11.post2" },
     { name = "opentelemetry-api", specifier = ">=1.25.0" },
     { name = "opentelemetry-exporter-otlp-proto-grpc", specifier = ">=1.25.0" },
     { name = "opentelemetry-exporter-otlp-proto-http", specifier = ">=1.25.0" },
@@ -2327,7 +2327,7 @@ wheels = [
 
 [[package]]
 name = "openjiuwen"
-version = "0.1.11.post1"
+version = "0.1.11.post2"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "aiofiles" },
@@ -2364,9 +2364,9 @@ dependencies = [
     { name = "tiktoken" },
     { name = "transformers" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/78/84/52c355b747dd635c299314804aa7e6087fd49b2e61bf077156e9fb11dd71/openjiuwen-0.1.11.post1.tar.gz", hash = "sha256:86497a79b3f31302e772afb118964cbad628376e66ceed3a952549d0a31ff311", size = 2151124, upload-time = "2026-04-27T14:35:39.953Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/96/33/6434c5f48cea47cf28c1359b05ccb0f8f9a21794ae4ce4fd15a7eed2e184/openjiuwen-0.1.11.post2.tar.gz", hash = "sha256:0e73051fc8cba99af70238c5154126d80188a5b0242fbb0b407939a23c47f992", size = 2153113, upload-time = "2026-04-27T17:01:15.47Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/5a/77/cb825e6540f1cf1fdb7ec9b75162bf1e15efa93f044c611d3faccecba8fe/openjiuwen-0.1.11.post1-py3-none-any.whl", hash = "sha256:b219f5966f11e6fe1f761f829fd3daedd74e3402fdf42338b803188834ace5d3", size = 2879447, upload-time = "2026-04-27T14:35:37.171Z" },
+    { url = "https://files.pythonhosted.org/packages/1e/1a/c075b78c348aa094d28deddbf1a509d8c50a15f65523ed0af06d42644fc9/openjiuwen-0.1.11.post2-py3-none-any.whl", hash = "sha256:7ce32ebd4f7ddaa674381e3360987c9d5979c607a90204af9f53bac98268895b", size = 2881792, upload-time = "2026-04-27T17:01:12.9Z" },
 ]
 
 [[package]]
