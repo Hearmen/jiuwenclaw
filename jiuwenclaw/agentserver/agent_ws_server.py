@@ -490,7 +490,10 @@ class AgentWebSocketServer:
             return
 
         mode = request.params.get("mode", "agent.plan").split(".")[0]
-        sub_mode = request.params.get("mode", "agent.plan").split(".")[1]
+        try:
+            sub_mode = request.params.get("mode", "agent.plan").split(".")[1]
+        except IndexError:
+            sub_mode ="plan"
         trusted_dirs = request.params.get("trusted_dirs", None)
         agent = await self._agent_manager.get_agent(
             channel_id=channel_id,
@@ -526,7 +529,10 @@ class AgentWebSocketServer:
         """流式处理：调用 process_message_stream，逐条发送 E2AResponse 线 JSON。"""
         channel_id = request.channel_id or "default"
         mode = request.params.get("mode", "agent.plan").split(".")[0]
-        sub_mode = request.params.get("mode", "agent.plan").split(".")[1]
+        try:
+            sub_mode = request.params.get("mode", "agent.plan").split(".")[1]
+        except IndexError:
+            sub_mode = "plan"
         trusted_dirs = request.params.get("trusted_dirs", None)
         agent = await self._agent_manager.get_agent(
             channel_id=channel_id,
