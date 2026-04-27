@@ -263,7 +263,9 @@ react:
     base_url: "http://127.0.0.1:8000"
     timeout: 30.0
     api_key: ""
-    ownership_file: false
+    # null uses the SDK default ownership store under the process HOME.
+    # Keep ownership persistent so teardown can call replace_agent_card safely.
+    ownership_file:
     # Allowed values: teammate / teamleader
     role: "teammate"
     # When role=teammate, automatic blank-agent registration during agent

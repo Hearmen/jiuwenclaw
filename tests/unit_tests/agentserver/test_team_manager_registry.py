@@ -40,10 +40,19 @@ def test_get_team_manager_is_scoped_by_channel() -> None:
 async def test_team_manager_keeps_single_session_per_channel(monkeypatch: pytest.MonkeyPatch) -> None:
     destroyed_sessions: list[str] = []
     created_sessions: list[str] = []
+    stopped_messagers: list[str] = []
 
     class _FakeTeamAgent:
         def __init__(self, session_id: str) -> None:
             self.session_id = session_id
+            self._messager = self._FakeMessager(session_id)
+
+        class _FakeMessager:
+            def __init__(self, session_id: str) -> None:
+                self.session_id = session_id
+
+            async def stop(self) -> None:
+                stopped_messagers.append(self.session_id)
 
         async def destroy_team(self, force: bool = False) -> bool:
             _ = force
@@ -83,6 +92,7 @@ async def test_team_manager_keeps_single_session_per_channel(monkeypatch: pytest
 
     assert created_sessions == ["web-s1", "fs-s1", "web-s2"]
     assert destroyed_sessions == ["web-s1"]
+    assert stopped_messagers == ["web-s1"]
     assert web_manager.get_team_agent("web-s1") is None
     assert isinstance(web_manager.get_team_agent("web-s2"), _FakeTeamAgent)
     assert isinstance(feishu_manager.get_team_agent("fs-s1"), _FakeTeamAgent)

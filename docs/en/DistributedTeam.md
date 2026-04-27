@@ -17,7 +17,7 @@ The main config file is usually `~/.jiuwenclaw/config/config.yaml`. Override the
 | **Transport** | `team.transport.type`: `inprocess \| pyzmq`; distributed setups typically use `pyzmq` |
 | **Entry** | `TeamManager` (`jiuwenclaw/agentserver/team/team_manager.py`): normalizes transport / identity before building `TeamAgentSpec` |
 | **Loading** | `load_team_spec_dict()` (`jiuwenclaw/agentserver/team/config_loader.py`): `name` / `display_name` compatibility for leader and `predefined_members` |
-| **Sample** | `jiuwenclaw/resources/config.team.distributed.yaml` (generic) plus `config.team.distributed.leader.yaml` / `config.team.distributed.teammate.yaml` (current role-specific templates) |
+| **Sample** | `jiuwenclaw/resources/config.team.distributed.leader.yaml` / `config.team.distributed.teammate.yaml` (current role-specific templates) |
 
 **Session semantics**: aligned with regular Team—**single active session** per process: creating a Team for a new session tears down other session Teams first. This document does not add a multi-session routing layer for distributed mode.
 
@@ -25,7 +25,7 @@ The main config file is usually `~/.jiuwenclaw/config/config.yaml`. Override the
 
 ## 2. Config keys you will touch
 
-Typical keys for distributed integration (full template: `config.team.distributed.yaml`; role-specific templates: `config.team.distributed.leader.yaml` / `config.team.distributed.teammate.yaml`).
+Typical keys for distributed integration (templates: `config.team.distributed.leader.yaml` / `config.team.distributed.teammate.yaml`).
 
 | Key | Meaning |
 |-----|---------|
@@ -117,9 +117,13 @@ The current implementation is explicitly split:
   - Leader sends bootstrap through direct ZMQ (`jiuwen.remote_teammate_bootstrap.direct`) after `spawn_member`.
   - Teammate listens on `bootstrap_direct_addr`, applies leader route, and adopts the target member.
   - ACK is treated as direct transport acknowledgment (not DB-ACK message flow).
-  - Reservation lifecycle: release immediately when bootstrap delivery fails; keep the reservation after successful bootstrap and release it when the Team is dissolved / session runtime is destroyed.
+  - Reservation lifecycle: the leader releases immediately when bootstrap delivery fails; after successful bootstrap, the leader does not actively release that reservation.
+  - When the Team is dissolved, the leader sends `jiuwen.remote_team_destroy.direct` to each reserved teammate over direct ZMQ. The teammate cleans up its local session/team runtime, then uses A2X `replace_agent_card` to reset its own agent card back to idle teammate state; `bootstrap_direct_addr` stays alive so it can accept the next bootstrap.
+  - On the teammate side, bootstrap may temporarily build an auxiliary `TeamAgent` to read shared DB/context. That helper must not remain cached in `TeamManager._team_agents`; after context construction it must stop its runtime/messager and be removed from the cache.
+  - The real dynamic teammate runtime retargets its in-process loopback `direct_addr` to an available port instead of reusing the agent-core default `tcp://127.0.0.1:16000`, avoiding publish/event port conflicts.
 - **Data plane**:
   - Business messages/tasks (create/claim/complete, normal team messaging) continue through team runtime + shared storage.
+  - `team.storage` shares business state such as tasks, member status, and messages. The default `team-workspace` directory is still created under each process' own HOME; it is not a cross-process physical shared directory by itself.
 - **Fallback policy (current)**:
   - Leader no longer falls back to `team_message` when direct bootstrap send fails.
   - Teammate no longer uses DB polling fallback for bootstrap intake.
@@ -128,23 +132,25 @@ The current implementation is explicitly split:
 
 ---
 
-## 4. Current recommended config usage (templates)
+## 4. Current recommended config usage (complete templates)
 
-Use the role templates in the repo:
+The role templates in the repo are now **complete `config.yaml` files**. They include the base agent/model config, A2X registry config, the top-level `team` runtime marker, and the actual `modes.team.jiuwen_team` TeamAgentSpec config. For deployment, copy one template directly into the matching HOME config path; no manual merge with the default `config.yaml` is required.
 
 - `jiuwenclaw/resources/config.team.distributed.leader.yaml`
 - `jiuwenclaw/resources/config.team.distributed.teammate.yaml`
 
 Suggested workflow:
 
-1. Copy each template into the matching config root (`<LEADER_HOME>/.jiuwenclaw/config/config.yaml` and `<TEAMMATE_HOME>/.jiuwenclaw/config/config.yaml`).
+1. Copy each complete template into the matching config root (`<LEADER_HOME>/.jiuwenclaw/config/config.yaml` and `<TEAMMATE_HOME>/.jiuwenclaw/config/config.yaml`).
 2. Adjust:
    - `react.a2x_registry.base_url` / `dataset` so leader and teammate use the same registry dataset.
    - teammate `team.transport.params.bootstrap_direct_addr` or `react.a2x_registry.endpoint` so the registry advertises a reachable address.
    - `team.storage.params.connection_string` (must be shared and identical on both sides).
    - teammate `team.runtime.member_name` as its default local identity; leader no longer uses it for address lookup.
+   - IPs/ports under `team.transport.params.*` and `modes.team.jiuwen_team.transport.params.*` (do not use loopback-only `127.0.0.1` values for multi-host deployments).
+3. Prepare model environment variables before startup, for example `API_BASE` / `API_KEY` / `MODEL_PROVIDER` / `MODEL_NAME`; secrets in the templates remain environment-variable placeholders or empty strings.
 
-Minimal ready-to-use copy commands:
+Minimal ready-to-use copy commands for the complete templates:
 
 ```bash
 # leader
@@ -175,7 +181,14 @@ Both sides must agree on:
 - `team.runtime.role` as `leader` vs `teammate`
 - `react.a2x_registry` pointing at the **same registry dataset**
 - Teammate advertises its own bootstrap endpoint; leader does not need teammate addresses
-- `team.storage.params.connection_string` pointing at the **same** sqlite file (or equivalent shared storage)
+- `team.storage.params.connection_string` pointing at the **same database** (for example PostgreSQL, or a sqlite file visible to all nodes)
+
+Note: `team.workspace.enabled=true` enables team workspace semantics; unless both sides explicitly configure a jointly visible workspace root, leader and teammate create local directories under their own HOME:
+
+- `<LEADER_HOME>/.jiuwenclaw/.agent_teams/<team_name>/team-workspace`
+- `<TEAMMATE_HOME>/.jiuwenclaw/.agent_teams/<team_name>/team-workspace`
+
+These paths have the same shape but are not the same physical directory. If the leader must directly read files written by a teammate, use a shared mount path or return results through messages, DB state, or file transfer tooling.
 
 Open firewall ports as needed; replace `127.0.0.1` with real IPs for multi-host setups.
 
@@ -278,7 +291,10 @@ If any step fails, output FAILED_AT_STEP=<n> and the error.
 | UI idle while backends run | Frontend must use `VITE_WS_BASE` (not `VITE_WS_URL`). |
 | Teammate cannot reach leader | Firewall, or the leader address sent in bootstrap is still `127.0.0.1` on a multi-host setup. |
 | Leader did not get a teammate from registry | Check registry logs for `POST /api/datasets/<dataset>/reservations 200 OK`; check teammate blank-agent registration succeeded. |
-| Teammate can be reserved twice too early | Check that leader does not release the reservation immediately after successful bootstrap; current behavior releases it when the Team is dissolved. |
+| Teammate can be reserved twice too early | Check that leader does not release the reservation immediately after successful bootstrap; current design lets teammate restore itself to idle with `replace_agent_card` after receiving destroy. |
+| Teammate cannot bootstrap again after Team dissolve | Check teammate logs for `teammate applied team destroy notification ... cleaned=True`; `cleaned=False` or `cleanup failed` means the old team runtime / messager may still be partially alive. |
+| `Address already in use (tcp://127.0.0.1:16000)` | The teammate process may still have an auxiliary `TeamAgent` or old dynamic runtime alive. Confirm the bootstrap helper is removed from `TeamManager` cache and its messager is stopped after context construction, and that dynamic runtime retargeted to a fresh `direct_addr`. |
+| Leader and teammate both have `team-workspace/result.txt` with different contents | Default workspace paths are local to each process HOME, not a shared filesystem. Use a jointly visible path or return teammate results through messages/storage. |
 
 ---
 

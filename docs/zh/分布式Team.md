@@ -17,7 +17,7 @@ English: [Distributed Team](../en/DistributedTeam.md)
 | **传输** | `team.transport.type`: `inprocess \| pyzmq`；分布式联调通常用 `pyzmq` |
 | **入口类** | `TeamManager`（`jiuwenclaw/agentserver/team/team_manager.py`）：构建 `TeamAgentSpec` 前会做 transport/身份字段归一化 |
 | **配置装载** | `load_team_spec_dict()`（`jiuwenclaw/agentserver/team/config_loader.py`）：leader / `predefined_members` 的 name 与 display_name 兼容 |
-| **样例** | 仓库内 `jiuwenclaw/resources/config.team.distributed.yaml`（通用）以及 `config.team.distributed.leader.yaml` / `config.team.distributed.teammate.yaml`（当前分角色模板） |
+| **样例** | 仓库内 `jiuwenclaw/resources/config.team.distributed.leader.yaml` / `config.team.distributed.teammate.yaml`（当前分角色模板） |
 
 **会话语义**：与原 Team 一致倾向 **单活 session**——新建 session 的 Team 前会清理其它 session 的 Team 资源；分布式下不在本文档引入多 session 并发路由层。
 
@@ -25,7 +25,7 @@ English: [Distributed Team](../en/DistributedTeam.md)
 
 ## 2. 你需要关心的配置键
 
-以下为分布式联调最常改动的键（完整模板见仓库 `config.team.distributed.yaml`，分角色模板见 `config.team.distributed.leader.yaml` / `config.team.distributed.teammate.yaml`）。
+以下为分布式联调最常改动的键（模板见仓库 `config.team.distributed.leader.yaml` / `config.team.distributed.teammate.yaml`）。
 
 | 键 | 含义 |
 |----|------|
@@ -117,9 +117,13 @@ team:
   - leader 在 `spawn_member` 后通过 direct ZMQ 发送 `jiuwen.remote_teammate_bootstrap.direct`。
   - teammate 监听 `bootstrap_direct_addr` 接收 bootstrap，应用 leader 路由并完成接管。
   - ACK 使用 direct 传输层确认（不再依赖 DB ACK 消息链路）。
-  - reservation 生命周期：bootstrap 失败时立即 release；bootstrap 成功后由 leader 持有，直到 Team 解散 / session runtime 销毁时统一 release。
+  - reservation 生命周期：bootstrap 失败时 leader 立即 release；bootstrap 成功后 leader 不再主动 release 该 reservation。
+  - Team 解散时，leader 会通过 direct ZMQ 向已预约 teammate 发送 `jiuwen.remote_team_destroy.direct`。teammate 收到后清理本地 session/team runtime，并通过 A2X `replace_agent_card` 将自己的 agent card 重置为空闲 teammate；`bootstrap_direct_addr` 监听端口保持常驻，用于接收下一次 bootstrap。
+  - teammate 侧 bootstrap 会临时构建一个辅助 `TeamAgent` 来读取共享 DB/context，但该 helper 不应长期缓存到 `TeamManager._team_agents`，构建完 context 后必须停止 runtime/messager 并移出 cache。
+  - 真正执行任务的 dynamic teammate runtime 会重新分配本进程内可用的 loopback `direct_addr`，避免复用 agent-core 默认的 `tcp://127.0.0.1:16000` 导致 publish/event 端口冲突。
 - **数据面（Data Plane）**：
   - 任务创建、认领、完成、普通团队消息仍走 team 业务链路（共享存储 + team runtime）。
+  - `team.storage` 共享的是任务、成员状态、消息等业务状态；默认 `team-workspace` 文件目录仍按各进程自己的 HOME 生成，不等同于跨进程物理共享目录。
 - **兜底策略（当前）**：
   - leader 侧 direct bootstrap 发送失败后，**不再 fallback 到 `team_message`**。
   - teammate 侧 bootstrap 接收也**不再使用 DB 轮询兜底**。
@@ -128,23 +132,25 @@ team:
 
 ---
 
-## 4. 当前推荐配置方式（模板）
+## 4. 当前推荐配置方式（完整模板）
 
-建议优先使用仓库内分角色模板：
+仓库内分角色模板已经是**完整 `config.yaml`**，包含基础 agent/model 配置、A2X 注册中心配置、顶层 `team` 运行时标记，以及 `modes.team.jiuwen_team` 的实际 TeamAgentSpec 配置。部署时可以直接复制为各自 HOME 下的配置文件，不需要再和默认 `config.yaml` 手工合并。
 
 - `jiuwenclaw/resources/config.team.distributed.leader.yaml`
 - `jiuwenclaw/resources/config.team.distributed.teammate.yaml`
 
 用法（建议）：
 
-1. 复制对应模板到各自配置目录（如 `<LEADER_HOME>/.jiuwenclaw/config/config.yaml` 和 `<TEAMMATE_HOME>/.jiuwenclaw/config/config.yaml`）。
+1. 复制对应完整模板到各自配置目录（如 `<LEADER_HOME>/.jiuwenclaw/config/config.yaml` 和 `<TEAMMATE_HOME>/.jiuwenclaw/config/config.yaml`）。
 2. 按环境替换以下字段：
    - `react.a2x_registry.base_url` / `dataset`（leader 和 teammate 指向同一注册中心数据集）。
    - teammate 的 `team.transport.params.bootstrap_direct_addr` 或 `react.a2x_registry.endpoint`（用于向注册中心发布可连接地址）。
    - `team.storage.params.connection_string`（leader 与 teammate 必须一致）。
    - teammate 的 `team.runtime.member_name`（仅标识本进程默认身份；leader 不再靠它定位地址）。
+   - `team.transport.params.*` 与 `modes.team.jiuwen_team.transport.params.*` 中的端口/IP（多机部署不要使用只在本机可达的 `127.0.0.1`）。
+3. 启动前准备模型相关环境变量，例如 `API_BASE` / `API_KEY` / `MODEL_PROVIDER` / `MODEL_NAME`；模板中的敏感值均保持为环境变量占位符或空字符串。
 
-最小可用示例（复制模板到当前运行目录）：
+最小可用示例（复制完整模板到当前运行目录）：
 
 ```bash
 # leader
@@ -175,7 +181,14 @@ cp "<REPO_ROOT>/jiuwenclaw/resources/config.team.distributed.teammate.yaml" \
 - `team.runtime.role` 分别为 `leader` / `teammate`
 - `react.a2x_registry` 指向 **同一注册中心数据集**
 - teammate 发布自己的 bootstrap endpoint，leader 不需要知道 teammate 地址
-- `team.storage.params.connection_string` 指向 **同一 sqlite 文件路径**（或等价的共享存储）
+- `team.storage.params.connection_string` 指向 **同一数据库**（如 PostgreSQL，或各节点都能访问的 sqlite 文件）
+
+注意：`team.workspace.enabled=true` 只启用 team workspace 语义；未显式配置共同可见的 workspace root 时，leader 和 teammate 会分别在各自 HOME 下创建：
+
+- `<LEADER_HOME>/.jiuwenclaw/.agent_teams/<team_name>/team-workspace`
+- `<TEAMMATE_HOME>/.jiuwenclaw/.agent_teams/<team_name>/team-workspace`
+
+这两个路径名字相同但不是同一个物理目录。需要让成员写出的文件被 leader 直接读取时，应配置双方都可访问的共享挂载路径，或通过消息 / DB / 文件传输工具回传结果。
 
 端口与防火墙需保证 leader/teammate 机器互通（多机时把示例中的 `127.0.0.1` 换成真实 IP）。
 
@@ -278,7 +291,10 @@ VITE_WS_BASE="ws://localhost:29100" npm run dev -- --host 0.0.0.0 --port 5173
 | 前端无响应但后端已启动 | 确认前端使用 `VITE_WS_BASE`（而不是误用 `VITE_WS_URL`）。 |
 | teammate 连不上 leader | 检查防火墙、leader 在 bootstrap 中下发的地址是否仍为 `127.0.0.1`（多机需使用真实地址）。 |
 | leader 没有从注册中心拿到 teammate | 检查注册中心日志是否有 `POST /api/datasets/<dataset>/reservations 200 OK`；检查 teammate 是否已成功注册 blank agent。 |
-| teammate 被重复抢占 | 检查 leader 是否在 bootstrap 成功后过早 release reservation；当前实现应在 Team 解散时 release。 |
+| teammate 被重复抢占 | 检查 bootstrap 成功后 leader 是否误 release reservation；当前设计是 teammate 在收到 destroy 后通过 `replace_agent_card` 自行恢复空闲。 |
+| Team 解散后 teammate 无法再次 bootstrap | 检查 teammate 日志是否出现 `teammate applied team destroy notification ... cleaned=True`；若为 `cleaned=False` 或 `cleanup failed`，旧 team runtime / messager 可能未释放干净。 |
+| `Address already in use (tcp://127.0.0.1:16000)` | teammate 进程内可能存在未清理的辅助 `TeamAgent` 或旧 dynamic runtime；确认 bootstrap helper 构建 context 后已从 `TeamManager` cache 移除并 stop messager，dynamic runtime 已 retarget 到新 `direct_addr`。 |
+| leader 与 teammate 都有 `team-workspace/result.txt` 但内容不同 | 默认 workspace 是各进程 HOME 下的本地目录，不是共享文件系统；需要显式使用共同可见路径或让 teammate 通过消息/存储回传结果。 |
 
 ---
 

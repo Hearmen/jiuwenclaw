@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import importlib
 import sys
 from types import ModuleType, SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -11,9 +12,11 @@ from jiuwenclaw.agentserver.a2x_registry_runtime import (
     clear_blank_registration_cache_for_tests,
     reserve_blank_teammate_agent,
     resolve_a2x_config,
+    restore_teammate_blank_agent_on_destroy,
     register_teammate_blank_agent_at_startup,
 )
 from jiuwenclaw.agentserver.deep_agent.interface_deep import JiuWenClawDeepAdapter
+from jiuwenclaw.a2x_registry_client.errors import NotOwnedError
 
 
 class _FakeAsyncA2XRegistryClient:
@@ -32,6 +35,7 @@ class _FakeAsyncA2XRegistryClient:
         self.api_key = api_key
         self.ownership_file = ownership_file
         self.blank_registrations: list[dict[str, object]] = []
+        self.card_replacements: list[dict[str, object]] = []
         self.reservations: list[dict[str, object]] = []
         self.released_reservations: list[str] = []
         self.closed = False
@@ -53,6 +57,23 @@ class _FakeAsyncA2XRegistryClient:
             }
         )
         return SimpleNamespace(service_id="blank-service-id")
+
+    async def replace_agent_card(
+        self,
+        dataset: str,
+        service_id: str,
+        agent_card: dict[str, object],
+        release_lease: bool = True,
+    ):
+        self.card_replacements.append(
+            {
+                "dataset": dataset,
+                "service_id": service_id,
+                "agent_card": agent_card,
+                "release_lease": release_lease,
+            }
+        )
+        return SimpleNamespace(service_id=service_id)
 
     async def reserve_blank_agents(
         self,
@@ -93,6 +114,19 @@ class _FakeAsyncA2XRegistryClient:
 class _FailingAsyncA2XRegistryClient:
     def __init__(self, **_: object) -> None:
         raise RuntimeError("boom")
+
+
+class _NotOwnedOnceAsyncA2XRegistryClient(_FakeAsyncA2XRegistryClient):
+    async def replace_agent_card(
+        self,
+        dataset: str,
+        service_id: str,
+        agent_card: dict[str, object],
+        release_lease: bool = True,
+    ):
+        if not self.blank_registrations and not self.card_replacements:
+            raise NotOwnedError(dataset, service_id)
+        return await super().replace_agent_card(dataset, service_id, agent_card, release_lease)
 
 
 def _make_config(role: str, *, dataset: str = "", endpoint: str = "") -> dict:
@@ -207,6 +241,81 @@ async def test_startup_registers_blank_agent_without_deepagent(monkeypatch: pyte
             "persistent": True,
         }
     ]
+
+
+@pytest.mark.asyncio
+async def test_teammate_destroy_restore_replaces_agent_card(monkeypatch: pytest.MonkeyPatch) -> None:
+    clear_blank_registration_cache_for_tests()
+    _FakeAsyncA2XRegistryClient.instances.clear()
+    fake_module = ModuleType("jiuwenclaw.a2x_registry_client")
+    fake_module.AsyncA2XRegistryClient = _FakeAsyncA2XRegistryClient
+    a2x_internal = importlib.import_module("jiuwenclaw.a2x_registry_client._internal")
+    setattr(fake_module, "_internal", a2x_internal)
+    monkeypatch.setitem(sys.modules, "jiuwenclaw.a2x_registry_client", fake_module)
+
+    restored = await restore_teammate_blank_agent_on_destroy(
+        _make_config(
+            "teammate",
+            dataset="team_pool",
+            endpoint="tcp://127.0.0.1:28610",
+        ),
+        service_id="blank-service-id",
+        source="test-destroy",
+    )
+
+    assert restored is True
+    assert len(_FakeAsyncA2XRegistryClient.instances) == 1
+    assert _FakeAsyncA2XRegistryClient.instances[0].closed is True
+    assert _FakeAsyncA2XRegistryClient.instances[0].blank_registrations == []
+    assert _FakeAsyncA2XRegistryClient.instances[0].card_replacements == [
+        {
+            "dataset": "team_pool",
+            "service_id": "blank-service-id",
+            "agent_card": {
+                "name": "_BlankAgent_tcp://127.0.0.1:28610",
+                "description": "__BLANK__",
+                "endpoint": "tcp://127.0.0.1:28610",
+                "status": "online",
+            },
+            "release_lease": True,
+        }
+    ]
+
+
+@pytest.mark.asyncio
+async def test_teammate_destroy_restore_recovers_missing_ownership(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    clear_blank_registration_cache_for_tests()
+    _NotOwnedOnceAsyncA2XRegistryClient.instances.clear()
+    fake_module = ModuleType("jiuwenclaw.a2x_registry_client")
+    fake_module.AsyncA2XRegistryClient = _NotOwnedOnceAsyncA2XRegistryClient
+    a2x_internal = importlib.import_module("jiuwenclaw.a2x_registry_client._internal")
+    setattr(fake_module, "_internal", a2x_internal)
+    monkeypatch.setitem(sys.modules, "jiuwenclaw.a2x_registry_client", fake_module)
+
+    restored = await restore_teammate_blank_agent_on_destroy(
+        _make_config(
+            "teammate",
+            dataset="team_pool",
+            endpoint="tcp://127.0.0.1:28610",
+        ),
+        service_id="blank-service-id",
+        source="test-destroy",
+    )
+
+    assert restored is True
+    client = _NotOwnedOnceAsyncA2XRegistryClient.instances[0]
+    assert client.blank_registrations == [
+        {
+            "dataset": "team_pool",
+            "endpoint": "tcp://127.0.0.1:28610",
+            "service_id": "blank-service-id",
+            "persistent": True,
+        }
+    ]
+    assert client.card_replacements[0]["service_id"] == "blank-service-id"
+    assert client.card_replacements[0]["release_lease"] is True
 
 
 @pytest.mark.asyncio

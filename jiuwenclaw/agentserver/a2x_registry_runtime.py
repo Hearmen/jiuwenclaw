@@ -226,6 +226,105 @@ async def register_teammate_blank_agent_at_startup(
     return False
 
 
+async def restore_teammate_blank_agent_on_destroy(
+    config_base: dict[str, Any],
+    *,
+    dataset: str | None = None,
+    service_id: str | None = None,
+    endpoint: str | None = None,
+    source: str = "teammate-team-destroy",
+    timeout: float = 5.0,
+) -> bool:
+    """Reset this teammate's registry agent card to blank/online after team teardown."""
+    client = None
+    try:
+        client, config = await init_a2x_client(config_base)
+        if not config.get("distributed_mode") or config.get("role") != "teammate":
+            return False
+        resolved_dataset = str(dataset or config.get("dataset") or "").strip()
+        resolved_endpoint = _normalize_connect_addr(endpoint or config.get("endpoint"))
+        resolved_service_id = str(service_id or "").strip() or None
+        if not resolved_dataset or not resolved_endpoint:
+            logger.info(
+                "[A2XRegistryRuntime] blank agent restore skipped source=%s: missing dataset or endpoint",
+                source,
+            )
+            return False
+
+        async def _restore() -> bool:
+            if not resolved_service_id:
+                result = await client.register_blank_agent(
+                    dataset=resolved_dataset,
+                    endpoint=resolved_endpoint,
+                    persistent=True,
+                )
+                restored_service_id = result.service_id
+            else:
+                from jiuwenclaw.a2x_registry_client.errors import NotOwnedError
+                from jiuwenclaw.a2x_registry_client import _internal as _a2x_internal
+
+                blank_card = _a2x_internal.build_blank_agent_card(resolved_endpoint)
+                try:
+                    result = await client.replace_agent_card(
+                        resolved_dataset,
+                        resolved_service_id,
+                        blank_card,
+                        release_lease=True,
+                    )
+                except NotOwnedError:
+                    logger.info(
+                        "[A2XRegistryRuntime] blank agent restore ownership missing; "
+                        "re-registering before replace source=%s dataset=%s service_id=%s endpoint=%s",
+                        source,
+                        resolved_dataset,
+                        resolved_service_id,
+                        resolved_endpoint,
+                    )
+                    registered = await client.register_blank_agent(
+                        dataset=resolved_dataset,
+                        endpoint=resolved_endpoint,
+                        service_id=resolved_service_id,
+                        persistent=True,
+                    )
+                    result = await client.replace_agent_card(
+                        resolved_dataset,
+                        registered.service_id,
+                        blank_card,
+                        release_lease=True,
+                    )
+                restored_service_id = result.service_id
+            _REGISTERED_BLANK_ENDPOINTS.add(
+                (str(config.get("base_url") or ""), resolved_dataset, resolved_endpoint)
+            )
+            logger.info(
+                "[A2XRegistryRuntime] blank agent restored after team destroy "
+                "source=%s dataset=%s service_id=%s endpoint=%s",
+                source,
+                resolved_dataset,
+                restored_service_id,
+                resolved_endpoint,
+            )
+            return True
+
+        return await asyncio.wait_for(_restore(), timeout=max(timeout, 0.1))
+    except asyncio.TimeoutError:
+        logger.warning("[A2XRegistryRuntime] blank agent restore timed out source=%s", source)
+    except Exception as exc:
+        logger.warning(
+            "[A2XRegistryRuntime] blank agent restore failed source=%s: %s",
+            source,
+            exc,
+            exc_info=True,
+        )
+    finally:
+        if client is not None:
+            try:
+                await asyncio.wait_for(client.aclose(), timeout=2.0)
+            except Exception as exc:
+                logger.debug("[A2XRegistryRuntime] A2X client close failed source=%s: %s", source, exc)
+    return False
+
+
 def _agent_service_id(agent: dict[str, Any]) -> str:
     for key in ("id", "service_id", "sid"):
         value = str(agent.get(key) or "").strip()

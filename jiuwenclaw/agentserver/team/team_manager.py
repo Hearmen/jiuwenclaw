@@ -88,6 +88,19 @@ def _sync_skills_dir(source: Path, target: Path) -> None:
         logger.info("[TeamManager] synced %d skills: %s -> %s", synced, source, target)
 
 
+async def _stop_team_messager(team_agent: Any, *, session_id: str) -> None:
+    """Stop a team's mailbox transport so per-team ZMQ sockets release their ports."""
+    messager = getattr(team_agent, "_messager", None) or getattr(team_agent, "mailbox_transport", None)
+    stop = getattr(messager, "stop", None)
+    if not callable(stop):
+        return
+    try:
+        await stop()
+        logger.info("[TeamManager] team messager stopped: session_id=%s", session_id)
+    except Exception as exc:
+        logger.warning("[TeamManager] team messager stop failed: session_id=%s error=%s", session_id, exc)
+
+
 async def cleanup_team_runtime_state_once() -> tuple[list[str], list[str]]:
     """Clear leftover shared team runtime state once during AgentServer startup."""
     from openjiuwen.agent_teams.paths import get_agent_teams_home
@@ -859,6 +872,7 @@ class TeamManager:
                     cleaned = await team_agent.destroy_team(force=True)
                 finally:
                     await release_a2x_reservations_for_team(team_agent)
+                    await _stop_team_messager(team_agent, session_id=session_id)
             finally:
                 reset_session_id(token)
 
