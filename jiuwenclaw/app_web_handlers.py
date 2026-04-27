@@ -656,7 +656,14 @@ def _register_web_handlers(bind: WebHandlersBindParams) -> None:
             content = resp.get("content", "")
         else:
             content = str(resp)
-        if not (isinstance(content, str) and content.strip()):
+         # For reasoning models (e.g. deepseek-v4-flash), the model may put all
+        # tokens into reasoning_content while leaving content empty.  Treat a
+        # non-empty reasoning_content as a valid response as well.
+        reasoning_content = getattr(resp, "reasoning_content", None) if hasattr(resp, "reasoning_content") else None
+        has_valid_response = (isinstance(content, str) and content.strip()) or (
+            isinstance(reasoning_content, str) and reasoning_content.strip()
+        )
+        if not has_valid_response:
             await channel.send_response(
                 ws, req_id, ok=False,
                 error="Empty response from model",
