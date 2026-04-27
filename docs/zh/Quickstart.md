@@ -92,7 +92,7 @@ JiuwenClaw提供两种安装方式：`pip安装`或`源码安装`。
     uv run jiuwenclaw-start
     ```
 
-  - 动态运行前端服务（适合生开发调试）
+  - 动态运行前端服务（适合开发调试）
     ```bash
     cd ../../
     uv run jiuwenclaw-init
@@ -140,7 +140,7 @@ JiuwenClaw提供两种安装方式：`pip安装`或`源码安装`。
     jiuwenclaw-start
     ```
 
-  - 动态运行前端服务（适合生开发调试）
+  - 动态运行前端服务（适合开发调试）
     ```bash
     cd ../../
     # 直接启动（不使用 uv run）

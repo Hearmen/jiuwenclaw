@@ -120,17 +120,17 @@ chmod +x scripts/build-macos.sh
 ./scripts/build-macos.sh
 ```
 
-脚本会自动完成：安装依赖 → 构建前端 → 使用 PyInstaller 生成 `JiuwenClaw.app` → 生成 `JiuwenClaw-0.1.7.dmg`。
+脚本会自动完成：安装依赖 → 构建前端 → 使用 PyInstaller 生成 `JiuwenClaw.app` → 生成 `JiuwenClaw-<version>.dmg`。
 
 生成后的产物：
 
 - `dist/JiuwenClaw.app`
-- `dist/JiuwenClaw-0.1.7.dmg`
+- `dist/JiuwenClaw-<version>.dmg`
 
 验证方式：
 
 1. 双击 `dist/JiuwenClaw.app`
-2. 或挂载 `dist/JiuwenClaw-0.1.7.dmg`
+2. 或挂载 `dist/JiuwenClaw-<version>.dmg`
 3. 将 `JiuwenClaw.app` 拖到 `Applications`
 
 注意事项：

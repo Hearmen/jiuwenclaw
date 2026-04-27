@@ -1474,7 +1474,7 @@ JiuwenClaw 配置文件内容：
 ```yaml
 react:
   agent_name: main_agent
-  max_iterations: 50
+  max_iterations: 100
   model_name: ${MODEL_NAME:-glm-4.7}
   answer_chunk_size: 500
   stream_chunk_threshold: 50
@@ -1491,7 +1491,7 @@ react:
   evolution:
     enabled: true
     auto_scan: false
-    skill_base_dir: "workspace/agent/skills"
+    skill_base_dir: "agent/skills"
 
 tools:
   - todo
@@ -1741,7 +1741,7 @@ Agent 会按照技能指引执行审查流程，返回包含评分、问题列�
    `D:\Download\jiuwenclaw\workspace\agent\skills\code-review\`
 
 6. **Agent 迭代次数超限**
-   问题：复杂任务达到 max_iterations (50) 后未完成
+   问题：复杂任务达到 max_iterations (100) 后未完成
    表现：返回 "Max iterations reached without completion"
    原因：Agent 用浏览器逐个访问文件，效率太低
    解决：确保 Agent 读取技能文档并按技能指引使用正确工具

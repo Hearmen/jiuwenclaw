@@ -37,9 +37,7 @@
 
 ## ⚠️ 版本升级提醒
 
-**如果您从旧版本升级到 v0.1.7：**
-
-由于本版本包含重大变更，升级后**必须**重新初始化 JiuwenClaw，否则服务将无法启动。
+如果您从旧版本升级，请查看更新日志确认是否有重大变更。如有重大变更，升级后**必须**重新初始化 JiuwenClaw，否则服务将无法启动。
 
 ### 升级前备份数据
 
@@ -144,22 +142,38 @@ jiuwenclaw-tui
 
 ## 📚 文档导航
 
-| 文档                                  | 核心内容                     |
-|:------------------------------------|:-------------------------|
-| [📖 快速开始](docs/zh/Quickstart.md)             | 5分钟上手JiuwenClaw          |
-| [📖 快速开始(TUI)](docs/zh/Quickstart_tui.md)         | 5分钟上手JiuwenClaw-tui      |
-| [⚙️ 配置与工作空间](docs/zh/配置信息.md)          | 环境配置与工作区管理               |
-| [📁 工作区结构](docs/zh/智能体.md)             | workspace 目录说明，预置与动态生成内容 |
-| [🛠️ 技能系统](docs/zh/技能.md)              | 自定义技能开发指南                |
-| [📱 频道配置](docs/zh/频道.md)               | 飞书、小艺等频道接入               |
-| [⌨️ 命令行指令](docs/zh/命令行指令.md)           | 命令行工具使用指南                |
-| [⏰ 定时任务](docs/zh/定时任务.md)             | 定时任务管理                    |
-| [🧠 记忆功能](docs/zh/记忆.md)               | 智能记忆与学习                  |
-| [🌐 浏览器相关](docs/zh/浏览器.md)             | 自动化浏览功能                  |
-| [📋 任务规划](docs/zh/任务规划.md)        | 任务规划与待办事项                |
-| [🔄 Skill自演进](docs/zh/Skill自演进.md) | Skill自演进机制                 |
-| [📦 上下文压缩](docs/zh/上下文压缩卸载.md)  | 上下文压缩与卸载                 |
-| [🚀 开发实践](docs/zh/开发实践/) | 开发实践与经验分享                |
+| 文档 | 核心内容 |
+|:-----|:---------|
+| [📖 快速开始](docs/zh/Quickstart.md) | 5分钟上手JiuwenClaw |
+| [📖 快速开始(TUI)](docs/zh/Quickstart_tui.md) | 5分钟上手JiuwenClaw-tui |
+| [⚙️ 配置与工作空间](docs/zh/配置信息.md) | 环境配置与工作区管理 |
+| [📁 工作区结构](docs/zh/智能体.md) | workspace 目录说明，预置与动态生成内容 |
+| [🔄 模式系统](docs/zh/模式系统.md) | PLAN / AGENT / CODE / TEAM 模式切换与配置 |
+| [🛠️ 技能系统](docs/zh/技能.md) | 自定义技能开发指南 |
+| [🔄 Skill自演进](docs/zh/Skill自演进.md) | Skill自演进机制 |
+| [📱 频道配置](docs/zh/频道.md) | 飞书、小艺等频道接入 |
+| [💬 Discord](docs/zh/Discord.md) | Discord频道配置与使用 |
+| [💬 WhatsApp](docs/zh/whatsapp.md) | WhatsApp频道配置与使用 |
+| [⌨️ 命令行指令](docs/zh/命令行指令.md) | 命令行工具使用指南 |
+| [⏰ 定时任务](docs/zh/定时任务.md) | 定时任务管理 |
+| [💓 心跳](docs/zh/心跳.md) | 心跳机制与配置 |
+| [🧠 记忆功能](docs/zh/记忆.md) | 智能记忆与学习 |
+| [💡 经验记忆](docs/zh/经验记忆.md) | 任务级经验检索与沉淀 |
+| [📦 上下文压缩](docs/zh/上下文压缩卸载.md) | 上下文压缩与卸载 |
+| [💻 编码记忆](docs/zh/编码记忆.md) | Code模式专属记忆系统 |
+| [📋 任务规划](docs/zh/任务规划.md) | 任务规划与待办事项 |
+| [🌐 浏览器相关](docs/zh/浏览器.md) | 自动化浏览功能 |
+| [🔌 MCP配置](docs/zh/MCP配置.md) | MCP服务接入与配置 |
+| [🔒 工具权限与安全](docs/zh/工具权限与安全防护.md) | 权限模型与安全配置 |
+| [📝 Slash命令](docs/zh/Slash命令表.md) | Slash命令速查 |
+| [🏗️ Slash命令架构](docs/zh/SLASH_COMMAND_ARCHITECTURE.md) | Slash命令内部机制与扩展 |
+| [📨 E2A协议](docs/zh/E2A-protocol.md) | Gateway ↔ Agent 请求信封规范 |
+| [🤝 A2A接入](docs/zh/A2A.md) | A2A协议接入说明 |
+| [🔌 ACP插件配置](docs/zh/ACP插件使用.md) | ACP客户端插件配置 |
+| [👥 分布式Team](docs/zh/分布式Team.md) | 多进程分布式团队模式 |
+| [🔀 单机多实例](docs/zh/单机多实例运行.md) | 同一机器运行多个独立实例 |
+| [📦 打包桌面应用](docs/zh/打包exe指南.md) | 打包独立桌面可执行文件 |
+| [🚀 开发实践](docs/zh/开发实践/) | 开发实践与经验分享 |
 
 ## 🤝 参与贡献
 

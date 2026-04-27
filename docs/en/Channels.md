@@ -361,19 +361,19 @@ In JiuwenClaw **Channels → DingTalk**, enable and paste **client_id** / **clie
 
 1. Open WeCom → **Workbench** → **Smart bot** → **Create bot** → **Manual creation**
 
-   ![WeCom entry](../assets/images/wecom/1_企业微信创建机器人入口.png?msec=1774269205893)
+   ![WeCom entry](../assets/images/wecom/1_企业微信创建机器人入口.png)
 
-   ![WeCom manual](../assets/images/wecom/2_创建机器人.png?msec=1774269205909)
+   ![WeCom manual](../assets/images/wecom/2_创建机器人.png)
 
-   ![WeCom create form](../assets/images/wecom/3_手动创建.png?msec=1774269205918)
+   ![WeCom create form](../assets/images/wecom/3_手动创建.png)
 
 2. Choose **API mode**.
 
-   ![WeCom API mode](../assets/images/wecom/4_API模式创建.png?msec=1774269205918)
+   ![WeCom API mode](../assets/images/wecom/4_API模式创建.png)
 
 3. Set connection to **Long connection**.
 
-   ![WeCom long connection](../assets/images/wecom/5_选择长连接.png?msec=1774269205922)
+   ![WeCom long connection](../assets/images/wecom/5_选择长连接.png)
 
 4. After creation, save **Bot ID** and **Secret** for JiuwenClaw.
 
@@ -383,23 +383,23 @@ In JiuwenClaw **Channels → DingTalk**, enable and paste **client_id** / **clie
 
 2. Enter **bot id** and **secret**, then save.
 
-   ![WeCom channel](../assets/images/wecom/6_频道.png?msec=1774269205907)
+   ![WeCom channel](../assets/images/wecom/6_频道.png)
 
-   ![WeCom channel admin](../assets/images/wecom/7_频道管理.png?msec=1774269205918)
+   ![WeCom channel admin](../assets/images/wecom/7_频道管理.png)
 
 ## 3. Chat with the bot
 
 > If you cannot find the bot: **Workbench → Smart bot → Details → Use → Send message**.
 
-![WeCom bot detail](../assets/images/wecom/8_机器人详情.png?msec=1774269205913)
+![WeCom bot detail](../assets/images/wecom/8_机器人详情.png)
 
-![WeCom bot use](../assets/images/wecom/9_使用机器人.png?msec=1774269205913)
+![WeCom bot use](../assets/images/wecom/9_使用机器人.png)
 
 1. On PC WeCom, send a test message; a reply means success.
 
 2. On mobile WeCom, do the same.
 
-![WeCom PC](../assets/images/wecom/10_客户端验证.png?msec=1774269205911)
+![WeCom PC](../assets/images/wecom/10_客户端验证.png)
 ![WeCom mobile](../assets/images/wecom/11_手机端验证.png)
 
 ## 4. Enable Group Digital Avatar (optional)

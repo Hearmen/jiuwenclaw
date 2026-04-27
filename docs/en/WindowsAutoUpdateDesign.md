@@ -1,53 +1,53 @@
-# Windows auto-update design
+# Windows Auto-Update Design
 
-Minimal auto-update path for the **Windows desktop** build: stability first, not silent “magic” upgrades.
+This document describes the minimum viable auto-update solution for JiuwenClaw on Windows desktop. The goal is to prioritize stability over seamless upgrades.
 
 ## Scope
 
-- Windows desktop only
-- Check once at startup
-- Manual check from the sidebar **Update** page
-- Source: **GitHub Releases**
-- Installer: Inno Setup **`jiuwenclaw-setup-<version>.exe`**
-- After download, an external helper runs a **silent** install and restarts the app
+- Windows desktop edition only
+- Automatic update check on startup
+- Manual update check via the sidebar "Update" page
+- Update source: GitHub Releases
+- Download artifact: Inno Setup installer `jiuwenclaw-setup-<version>.exe`
+- After download, an external helper script performs a silent install and restarts the application
 
-## Out of scope
+## Out of Scope
 
-- Delta/patch updates
-- In-place self-replacement while running
-- macOS auto-install
-- Skip lists, staged rollouts, multiple channels
-- Forced updates
+- No incremental/delta updates
+- No in-process self-replacement
+- No macOS auto-install
+- No version-skip, canary releases, or multi-channel distribution
+- No forced updates
 
-## Flow
+## Core Flow
 
-1. After start, the frontend calls `updater.check` asynchronously.
-2. Backend calls the GitHub Releases API for the latest release.
-3. If newer, record version, published time, notes, and installer URL.
-4. User clicks **Download** on the **Update** page.
-5. Backend downloads the installer to `%USERPROFILE%\.jiuwenclaw\.updates`.
-6. When done, the frontend calls pywebview to **install**.
-7. The desktop process writes a temporary **cmd** helper that waits for exit.
-8. Helper runs Inno Setup **silently**, then restarts `jiuwenclaw.exe`.
+1. After app launch, the frontend asynchronously calls `updater.check`
+2. The backend requests the GitHub Releases API for the latest release
+3. If a new version is found, it records the latest version, publish date, release notes, and installer download URL
+4. The user clicks "Download Update" on the Update page
+5. The backend downloads the installer to `%USERPROFILE%\\.jiuwenclaw\\.updates` in the background
+6. After download completes, the frontend calls the pywebview API to trigger installation
+7. The desktop process writes a temporary `cmd` helper script that waits for the current process to exit
+8. The helper runs the Inno Setup installer silently, then restarts the application
 
-## Source
+## Update Source
 
-GitHub Releases API:
+Default GitHub Releases API:
 
 ```text
 https://api.github.com/repos/{owner}/{repo}/releases/latest
 ```
 
-Read:
+Fields read from the release:
 
-- `tag_name` — version
+- `tag_name` — latest version number
 - `body` — release notes
-- `published_at` — time
-- `assets[]` — installer and optional `.sha256`
+- `published_at` — publish date
+- `assets[]` — the installer and optional sha256 file
 
-## Config
+## Configuration
 
-`config.yaml` → `updater`:
+Update settings are in the `updater` section of `config.yaml`:
 
 ```yaml
 updater:
@@ -60,15 +60,15 @@ updater:
   timeout_seconds: 20
 ```
 
-## RPC
+## Backend API
 
-WebSocket RPC methods:
+Three WebSocket RPC methods are registered:
 
 - `updater.get_status`
 - `updater.check`
 - `updater.download`
 
-States:
+Status values:
 
 - `idle`
 - `checking`
@@ -80,16 +80,18 @@ States:
 - `error`
 - `unsupported`
 
-## Install mechanics
+## Installation Execution
 
-The running exe is not replaced in-process.
+To avoid replacing files while the main process is running, installation is not performed within the current process.
 
-1. Desktop app writes a temp **cmd** helper.
-2. Helper waits for the main process to exit.
-3. Runs the installer:
+When the desktop process receives an install request from the frontend:
+
+1. It generates a temporary `cmd` helper script
+2. The helper waits for the desktop main process to exit
+3. The helper runs the installer with:
 
 ```text
 /VERYSILENT /SUPPRESSMSGBOXES /NORESTART /SP- /CLOSEAPPLICATIONS
 ```
 
-4. Starts `jiuwenclaw.exe` again after install completes.
+4. After installation completes, it restarts `jiuwenclaw.exe`

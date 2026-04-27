@@ -3,7 +3,7 @@
 JiuwenClaw supports **special prefix commands** to control sessions and modes. Common ones:
 
 - `/new_session`: start a new `session_id` for the current channel
-- `/mode plan`, `/mode fast`, or `/mode team`: switch the channel’s working mode
+- `/mode plan`, `/mode fast`, `/mode team`, `/mode code`: switch the channel's working mode
 
 These are handled in the Gateway **`MessageHandler`** and **are not** sent to the agent.
 
@@ -13,15 +13,18 @@ These are handled in the Gateway **`MessageHandler`** and **are not** sent to th
 
 **Behavior**
 
-- For supported channels (`feishu` / `xiaoyi` / `dingtalk`), generates a new `session_id`, e.g.:  
+- For supported channels (`feishu` / `xiaoyi` / `dingtalk` / `whatsapp` / `wecom` / `wechat`), generates a new `session_id`, e.g.:  
   - `feishu_<ms hex>_<random hex>`
   - `xiaoyi_<ms hex>_<random hex>`
   - `dingtalk_<ms hex>_<random hex>`
+  - `whatsapp_<ms hex>_<random hex>`
+  - `wecom_<ms hex>_<random hex>`
+  - `wechat_<ms hex>_<random hex>`
 - Later messages on that channel use this id, so a new folder appears under `workspace/session/`.
 
 **Usage**
 
-Send in the channel (Feishu / Xiaoyi / DingTalk):
+Send in a supported channel:
 
   ```text
   /new_session
@@ -41,14 +44,21 @@ The Gateway will:
 
 ---
 
-### 2. `/mode` — channel mode (`plan` / `fast` / `team`)
+### 2. `/mode` — channel mode (`plan` / `fast` / `code` / `team`)
 
 **Behavior**
 
 - Sets a logical **mode** for the channel:
   - `plan`: planning, explanation, decomposition (default)
-  - `fast`: more hands-on execution (same internal semantics as the historical `agent` mode)
+  - `fast`: more hands-on execution
+  - `code`: code generation and execution mode (defaults to `code.normal`; use `/mode code.plan` for code planning)
   - `team`: team mode
+- You can also specify sub-modes directly:
+  - `agent.plan` or `plan` → Agent Plan mode
+  - `agent.fast` or `fast` → Agent Fast mode
+  - `code.plan` → Code Plan mode
+  - `code.normal` or `code` → Code Normal mode
+  - `team` → Team mode
 - Mode is passed in `params["mode"]` for prompt construction.
 
 **Usage**

@@ -1383,7 +1383,7 @@ ATOMGIT_TOKEN=xxx
 ```yaml
 react:
   agent_name: main_agent
-  max_iterations: 50
+  max_iterations: 100
   model_name: ${MODEL_NAME:-glm-4.7}
   answer_chunk_size: 500
   stream_chunk_threshold: 50
@@ -1399,7 +1399,7 @@ react:
   evolution:
     enabled: true
     auto_scan: false
-    skill_base_dir: "workspace/agent/skills"
+    skill_base_dir: "agent/skills"
 
 tools:
   - todo

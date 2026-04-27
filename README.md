@@ -40,9 +40,7 @@ When you express dissatisfaction or an error occurs, JiuwenClaw automatically re
 
 ## ⚠️ Version Upgrade Notice
 
-**If you're upgrading from an earlier version to v0.1.7:**
-
-Due to breaking changes in this release, you **must** reinitialize JiuwenClaw after upgrading. The service will fail to start without reinitialization.
+If you're upgrading from an older version, check the changelog for any breaking changes. You **must** reinitialize JiuwenClaw if a breaking change is indicated. The service will fail to start without reinitialization.
 
 ### Backup Before Upgrading
 
@@ -104,22 +102,38 @@ Set up heartbeat tasks with your to-do items, and JiuwenClaw will wake up on sch
 
 ## 📚 Documentation
 
-| Document                                             | Description                                              |
+| Document | Description |
 | :--------------------------------------------------- | :------------------------------------------------------- |
-| [📖 Quick Start](docs/en/Quickstart.md)              | Get up and running with JiuwenClaw in 5 minutes          |
-| [📖 Quick Start(TUI)](docs/en/Quickstart_tui.md)   | Get up and running with JiuwenClaw-tui in 5 minutes      |
-| [⚙️ Configuration & Workspace](docs/en/Configuration.md) | Environment setup and workspace management               |
-| [📁 Workspace Structure](docs/en/Agent.md)           | workspace directory layout, presets, and dynamic content |
-| [🛠️ Skill System](docs/en/Skills.md)                 | Guide to developing custom skills                        |
-| [📱 Channel Configuration](docs/en/Channels.md)      | Integrating Feishu, Xiaoyi, and other channels           |
-| [⌨️ CLI Commands](docs/en/CLI.md)                    | Command-line tool usage guide                            |
-| [⏰ Scheduled Tasks](docs/en/ScheduledTasks.md)      | Scheduled task management                                |
-| [🧠 Memory](docs/en/Memory.md)                       | Intelligent memory and learning capabilities             |
-| [🌐 Browser Automation](docs/en/Browser.md)          | Web browsing and automation features                     |
-| [📋 Task Planning](docs/en/TaskPlanning.md)          | Chat behavior and task flow                              |
-| [🔄 Skill Self-Evolution](docs/en/SkillSelfEvolution.md) | Mechanism for automatic skill evolution                  |
-| [📦 Context Compression](docs/en/ContextCompression.md) | Context compression and unloading                        |
-| [🚀 Development Practices](docs/en/development-practices/README.md) | Development practices and experience sharing             |
+| [📖 Quick Start](docs/en/Quickstart.md) | Get up and running with JiuwenClaw in 5 minutes |
+| [📖 Quick Start (TUI)](docs/en/Quickstart_tui.md) | Get up and running with JiuwenClaw-tui in 5 minutes |
+| [⚙️ Configuration & Workspace](docs/en/Configuration.md) | Environment setup and workspace management |
+| [📁 Workspace Structure](docs/en/Agent.md) | workspace directory layout, presets, and dynamic content |
+| [🔄 Modes](docs/en/Modes.md) | PLAN / AGENT / CODE / TEAM mode switching and configuration |
+| [🛠️ Skill System](docs/en/Skills.md) | Guide to developing custom skills |
+| [🔄 Skill Self-Evolution](docs/en/SkillSelfEvolution.md) | Mechanism for automatic skill evolution |
+| [📱 Channel Configuration](docs/en/Channels.md) | Integrating Feishu, Xiaoyi, and other channels |
+| [💬 Discord](docs/en/Discord.md) | Discord channel setup and usage |
+| [💬 WhatsApp](docs/en/WhatsApp.md) | WhatsApp channel setup and usage |
+| [⌨️ CLI Commands](docs/en/CLI.md) | Command-line tool usage guide |
+| [⏰ Scheduled Tasks](docs/en/ScheduledTasks.md) | Scheduled task management |
+| [💓 Heartbeat](docs/en/Heartbeat.md) | Heartbeat mechanism and configuration |
+| [🧠 Memory](docs/en/Memory.md) | Intelligent memory and learning capabilities |
+| [💡 Task Memory](docs/en/TaskMemory.md) | Task-level experience retrieval and consolidation |
+| [📦 Context Compression](docs/en/ContextCompression.md) | Context compression and unloading |
+| [💻 Coding Memory](docs/en/CodingMemory.md) | Code-mode-specific memory system |
+| [📋 Task Planning](docs/en/TaskPlanning.md) | Chat behavior and task flow |
+| [🌐 Browser Automation](docs/en/Browser.md) | Web browsing and automation features |
+| [🔌 MCP Configuration](docs/en/MCPConfiguration.md) | MCP server integration and configuration |
+| [🔒 Tool Permissions & Security](docs/en/ToolPermissionsSecurity.md) | Permission model and security configuration |
+| [📝 Slash Commands](docs/en/SlashCommands.md) | Slash command reference |
+| [🏗️ Slash Command Architecture](docs/en/SlashCommandArchitecture.md) | Slash command internals and extension guide |
+| [📨 E2A Protocol](docs/en/E2A-protocol.md) | Gateway ↔ Agent request envelope specification |
+| [🤝 A2A Integration](docs/en/A2A.md) | A2A protocol integration guide |
+| [🔌 ACP Client Config](docs/en/ACP_Client_Config.md) | ACP client plugin configuration |
+| [👥 Distributed Team](docs/en/DistributedTeam.md) | Multi-process distributed team mode |
+| [🔀 Multi-Instance Operation](docs/en/MultiInstance.md) | Running multiple independent instances on one machine |
+| [📦 Packaging Desktop App](docs/en/PackExeGuide.md) | Build standalone desktop executables |
+| [🚀 Development Practices](docs/en/development-practices/README.md) | Development practices and experience sharing |
 
 ## 🤝 Contributing
 

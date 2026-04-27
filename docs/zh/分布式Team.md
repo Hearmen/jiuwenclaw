@@ -40,7 +40,56 @@ English: [Distributed Team](../en/DistributedTeam.md)
 
 ---
 
-## 3. 代码落点（改 bug / 跟逻辑时从这里进）
+## 3. pyzmq Transport 字段归一化
+
+当 `transport.type == pyzmq` 且 **`pubsub_publish_addr` / `pubsub_subscribe_addr` 尚未同时存在** 时，`TeamManager` 会根据 `params.leader` / `params.teammate` 等拓扑信息自动补全：
+
+| 字段 | 说明 |
+|------|------|
+| `direct_addr` | 本进程直接通信地址 |
+| `pubsub_publish_addr` | 发布地址 |
+| `pubsub_subscribe_addr` | 订阅地址 |
+| `known_peers` / `bootstrap_peers` | 节点发现列表 |
+| `metadata.pubsub_bind` | 是否绑定 pubsub（leader=True，teammate=False） |
+
+默认端口：
+- Leader: `direct_port=18555`, `pub_port=18556`, `sub_port=18557`
+- Teammate: `direct_port=18600`
+
+---
+
+## 4. PostgreSQL Bootstrap（Leader 角色）
+
+当 `team.storage.type=postgresql` 且当前进程角色为 `leader` 时，启动时会自动检测 PostgreSQL 可用性：
+
+1. 检查 `pg_isready -h <host> -p <port>`
+2. 若不可达，尝试启动本地 PostgreSQL 集群：
+   - 先尝试 `pg_ctlcluster <version> <cluster> start`
+   - 失败则尝试 `systemctl start postgresql` 或 `service postgresql start`
+3. 等待最多 30 秒确认服务就绪
+
+配置示例：
+
+```yaml
+team:
+  storage:
+    type: postgresql
+    params:
+      connection_string: postgresql+asyncpg://user:pass@host:5432/teamdb
+```
+
+---
+
+## 5. teammate_mode 与 spawn_mode
+
+| 配置 | 值 | 说明 |
+|------|-----|------|
+| `teammate_mode` | `build_mode`（默认） | teammate 通过 build 流程构建 |
+| `spawn_mode` | `inprocess`（默认） | teammate 在同一进程内运行 |
+
+---
+
+## 6. 代码落点（改 bug / 跟逻辑时从这里进）
 
 ### 3.1 `TeamManager._load_team_spec`
 

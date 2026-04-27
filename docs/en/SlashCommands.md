@@ -39,6 +39,8 @@ Identified by Gateway and forwarded to AgentServer and other backend capabilitie
 | `/model` | Model view, add, switch (see below) |
 | `/mcp` | MCP server management (see below) |
 | `/diff` | View session changes by turn (see below) |
+| `/compact` | Compress current context (see below) |
+| `/init` | Project initialization (see below) |
 
 ---
 
@@ -124,6 +126,27 @@ Manages directories AI can access for file read, edit, and execute operations.
   - Without changes: Shows `No file changes in this session`.
 - Scope: For viewing uncommitted per-turn change traces in current session, not a replacement for `git diff` full version control perspective.
 
+### `/compact` (Context Compression)
+
+- Usage: `/compact` (no parameters).
+- Function: Trigger context compression,清理对话 history but keep summary in context.
+- Data source: TUI requests Agent compression service via `command.compact`.
+- Results:
+  - `busy`: Compression in progress, retry later;
+  - `compressed`: Success, shows before/after token counts and savings ratio;
+  - `noop`: No compression needed, context already optimal.
+
+### `/init` (Project Initialization)
+
+- Usage: `/init` (no parameters).
+- Function: Initialize project AI collaboration config, generates `JIUWENCLAW.md` and optionally `JIUWENCLAW.local.md`.
+- Scope: Only runs in `code` mode.
+- Flow:
+  1. Select scope: `Team-shared` (JIUWENCLAW.md), `Personal` (JIUWENCLAW.local.md), or `Both`.
+  2. Detect existing configs: Auto-detect `CLAUDE.md`, `.cursorrules`, `copilot-instructions.md` etc.
+  3. Generate configs: Create project config files based on selection.
+- Auto mode switch: If in `code.plan`, auto-switches to `code.normal` for write permission.
+
 ### `/mcp` (MCP Server Management)
 
 - Usage:
@@ -169,8 +192,6 @@ Conclusion: IM uses `/skills list`, TUI uses `/skills`, current syntax differs (
 
 | Command | Description |
 |---|---|
-| `/compact` | Compress current context |
-| `/init` | Project initialization |
 | `/btw` | Ask question |
 | `/context` | Context status view |
 | `/export` | Export related files |

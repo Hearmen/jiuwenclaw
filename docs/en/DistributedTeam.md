@@ -40,7 +40,56 @@ Typical keys for distributed integration (full template: `config.team.distribute
 
 ---
 
-## 3. Where to look in code
+## 3. pyzmq Transport Field Normalization
+
+When `transport.type == pyzmq` and **`pubsub_publish_addr` / `pubsub_subscribe_addr` not both set**, `TeamManager` auto-fills from topology:
+
+| Field | Description |
+|-------|-------------|
+| `direct_addr` | Direct communication address |
+| `pubsub_publish_addr` | Publish address |
+| `pubsub_subscribe_addr` | Subscribe address |
+| `known_peers` / `bootstrap_peers` | Node discovery list |
+| `metadata.pubsub_bind` | Bind pubsub (leader=True, teammate=False) |
+
+Default ports:
+- Leader: `direct_port=18555`, `pub_port=18556`, `sub_port=18557`
+- Teammate: `direct_port=18600`
+
+---
+
+## 4. PostgreSQL Bootstrap (Leader Role)
+
+When `team.storage.type=postgresql` and role is `leader`, startup auto-checks PostgreSQL availability:
+
+1. Check `pg_isready -h <host> -p <port>`
+2. If unreachable, attempt to start local cluster:
+   - Try `pg_ctlcluster <version> <cluster> start`
+   - Fallback to `systemctl start postgresql` or `service postgresql start`
+3. Wait up to 30 seconds for service ready
+
+Config example:
+
+```yaml
+team:
+  storage:
+    type: postgresql
+    params:
+      connection_string: postgresql+asyncpg://user:pass@host:5432/teamdb
+```
+
+---
+
+## 5. teammate_mode and spawn_mode
+
+| Config | Value | Description |
+|--------|-------|-------------|
+| `teammate_mode` | `build_mode` (default) | Teammate built via build flow |
+| `spawn_mode` | `inprocess` (default) | Teammate runs in same process |
+
+---
+
+## 6. Where to look in code
 
 ### 3.1 `TeamManager._load_team_spec`
 

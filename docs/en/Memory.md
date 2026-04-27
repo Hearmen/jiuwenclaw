@@ -2,7 +2,26 @@
 
 Memory gives JiuwenClaw **persistent, cross-session recall**: important facts are written to files and retrieved with semantic search (plus optional BM25).
 
+**External Memory Providers**, supporting third-party memory services (OpenJiuwen LTM, Mem0, OpenViking) or custom plugins.
+
+---
+
+## Engine Switch
+
+Control memory engine mounting via `memory.engine` config:
+
+| Value | Description |
+|-------|-------------|
+| `builtin` | Only built-in memory (default, backward-compatible) |
+| `external` | Only external memory (LTM / Mem0 / OpenViking / plugin) |
+| `both` | Built-in + external coexist |
+| `none` | All disabled |
+
+---
+
 ## Configuration
+
+### Built-in Memory
 
 Retrieval defaults to BM25 full-text search. Configure **`EMBED_API_KEY`** (and related embed settings) for vector + BM25 hybrid search.
 
@@ -13,6 +32,60 @@ Retrieval defaults to BM25 full-text search. Configure **`EMBED_API_KEY`** (and 
 | `EMBED_MODEL` | Embedding model name |
 
 ![Memory config](../assets/images/memory_config.png)
+
+### External Memory
+
+Config location: `memory.external` section in `config.yaml`.
+
+```yaml
+memory:
+  engine: external   # or both
+  external:
+    provider: mem0   # Choose one: openjiuwen | mem0 | openviking | <plugin-name>
+    user_id: __default__
+    scope_id: __default__
+
+    # Provider-specific config
+    openjiuwen:
+      kv_type: shelve
+      vector_type: chroma
+      db_type: sqlite
+    mem0:
+      api_key: ""
+      user_id: ""
+      agent_id: ""
+      rerank: true
+    openviking:
+      endpoint: http://127.0.0.1:1933
+      api_key: ""
+      account: root
+      user: default
+```
+
+#### Supported Providers
+
+| Provider | Description | Required Config |
+|----------|-------------|-----------------|
+| `openjiuwen` | Local long-term memory (KV + Vector + DB) | None (uses default ~/.jiuwenclaw/memory/ltm) |
+| `mem0` | Cloud fact extraction & semantic retrieval | `api_key` (from mem0.ai) |
+| `openviking` | ByteDance context database | `endpoint`, `api_key` |
+| `<plugin-name>` | Custom plugin | ~/.jiuwenclaw/plugins/memory/<name>/ |
+
+#### External Memory Environment Variables
+
+| Variable | Description |
+|----------|-------------|
+| `MEMORY_EXTERNAL_PROVIDER` | Provider name (overrides config.yaml) |
+| `MEMORY_USER_ID` | Data isolation identifier |
+| `MEMORY_SCOPE_ID` | Scope identifier |
+| `MEM0_API_KEY` | Mem0 API key |
+| `MEM0_USER_ID` | Mem0 user identifier |
+| `OPENVIKING_ENDPOINT` | OpenViking service address |
+| `OPENVIKING_API_KEY` | OpenViking API key |
+
+---
+
+## Built-in Memory File Layout
 
 
 ## File layout

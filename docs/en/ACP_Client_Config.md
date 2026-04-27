@@ -12,15 +12,15 @@ Pre-installation Preparation
 # VS Code ACP Client Setup (macOS / Linux)
 1. Install the ACP Client extension from the marketplace. Search for `formulahendry.acp-client` and install it.
 
-![ACP](../assets/images/acp.png)
+![ACP](../assets/images/ACP插件.png)
 
 2. In the extension, click the `+` button (`ACP: Add Agent Configuration`).
 
-![addAgent](../assets/images/addAgent.png)
+![addAgent](../assets/images/ACP插件添加agent.png)
 
 3. Under `Add Acp Agent`, enter: jiuwenclaw.
 
-![name](../assets/images/name.png)
+![name](../assets/images/agent.png)
 
 4. For `Agent Command`, enter the absolute path to run_gateway_acp.sh.
 5. Leave `Agent Arguments` empty.

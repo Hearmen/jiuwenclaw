@@ -305,7 +305,7 @@ gateway:
   session_map_scope: per_chat_bot
 
 heartbeat:
-  # 心跳间隔（秒），默认 60
+  # 心跳间隔（秒），默认 3600
   every: 3600
   # 心跳结果回传的 channel（如 "web"），
   target: web

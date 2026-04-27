@@ -68,7 +68,7 @@ Created or updated at runtime:
 
 ## Related configuration
 
-- **Skill root**: `skill_base_dir` in `config/config.yaml`, default `workspace/agent/skills`.
+- **Skill root**: `skill_base_dir` in `config/config.yaml`, default `agent/skills`.
 - **Memory workspace**: `workspace/agent` (`get_agent_workspace_dir()`).
 - **Sessions**: `workspace/session`, one subfolder per `session_id`.
 - **SkillNet usage in Claw**: see [Skills.md §5](Skills.md#5-how-skills-installed-via-skillnet-are-used-in-claw).
