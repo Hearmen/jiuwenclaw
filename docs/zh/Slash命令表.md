@@ -35,7 +35,7 @@
 | `/new_session` | 新建会话（仅 IM 生效） |
 | `/mode` | 模式切换（支持一级入口与直达写法） |
 | `/switch` | 在当前模式族内切换二级模式 |
-| `/skills` | 技能列表（见「IM 与 TUI 差异」） |
+| `/skills` | 技能管理（列表、安装、卸载、市场源） |
 | `/model` | 模型查看、新增、切换（见下文） |
 | `/mcp` | MCP 服务管理（见下文） |
 | `/diff` | 查看当前会话按轮次改动（见下文） |
@@ -173,9 +173,31 @@
   - 变更会写入 `config.yaml` 的 `mcp.servers`；
   - 写入后会触发 Agent 配置重载，运行时按配置同步 MCP server 绑定。
 
----
+### `/skills`（技能管理）
 
-## `/skills`：IM 与 TUI 的差异
+管理技能的完整生命周期：列表查看、安装、卸载以及市场源管理。
+
+#### 子命令
+
+| 命令 | 说明 |
+|---|---|
+| `/skills` 或 `/skills list` | 列出当前已安装的技能 |
+| `/skills install <spec>` | 从市场源安装技能（如 `my-skill@marketplace`） |
+| `/skills uninstall <name>` | 按名称卸载技能 |
+| `/skills marketplace` 或 `/skills marketplace list` | 列出市场源（名称、URL、启用状态、最后更新时间） |
+| `/skills marketplace add <name> <url>` | 添加新的市场源 |
+| `/skills marketplace remove <name>` | 移除市场源（同时清理缓存） |
+| `/skills marketplace toggle <name> <on|off>` | 启用或禁用市场源（`on`/`true`/`1` 为启用，其余为禁用） |
+| `/skills use <skill_name>, <query>` | 使用指定技能执行查询 |
+
+#### 概念说明
+
+- **技能（Skill）**：可从市场源安装的扩展能力，为 Agent 提供额外功能。
+- **市场源（Marketplace source）**：托管可用技能的远程仓库（通常为 Git URL），每个源包含名称、URL 和启用/禁用状态。
+- **规格标识（Spec）**：安装时使用的标识格式 `<技能名>@<市场源名>`。
+- **安装位置（Install location）**：技能安装后的存储目录。
+
+#### IM 与 TUI 的差异
 
 两端最终都会请求 `skills.list`，但触发方式和展示形态不同。
 
@@ -184,7 +206,27 @@
 | IM（飞书等受控通道） | 整行精确匹配 `/skills list`（会先做空白规范化） | Gateway 拦截控制消息并请求 `skills.list`，结果以 IM 通知/卡片等形式展示；单独输入 `/skills` 不走该控制路径。 |
 | TUI（CLI 内置） | 输入 `/skills` | 本地执行内置命令并调用 `skills.list`，在会话内以列表视图展示（标题 `Skills`）；无数据时提示 `No skills returned`。 |
 
-结论：IM 使用 `/skills list`，TUI 使用 `/skills`，当前写法存在差异（已知现状）。
+对于其他子命令（`/skills install`、`/skills uninstall`、`/skills marketplace add/remove/toggle`、`/skills use`），Gateway **不会拦截**——在 IM 侧输入时会被当作普通聊天消息发送给 Agent。这些子命令仅在 TUI（CLI 内置）和 Web UI 路径下可用，通过 RPC 直连 AgentServer。
+
+#### 备注
+
+- **超时**：`install`、`uninstall`、`marketplace toggle` 请求在 TUI 侧有 120 秒超时；其余子命令无显式超时设置。
+- **缓存清理**：`marketplace remove` 发送 `{ name, remove_cache: true }` 以同时清理该源的本地缓存。
+- **自动刷新**：`marketplace add`、`marketplace remove`、`marketplace toggle` 在操作成功后会自动重新列出市场源。
+- **离线处理**：`/skills use` 会检查连接状态；离线时显示 `offline: waiting for reconnect before sending /skills use request`。
+
+#### 示例
+
+- `/skills` — 列出已安装技能
+- `/skills list` — 列出已安装技能（显式子命令）
+- `/skills install my-skill@marketplace` — 从市场源安装技能
+- `/skills uninstall my-skill` — 卸载技能
+- `/skills marketplace list` — 列出市场源
+- `/skills marketplace add community https://github.com/user/skills-repo` — 添加名为"community"的市场源
+- `/skills marketplace remove community` — 移除"community"市场源
+- `/skills marketplace toggle community on` — 启用"community"市场源
+- `/skills marketplace toggle community off` — 禁用"community"市场源
+- `/skills use my-skill, Code and execute a Hello World program.` — 使用技能执行查询
 
 ---
 
