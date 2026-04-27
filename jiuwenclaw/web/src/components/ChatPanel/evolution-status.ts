@@ -14,7 +14,7 @@ const STAGE_KEY_MAP: Record<string, string> = {
 };
 
 export function getEvolutionPillLabel(
-  _mode: AgentMode,
+  mode: AgentMode,
   evolutionStatus: EvolutionStatusPayload | null,
   t: Translate,
 ): string | null {
@@ -23,6 +23,9 @@ export function getEvolutionPillLabel(
   }
 
   const stage = (evolutionStatus.stage || '').trim().toLowerCase();
+  if (mode !== 'team' && (stage === 'failed' || stage === 'hidden')) {
+    return null;
+  }
   const translationKey = STAGE_KEY_MAP[stage];
   if (translationKey) {
     return t(translationKey);

@@ -4386,8 +4386,11 @@ class JiuWenClawDeepAdapter:
                 await _push_approval(evt)
 
             if outcome is not None:
-                stage = str(outcome.get("status") or "failed")
+                stage = str(outcome.get("status") or "failed").strip().lower()
                 message = str(outcome.get("message") or "Evolution analysis failed")
+                if stage == "failed":
+                    await _push_status("end", "hidden", "")
+                    return
                 await _push_status("end", stage, message)
                 return
 
@@ -4395,7 +4398,7 @@ class JiuWenClawDeepAdapter:
         except Exception as exc:
             logger.warning("[JiuWenClawDeepAdapter] evolution watcher failed: %s", exc)
             try:
-                await _push_status("end", "failed", f"Evolution analysis failed: {exc}")
+                await _push_status("end", "hidden", "")
             except Exception:
                 pass
 
