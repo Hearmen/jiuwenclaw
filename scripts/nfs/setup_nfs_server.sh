@@ -3,8 +3,9 @@
 set -euo pipefail
 
 CLIENT_IP="${CLIENT_IP:-}"
-EXPORT_DIR="${EXPORT_DIR:-/root/.jiuwenclaw/agent/jiuwenclaw_workspace}"
-MOUNT_POINT="${MOUNT_POINT:-/root/.jiuwenclaw/agent/jiuwenclaw_workspace}"
+EXPORT_DIR="${EXPORT_DIR:-/root/.jiuwenclaw/.agent_teams}"
+MOUNT_POINT="${MOUNT_POINT:-/root/.jiuwenclaw/.agent_teams}"
+FSID="${FSID:-1002}"
 EXPORTS_FILE="/etc/exports.d/jiuwenclaw.exports"
 
 while [[ $# -gt 0 ]]; do
@@ -21,6 +22,10 @@ while [[ $# -gt 0 ]]; do
       MOUNT_POINT="$2"
       shift 2
       ;;
+    --fsid)
+      FSID="$2"
+      shift 2
+      ;;
     -h|--help)
       cat <<'EOF'
 Usage:
@@ -28,8 +33,9 @@ Usage:
 
 Options:
   --client-ip <ip>       Allowed NFS client IP. Required unless CLIENT_IP is set
-  --export-dir <path>    Server export directory. Default: /root/.jiuwenclaw/agent/jiuwenclaw_workspace
-  --mount-point <path>   Local mount path. Default: /root/.jiuwenclaw/agent/jiuwenclaw_workspace
+  --export-dir <path>    Server export directory. Default: /root/.jiuwenclaw/.agent_teams
+  --mount-point <path>   Local mount path. Default: /root/.jiuwenclaw/.agent_teams
+  --fsid <id>            Stable NFS filesystem id for this export. Default: 1002
 EOF
       exit 0
       ;;
@@ -90,7 +96,7 @@ chmod 755 "${EXPORT_DIR}"
 echo "[3/6] Writing export rule to ${EXPORTS_FILE}"
 mkdir -p /etc/exports.d
 cat > "${EXPORTS_FILE}" <<EOF
-${EXPORT_DIR} ${CLIENT_IP}(rw,sync,no_subtree_check,no_root_squash)
+${EXPORT_DIR} ${CLIENT_IP}(rw,sync,no_subtree_check,no_root_squash,fsid=${FSID})
 EOF
 
 echo "[4/6] Reloading exports"
@@ -114,6 +120,7 @@ Server node:
   export dir : ${EXPORT_DIR}
   mount path : ${MOUNT_POINT}
   client ip  : ${CLIENT_IP}
+  fsid       : ${FSID}
 
 Next step on the client node:
   sudo bash scripts/nfs/setup_nfs_client.sh --server-ip <server-private-ip>

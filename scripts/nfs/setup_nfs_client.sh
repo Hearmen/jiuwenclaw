@@ -3,8 +3,8 @@
 set -euo pipefail
 
 SERVER_IP="${SERVER_IP:-}"
-EXPORT_DIR="${EXPORT_DIR:-/root/.jiuwenclaw/agent/jiuwenclaw_workspace}"
-MOUNT_POINT="${MOUNT_POINT:-/root/.jiuwenclaw/agent/jiuwenclaw_workspace}"
+EXPORT_DIR="${EXPORT_DIR:-/root/.jiuwenclaw/.agent_teams}"
+MOUNT_POINT="${MOUNT_POINT:-/root/.jiuwenclaw/.agent_teams}"
 FSTAB_LINE=""
 
 while [[ $# -gt 0 ]]; do
@@ -28,8 +28,8 @@ Usage:
 
 Options:
   --server-ip <ip>       NFS server IP. Required unless SERVER_IP is set
-  --export-dir <path>    Server export directory. Default: /root/.jiuwenclaw/agent/jiuwenclaw_workspace
-  --mount-point <path>   Local mount path. Default: /root/.jiuwenclaw/agent/jiuwenclaw_workspace
+  --export-dir <path>    Server export directory. Default: /root/.jiuwenclaw/.agent_teams
+  --mount-point <path>   Local mount path. Default: /root/.jiuwenclaw/.agent_teams
 EOF
       exit 0
       ;;
