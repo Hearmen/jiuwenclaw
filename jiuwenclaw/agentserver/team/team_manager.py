@@ -242,7 +242,11 @@ class TeamManager:
         )
 
         try:
-            cron_tools = cron_runtime.build_tools(context=cron_context, agent_id=agent_id)
+            cron_tools = cron_runtime.build_tools(
+                context=cron_context,
+                agent_id=agent_id,
+                language=getattr(agent.deep_config, "language", "cn")
+            )
             for cron_tool in cron_tools:
                 if not Runner.resource_mgr.get_tool(cron_tool.card.id):
                     Runner.resource_mgr.add_tool(cron_tool)

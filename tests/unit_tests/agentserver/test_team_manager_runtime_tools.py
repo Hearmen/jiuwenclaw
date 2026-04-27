@@ -25,8 +25,8 @@ class _FakeResourceManager:
 
 class _FakeCronRuntimeBridge:
     @staticmethod
-    def build_tools(*, context, agent_id):
-        _ = (context, agent_id)
+    def build_tools(*, context, agent_id, language="cn"):
+        _ = (context, agent_id, language)
         return [
             LocalFunction(
                 card=ToolCard(
@@ -85,6 +85,7 @@ def test_register_member_runtime_tools_adds_cron_and_send_file(monkeypatch):
     agent = SimpleNamespace(
         card=SimpleNamespace(id="member-agent", name="member-agent"),
         ability_manager=AbilityManager(),
+        deep_config=SimpleNamespace(language="cn"),
     )
 
     TeamManager.register_member_runtime_tools(

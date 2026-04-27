@@ -1995,7 +1995,9 @@ class JiuWenClawDeepAdapter:
         """Build cron tools from the shared runtime bridge."""
         agent_id = self._instance.card.id if self._instance else None
         return self._cron_runtime.build_tools(
-            context=self._runtime_cron_tool_context, agent_id=agent_id
+            context=self._runtime_cron_tool_context,
+            agent_id=agent_id,
+            language=self._resolve_runtime_language(),
         )
 
     async def _proc_context_compaction(self) -> None:
