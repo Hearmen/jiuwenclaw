@@ -21,6 +21,7 @@ Executed locally in the terminal UI, not through Gateway control pipeline.
 | `/theme` | Switch theme |
 | `/config` | Modify configuration (currently local, planned to unify with Gateway) |
 | `/workspace` | Manage trusted directories (see below) |
+| `/teamskills` | TeamSkills Hub publish/delete (`publish`/`delete`) |
 
 > Note: `/mode` controlled switching logic is primarily on Gateway side, see "`/mode` and `/switch`" below.
 

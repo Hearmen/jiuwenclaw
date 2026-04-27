@@ -21,6 +21,7 @@
 | `/theme` | 切换主题 |
 | `/config` | 修改配置（当前为本地实现，后续计划统一到 Gateway） |
 | `/workspace` | 管理可信目录（见下文） |
+| `/teamskills` | TeamSkills 管理（`init/validate/pack/info/search/list/install/uninstall/config/publish/delete`） |
 
 > 说明：`/mode` 的受控切换逻辑以 Gateway 侧行为为主，详见下文「`/mode` 与 `/switch`」。
 
@@ -172,6 +173,28 @@
 - 配置与生效：
   - 变更会写入 `config.yaml` 的 `mcp.servers`；
   - 写入后会触发 Agent 配置重载，运行时按配置同步 MCP server 绑定。
+
+### `/teamskills`（TeamSkills 管理）
+
+- 用法：
+  - `/teamskills init <name> [--path <parent_dir>] [--type <teamskills|skill>] [--force]`
+  - `/teamskills validate <path> [--type <teamskills|skill>]`
+  - `/teamskills pack <path> [--output <dir>]`
+  - `/teamskills info <asset_id> --version <x.y.z> [--market-url <url>]`
+  - `/teamskills search <query> [--type <skill|teamskills>] [--author <name>] [--asset-id <id>] [--asset-type <type>] [--publisher-id <id>] [--page <n>] [--page-size <n>] [--order-by <field>] [--desc <bool>] [--market-url <url>]`
+  - `/teamskills list`
+  - `/teamskills install <asset_id> [--version <x.y.z>] [--output <dir>] [--force] [--market-url <url>]`
+  - `/teamskills uninstall <name>`
+  - `/teamskills config [--market-url <url>] [--token <user_token>] [--system-token <system_token>]`
+  - `/teamskills publish <path> --version <x.y.z> [--id <skill_id>] [--file <zip>] (--token <t>|--system-token <t>) [--market-url <url>] [--force] [--version-desc <text>]`
+  - `/teamskills delete <skill_id> [--version <x.y.z|all>] (--token <t>|--system-token <t>) [--market-url <url>]`
+- 行为：
+  - `list` 仅列出当前本地可见已安装技能（并展示 `type`，区分 `skill` 与 `teamskills`）；
+  - `search` 仅用于 TeamSkills Hub 市场搜索；
+  - `config` 用于持久化 TeamSkills Hub 地址与 token（写入配置并尽量即时生效）；
+  - `publish` 走 TeamSkills Hub 原生发布接口 `POST /api/v1/plugins`；
+  - `delete` 走 TeamSkills Hub 原生删除接口 `DELETE /api/v1/plugins/{skill_id}/versions/{version}`；
+  - `--token` 与 `--system-token` 互斥，且必须二选一。
 
 ### `/skills`（技能管理）
 

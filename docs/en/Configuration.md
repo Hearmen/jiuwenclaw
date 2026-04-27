@@ -236,9 +236,11 @@ Log files are stored in `~/.jiuwenclaw/agent/.logs/`, split into `gateway.log`, 
 | `EVOLUTION_AUTO_SCAN` | Auto-scan evolvable skills after each turn (`true`/`false`) |
 | `SKILLNET_DOWNLOAD_TIMEOUT` | SkillNet download timeout (seconds), default 60 |
 | `SKILLNET_MAX_RETRIES` | SkillNet download max retries, default 3 |
-| `OPENJIUWEN_MARKET_BASE_URL` | TeamSkillsHub market URL (empty = default) |
-| `OPENJIUWEN_MARKET_TIMEOUT` | Market request timeout (seconds), default 60 |
-| `OPENJIUWEN_ALLOWED_DOWNLOAD_HOSTS` | ZIP download host allowlist, comma-separated |
+| `TEAM_SKILLS_HUB_BASE_URL` | TeamSkillsHub market URL (empty = default) |
+| `TEAM_SKILLS_HUB_USER_TOKEN` | TeamSkillsHub user token (mutually exclusive with system token) |
+| `TEAM_SKILLS_HUB_SYSTEM_TOKEN` | TeamSkillsHub system token (mutually exclusive with user token) |
+| `TEAM_SKILLS_HUB_TIMEOUT` | TeamSkillsHub request timeout (seconds), default 60 |
+| `TEAM_SKILLS_HUB_ALLOWED_DOWNLOAD_HOSTS` | TeamSkillsHub ZIP download host allowlist, comma-separated |
 | `MEMORY_MODE` | Memory mode (empty = `local` default) |
 | `EXTENSION_DIRS` | Extension search directories, semicolon-separated (maps to `extensions.extension_dirs`) |
 | `OTEL_ENABLED` | Enable OpenTelemetry (maps to `telemetry.enabled`) |

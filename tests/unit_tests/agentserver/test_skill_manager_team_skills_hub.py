@@ -62,10 +62,9 @@ def test_get_team_skills_hub_base_url_env_override(monkeypatch):
     assert manager.get_team_skills_hub_base_url() == "https://example.com/custom/hub"
 
 
-def test_get_team_skills_hub_base_url_ignores_removed_openjiuwen_market_env(monkeypatch):
-    """OPENJIUWEN_MARKET_* 已移除，不应再影响 Hub 基址。"""
+def test_get_team_skills_hub_base_url_default_without_override(monkeypatch):
+    """未配置 TEAM_SKILLS_HUB_BASE_URL 时应回退默认值。"""
     monkeypatch.delenv("TEAM_SKILLS_HUB_BASE_URL", raising=False)
-    monkeypatch.setenv("OPENJIUWEN_MARKET_BASE_URL", "https://ignored-legacy.example/")
     manager = TeamSkillsHubHarnessSkillManager(workspace_dir="dummy")
     assert manager.get_team_skills_hub_base_url() == "https://teamskills.openjiuwen.com"
 
@@ -74,9 +73,23 @@ def test_get_team_skills_hub_base_url_ignores_removed_openjiuwen_market_env(monk
 async def test_handle_skills_team_skills_hub_info(tmp_path, monkeypatch):
     monkeypatch.delenv("TEAM_SKILLS_HUB_BASE_URL", raising=False)
     manager = TeamSkillsHubHarnessSkillManager(workspace_dir=str(tmp_path))
-    payload = await manager.handle_skills_team_skills_hub_info({})
+
+    async def _fake_get_data(path, **kwargs):  # noqa: ANN001
+        assert path == "/api/v1/artifacts/demo-skill"
+        assert kwargs.get("params") == {"version": "1.0.0"}
+        return {
+            "asset_id": "demo-skill",
+            "name": "demo-skill",
+            "display_name": "Demo Skill",
+            "download_url": _TEAM_SKILLS_HUB_ZIP_URL,
+        }
+
+    manager.set_mock_get_data(_fake_get_data)
+    payload = await manager.handle_skills_team_skills_hub_info({"asset_id": "demo-skill", "version": "1.0.0"})
     assert payload["success"] is True
-    assert payload["market_base_url"] == "https://teamskills.openjiuwen.com"
+    assert payload["asset_id"] == "demo-skill"
+    assert payload["version"] == "1.0.0"
+    assert payload["data"]["display_name"] == "Demo Skill"
 
 
 @pytest.mark.asyncio
