@@ -495,7 +495,7 @@ class AgentWebSocketServer:
         agent = await self._agent_manager.get_agent(
             channel_id=channel_id,
             mode=mode,
-            workspace_dir=trusted_dirs[0] if trusted_dirs else None,
+            project_dir=trusted_dirs[0] if trusted_dirs else None,
             sub_mode=sub_mode,
         )
         if agent is None:
@@ -531,7 +531,7 @@ class AgentWebSocketServer:
         agent = await self._agent_manager.get_agent(
             channel_id=channel_id,
             mode=mode,
-            workspace_dir=trusted_dirs[0] if trusted_dirs else None,
+            project_dir=trusted_dirs[0] if trusted_dirs else None,
             sub_mode=sub_mode,
         )
         if agent is None:
@@ -850,7 +850,7 @@ class AgentWebSocketServer:
             agent = await self._agent_manager.get_agent(
                 channel_id=channel_id,
                 mode=mode,
-                workspace_dir=params.get("workspace_dir", None)
+                project_dir=params.get("project_dir", None)
             )
 
             if agent is None:

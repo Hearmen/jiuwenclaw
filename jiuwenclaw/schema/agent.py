@@ -79,7 +79,6 @@ class AgentRequest:
     metadata: dict[str, Any] | None = None
     enable_memory: bool | None = None
     permission_context: PermissionContext | None = None
-    workspace_dir: str = None
 
 
 @dataclass

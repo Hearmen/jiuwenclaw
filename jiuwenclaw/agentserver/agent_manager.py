@@ -154,7 +154,7 @@ class AgentManager:
             self,
             channel_id: str = "",
             mode: str = "agent",
-            workspace_dir: str = None,
+            project_dir: str = None,
             sub_mode: str = None
     ) -> "JiuWenClaw | None":
         """获取 Agent 实例（自动创建）.
@@ -164,7 +164,7 @@ class AgentManager:
         Args:
             channel_id: 通道 ID
             mode: 每个模式对应的实例
-            workspace_dir: project dir
+            project_dir: user project dir (e.g. trusted_dirs[0])
             sub_mode: 子模式
 
         Returns:
@@ -173,7 +173,9 @@ class AgentManager:
         if channel_id in self.agents and mode in self.agents[channel_id]:
             return self.agents[channel_id][mode]
         else:
-            config = {"workspace_dir": workspace_dir} if workspace_dir else {}
+            config = {}
+            if project_dir:
+                config["project_dir"] = project_dir
             if channel_id == "acp":
                 config = {
                     **config,

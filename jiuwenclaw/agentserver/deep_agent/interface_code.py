@@ -168,7 +168,7 @@ class JiuwenClawCodeAdapter(JiuWenClawDeepAdapter):
             "agent_name", config.get("agent_name", "main_agent")
         )
         self._project_dir = self._instance_overrides.get(
-            "workspace_dir", config.get("workspace_dir")
+            "project_dir", config.get("project_dir")
         )
 
         model = self._create_model(config_base)
@@ -196,7 +196,7 @@ class JiuwenClawCodeAdapter(JiuWenClawDeepAdapter):
             raw_subagents,
             resolved_language=self._resolve_runtime_language(),
             model=model,
-            workspace=self._project_dir or self._workspace_dir or "./",
+            workspace=self._workspace_dir or "./",
         )
 
         self._instance = create_deep_agent(
@@ -216,13 +216,15 @@ class JiuwenClawCodeAdapter(JiuWenClawDeepAdapter):
             enable_task_loop=config.get("enable_task_loop", True),
             max_iterations=config.get("max_iterations", 15),
             workspace=Workspace(
-                root_path=self._project_dir or "./",
+                root_path=self._workspace_dir or "./",
                 language=self._resolve_runtime_language(),
             ),
             sys_operation=sys_operation,
             language=self._resolve_runtime_language(),
-            enable_task_planning=True
+            enable_task_planning=True,
+            auto_create_workspace=False
         )
+
         # code 模式不传: vision_model_config, audio_model_config,
         # context_engine_config, completion_timeout
 
@@ -425,7 +427,7 @@ class JiuwenClawCodeAdapter(JiuWenClawDeepAdapter):
         确保能检索到 /init 命令创建 JIUWENCLAW.md 的目录（当前工作目录）。
         """
         try:
-            workspace = self._workspace_dir or "./"
+            workspace = self._project_dir or self._workspace_dir or "./"
             language = self._resolve_runtime_language()
             raw_additional_dirs = self._instance_overrides.get(
                 "project_memory_additional_directories",

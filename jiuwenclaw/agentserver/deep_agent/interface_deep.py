@@ -2027,9 +2027,7 @@ class JiuWenClawDeepAdapter:
         self._agent_name = self._instance_overrides.get(
             "agent_name", config.get("agent_name", "main_agent")
         )
-        self._workspace_dir = self._instance_overrides.get(
-            "workspace_dir", config.get("workspace_dir", get_agent_workspace_dir())
-        )
+        self._workspace_dir = config.get("workspace_dir", str(get_agent_workspace_dir()))
 
         model = self._create_model(config_base)
         await self._try_init_a2x_client(config_base)
@@ -2077,6 +2075,7 @@ class JiuWenClawDeepAdapter:
             ),
             sys_operation=sys_operation,
             language=self._resolve_runtime_language(),
+            auto_create_workspace=False
         )
 
         self._instance = create_deep_agent(
