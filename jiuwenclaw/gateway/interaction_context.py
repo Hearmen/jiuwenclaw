@@ -2,7 +2,7 @@
 
 """PendingInteraction — 统一的追问上下文，支持群聊追问和 DM 追问两种模式。
 
-存储路径: ~/.jiuwenclaw/workspace/agent/interactions/{interaction_id}.json
+存储路径: {workspace_dir}/agent/jiuwenclaw_workspace/interactions/{interaction_id}.json
 文件名前缀: gpq_* 群聊追问, iact_* DM 追问
 TTL: 24 小时
 """
@@ -12,11 +12,12 @@ from __future__ import annotations
 import glob
 import json
 import logging
-import os
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
+
+from jiuwenclaw.utils import get_interactions_dir
 
 logger = logging.getLogger(__name__)
 
@@ -25,10 +26,9 @@ _DEFAULT_TTL = 86400
 
 
 def _get_interactions_dir() -> Path:
-    home = os.path.expanduser("~/.jiuwenclaw")
-    d = Path(home) / "workspace" / "agent" / "interactions"
-    d.mkdir(parents=True, exist_ok=True)
-    return d
+    interactions_dir = get_interactions_dir()
+    interactions_dir.mkdir(parents=True, exist_ok=True)
+    return interactions_dir
 
 
 def _filter_sensitive(metadata: dict[str, Any]) -> dict[str, Any]:

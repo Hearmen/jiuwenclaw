@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+import json
 from typing import Any
 
 from jiuwenclaw.channel.platform_adapter.message import MessageStore
@@ -178,11 +179,9 @@ class FeishuIMPlatformAdapter:
         if not name or not self._api_client:
             return ""
         try:
-            from jiuwenclaw.utils import get_agent_workspace_dir
-            import json
-            from pathlib import Path
+            from jiuwenclaw.utils import get_interactions_dir
 
-            interactions_dir = Path.home() / ".jiuwenclaw" / "workspace" / "agent" / "interactions"
+            interactions_dir = get_interactions_dir()
             for fp in interactions_dir.glob("*.json"):
                 try:
                     data = json.loads(fp.read_text(encoding="utf-8"))

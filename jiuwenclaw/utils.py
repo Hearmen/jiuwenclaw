@@ -1021,6 +1021,15 @@ def get_agent_skills_dir() -> Path:
     return get_agent_workspace_dir() / "skills"
 
 
+def get_interactions_dir() -> Path:
+    """Get the interactions directory for pending interaction contexts.
+
+    Returns:
+        Path to interactions directory: {workspace}/agent/jiuwenclaw_workspace/interactions
+    """
+    return get_agent_workspace_dir() / "interactions"
+
+
 def get_cron_jobs_path() -> Path:
     """Canonical path for cron_jobs.json shared by gateway and agentserver."""
     return get_user_workspace_dir() / "agent" / "home" / "cron_jobs.json"

@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+import json
 from typing import Any
 
 from jiuwenclaw.channel.platform_adapter.message import MessageStore
@@ -153,10 +154,9 @@ class WecomIMPlatformAdapter:
         if not name:
             return ""
         try:
-            import json
-            from pathlib import Path
+            from jiuwenclaw.utils import get_interactions_dir
 
-            interactions_dir = Path.home() / ".jiuwenclaw" / "workspace" / "agent" / "interactions"
+            interactions_dir = get_interactions_dir()
             for fp in interactions_dir.glob("*.json"):
                 try:
                     data = json.loads(fp.read_text(encoding="utf-8"))

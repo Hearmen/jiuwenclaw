@@ -14,6 +14,8 @@ import os
 from pathlib import Path
 from typing import Any, Dict, Optional
 
+from jiuwenclaw.utils import get_user_workspace_dir
+
 from .config import _load_config, get_embed_config
 
 logger = logging.getLogger(__name__)
@@ -47,7 +49,9 @@ def is_external_memory_allowed(config: Optional[Dict[str, Any]] = None) -> bool:
     return get_memory_engine(config) in {"external", "both"}
 
 
-def get_external_memory_config(config: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+def get_external_memory_config(
+    config: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
     """Return the `memory.external` section with defaults filled in."""
     cfg = config if config is not None else _load_config()
     mem = (cfg or {}).get("memory", {}) if isinstance(cfg, dict) else {}
@@ -74,8 +78,8 @@ def is_external_memory_enabled(config: Optional[Dict[str, Any]] = None) -> bool:
 
 
 def _resolve_ltm_dir() -> Path:
-    """Default LTM data dir under ~/.jiuwenclaw/memory/ltm."""
-    base = Path.home() / ".jiuwenclaw" / _LTM_SUBDIR
+    """Default LTM data dir under {workspace_dir}/memory/ltm."""
+    base = get_user_workspace_dir() / _LTM_SUBDIR
     base.mkdir(parents=True, exist_ok=True)
     return base
 

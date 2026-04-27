@@ -320,4 +320,20 @@ class TestAdditionalHardcodedPaths:
         assert str(_CONFIG_MODULE_DIR.resolve()) == str(expected_path.resolve()), \
             f"Expected: {expected_path.resolve()}, Got: {_CONFIG_MODULE_DIR.resolve()}"
 
+    @staticmethod
+    def test_interactions_dir_structure():
+        """Test get_interactions_dir() returns correct path structure."""
+        # Reset caches to ensure clean state
+        setattr(utils, '_user_home', None)
+        setattr(utils, '_workspace_base_dir', None)
+
+        from jiuwenclaw.utils import get_interactions_dir, get_user_workspace_dir
+
+        workspace = get_user_workspace_dir()
+        expected_path = workspace / "agent" / "jiuwenclaw_workspace" / "interactions"
+        actual_path = get_interactions_dir()
+
+        assert str(actual_path.resolve()) == str(expected_path.resolve()), \
+            f"Expected: {expected_path.resolve()}, Got: {actual_path.resolve()}"
+
     
