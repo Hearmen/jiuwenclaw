@@ -1,15 +1,15 @@
 # Copyright (c) Huawei Technologies Co., Ltd. 2026. All rights reserved.
 
-"""Unit tests for SignalDetector."""
+"""Unit tests for SignalDetector (using openjiuwen core)."""
 
 import pytest
 
-from jiuwenclaw.evolution.signal_detector import SignalDetector
-from jiuwenclaw.evolution.schema import EvolutionType, EvolutionSignal
+from openjiuwen.agent_evolving.signal import SignalDetector
+from openjiuwen.agent_evolving import EvolutionSignal
 
 
 class TestSignalDetector:
-    """Test SignalDetector class."""
+    """Test SignalDetector class from openjiuwen."""
 
     @staticmethod
     def test_detect_no_signals():
@@ -37,7 +37,7 @@ class TestSignalDetector:
         ]
         signals = detector.detect(messages)
         assert len(signals) == 1
-        assert signals[0].type == "execution_failure"
+        assert signals[0].signal_type == "execution_failure"
         assert signals[0].section == "Troubleshooting"
         assert "Command failed" in signals[0].excerpt
 
@@ -51,7 +51,7 @@ class TestSignalDetector:
         ]
         signals = detector.detect(messages)
         assert len(signals) == 1
-        assert signals[0].type == "user_correction"
+        assert signals[0].signal_type == "user_correction"
         assert signals[0].section == "Examples"
 
     @staticmethod
@@ -64,7 +64,8 @@ class TestSignalDetector:
         ]
         signals = detector.detect(messages)
         assert len(signals) == 1
-        assert signals[0].type == "user_correction"
+        assert signals[0].signal_type == "user_correction"
+        assert signals[0].section == "Examples"
 
     @staticmethod
     def test_detect_multiple_signals():
@@ -102,7 +103,7 @@ class TestSignalDetector:
     @staticmethod
     def test_detect_with_skill_from_tool_calls():
         """Test detecting skill name from tool calls."""
-        detector = SignalDetector(skill_dir_map={"test-skill": "/path/to/test-skill"})
+        detector = SignalDetector(existing_skills={"test-skill"})
         messages = [
             {
                 "role": "assistant",

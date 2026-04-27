@@ -29,13 +29,16 @@ import requests
 from requests.adapters import HTTPAdapter
 from urllib3.util.ssl_ import create_urllib3_context
 
+from openjiuwen.agent_evolving.checkpointing.evolution_store import (
+    EvolutionLog as EvolutionFile,
+    EvolutionRecord as EvolutionEntry,
+)
 from jiuwenclaw.utils import (
     get_agent_root_dir,
     get_agent_skills_dir,
     get_builtin_skills_dir,
     is_package_installation,
 )
-from jiuwenclaw.evolution.schema import EvolutionEntry, EvolutionFile
 
 logger = logging.getLogger(__name__)
 
