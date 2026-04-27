@@ -12,11 +12,14 @@ import {
   InterruptResultPayload,
   SubtaskUpdatePayload,
   AskUserQuestionPayload,
+  EvolutionStatusPayload,
   UsageSummary,
 } from '../types';
 import { useTodoStore } from './todoStore';
 
 const TOOL_TIMEOUT_MS = 12_000_000;
+const EVOLUTION_STATUS_END_VISIBLE_MS = 3_000;
+let evolutionStatusClearTimer: ReturnType<typeof setTimeout> | null = null;
 
 function computeTimeoutAt(baseIso: string): string {
   return new Date(Date.parse(baseIso) + TOOL_TIMEOUT_MS).toISOString();
@@ -51,6 +54,7 @@ interface ChatState {
   messages: Message[];
   isProcessing: boolean;
   isThinking: boolean;  // 思考中状态（显示闪烁动画）
+  evolutionStatus: EvolutionStatusPayload | null;
   isPaused: boolean;    // 任务是否暂停
   pausedTask: string | null;  // 暂停的任务描述
   interruptResult: InterruptResultPayload | null;  // 最近的中断结果
@@ -80,6 +84,7 @@ interface ChatState {
   stopStreaming: (streamKey?: string) => void;
   setProcessing: (status: boolean) => void;
   setThinking: (status: boolean) => void;
+  setEvolutionStatus: (status: EvolutionStatusPayload | null) => void;
   setPaused: (paused: boolean, task?: string | null) => void;
   setInterruptResult: (result: InterruptResultPayload | null) => void;
   addToolCall: (toolCall: ToolCall, options?: { startedAt?: string }) => void;
@@ -106,6 +111,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
   messages: [],
   isProcessing: false,
   isThinking: false,
+  evolutionStatus: null,
   isPaused: false,
   pausedTask: null,
   interruptResult: null,
@@ -184,6 +190,25 @@ export const useChatStore = create<ChatState>((set, get) => ({
 
   setThinking: (status) => {
     set({ isThinking: status });
+  },
+
+  setEvolutionStatus: (status) => {
+    if (evolutionStatusClearTimer) {
+      clearTimeout(evolutionStatusClearTimer);
+      evolutionStatusClearTimer = null;
+    }
+    set({ evolutionStatus: status });
+    if (status?.status === 'end') {
+      evolutionStatusClearTimer = setTimeout(() => {
+        set((state) => {
+          if (state.evolutionStatus === status) {
+            return { evolutionStatus: null };
+          }
+          return {};
+        });
+        evolutionStatusClearTimer = null;
+      }, EVOLUTION_STATUS_END_VISIBLE_MS);
+    }
   },
 
   setPaused: (paused, task = null) => {
@@ -470,11 +495,16 @@ export const useChatStore = create<ChatState>((set, get) => ({
   },
 
   clearMessages: () => {
+    if (evolutionStatusClearTimer) {
+      clearTimeout(evolutionStatusClearTimer);
+      evolutionStatusClearTimer = null;
+    }
     set({
       messages: [],
       currentStreamContent: '',
       currentStreamId: null,
       streamBuffers: new Map(),
+      evolutionStatus: null,
       isPaused: false,
       pausedTask: null,
       interruptResult: null,

@@ -15,6 +15,7 @@ import {
   InterruptIntent,
   SubtaskUpdatePayload,
   AskUserQuestionPayload,
+  EvolutionStatusPayload,
   UserAnswer,
   MediaItem,
   AgentMode,
@@ -146,6 +147,7 @@ export function useWebSocket(options: UseWebSocketOptions): UseWebSocketReturn {
     updateMessage,
     setProcessing,
     setThinking,
+    setEvolutionStatus,
     setPaused,
     setInterruptResult,
     addToolCall,
@@ -783,6 +785,11 @@ export function useWebSocket(options: UseWebSocketOptions): UseWebSocketReturn {
             }
           }
         }
+      }),
+      webClient.on('chat.evolution_status', ({ payload }) => {
+        if (!shouldHandleSessionEvent(payload)) return;
+        if (shouldDropDuplicatedEvent('chat.evolution_status', payload)) return;
+        setEvolutionStatus(payload as unknown as EvolutionStatusPayload);
       }),
       webClient.on('chat.error', ({ payload }) => {
         if (!shouldHandleSessionEvent(payload)) return;

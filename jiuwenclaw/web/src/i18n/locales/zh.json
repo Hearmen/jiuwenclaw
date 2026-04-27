@@ -46,6 +46,16 @@
     "pause": "暂停",
     "resume": "恢复",
     "processing": "处理中...",
+    "evolving": "后台技能演进中...",
+    "evolutionStages": {
+      "collecting": "后台技能演进中...",
+      "detecting": "正在检测演进信号...",
+      "generating": "正在生成演进经验...",
+      "awaitingApproval": "演进经验已生成，等待审批...",
+      "completed": "技能演进已完成",
+      "timedOut": "技能演进已超时",
+      "failed": "技能演进失败"
+    },
     "paused": "已暂停",
     "pausedWithTask": "已暂停: {{task}}..."
   },
@@ -421,6 +431,9 @@
       "teamMemberPersona": "人设",
       "teamMemberPromptHint": "提示词",
       "teamMemberAgentKey": "Agent Key"
+    },
+    "keyHelp": {
+      "skillCreate": "建议先安装 `skill-creator` 和 `teamskill-creator`，再开启"
     },
     "hideValue": "隐藏明文",
     "showValue": "显示明文",

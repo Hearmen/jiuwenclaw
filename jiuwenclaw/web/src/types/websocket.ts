@@ -66,6 +66,13 @@ export interface ProcessingStatusPayload {
   current_task?: string;
 }
 
+export interface EvolutionStatusPayload {
+  session_id?: string;
+  status: 'start' | 'progress' | 'end';
+  stage?: string;
+  message?: string;
+}
+
 export interface ErrorPayload {
   error: string;
   code?: string;

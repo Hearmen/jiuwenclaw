@@ -46,6 +46,16 @@
     "pause": "Pause",
     "resume": "Resume",
     "processing": "Processing...",
+    "evolving": "Background skill evolution in progress...",
+    "evolutionStages": {
+      "collecting": "Background skill evolution in progress...",
+      "detecting": "Detecting evolution signals...",
+      "generating": "Generating evolution experience...",
+      "awaitingApproval": "Evolution proposal ready, awaiting approval...",
+      "completed": "Skill evolution completed",
+      "timedOut": "Skill evolution timed out",
+      "failed": "Skill evolution failed"
+    },
     "paused": "Paused",
     "pausedWithTask": "Paused: {{task}}..."
   },
@@ -422,6 +432,9 @@
       "teamMemberPersona": "Persona",
       "teamMemberPromptHint": "Prompt Hint",
       "teamMemberAgentKey": "Agent Key"
+    },
+    "keyHelp": {
+      "skillCreate": "Install `skill-creator` and `teamskill-creator` before enabling"
     },
     "hideValue": "Hide value",
     "showValue": "Show value",

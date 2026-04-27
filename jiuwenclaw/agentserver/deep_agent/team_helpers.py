@@ -110,6 +110,45 @@ def _ensure_team_evolution_watcher(
     tm.register_team_evolution_watcher(session_id, task)
 
 
+async def _resolve_team_rebuild_followup(
+    channel_id: str | None,
+    session_id: str,
+    query: str,
+) -> tuple[str | None, str | None]:
+    """Resolve /evolve_rebuild into a followup prompt for the team session."""
+    stripped = str(query or "").strip()
+    if not stripped.startswith("/evolve_rebuild"):
+        return None, None
+
+    tm = get_team_manager(channel_id)
+    rail = tm.get_team_skill_rail(session_id)
+    if rail is None:
+        return None, "团队技能重建不可用：未找到 TeamSkillRail。"
+
+    store = rail.store
+    parts = stripped.split(maxsplit=2)
+    skill_name = parts[1] if len(parts) > 1 else ""
+    user_intent = parts[2] if len(parts) > 2 else None
+
+    if not skill_name:
+        return None, "请指定 Skill 名称：`/evolve_rebuild <skill_name> [user_intent]`"
+
+    if not store.skill_exists(skill_name):
+        available = "、".join(store.list_skill_names()) or "（无可用 Skill）"
+        return None, f"未找到 Skill '{skill_name}'。当前可用：{available}"
+
+    try:
+        followup_prompt = await rail.request_rebuild(skill_name, user_intent)
+    except Exception as exc:
+        logger.warning("[TeamHelpers] evolve_rebuild failed: session_id=%s error=%s", session_id, exc)
+        return None, f"团队技能重建分析失败：{exc}"
+
+    if not followup_prompt:
+        return None, f"Skill '{skill_name}' 未生成可执行的重建指令。"
+
+    return followup_prompt, None
+
+
 async def process_team_message_stream(
     request: Any,
     inputs: dict[str, Any],
@@ -152,6 +191,28 @@ async def process_team_message_stream(
     query = inputs.get("query", "")
     is_first_request = not team_manager.has_stream_task(session_id)
     request_queue: asyncio.Queue | None = None
+
+    followup_prompt, rebuild_error = await _resolve_team_rebuild_followup(
+        channel_id,
+        session_id,
+        str(query or ""),
+    )
+    if rebuild_error is not None:
+        yield AgentResponseChunk(
+            request_id=rid,
+            channel_id=channel_id,
+            payload={"event_type": "chat.error", "error": rebuild_error},
+            is_complete=False,
+        )
+        yield AgentResponseChunk(
+            request_id=rid,
+            channel_id=channel_id,
+            payload=None,
+            is_complete=True,
+        )
+        return
+    if followup_prompt is not None:
+        query = followup_prompt
 
     try:
         if is_first_request:

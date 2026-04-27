@@ -434,9 +434,14 @@ const KEY_PLACEHOLDER_I18N: Record<string, string> = {
   free_search_proxy_url: "config.keys.freeSearchProxyUrlPlaceholder",
   memory_forbidden_description: "config.keys.memoryForbiddenDescriptionPlaceholder",
 };
+const KEY_LABEL_HINT_I18N: Record<string, string> = {
+  skill_create: "config.keyHelp.skillCreate",
+};
 
 /** 组内字段排序优先级，数字越小越靠前 */
 const KEY_SORT_PRIORITY: Record<string, number> = {
+  evolution_auto_scan: 0,
+  skill_create: 1,
   free_search_ddg_enabled: 0,
   free_search_bing_enabled: 1,
   free_search_proxy_url: 2,
@@ -451,8 +456,16 @@ const KEY_SORT_PRIORITY: Record<string, number> = {
 function getKeyDisplayLabel(key: string, t: (key: string) => string): string {
   if (KEY_DISPLAY_I18N[key]) return t(KEY_DISPLAY_I18N[key]);
   const m = key.match(/^(video|audio|vision)_(.+)$/);
-  if (m) return m[2];
-  return getBooleanKeyLabel(key, t) ?? key;
+  return m ? m[2] : (getBooleanKeyLabel(key, t) ?? key);
+}
+
+function getKeyLabelHintText(key: string, t: (key: string) => string): string {
+  const hintKey = KEY_LABEL_HINT_I18N[key];
+  return hintKey ? t(hintKey) : "";
+}
+
+function getKeySortPriority(key: string): number {
+  return KEY_SORT_PRIORITY[key] ?? 50;
 }
 
 function GroupSection({
@@ -526,7 +539,14 @@ function GroupSection({
           <tbody>
             {group.keys.map(([key, value]) => (
               <tr key={key} className="border-t border-border first:border-t-0 even:bg-secondary/10 hover:bg-secondary/25 transition-colors">
-                <td className="px-4 py-2.5 align-middle mono text-xs text-text-muted w-[32%]" title={key}>{getKeyDisplayLabel(key, t)}</td>
+                <td className="px-4 py-2.5 align-middle text-xs text-text-muted w-[32%]" title={key}>
+                  <div className="mono">{getKeyDisplayLabel(key, t)}</div>
+                  {getKeyLabelHintText(key, t) ? (
+                    <div className="mt-1 text-[11px] leading-4 text-text-muted">
+                      {getKeyLabelHintText(key, t)}
+                    </div>
+                  ) : null}
+                </td>
                 <td className="px-4 py-2.5 break-all text-[13px] align-middle">
                   {isBooleanKey(key) ? (
                     <div className="flex items-center gap-2">
@@ -1806,8 +1826,8 @@ export function ConfigPanel({
     }
     for (const entries of Object.values(buckets)) {
       entries.sort(([a], [b]) => {
-        const pa = KEY_SORT_PRIORITY[a] ?? 50;
-        const pb = KEY_SORT_PRIORITY[b] ?? 50;
+        const pa = getKeySortPriority(a);
+        const pb = getKeySortPriority(b);
         if (pa !== pb) return pa - pb;
         return a.localeCompare(b);
       });

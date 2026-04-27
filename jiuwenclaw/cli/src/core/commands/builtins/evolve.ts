@@ -105,15 +105,15 @@ export function createEvolveSimplifyCommand(): SlashCommand {
 }
 
 /**
- * /evolve_rewrite - Rewrite SKILL.md by deeply integrating evolution experiences using LLM
- * Usage: /evolve_rewrite <skill_name> [--min-score <float>] [--dry-run] [<user_query>...]
+ * /evolve_rebuild - Rebuild SKILL.md via followup execution
+ * Usage: /evolve_rebuild <skill_name> [<user_query>...]
  */
-export function createEvolveRewriteCommand(): SlashCommand {
+export function createEvolveRebuildCommand(): SlashCommand {
   return {
-    name: "evolve_rewrite",
-    description: "Rewrite SKILL.md by deeply integrating evolution experiences using LLM",
-    usage: "/evolve_rewrite <skill_name> [--min-score <float>] [--dry-run] [<user_query>...]",
-    example: "/evolve_rewrite pptx --min-score 0.7 --dry-run improve error handling",
+    name: "evolve_rebuild",
+    description: "Rebuild SKILL.md from archived history and evolution records",
+    usage: "/evolve_rebuild <skill_name> [<user_query>...]",
+    example: "/evolve_rebuild pptx improve error handling",
     kind: CommandKind.BUILT_IN,
     takesArgs: true,
     action: (ctx, args) => {
@@ -125,21 +125,19 @@ export function createEvolveRewriteCommand(): SlashCommand {
           makeItem(
             ctx.sessionId,
             "error",
-            "usage: /evolve_rewrite <skill_name> [--min-score <float>] [--dry-run] [<user_query>...] - Provide the name of the skill",
+            "usage: /evolve_rebuild <skill_name> [<user_query>...] - Provide the name of the skill",
           ),
         );
         return;
       }
 
-      // Forward all arguments to backend (including flags and user_query)
-      const requestId = ctx.sendMessage(`/evolve_rewrite ${args.trim()}`);
+      const requestId = ctx.sendMessage(`/evolve_rebuild ${args.trim()}`);
       if (!requestId) {
         ctx.addItem(
-          makeItem(ctx.sessionId, "error", "offline: waiting for reconnect before sending evolve_rewrite request"),
+          makeItem(ctx.sessionId, "error", "offline: waiting for reconnect before sending evolve_rebuild request"),
         );
       }
     },
   };
 }
-
 

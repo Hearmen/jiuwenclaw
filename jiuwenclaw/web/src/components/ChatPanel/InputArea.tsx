@@ -5,6 +5,7 @@ import { stopAllTts } from '../../utils';
 import { useChatStore, useSessionStore } from '../../stores';
 import { AgentMode } from '../../types';
 import clsx from 'clsx';
+import { getEvolutionPillLabel } from './evolution-status';
 
 interface InputAreaProps {
   onSubmit: (content: string) => void;
@@ -30,7 +31,16 @@ export function InputArea({
   const activePointerIdRef = useRef<number | null>(null);
   const isVoicePressingRef = useRef(false);
   const { t } = useTranslation();
-  const { isPaused, taskQueue, addToTaskQueue, removeFromTaskQueue, inputValue, setInputValue, messages } = useChatStore();
+  const {
+    isPaused,
+    taskQueue,
+    addToTaskQueue,
+    removeFromTaskQueue,
+    inputValue,
+    setInputValue,
+    messages,
+    evolutionStatus,
+  } = useChatStore();
   const { mode } = useSessionStore();
   const isInterruptible = isProcessing || isPaused;
   const isAgentMode = mode === 'agent.fast';
@@ -250,6 +260,7 @@ export function InputArea({
 
   const canSend = inputValue.trim().length > 0 || isListening;
   const modeIndex = Math.max(0, modes.findIndex((m) => m.value === mode));
+  const evolutionLabel = getEvolutionPillLabel(mode, evolutionStatus, t);
 
   return (
     <div
@@ -339,7 +350,12 @@ export function InputArea({
               </button>
             ))}
           </div>
-
+          {evolutionLabel && (
+            <div className="chat-input-evolution-pill" title={evolutionLabel}>
+              <span className="chat-input-evolution-pill__dot" />
+              <span className="chat-input-evolution-pill__label">{evolutionLabel}</span>
+            </div>
+          )}
         </div>
 
         <div className="chat-input-actions">

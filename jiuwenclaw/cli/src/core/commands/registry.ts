@@ -9,7 +9,7 @@ import { createDiffCommand } from "./builtins/diff.js";
 import {
   createEvolveCommand,
   createEvolveListCommand,
-  createEvolveRewriteCommand,
+  createEvolveRebuildCommand,
   createEvolveSimplifyCommand,
 } from "./builtins/evolve.js";
 import { createExitCommand } from "./builtins/exit.js";
@@ -41,7 +41,7 @@ export function createBuiltinCommands(): SlashCommand[] {
     createDiffCommand(),
     createEvolveCommand(),
     createEvolveListCommand(),
-    createEvolveRewriteCommand(),
+    createEvolveRebuildCommand(),
     createEvolveSimplifyCommand(),
     createExitCommand(),
     createModelCommand(),
