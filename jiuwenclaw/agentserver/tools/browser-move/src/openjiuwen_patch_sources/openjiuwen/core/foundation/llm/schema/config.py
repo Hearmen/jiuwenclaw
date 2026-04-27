@@ -18,6 +18,7 @@ class ProviderType(str, Enum):
     SiliconFlow = "SiliconFlow"
     DashScope = "DashScope"
     InferenceAffinity = "InferenceAffinity"
+    DeepSeek = "DeepSeek"
 
 
 class ModelClientConfig(BaseModel):
@@ -27,7 +28,7 @@ class ModelClientConfig(BaseModel):
     client_provider: Union[ProviderType, str] = Field(
         ...,
         description="Service provider identification, Enumeration value: OpenAI, OpenRouter, "
-                    "SiliconFlow, DashScope, InferenceAffinity or ICBC"
+                    "SiliconFlow, DashScope, InferenceAffinity, DeepSeek or ICBC"
     )
     api_key: str = Field(..., description="API key")
     api_base: str = Field(..., description="API base URL")

@@ -600,6 +600,7 @@ function GroupSection({
                               <option value="DashScope">DashScope</option>
                               <option value="SiliconFlow">SiliconFlow</option>
                               <option value="InferenceAffinity">InferenceAffinity</option>
+                              <option value="DeepSeek">DeepSeek</option>
                             </>
                           )}
                         </select>
@@ -678,7 +679,7 @@ function GroupSection({
   );
 }
 
-const MODEL_PROVIDER_OPTIONS = ["OpenAI", "DashScope", "SiliconFlow", "InferenceAffinity"] as const;
+const MODEL_PROVIDER_OPTIONS = ["OpenAI", "DashScope", "SiliconFlow", "InferenceAffinity", "DeepSeek"] as const;
 
 /** 多默认模型管理（受控组件，编辑状态由父组件持有） */
 function MultiModelSection({

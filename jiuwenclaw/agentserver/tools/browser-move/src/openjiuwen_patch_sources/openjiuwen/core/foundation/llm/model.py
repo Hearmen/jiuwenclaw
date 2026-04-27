@@ -18,12 +18,14 @@ from openjiuwen.core.foundation.llm.schema.generation_response import (
 from openjiuwen.core.foundation.llm.model_clients.base_model_client import BaseModelClient
 from openjiuwen.core.foundation.llm.model_clients.openai_model_client import OpenAIModelClient
 from openjiuwen.core.foundation.llm.model_clients.siliconflow_model_client import SiliconFlowModelClient
+from openjiuwen.core.foundation.llm.model_clients.deepseek_model_client import DeepSeekModelClient
 
 _CLIENT_TYPE_REGISTRY: Dict[str, Type[BaseModelClient]] = {
     "OpenAI": OpenAIModelClient,
     "OpenRouter": OpenAIModelClient,
     "SiliconFlow": SiliconFlowModelClient,
     "DashScope": DashScopeModelClient,
+    "DeepSeek": DeepSeekModelClient,
 }
 
 
