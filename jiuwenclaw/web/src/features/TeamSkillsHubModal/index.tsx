@@ -1,17 +1,16 @@
 /**
- * TeamSkills 在线检索弹窗
- * 从 TeamSkillsHub 检索并安装技能
+ * Team Skills Hub（teamskillshub）在线检索弹窗：从 Hub 检索并安装技能。
  */
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { webRequest } from "../../services/webClient";
 
-/** 与后端 OPENJIUWEN_MARKET_BASE_URL 默认值一致（info 请求失败时的回退） */
+/** 与后端 TEAM_SKILLS_HUB_BASE_URL 默认值一致（info 请求失败时的回退） */
 const DEFAULT_TEAMSKILLS_HUB_BASE_URL = "https://teamskills.openjiuwen.com";
 
 type LoadState = "idle" | "loading" | "success" | "error";
 
-type OpenJiuwenSkillItem = {
+type TeamSkillsHubSkillItem = {
   asset_id: string;
   name: string;
   display_name: string;
@@ -20,7 +19,7 @@ type OpenJiuwenSkillItem = {
   updated_at: number;
 };
 
-interface OpenJiuwenMarketModalProps {
+interface TeamSkillsHubModalProps {
   open: boolean;
   sessionId: string;
   installedSkillNames?: ReadonlySet<string>;
@@ -28,21 +27,21 @@ interface OpenJiuwenMarketModalProps {
   onInstalled?: (skillName: string) => void | Promise<void>;
 }
 
-export function OpenJiuwenMarketModal({
+export function TeamSkillsHubModal({
   open,
   sessionId,
   installedSkillNames,
   onClose,
   onInstalled,
-}: OpenJiuwenMarketModalProps) {
+}: TeamSkillsHubModalProps) {
   const { t } = useTranslation();
   const [query, setQuery] = useState("");
-  const [results, setResults] = useState<OpenJiuwenSkillItem[]>([]);
+  const [results, setResults] = useState<TeamSkillsHubSkillItem[]>([]);
   const [loadState, setLoadState] = useState<LoadState>("idle");
   const [message, setMessage] = useState<{ type: "success" | "error"; text: string } | null>(null);
   const [installingAssetId, setInstallingAssetId] = useState<string | null>(null);
   const [installedNames, setInstalledNames] = useState<Set<string>>(new Set());
-  const [marketHubUrl, setMarketHubUrl] = useState(DEFAULT_TEAMSKILLS_HUB_BASE_URL);
+  const [hubBaseUrl, setHubBaseUrl] = useState(DEFAULT_TEAMSKILLS_HUB_BASE_URL);
   const messageTimerRef = useRef<number | null>(null);
 
   const withSession = useCallback(
@@ -78,7 +77,7 @@ export function OpenJiuwenMarketModal({
   useEffect(() => {
     if (!open) return;
     setInstalledNames(new Set());
-    setMarketHubUrl(DEFAULT_TEAMSKILLS_HUB_BASE_URL);
+    setHubBaseUrl(DEFAULT_TEAMSKILLS_HUB_BASE_URL);
   }, [open]);
 
   useEffect(() => {
@@ -89,18 +88,18 @@ export function OpenJiuwenMarketModal({
         const data = await webRequest<{
           success?: boolean;
           market_base_url?: string;
-        }>("skills.openjiuwen.info", withSession());
+        }>("skills.teamskillshub.info", withSession());
         const url = data.market_base_url?.trim();
         if (!cancelled && data.success && url) {
           try {
             // 确保为合法绝对 URL（与服务端配置的基地址一致）
-            setMarketHubUrl(new URL(url).href.replace(/\/$/, ""));
+            setHubBaseUrl(new URL(url).href.replace(/\/$/, ""));
           } catch {
-            setMarketHubUrl(url.replace(/\/$/, ""));
+            setHubBaseUrl(url.replace(/\/$/, ""));
           }
         }
       } catch {
-        if (!cancelled) setMarketHubUrl(DEFAULT_TEAMSKILLS_HUB_BASE_URL);
+        if (!cancelled) setHubBaseUrl(DEFAULT_TEAMSKILLS_HUB_BASE_URL);
       }
     })();
     return () => {
@@ -127,10 +126,10 @@ export function OpenJiuwenMarketModal({
       const data = await webRequest<{
         success: boolean;
         detail?: string;
-        skills?: OpenJiuwenSkillItem[];
-      }>("skills.openjiuwen.search", withSession({ q, limit: 50 }));
+        skills?: TeamSkillsHubSkillItem[];
+      }>("skills.teamskillshub.search", withSession({ q, limit: 50 }));
       if (!data.success) {
-        throw new Error(data.detail || t("skills.openjiuwen.errors.searchFailed"));
+        throw new Error(data.detail || t("skills.teamskillshub.errors.searchFailed"));
       }
       setResults(data.skills || []);
       setLoadState("success");
@@ -140,13 +139,13 @@ export function OpenJiuwenMarketModal({
       setLoadState("error");
       showMessage(
         "error",
-        error instanceof Error ? error.message : t("skills.openjiuwen.errors.searchFailed")
+        error instanceof Error ? error.message : t("skills.teamskillshub.errors.searchFailed")
       );
     }
   }, [query, showMessage, t, withSession]);
 
   const handleInstall = useCallback(
-    async (item: OpenJiuwenSkillItem) => {
+    async (item: TeamSkillsHubSkillItem) => {
       if (installingAssetId) return;
       setInstallingAssetId(item.asset_id);
       setMessage(null);
@@ -155,19 +154,19 @@ export function OpenJiuwenMarketModal({
           success: boolean;
           detail?: string;
           skill?: { name: string };
-        }>("skills.openjiuwen.install", withSession({ asset_id: item.asset_id, force: false }));
+        }>("skills.teamskillshub.install", withSession({ asset_id: item.asset_id, force: false }));
         if (!data.success) {
-          throw new Error(data.detail || t("skills.openjiuwen.errors.installFailed"));
+          throw new Error(data.detail || t("skills.teamskillshub.errors.installFailed"));
         }
         const skillName = data.skill?.name || item.name;
         setInstalledNames((prev) => new Set([...prev, skillName]));
-        showMessage("success", t("skills.openjiuwen.messages.installed", { name: skillName }));
+        showMessage("success", t("skills.teamskillshub.messages.installed", { name: skillName }));
         await onInstalled?.(skillName);
       } catch (error) {
         console.error(error);
         showMessage(
           "error",
-          error instanceof Error ? error.message : t("skills.openjiuwen.errors.installFailed")
+          error instanceof Error ? error.message : t("skills.teamskillshub.errors.installFailed")
         );
       } finally {
         setInstallingAssetId(null);
@@ -189,16 +188,16 @@ export function OpenJiuwenMarketModal({
       <div className="relative w-full max-w-2xl max-h-[85vh] overflow-hidden rounded-xl border border-border bg-card shadow-2xl animate-rise flex flex-col">
         <div className="flex items-start justify-between gap-3 px-5 py-3 border-b border-border bg-panel flex-shrink-0">
           <div className="min-w-0 flex-1 space-y-1">
-            <h3 className="text-base font-semibold text-text">{t("skills.openjiuwen.title")}</h3>
+            <h3 className="text-base font-semibold text-text">{t("skills.teamskillshub.title")}</h3>
             <p className="text-[11px] leading-snug text-text-muted">
               <a
-                href={marketHubUrl}
+                href={hubBaseUrl}
                 target="_blank"
                 rel="noopener noreferrer"
                 className="font-medium text-accent underline decoration-accent/35 underline-offset-2 hover:text-accent-hover hover:decoration-accent/60"
-                aria-label={t("skills.openjiuwen.titleHubAria")}
+                aria-label={t("skills.teamskillshub.titleHubAria")}
               >
-                {t("skills.openjiuwen.titleHubLinkText")}
+                {t("skills.teamskillshub.titleHubLinkText")}
               </a>
             </p>
           </div>
@@ -229,7 +228,7 @@ export function OpenJiuwenMarketModal({
               value={query}
               onChange={(e) => setQuery(e.target.value)}
               onKeyDown={(e) => e.key === "Enter" && handleSearch()}
-              placeholder={t("skills.openjiuwen.searchPlaceholder")}
+              placeholder={t("skills.teamskillshub.searchPlaceholder")}
               className="flex-1 min-w-0 px-3 py-2 rounded-md bg-secondary border border-border text-sm text-text placeholder:text-text-muted"
             />
             <button
@@ -242,7 +241,7 @@ export function OpenJiuwenMarketModal({
                   : "bg-accent text-white hover:bg-accent-hover"
               }`}
             >
-              {loadState === "loading" ? t("common.loading") : t("skills.openjiuwen.search")}
+              {loadState === "loading" ? t("common.loading") : t("skills.teamskillshub.search")}
             </button>
           </div>
 
@@ -250,7 +249,7 @@ export function OpenJiuwenMarketModal({
             <div className="mt-4 flex min-h-0 max-h-[50vh] flex-col gap-2">
               <div className="min-h-0 flex-1 space-y-2 overflow-y-auto pr-0.5">
                 {results.length === 0 ? (
-                  <div className="text-xs text-text-muted">{t("skills.openjiuwen.noResults")}</div>
+                  <div className="text-xs text-text-muted">{t("skills.teamskillshub.noResults")}</div>
                 ) : (
                   results.map((item) => {
                     const isInstalled =
@@ -288,7 +287,7 @@ export function OpenJiuwenMarketModal({
                             {isInstalled
                               ? t("skills.status.installed")
                               : isInstalling
-                                ? t("skills.openjiuwen.installing")
+                                ? t("skills.teamskillshub.installing")
                                 : t("skills.actions.install")}
                           </button>
                         </div>

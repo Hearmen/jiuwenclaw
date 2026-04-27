@@ -54,9 +54,12 @@ _SKILLNET_PROXY_ENV_KEYS = (
 _SKILLNET_NO_PROXY_ENV_KEYS = ("NO_PROXY", "no_proxy")
 _FREE_SEARCH_DEFAULT_NO_PROXY = "127.0.0.1,.huawei.com,localhost,local,.local,10.155.97.247,.myhuaweicloud.com"
 
-_OPENJIUWEN_MARKET_TIMEOUT: float = float(os.environ.get("OPENJIUWEN_MARKET_TIMEOUT", "60"))
-_OPENJIUWEN_MARKET_BASE_URL_DEFAULT = "https://teamskills.openjiuwen.com"
-_OPENJIUWEN_DEFAULT_ALLOWED_DOWNLOAD_HOSTS: tuple[str, ...] = ("openjiuwen-market.obs.*.myhuaweicloud.com",)
+# Team Skills Hub（仅 TEAM_SKILLS_HUB_* 环境变量）
+_TEAM_SKILLS_HUB_MARKET_TIMEOUT: float = float(os.environ.get("TEAM_SKILLS_HUB_TIMEOUT", "60"))
+_TEAM_SKILLS_HUB_BASE_URL_DEFAULT = "https://teamskills.openjiuwen.com"
+_TEAM_SKILLS_HUB_DEFAULT_ALLOWED_DOWNLOAD_HOSTS: tuple[str, ...] = (
+    "openjiuwen-market.obs.*.myhuaweicloud.com",
+)
 _IMPORT_LOCAL_REMOTE_TIMEOUT: float = float(os.environ.get("IMPORT_LOCAL_REMOTE_TIMEOUT", "60"))
 _IMPORT_LOCAL_DEFAULT_ALLOWED_DOWNLOAD_HOSTS: tuple[str, ...] = ("*.obs.*.myhuaweicloud.com",)
 
@@ -1124,12 +1127,12 @@ class SkillManager:
                 "detail_key": "skills.clawhub.errors.downloadFailed",
             }
 
-    async def handle_skills_openjiuwen_info(self, _params: dict) -> dict:
-        """返回当前配置的 TeamSkillsHub / OpenJiuwen marketplace 基地址（供前端展示链接）。"""
-        return {"success": True, "market_base_url": self._get_openjiuwen_market_base_url()}
+    async def handle_skills_team_skills_hub_info(self, _params: dict) -> dict:
+        """返回当前配置的 Team Skills Hub 基地址（供前端展示链接）。"""
+        return {"success": True, "market_base_url": self._get_team_skills_hub_base_url()}
 
-    async def handle_skills_openjiuwen_search(self, params: dict) -> dict:
-        """从 OpenJiuwen Marketplace 搜索技能（原生 /api/v1/plugins）。"""
+    async def handle_skills_team_skills_hub_search(self, params: dict) -> dict:
+        """从 Team Skills Hub 搜索技能（/api/v1/plugins）。"""
         query = str(params.get("q", "")).strip()
         if not query:
             return {"success": False, "detail": "缺少参数: q"}
@@ -1147,7 +1150,7 @@ class SkillManager:
             return {"success": False, "detail": "参数 page 必须是整数"}
 
         try:
-            data = await self._openjiuwen_http_get_data(
+            data = await self._team_skills_hub_http_get_data(
                 "/api/v1/plugins",
                 params={
                     "search_keyword": query,
@@ -1157,7 +1160,7 @@ class SkillManager:
                     "order_by": "install_count",
                     "desc": "true",
                 },
-                timeout=_OPENJIUWEN_MARKET_TIMEOUT,
+                timeout=_TEAM_SKILLS_HUB_MARKET_TIMEOUT,
             )
             items = data.get("items", []) if isinstance(data, dict) else []
             normalized: list[dict[str, Any]] = []
@@ -1183,15 +1186,15 @@ class SkillManager:
                 "skills": normalized,
             }
         except Exception as exc:
-            logger.error("OpenJiuwen 搜索失败: %s", exc)
+            logger.error("Team Skills Hub 搜索失败: %s", exc)
             return {
                 "success": False,
                 "detail": str(exc)[:500],
-                "detail_key": "skills.openjiuwen.errors.searchFailed",
+                "detail_key": "skills.teamskillshub.errors.searchFailed",
             }
 
-    async def handle_skills_openjiuwen_install(self, params: dict) -> dict:
-        """从 OpenJiuwen Marketplace 安装技能（原生 /api/v1/artifacts/{asset_id}）。"""
+    async def handle_skills_team_skills_hub_install(self, params: dict) -> dict:
+        """从 Team Skills Hub 安装技能（/api/v1/artifacts/{asset_id}）。"""
         asset_id = str(params.get("asset_id", "")).strip()
         if not asset_id:
             return {"success": False, "detail": "缺少参数: asset_id"}
@@ -1201,10 +1204,10 @@ class SkillManager:
         version_str = str(version).strip() if version is not None else ""
 
         try:
-            artifact_data = await self._openjiuwen_http_get_data(
+            artifact_data = await self._team_skills_hub_http_get_data(
                 f"/api/v1/artifacts/{asset_id}",
                 params={"version": version_str} if version_str else None,
-                timeout=_OPENJIUWEN_MARKET_TIMEOUT,
+                timeout=_TEAM_SKILLS_HUB_MARKET_TIMEOUT,
             )
             if not isinstance(artifact_data, dict):
                 return {"success": False, "detail": "marketplace 返回数据格式错误"}
@@ -1212,16 +1215,15 @@ class SkillManager:
             download_url = str(artifact_data.get("download_url", "")).strip()
             if not download_url:
                 return {"success": False, "detail": "marketplace 未返回 download_url"}
-            self._assert_openjiuwen_download_url_allowed(download_url)
+            self._assert_team_skills_hub_download_url_allowed(download_url)
             checksum_sha256 = str(artifact_data.get("checksum_sha256", "")).strip()
 
             artifact_bytes = await self._download_zip_and_verify(download_url, checksum_sha256=checksum_sha256)
 
-            with tempfile.TemporaryDirectory(prefix="jiuwenclaw_openjiuwen_") as tmpdir:
+            with tempfile.TemporaryDirectory(prefix="jiuwenclaw_team_skills_hub_") as tmpdir:
                 tmp_path = Path(tmpdir)
-                zip_path = tmp_path / "skill.zip"
-                zip_path.write_bytes(artifact_bytes)
-                self._safe_extract_zip_to_dir(zip_path, tmp_path)
+                # 与 ClawHub 一致：从内存解压，避免在临时目录写入 skill.zip（扁平包时 copytree 曾误拷入安装目录）。
+                self._safe_extract_zip_bytes_to_dir(artifact_bytes, tmp_path)
 
                 skill_dir = self._locate_skill_dir(tmp_path)
                 if skill_dir is None:
@@ -1253,19 +1255,19 @@ class SkillManager:
                 self._add_local_skill(
                     {
                         "name": skill_name,
-                        "origin": f"openjiuwen:{asset_id}",
-                        "source": "openjiuwen",
+                        "origin": f"teamskillshub:{asset_id}",
+                        "source": "teamskillshub",
                         "installed_at": installed_at,
                     }
                 )
                 self._add_installed_plugin(
                     {
                         "name": skill_name,
-                        "marketplace": "openjiuwen",
+                        "marketplace": "teamskillshub",
                         "version": str(meta.get("version", "")).strip()
                         or str(artifact_data.get("version", "")).strip(),
                         "commit": "",
-                        "source": "openjiuwen",
+                        "source": "teamskillshub",
                         "installed_at": installed_at,
                     }
                 )
@@ -1274,16 +1276,16 @@ class SkillManager:
                     "success": True,
                     "skill": {
                         "name": skill_name,
-                        "source": "openjiuwen",
+                        "source": "teamskillshub",
                         "asset_id": asset_id,
                     },
                 }
         except Exception as exc:
-            logger.error("OpenJiuwen 安装失败: %s", exc)
+            logger.error("Team Skills Hub 安装失败: %s", exc)
             return {
                 "success": False,
                 "detail": str(exc)[:500],
-                "detail_key": "skills.openjiuwen.errors.installFailed",
+                "detail_key": "skills.teamskillshub.errors.installFailed",
             }
 
     async def _skillnet_install_background(
@@ -1833,7 +1835,7 @@ class SkillManager:
         if fm_match:
             fm_text = fm_match.group(1)
             body = fm_match.group(2).strip()
-            # 优先完整 YAML（支持 description: >- 多行、嵌套等），与 openjiuwen register_skill 一致
+            # 优先完整 YAML（支持 description: >- 多行、嵌套等），与 Team Skills Hub register_skill 一致
             try:
                 loaded = yaml.safe_load(fm_text)
                 if isinstance(loaded, dict):
@@ -2259,22 +2261,22 @@ class SkillManager:
         return None
 
     @staticmethod
-    def _get_openjiuwen_market_base_url() -> str:
-        raw = (os.getenv("OPENJIUWEN_MARKET_BASE_URL") or _OPENJIUWEN_MARKET_BASE_URL_DEFAULT).strip()
+    def _get_team_skills_hub_base_url() -> str:
+        raw = (os.getenv("TEAM_SKILLS_HUB_BASE_URL") or _TEAM_SKILLS_HUB_BASE_URL_DEFAULT).strip()
         return raw.rstrip("/")
 
     @staticmethod
-    def _get_openjiuwen_allowed_download_hosts() -> list[str]:
-        raw = (os.getenv("OPENJIUWEN_ALLOWED_DOWNLOAD_HOSTS") or "").strip()
+    def _get_team_skills_hub_allowed_download_hosts() -> list[str]:
+        raw = (os.getenv("TEAM_SKILLS_HUB_ALLOWED_DOWNLOAD_HOSTS") or "").strip()
         if not raw:
-            return list(_OPENJIUWEN_DEFAULT_ALLOWED_DOWNLOAD_HOSTS)
+            return list(_TEAM_SKILLS_HUB_DEFAULT_ALLOWED_DOWNLOAD_HOSTS)
         hosts: list[str] = []
         for token in raw.split(","):
             host = token.strip().lower()
             if not host:
                 continue
             hosts.append(host)
-        return hosts or list(_OPENJIUWEN_DEFAULT_ALLOWED_DOWNLOAD_HOSTS)
+        return hosts or list(_TEAM_SKILLS_HUB_DEFAULT_ALLOWED_DOWNLOAD_HOSTS)
 
     @staticmethod
     def _get_import_local_allowed_download_hosts() -> list[str]:
@@ -2290,22 +2292,22 @@ class SkillManager:
         return hosts or list(_IMPORT_LOCAL_DEFAULT_ALLOWED_DOWNLOAD_HOSTS)
 
     @staticmethod
-    def _assert_openjiuwen_download_url_allowed(download_url: str) -> None:
+    def _assert_team_skills_hub_download_url_allowed(download_url: str) -> None:
         parsed = urlparse(download_url)
         if parsed.scheme != "https":
-            raise RuntimeError("OpenJiuwen download_url 必须使用 HTTPS")
+            raise RuntimeError("Team Skills Hub download_url 必须使用 HTTPS")
         host = (parsed.hostname or "").strip().lower()
         if not host:
-            raise RuntimeError("OpenJiuwen download_url 缺少主机名")
-        for rule in SkillManager._get_openjiuwen_allowed_download_hosts():
+            raise RuntimeError("Team Skills Hub download_url 缺少主机名")
+        for rule in SkillManager._get_team_skills_hub_allowed_download_hosts():
             # 支持 .example.com 后缀匹配与 * 单段通配（如 a.*.c.com）。
             if rule.startswith("."):
                 if host.endswith(rule):
                     return
                 continue
-            if SkillManager._openjiuwen_host_matches_rule(host, rule):
+            if SkillManager._team_skills_hub_host_matches_rule(host, rule):
                 return
-        raise RuntimeError(f"OpenJiuwen download_url host 不在白名单: {host}")
+        raise RuntimeError(f"Team Skills Hub download_url host 不在白名单: {host}")
 
     @staticmethod
     def _assert_import_local_download_url_allowed(download_url: str) -> None:
@@ -2320,12 +2322,12 @@ class SkillManager:
                 if host.endswith(rule):
                     return
                 continue
-            if SkillManager._openjiuwen_host_matches_rule(host, rule):
+            if SkillManager._team_skills_hub_host_matches_rule(host, rule):
                 return
         raise RuntimeError(f"远程导入 URL host 不在白名单: {host}")
 
     @staticmethod
-    def _openjiuwen_host_matches_rule(host: str, rule: str) -> bool:
+    def _team_skills_hub_host_matches_rule(host: str, rule: str) -> bool:
         host_parts = host.split(".")
         rule_parts = rule.split(".")
         if len(host_parts) != len(rule_parts):
@@ -2342,73 +2344,86 @@ class SkillManager:
         parsed = urlparse(str(value or "").strip())
         return parsed.scheme in {"http", "https"} and bool(parsed.netloc)
 
-    async def _openjiuwen_http_get_data(
+    async def _team_skills_hub_http_get_data(
         self,
         path: str,
         *,
         params: dict[str, Any] | None = None,
-        timeout: float = _OPENJIUWEN_MARKET_TIMEOUT,
+        timeout: float = _TEAM_SKILLS_HUB_MARKET_TIMEOUT,
     ) -> Any:
-        base_url = self._get_openjiuwen_market_base_url()
+        base_url = self._get_team_skills_hub_base_url()
         rel_path = path if path.startswith("/") else f"/{path}"
         req_url = f"{base_url}{rel_path}"
         try:
             async with httpx.AsyncClient(timeout=timeout, follow_redirects=False) as client:
                 resp = await client.get(req_url, params=params)
         except Exception as exc:
-            raise RuntimeError(f"无法连接 OpenJiuwen marketplace: {exc}") from exc
+            raise RuntimeError(f"无法连接 Team Skills Hub: {exc}") from exc
 
         if not resp.is_success:
             detail = (resp.text or "").strip()[:300]
-            raise RuntimeError(f"OpenJiuwen API 错误 HTTP {resp.status_code}: {detail}")
+            raise RuntimeError(f"Team Skills Hub API 错误 HTTP {resp.status_code}: {detail}")
         try:
             payload = resp.json()
         except Exception as exc:
-            raise RuntimeError(f"OpenJiuwen API 响应不是合法 JSON: {exc}") from exc
+            raise RuntimeError(f"Team Skills Hub API 响应不是合法 JSON: {exc}") from exc
         if not isinstance(payload, dict):
-            raise RuntimeError("OpenJiuwen API 响应格式错误")
+            raise RuntimeError("Team Skills Hub API 响应格式错误")
 
         code = payload.get("code", 200)
         if int(code) != 200:
-            message = str(payload.get("message", "")).strip() or "OpenJiuwen API 返回失败"
+            message = str(payload.get("message", "")).strip() or "Team Skills Hub API 返回失败"
             raise RuntimeError(message)
 
         data = payload.get("data")
         if not isinstance(data, dict):
-            raise RuntimeError("OpenJiuwen API 响应 data 格式错误")
+            raise RuntimeError("Team Skills Hub API 响应 data 格式错误")
         return data
 
     @staticmethod
+    def _safe_extract_zip_members_into(zf: zipfile.ZipFile, dest_root: Path) -> None:
+        """将已打开的 ZIP 成员解压到 dest_root（须为 resolve() 后的目录），拒绝 Zip Slip。"""
+        for info in zf.infolist():
+            raw = (info.filename or "").replace("\\", "/")
+            if not raw or raw.startswith("/"):
+                continue
+            if "\0" in raw:
+                raise RuntimeError("ZIP 包含非法文件名")
+            is_dir = raw.endswith("/") or info.is_dir()
+            rel_str = raw.rstrip("/")
+            if not rel_str:
+                continue
+            rel = PurePosixPath(rel_str)
+            if rel.is_absolute() or ".." in rel.parts:
+                raise RuntimeError("ZIP 包含非法路径")
+            dest_path = dest_root.joinpath(*rel.parts)
+            try:
+                dest_path = dest_path.resolve()
+                dest_path.relative_to(dest_root)
+            except ValueError as exc:
+                raise RuntimeError("ZIP 路径越界") from exc
+            if is_dir:
+                dest_path.mkdir(parents=True, exist_ok=True)
+                continue
+            dest_path.parent.mkdir(parents=True, exist_ok=True)
+            with zf.open(info, "r") as src:
+                dest_path.write_bytes(src.read())
+
+    @staticmethod
+    def _safe_extract_zip_bytes_to_dir(data: bytes, dest_dir: Path) -> None:
+        """将 ZIP 字节解压到 dest_dir（不落盘 staging zip，与 ClawHub extractall 语义一致）。"""
+        dest_root = dest_dir.resolve()
+        dest_root.mkdir(parents=True, exist_ok=True)
+        with zipfile.ZipFile(io.BytesIO(data), "r") as zf:
+            SkillManager._safe_extract_zip_members_into(zf, dest_root)
+
+    @staticmethod
     def _safe_extract_zip_to_dir(zip_path: Path, dest_dir: Path) -> None:
-        """将 ZIP 解压到 dest_dir，拒绝 Zip Slip（..、绝对路径、写出目标目录外）。"""
+        """将 ZIP 文件解压到 dest_dir，拒绝 Zip Slip（..、绝对路径、写出目标目录外）。"""
         dest_root = dest_dir.resolve()
         dest_root.mkdir(parents=True, exist_ok=True)
         with zipfile.ZipFile(zip_path, "r") as zf:
-            for info in zf.infolist():
-                raw = (info.filename or "").replace("\\", "/")
-                if not raw or raw.startswith("/"):
-                    continue
-                if "\0" in raw:
-                    raise RuntimeError("ZIP 包含非法文件名")
-                is_dir = raw.endswith("/") or info.is_dir()
-                rel_str = raw.rstrip("/")
-                if not rel_str:
-                    continue
-                rel = PurePosixPath(rel_str)
-                if rel.is_absolute() or ".." in rel.parts:
-                    raise RuntimeError("ZIP 包含非法路径")
-                dest_path = dest_root.joinpath(*rel.parts)
-                try:
-                    dest_path = dest_path.resolve()
-                    dest_path.relative_to(dest_root)
-                except ValueError as exc:
-                    raise RuntimeError("ZIP 路径越界") from exc
-                if is_dir:
-                    dest_path.mkdir(parents=True, exist_ok=True)
-                    continue
-                dest_path.parent.mkdir(parents=True, exist_ok=True)
-                with zf.open(info, "r") as src:
-                    dest_path.write_bytes(src.read())
+            SkillManager._safe_extract_zip_members_into(zf, dest_root)
 
     @staticmethod
     def _safe_extract_tar_to_dir(tar_path: Path, dest_dir: Path) -> None:
@@ -2523,7 +2538,7 @@ class SkillManager:
         checksum_sha256: str = "",
         timeout: float | None = None,
     ) -> bytes:
-        timeout = max(30.0, timeout or _OPENJIUWEN_MARKET_TIMEOUT)
+        timeout = max(30.0, timeout or _TEAM_SKILLS_HUB_MARKET_TIMEOUT)
         async with httpx.AsyncClient(timeout=timeout, follow_redirects=False) as client:
             resp = await client.get(download_url)
             resp.raise_for_status()

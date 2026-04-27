@@ -9,7 +9,7 @@ import { webRequest } from "../../services/webClient";
 import { SourceManagerModal } from "../../features/SourceManagerModal";
 import { SkillNetSearchModal } from "../../features/SkillNetSearchModal";
 import { ClawHubSearchModal } from "../../features/ClawHubSearchModal";
-import { OpenJiuwenMarketModal } from "../../features/OpenJiuwenMarketModal";
+import { TeamSkillsHubModal } from "../../features/TeamSkillsHubModal";
 import { SkillEvolutionModal } from "../../features/SkillEvolutionModal";
 import { normalizeSkillNetUrl } from "../../utils/skillNetUrl";
 
@@ -112,7 +112,7 @@ export function SkillPanel({ sessionId, onNavigateToConfig }: SkillPanelProps) {
   const [sourceModalOpen, setSourceModalOpen] = useState(false);
   const [skillNetModalOpen, setSkillNetModalOpen] = useState(false);
   const [clawHubModalOpen, setClawHubModalOpen] = useState(false);
-  const [openjiuwenModalOpen, setOpenjiuwenModalOpen] = useState(false);
+  const [teamSkillsHubModalOpen, setTeamSkillsHubModalOpen] = useState(false);
   const [evolutionModalOpen, setEvolutionModalOpen] = useState(false);
   const [evolutionSkillName, setEvolutionSkillName] = useState<string | null>(null);
   const withSession = useCallback(
@@ -632,10 +632,10 @@ export function SkillPanel({ sessionId, onNavigateToConfig }: SkillPanelProps) {
               {t('skills.clawhub.title')}
             </button>
             <button
-              onClick={() => setOpenjiuwenModalOpen(true)}
+              onClick={() => setTeamSkillsHubModalOpen(true)}
               className="px-3 py-1.5 rounded-md text-sm bg-accent text-white hover:bg-accent-hover"
             >
-              {t('skills.openjiuwen.title')}
+              {t('skills.teamskillshub.title')}
             </button>
           </div>
         </div>
@@ -813,11 +813,11 @@ export function SkillPanel({ sessionId, onNavigateToConfig }: SkillPanelProps) {
           await fetchSkills();
         }}
       />
-      <OpenJiuwenMarketModal
-        open={openjiuwenModalOpen}
+      <TeamSkillsHubModal
+        open={teamSkillsHubModalOpen}
         sessionId={sessionId}
         installedSkillNames={installedSkillNames}
-        onClose={() => setOpenjiuwenModalOpen(false)}
+        onClose={() => setTeamSkillsHubModalOpen(false)}
         onInstalled={async () => {
           await fetchSkills();
         }}

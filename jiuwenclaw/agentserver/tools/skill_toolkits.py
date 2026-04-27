@@ -16,7 +16,7 @@ logger = logging.getLogger(__name__)
 
 _AUTO_SOURCE = "auto"
 _DEFAULT_SOURCE = "skillnet"
-_SUPPORTED_SOURCES = {"skillnet", "clawhub"}
+_SUPPORTED_SOURCES = {"skillnet", "clawhub", "teamskillshub"}
 # identifier 对模型是统一字段；这里根据其形态推断底层来源。
 _INSTALL_SOURCE_BY_TARGET: tuple[tuple[str, str], ...] = (
     (r"^https?://", "skillnet"),
@@ -79,6 +79,13 @@ class SkillToolkit:
             if source == "clawhub" and local_source == "clawhub":
                 if origin == f"clawhub:{target}" or origin == target or name == target:
                     return self._build_installed_item(name, "clawhub")
+            if source == "teamskillshub" and local_source == "teamskillshub":
+                if (
+                    origin == f"teamskillshub:{target}"
+                    or origin == target
+                    or name == target
+                ):
+                    return self._build_installed_item(name, "teamskillshub")
 
         for plugin in self._manager.get_installed_plugins():
             if not isinstance(plugin, dict):
@@ -91,6 +98,8 @@ class SkillToolkit:
                 return self._build_installed_item(name, "clawhub")
             if source == "skillnet" and normalized_source == "skillnet" and name == target:
                 return self._build_installed_item(name, "skillnet")
+            if source == "teamskillshub" and normalized_source == "teamskillshub" and name == target:
+                return self._build_installed_item(name, "teamskillshub")
 
         return None
 
@@ -108,6 +117,14 @@ class SkillToolkit:
             version = ""
             author = str(item.get("author", "")).strip()
             score = item.get("stars", 0)
+        elif source == "teamskillshub":
+            asset_id = str(item.get("asset_id", "")).strip()
+            name = str(item.get("display_name") or item.get("name") or asset_id).strip()
+            description = str(item.get("summary", "")).strip()
+            identifier = asset_id
+            version = str(item.get("version", "")).strip()
+            author = ""
+            score = None
         else:
             name = str(item.get("display_name") or item.get("slug") or "").strip()
             description = str(item.get("summary", "")).strip()
@@ -144,8 +161,13 @@ class SkillToolkit:
             "count": len(skills),
             "detail": str(payload.get("detail", "")).strip(),
             "sample": {
-                "skill_name": first.get("skill_name") or first.get("display_name") or first.get("slug") or "",
+                "skill_name": first.get("skill_name")
+                or first.get("display_name")
+                or first.get("slug")
+                or first.get("name")
+                or "",
                 "skill_url": first.get("skill_url") or "",
+                "asset_id": first.get("asset_id") or "",
                 "summary": first.get("skill_description") or first.get("summary") or "",
             },
         }
@@ -166,12 +188,15 @@ class SkillToolkit:
             if item.get("name") == name:
                 identifier = str(item.get("origin", "")).strip()
                 break
-        if source == "clawhub" and identifier.startswith("clawhub:"):
+        out_source = source
+        if out_source == "clawhub" and identifier.startswith("clawhub:"):
+            identifier = identifier.split(":", 1)[1].strip()
+        if out_source == "teamskillshub" and identifier.startswith("teamskillshub:"):
             identifier = identifier.split(":", 1)[1].strip()
         return {
             "name": name,
             "description": description,
-            "source": source,
+            "source": out_source,
             "identifier": identifier or name,
             "installed": True,
             "version": str(meta.get("version", "")),
@@ -182,7 +207,7 @@ class SkillToolkit:
         }
 
     async def search_skill(self, query: str, source: str = _DEFAULT_SOURCE, limit: int = 10) -> dict[str, Any]:
-        """Search skills from SkillNet and/or ClawHub with a unified response."""
+        """Search skills from SkillNet, ClawHub, and/or TeamSkillsHub with a unified response."""
         try:
             normalized_source = self._normalize_source(source)
             query = str(query or "").strip()
@@ -211,11 +236,14 @@ class SkillToolkit:
                 # SkillNet 的 vector 模式对多关键词查询召回更稳定。
                 if current_source == "skillnet":
                     params["mode"] = "vector"
-                payload = await (
-                    self._manager.handle_skills_skillnet_search(params)
-                    if current_source == "skillnet"
-                    else self._manager.handle_skills_clawhub_search(params)
-                )
+                if current_source == "skillnet":
+                    payload = await self._manager.handle_skills_skillnet_search(params)
+                elif current_source == "clawhub":
+                    payload = await self._manager.handle_skills_clawhub_search(params)
+                elif current_source == "teamskillshub":
+                    payload = await self._manager.handle_skills_team_skills_hub_search(params)
+                else:
+                    raise AssertionError(f"unexpected search source: {current_source}")
                 payload_summary = self._summarize_search_payload(current_source, query, payload)
                 logger.info(
                     "[SkillToolkit] %s search payload summary: %s",
@@ -321,7 +349,7 @@ class SkillToolkit:
                     "success": False,
                     "source": raw_source,
                     "installed": False,
-                    "detail": "source is required and must be either 'skillnet' or 'clawhub'",
+                    "detail": "source is required and must be one of: 'skillnet', 'clawhub', 'teamskillshub'",
                 }
             normalized_source = self._normalize_source(raw_source)
             if normalized_source == _AUTO_SOURCE:
@@ -329,7 +357,7 @@ class SkillToolkit:
                     "success": False,
                     "source": normalized_source,
                     "installed": False,
-                    "detail": "source must be explicitly set to 'skillnet' or 'clawhub'",
+                    "detail": "source must be explicitly set to 'skillnet', 'clawhub', or 'teamskillshub'",
                 }
 
             resolved_source = normalized_source
@@ -354,6 +382,10 @@ class SkillToolkit:
 
             if resolved_source == "skillnet":
                 payload = await self._install_skillnet_sync_wait(target, wait_timeout)
+            elif resolved_source == "teamskillshub":
+                payload = await self._manager.handle_skills_team_skills_hub_install(
+                    {"asset_id": target, "force": False}
+                )
             else:
                 payload = await self._manager.handle_skills_clawhub_download({"slug": target, "force": False})
         except Exception as exc:  # noqa: BLE001
@@ -521,8 +553,9 @@ class SkillToolkit:
             make_tool(
                 name="search_skill",
                 description=(
-                    "Search installable skills from SkillNet and ClawHub. "
-                    "Use the returned identifier with install_skill."
+                    "Search installable skills from SkillNet, ClawHub, and TeamSkillsHub. "
+                    "Use the returned identifier with install_skill (SkillNet URL, ClawHub slug, "
+                    "or TeamSkillsHub asset_id when source is teamskillshub)."
                 ),
                 input_params={
                     "type": "object",
@@ -530,10 +563,10 @@ class SkillToolkit:
                         "query": {"type": "string", "description": "Search query for the skill."},
                         "source": {
                             "type": "string",
-                            "enum": ["auto", "skillnet", "clawhub"],
+                            "enum": ["auto", "skillnet", "clawhub", "teamskillshub"],
                             "description": (
                                 "Skill source to search. Defaults to skillnet. "
-                                "Use auto to search both sources."
+                                "Use auto to search SkillNet, ClawHub, and TeamSkillsHub (teamskillshub)."
                             ),
                             "default": "skillnet",
                         },
@@ -562,8 +595,11 @@ class SkillToolkit:
                         },
                         "source": {
                             "type": "string",
-                            "enum": ["skillnet", "clawhub"],
-                            "description": "Explicit source of the identifier returned by search_skill.",
+                            "enum": ["skillnet", "clawhub", "teamskillshub"],
+                            "description": (
+                                "Explicit source matching search_skill items. "
+                                "Use teamskillshub for Team Skills Hub."
+                            ),
                         },
                         "timeout_sec": {
                             "type": "integer",

@@ -789,7 +789,7 @@
         "httpError": "请求失败，请检查token或者访问太频繁，稍后重试"
       }
     },
-    "openjiuwen": {
+    "teamskillshub": {
       "title": "TeamSkills 在线检索",
       "titleHubLinkText": "TeamSkillsHub",
       "titleHubAria": "TeamSkillsHub 在线市场",

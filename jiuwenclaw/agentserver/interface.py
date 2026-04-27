@@ -71,9 +71,9 @@ _SKILL_ROUTES: dict[ReqMethod, str] = {
     ReqMethod.SKILLS_CLAWHUB_SET_TOKEN: "handle_skills_clawhub_set_token",
     ReqMethod.SKILLS_CLAWHUB_SEARCH: "handle_skills_clawhub_search",
     ReqMethod.SKILLS_CLAWHUB_DOWNLOAD: "handle_skills_clawhub_download",
-    ReqMethod.SKILLS_OPENJIUWEN_INFO: "handle_skills_openjiuwen_info",
-    ReqMethod.SKILLS_OPENJIUWEN_SEARCH: "handle_skills_openjiuwen_search",
-    ReqMethod.SKILLS_OPENJIUWEN_INSTALL: "handle_skills_openjiuwen_install",
+    ReqMethod.SKILLS_TEAMSKILLS_HUB_INFO: "handle_skills_team_skills_hub_info",
+    ReqMethod.SKILLS_TEAMSKILLS_HUB_SEARCH: "handle_skills_team_skills_hub_search",
+    ReqMethod.SKILLS_TEAMSKILLS_HUB_INSTALL: "handle_skills_team_skills_hub_install",
     ReqMethod.SKILLS_EVOLUTION_STATUS: "handle_skills_evolution_status",
     ReqMethod.SKILLS_EVOLUTION_GET: "handle_skills_evolution_get",
     ReqMethod.SKILLS_EVOLUTION_SAVE: "handle_skills_evolution_save",
@@ -428,7 +428,7 @@ class JiuWenClaw:
                 "handle_skills_import_local",
                 "handle_skills_skillnet_install",
                 "handle_skills_clawhub_download",
-                "handle_skills_openjiuwen_install",
+                "handle_skills_team_skills_hub_install",
             ]
             if handler_name == "handle_skills_skillnet_install" and payload.get("pending"):
                 _reload_after_skills = False
