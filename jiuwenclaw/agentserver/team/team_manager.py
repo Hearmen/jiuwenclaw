@@ -549,7 +549,7 @@ class TeamManager:
                         config=get_config(),
                     ),
                 )
-                from openjiuwen.harness.rails.team_skill_rail import TeamSkillRail
+                from openjiuwen.harness.rails import TeamSkillRail
                 team_skill_rail: Any | None = None
                 for rail in member_rails:
                     if type(rail).__name__ in RAIL_WHITELIST:

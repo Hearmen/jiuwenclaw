@@ -15,13 +15,15 @@ from typing import Any
 
 from openjiuwen.agent_evolving.trajectory import FileTrajectoryStore, TrajectoryStore
 from openjiuwen.core.foundation.tool import ToolCard
-from openjiuwen.harness.rails.filesystem_rail import FileSystemRail
-from openjiuwen.harness.rails.heartbeat_rail import HeartbeatRail
-from openjiuwen.harness.rails.security_rail import SecurityRail
-from openjiuwen.harness.rails.skill_evolution_rail import SkillEvolutionRail
-from openjiuwen.harness.rails.task_planning_rail import TaskPlanningRail
-from openjiuwen.harness.rails.team_skill_rail import TeamSkillRail
-from openjiuwen.harness.rails.team_skill_create_rail import TeamSkillCreateRail
+from openjiuwen.harness.rails import (
+    SysOperationRail,
+    HeartbeatRail,
+    SecurityRail,
+    SkillEvolutionRail,
+    TaskPlanningRail,
+    TeamSkillRail,
+    TeamSkillCreateRail,
+)
 
 from jiuwenclaw.agentserver.deep_agent.rails.avatar_rail import AvatarPromptRail
 from jiuwenclaw.agentserver.deep_agent.rails.response_prompt_rail import ResponsePromptRail
@@ -177,7 +179,7 @@ def build_member_rails(
         logger.warning("[TeamRuntime] ResponsePromptRail failed: %s", exc)
 
     try:
-        rail = FileSystemRail()
+        rail = SysOperationRail()
         rails_list.append(rail)
         logger.info("[TeamRuntime] FileSystemRail created")
     except Exception as exc:

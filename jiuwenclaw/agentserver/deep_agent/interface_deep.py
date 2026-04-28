@@ -56,14 +56,14 @@ from openjiuwen.harness.rails import (
     SecurityRail,
     SkillEvolutionRail,
     SkillCreateRail,
+    SubagentRail,
+    SysOperationRail,
+    HeartbeatRail,
+    MemoryRail
 )
-from openjiuwen.harness.rails.subagent_rail import SubagentRail
 from openjiuwen.harness.rails.context_engineer.context_assemble_rail import ContextAssembleRail
 from openjiuwen.harness.rails.context_engineer.context_processor_rail import ContextProcessorRail
-from openjiuwen.harness.rails.filesystem_rail import FileSystemRail
-from openjiuwen.harness.rails.heartbeat_rail import HeartbeatRail
 from openjiuwen.agent_evolving.signal import SignalDetector
-from openjiuwen.harness.rails.memory_rail import MemoryRail
 from openjiuwen.harness.subagents.browser_agent import build_browser_agent_config
 from openjiuwen.harness.subagents.research_agent import build_research_agent_config
 from openjiuwen.harness.tools import (
@@ -381,7 +381,7 @@ class JiuWenClawDeepAdapter:
         self._model_client_config: ModelClientConfig | None = None
         self._model_request_config: ModelRequestConfig | None = None
         self._config_cache: dict[str, Any] = {}
-        self._filesystem_rail: FileSystemRail | None = None
+        self._filesystem_rail: SysOperationRail | None = None
         self._skill_rail: SkillUseRail | None = None
         self._stream_event_rail: JiuClawStreamEventRail | None = None
         self._task_planning_rail: TaskPlanningRail | None = None
@@ -1428,13 +1428,14 @@ class JiuWenClawDeepAdapter:
             logger.warning("[JiuWenClawDeepAdapter] add sys_operation failed: %s", exc)
             return None
 
-    def _build_filesystem_rail(self) -> FileSystemRail | None:
-        """Build FileSystemRail."""
+    @staticmethod
+    def _build_filesystem_rail() -> SysOperationRail | None:
+        """Build SysOperationRail."""
         try:
-            fs_rail = FileSystemRail()
-            logger.info("[JiuWenClawDeepAdapter] FileSystemRail create success")
+            fs_rail = SysOperationRail()
+            logger.info("[JiuWenClawDeepAdapter] SysOperationRail create success")
         except Exception as exc:
-            logger.warning("[JiuWenClawDeepAdapter] FileSystemRail create failed: %s", exc)
+            logger.warning("[JiuWenClawDeepAdapter] SysOperationRail create failed: %s", exc)
             fs_rail = None
         return fs_rail
 

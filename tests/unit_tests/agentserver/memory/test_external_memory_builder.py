@@ -93,6 +93,9 @@ def _install_agent_core_stubs():
     ]:
         _ensure_module(pkg)
 
+    rails_mod = _ensure_module("openjiuwen.harness.rails")
+    rails_mod.ExternalMemoryRail = _FakeRail
+
     rail_mod = _ensure_module("openjiuwen.harness.rails.external_memory_rail")
     rail_mod.ExternalMemoryRail = _FakeRail
 
@@ -309,17 +312,28 @@ def test_provider_raises_returns_none(monkeypatch):
 def test_rail_construction_failure_returns_none(monkeypatch):
     def _boom(*a, **k):
         raise RuntimeError("rail boom")
-    monkeypatch.setattr(_FakeRail, "__init__", _boom)
+    rails_mod = sys.modules["openjiuwen.harness.rails"]
+    monkeypatch.setattr(rails_mod.ExternalMemoryRail, "__init__", _boom)
     cfg = {"memory": {"external": {"provider": "mem0", "mem0": {"api_key": "k"}}}}
     assert emb.build_external_memory_rail(cfg) is None
 
 
 def test_rail_import_failure_returns_none():
-    orig = sys.modules.pop("openjiuwen.harness.rails.external_memory_rail")
+    orig_rails = sys.modules.get("openjiuwen.harness.rails")
+    orig_rail_mod = sys.modules.get("openjiuwen.harness.rails.external_memory_rail")
     try:
-        broken = ModuleType("openjiuwen.harness.rails.external_memory_rail")
-        sys.modules["openjiuwen.harness.rails.external_memory_rail"] = broken
+        broken_rails = ModuleType("openjiuwen.harness.rails")
+        sys.modules["openjiuwen.harness.rails"] = broken_rails
+        broken_rail_mod = ModuleType("openjiuwen.harness.rails.external_memory_rail")
+        sys.modules["openjiuwen.harness.rails.external_memory_rail"] = broken_rail_mod
         cfg = {"memory": {"external": {"provider": "mem0", "mem0": {"api_key": "k"}}}}
         assert emb.build_external_memory_rail(cfg) is None
     finally:
-        sys.modules["openjiuwen.harness.rails.external_memory_rail"] = orig
+        if orig_rails is not None:
+            sys.modules["openjiuwen.harness.rails"] = orig_rails
+        else:
+            sys.modules.pop("openjiuwen.harness.rails", None)
+        if orig_rail_mod is not None:
+            sys.modules["openjiuwen.harness.rails.external_memory_rail"] = orig_rail_mod
+        else:
+            sys.modules.pop("openjiuwen.harness.rails.external_memory_rail", None)

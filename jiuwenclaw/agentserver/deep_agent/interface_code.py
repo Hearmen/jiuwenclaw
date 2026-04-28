@@ -29,13 +29,13 @@ from openjiuwen.harness.factory import create_deep_agent
 from openjiuwen.harness.rails import (
     AgentModeRail,
     ConfirmInterruptRail,
+    CodingMemoryRail,
+    SysOperationRail,
+    LspRail
 )
-from openjiuwen.harness.rails.coding_memory_rail import CodingMemoryRail
 from openjiuwen.harness.rails.context_engineer.context_assemble_rail import ContextAssembleRail
 from openjiuwen.harness.rails.context_engineer.context_processor_rail import ContextProcessorRail
-from openjiuwen.harness.rails.filesystem_rail import FileSystemRail
 from openjiuwen.harness.lsp import InitializeOptions
-from openjiuwen.harness.rails.lsp_rail import LspRail
 from openjiuwen.harness.schema.config import SubAgentConfig
 from openjiuwen.harness.subagents.browser_agent import build_browser_agent_config
 from openjiuwen.harness.subagents.code_agent import build_code_agent_config
@@ -63,7 +63,7 @@ logger = logging.getLogger(__name__)
 
 # 名字 → 构建方法映射（rail/tool 名字与类方法名对照）
 _RAIL_BUILD_NAMES: dict[str, str] = {
-    "FileSystemRail": "_build_filesystem_rail",
+    "SysOperationRail": "_build_filesystem_rail",
     "SkillUseRail": "_build_skill_rail_via_config",
     "LspRail": "_build_lsp_rail_via_config",
     "HeartbeatRail": "_build_heartbeat_rail",
@@ -283,7 +283,7 @@ class JiuwenClawCodeAdapter(JiuWenClawDeepAdapter):
                     ).get("model_client_config", {}).get("model_name", "gpt-4"),
                 },
             ),
-            _RailBuildInfo("_code_filesystem_rail", FileSystemRail, {}),
+            _RailBuildInfo("_code_filesystem_rail", SysOperationRail, {}),
             _RailBuildInfo("_code_agent_mode_rail", AgentModeRail, {}),
             _RailBuildInfo("_code_ask_user_rail", StructuredAskUserRail, {}),
             _RailBuildInfo(
@@ -522,9 +522,9 @@ class JiuwenClawCodeAdapter(JiuWenClawDeepAdapter):
                 if get_memory_mode(get_config()) == "local":
                     coding_memory_rail = self._build_coding_memory_rail()
                     if coding_memory_rail is not None:
-                        # FileSystemRail is default rail for code_agent;
+                        # SysOperationRail is default rail for code_agent;
             # passing rails overrides defaults, must include it explicitly
-                        code_agent_rails = [FileSystemRail(), coding_memory_rail]
+                        code_agent_rails = [SysOperationRail(), coding_memory_rail]
                 subagents.append(
                     build_code_agent_config(
                         model,

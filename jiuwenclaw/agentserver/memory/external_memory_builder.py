@@ -32,7 +32,7 @@ def build_external_memory_rail(
 ) -> Optional[Any]:
     """Build an ExternalMemoryRail from config, or None if disabled/failed."""
     try:
-        from openjiuwen.harness.rails.external_memory_rail import ExternalMemoryRail
+        from openjiuwen.harness.rails import ExternalMemoryRail
     except Exception as exc:
         logger.warning("[ExternalMemoryBuilder] ExternalMemoryRail import failed: %s", exc)
         return None
