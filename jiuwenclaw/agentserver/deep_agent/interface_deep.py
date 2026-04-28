@@ -3678,6 +3678,10 @@ class JiuWenClawDeepAdapter:
         if mode == "team":
             from jiuwenclaw.agentserver.deep_agent.team_helpers import process_team_message_stream
 
+            resolved_language = self._resolve_runtime_language()
+            resolved_channel = str(cid or self._resolve_prompt_channel(session_id) or "web").strip() or "web"
+            self._write_runtime_state(mode="team", language=resolved_language, channel=resolved_channel)
+
             async for chunk in process_team_message_stream(request, inputs, self._instance):
                 yield chunk
             return
