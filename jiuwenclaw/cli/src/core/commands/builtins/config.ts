@@ -292,6 +292,15 @@ export function createConfigCommand(): SlashCommand {
           }
           if (schema.type === "toggle") {
             const currentVal = String(configPayload[key] ?? "false");
+            if (value && value !== "true" && value !== "false") {
+              ctx.addItem(
+                addError(
+                  ctx.sessionId,
+                  `Invalid value "${value}" for ${key}. Toggle only accepts: true, false`,
+                ),
+              );
+              return;
+            }
             const effectiveValue = value || (currentVal === "true" ? "false" : "true");
             await applyConfigSet(ctx, key, effectiveValue, schema);
             return;
