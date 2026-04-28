@@ -27,7 +27,7 @@ from jiuwenclaw.agentserver.tools.ssl_config import get_requests_verify
 
 
 logger = logging.getLogger(__name__)
-load_dotenv(verbose=True)
+load_dotenv(verbose=True, override=True)
 
 _SANDBOX_MARKER = "home/user"
 

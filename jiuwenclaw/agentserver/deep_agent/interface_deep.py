@@ -186,7 +186,7 @@ from jiuwenclaw.utils import (
     reset_free_search_runtime_flags,
 )
 
-load_dotenv(dotenv_path=get_env_file())
+load_dotenv(dotenv_path=get_env_file(), override=True)
 reset_free_search_runtime_flags()
 
 _react_config = get_config().get("react", {})
@@ -2020,6 +2020,7 @@ class JiuWenClawDeepAdapter:
         await self.set_checkpoint()
 
         self._instance_overrides = dict(config or {}) if isinstance(config, dict) else {}
+        load_dotenv(dotenv_path=get_env_file(), override=True)
         config_base = get_config()
         self._refresh_multimodal_configs(config_base)
         config = config_base.get("react", {}).copy()

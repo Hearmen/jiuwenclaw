@@ -52,7 +52,7 @@ logger = logging.getLogger(__name__)
 
 _PROJECT_ROOT = get_root_dir()
 _ENV_FILE = get_env_file()
-load_dotenv(dotenv_path=_ENV_FILE)
+load_dotenv(dotenv_path=_ENV_FILE, override=True)
 
 
 def _resolve_env_var_str(value: str) -> str:

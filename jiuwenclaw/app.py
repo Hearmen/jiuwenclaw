@@ -44,7 +44,7 @@ cleanup_team_files(_workspace_dir)
 if not _config_file.exists() or (_old_workspace.exists() and not _new_workspace.exists()):
     prepare_workspace(overwrite=False)
 
-load_dotenv(dotenv_path=get_env_file())
+load_dotenv(dotenv_path=get_env_file(), override=True)
 reset_free_search_runtime_flags()
 
 

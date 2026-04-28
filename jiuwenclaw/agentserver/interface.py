@@ -42,7 +42,7 @@ from jiuwenclaw.utils import (
     reset_free_search_runtime_flags,
 )
 
-load_dotenv(dotenv_path=get_env_file())
+load_dotenv(dotenv_path=get_env_file(), override=True)
 reset_free_search_runtime_flags()
 
 logger = logging.getLogger(__name__)

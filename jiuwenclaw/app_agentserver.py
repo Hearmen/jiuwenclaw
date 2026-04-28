@@ -49,7 +49,7 @@ for _lg in LogManager.get_all_loggers().values():
     _lg.set_level(logging.CRITICAL)
 
 # Load env from user workspace config/.env
-load_dotenv(dotenv_path=get_env_file())
+load_dotenv(dotenv_path=get_env_file(), override=True)
 reset_free_search_runtime_flags()
 
 
