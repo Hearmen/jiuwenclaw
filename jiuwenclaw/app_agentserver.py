@@ -54,6 +54,16 @@ reset_free_search_runtime_flags()
 
 
 async def _run(host: str, port: int) -> None:
+    # --- 删除 .agent_teams 目录（在 team 模块导入之前） ---
+    agent_teams_dir = get_user_workspace_dir() / ".agent_teams"
+    if agent_teams_dir.exists():
+        import shutil
+        try:
+            shutil.rmtree(agent_teams_dir)
+            logger.info("[AgentServer] deleted .agent_teams directory: %s", agent_teams_dir)
+        except OSError as exc:
+            logger.warning("[AgentServer] failed to delete .agent_teams: %s", exc)
+
     from openjiuwen.core.runner import Runner
     from jiuwenclaw.agentserver.agent_ws_server import AgentWebSocketServer
     from jiuwenclaw.agentserver.team import cleanup_team_runtime_state_once
