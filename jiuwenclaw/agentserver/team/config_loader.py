@@ -244,9 +244,10 @@ def _build_predefined_members(team_raw: dict[str, Any]) -> list[dict[str, Any]]:
     return predefined_members
 
 
-def load_team_spec_dict(session_id: str) -> dict[str, Any]:
+def load_team_spec_dict(session_id: str, config_base: dict[str, Any] | None = None) -> dict[str, Any]:
     """Load team config and build a TeamAgentSpec-compatible dict."""
-    config_base = get_config()
+    if config_base is None:
+        config_base = get_config()
     team_raw = _select_first_modes_team(config_base)
 
     if not team_raw:

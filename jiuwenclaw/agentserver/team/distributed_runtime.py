@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import copy
+import importlib.util
 import logging
 import time
 from typing import Any
@@ -154,6 +155,69 @@ def is_postgresql_storage(team_cfg: dict[str, Any]) -> bool:
     storage_cfg = team_cfg.get("storage", {}) if isinstance(team_cfg.get("storage"), dict) else {}
     storage_type = str(storage_cfg.get("type", "")).strip().lower()
     return storage_type in {"postgresql", "postgres"}
+
+
+def missing_distributed_dependencies(config_base: dict[str, Any]) -> list[str]:
+    """Return missing Python packages required by distributed runtime."""
+    if not is_distributed_mode(config_base):
+        return []
+
+    missing: list[str] = []
+    if importlib.util.find_spec("zmq") is None:
+        missing.append("pyzmq")
+
+    team_cfg = config_base.get("team", {}) if isinstance(config_base.get("team"), dict) else {}
+    if is_postgresql_storage(team_cfg) and importlib.util.find_spec("asyncpg") is None:
+        missing.append("asyncpg")
+    return missing
+
+
+def fallback_distributed_to_local(config_base: dict[str, Any]) -> dict[str, Any]:
+    """Create an in-memory local fallback config from distributed config."""
+    normalized = copy.deepcopy(config_base)
+
+    team_cfg = normalized.get("team", {})
+    if isinstance(team_cfg, dict):
+        runtime_cfg = team_cfg.get("runtime", {})
+        if not isinstance(runtime_cfg, dict):
+            runtime_cfg = {}
+        runtime_cfg["mode"] = "local"
+        runtime_cfg["role"] = "leader"
+        team_cfg["runtime"] = runtime_cfg
+
+        transport_cfg = team_cfg.get("transport", {})
+        if not isinstance(transport_cfg, dict):
+            transport_cfg = {}
+        transport_cfg["type"] = "inprocess"
+        transport_cfg.pop("params", None)
+        team_cfg["transport"] = transport_cfg
+
+        if is_postgresql_storage(team_cfg):
+            team_cfg["storage"] = {
+                "type": "sqlite",
+                "params": {"connection_string": "team.db"},
+            }
+
+    modes_cfg = normalized.get("modes", {})
+    if isinstance(modes_cfg, dict):
+        mode_team = modes_cfg.get("team", {})
+        if isinstance(mode_team, dict):
+            for _, candidate in mode_team.items():
+                if not isinstance(candidate, dict):
+                    continue
+                transport_cfg = candidate.get("transport", {})
+                if not isinstance(transport_cfg, dict):
+                    transport_cfg = {}
+                transport_cfg["type"] = "inprocess"
+                transport_cfg.pop("params", None)
+                candidate["transport"] = transport_cfg
+                if is_postgresql_storage(candidate):
+                    candidate["storage"] = {
+                        "type": "sqlite",
+                        "params": {"connection_string": "team.db"},
+                    }
+
+    return normalized
 
 
 def extract_pg_endpoint(team_cfg: dict[str, Any]) -> tuple[str, int]:

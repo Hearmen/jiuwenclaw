@@ -29,7 +29,9 @@ from jiuwenclaw.agentserver.team.config_loader import (
 from jiuwenclaw.agentserver.team.distributed_runtime import (
     ensure_postgresql_for_leader,
     extract_pg_endpoint,
+    fallback_distributed_to_local,
     is_distributed_mode,
+    missing_distributed_dependencies,
     is_pg_available,
     is_postgresql_storage,
     normalize_distributed_transport_fields,
@@ -212,7 +214,28 @@ class TeamManager:
     @staticmethod
     def _load_team_spec(session_id: str) -> TeamAgentSpec:
         config_base = get_config()
-        spec_dict = load_team_spec_dict(session_id)
+        # Keep dependency checks scoped to distributed mode to make the
+        # control flow explicit at the call site (local mode bypasses checks).
+        if TeamManager._is_distributed_mode(config_base):
+            missing = missing_distributed_dependencies(config_base)
+            if missing:
+                missing_list = ", ".join(missing)
+                logger.warning(
+                    "[TeamManager][MISSING_DISTRIBUTE_DEPS] missing=%s",
+                    missing_list,
+                )
+                logger.error(
+                    "[TeamManager][FALLBACK_TO_LOCAL] "
+                    "distributed runtime is not available; downgraded to local mode "
+                    "for current process"
+                )
+                logger.warning(
+                    "[TeamManager][ACTION] install via: "
+                    "pip install -e \".[distribute]\" or uv sync --extra distribute"
+                )
+                config_base = fallback_distributed_to_local(config_base)
+
+        spec_dict = load_team_spec_dict(session_id, config_base=config_base)
         spec_dict = TeamManager._normalize_team_identity_fields(spec_dict)
         if TeamManager._is_distributed_mode(config_base):
             spec_dict = TeamManager._normalize_distributed_transport_fields(config_base, spec_dict)
