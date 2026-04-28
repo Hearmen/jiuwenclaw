@@ -453,8 +453,11 @@
       "duplicateName": "Model name already exists",
       "lastModelWarning": "At least one model configuration is required",
       "untitled": "Untitled model",
-      "default": "Default",
-      "setDefault": "Set as Default"
+      "primaryDefault": "Primary Default",
+      "groupDefault": "Group Default",
+      "setPrimaryDefault": "Set as Primary Default",
+      "isDefault": "Group Default",
+      "onlyOneInGroup": "Only one in group, auto-default"
     },
     "agentList": {
       "addAgent": "Add Agent",

@@ -424,6 +424,7 @@ class JiuWenClawDeepAdapter:
         )
         self._is_proactive_memory: bool | None = None
         self._model_cache: dict[str, Model] = {}
+        self._model_name_to_keys: dict[str, list[str]] = {}
         self._default_model_name: str = ""
         self._registered_mcp_server_ids: set[str] = set()
         self._registered_mcp_servers: dict[str, McpServerConfig] = {}
@@ -1295,15 +1296,33 @@ class JiuWenClawDeepAdapter:
         return Model(model_client_config=ModelClientConfig(**mcc_fields), model_config=m_config)
 
     def _build_model_cache_from_defaults(self, config: dict) -> None:
-        """从 models.defaults 列表构建模型缓存。"""
+        """从 models.defaults 列表构建模型缓存。
+
+        key 使用 {model_name}#{index} 格式以支持同名模型共存。
+        同时记录 _model_name_to_keys 映射以便按 model_name 查找。
+        """
+        self._model_name_to_keys.clear()
+        name_counter: dict[str, int] = {}
+
         for entry in get_default_models(config):
             mcc = entry.get("model_client_config") or {}
             if not mcc.get("model_name"):
                 continue
-            self._model_cache[mcc["model_name"]] = self._build_model_from_entry(
+            model_name = mcc["model_name"]
+            idx = name_counter.get(model_name, 0)
+            name_counter[model_name] = idx + 1
+            cache_key = f"{model_name}#{idx}"
+            self._model_cache[cache_key] = self._build_model_from_entry(
                 mcc,
                 entry.get("model_config_obj") or {},
             )
+            if model_name not in self._model_name_to_keys:
+                self._model_name_to_keys[model_name] = []
+            self._model_name_to_keys[model_name].append(cache_key)
+
+            # 同时用纯 model_name 作为 key 指向 is_default=true 的条目
+            if entry.get("is_default") is True:
+                self._model_cache[model_name] = self._model_cache[cache_key]
 
     def _build_model_cache_legacy(self, config: dict) -> None:
         """回退到旧格式（models.default / react 段）构建单条目缓存。"""
@@ -1332,17 +1351,43 @@ class JiuWenClawDeepAdapter:
         if not self._model_cache:
             self._build_model_cache_legacy(config)
 
-        first_name = next(iter(self._model_cache))
-        self._default_model_name = first_name
-        self._model = self._model_cache[first_name]
+        # 优先取 is_default=true 的条目（纯 model_name key），否则取第一个
+        default_name = None
+        for name, keys in self._model_name_to_keys.items():
+            if name in self._model_cache:
+                default_name = name
+                break
+        if default_name is None:
+            # 回退：取第一个 #index key
+            for key in self._model_cache:
+                if "#" in key:
+                    default_name = key
+                    break
+        if default_name is None:
+            default_name = next(iter(self._model_cache))
+
+        self._default_model_name = default_name
+        self._model = self._model_cache[default_name]
         self._model_client_config = self._model.model_client_config
         self._model_request_config = self._model.model_config
         return self._model
 
     def _resolve_model_for_request(self, request: AgentRequest) -> Model:
-        """根据请求中的 model_name 参数查找对应模型，未匹配则回退默认模型。"""
+        """根据请求中的 model_name 参数查找对应模型，未匹配则回退默认模型。
+
+        支持两种格式：
+        - 纯 model_name：查找 is_default=true 的条目
+        - {model_name}#{index}：查找指定索引的条目
+        """
         requested = (request.params.get("model_name") or "").strip()
-        if requested and requested in self._model_cache:
+        if not requested:
+            return self._model
+        # 精确匹配（#index 格式或纯 model_name key）
+        if requested in self._model_cache:
+            return self._model_cache[requested]
+        # 回退：按纯 model_name 查找 is_default=true 的条目
+        name_to_keys = self._model_name_to_keys
+        if requested in name_to_keys and requested in self._model_cache:
             return self._model_cache[requested]
         return self._model
 

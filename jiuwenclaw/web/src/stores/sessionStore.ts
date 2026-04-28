@@ -126,6 +126,8 @@ interface SessionState {
   teamMembers: TeamMember[];
   availableModels: ModelEntry[];
   selectedModelName: string | null;
+  /** 过滤 is_default=true 的模型，供聊天窗口 ModelSelector 使用 */
+  chatAvailableModels: ModelEntry[];
 
   // Actions
   setCurrentSession: (session: Session | null) => void;
@@ -179,6 +181,7 @@ export const useSessionStore = create<SessionState>((set) => ({
   teamTaskEvents: [],
   teamMembers: [],
   availableModels: [],
+  chatAvailableModels: [],
   selectedModelName: (() => {
     try { return localStorage.getItem(MODEL_STORAGE_KEY); } catch { return null; }
   })(),
@@ -398,15 +401,16 @@ export const useSessionStore = create<SessionState>((set) => ({
   },
   setAvailableModels: (models, activeModel) => {
     set(() => {
-      const names = models.map((m) => m.model_name);
-      // 优先使用后端返回的 activeModel（默认模型）
-      const selected = (activeModel && names.includes(activeModel))
+      const chatModels = models.filter((m) => m.is_default !== false);
+      const chatNames = chatModels.map((m) => m.model_name);
+      // 优先使用后端返回的 activeModel（默认模型），其次取 chatAvailableModels 第一个
+      const selected = (activeModel && chatNames.includes(activeModel))
         ? activeModel
-        : names[0] || null;
+        : chatNames[0] || null;
       if (selected) {
         try { localStorage.setItem(MODEL_STORAGE_KEY, selected); } catch { /* noop */ }
       }
-      return { availableModels: models, selectedModelName: selected };
+      return { availableModels: models, chatAvailableModels: chatModels, selectedModelName: selected };
     });
   },
   setSelectedModelName: (name) => {

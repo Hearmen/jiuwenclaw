@@ -36,6 +36,8 @@ export interface ModelEntry {
   model_provider: string;
   timeout?: number;
   temperature?: number;
+  /** 同 model_name 组内的默认勾选标识 */
+  is_default?: boolean;
   /** 用于原子性重命名操作，指定原模型名 */
   original_model_name?: string;
 }

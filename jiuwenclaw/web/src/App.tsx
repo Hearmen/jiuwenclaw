@@ -448,12 +448,15 @@ function AppContent() {
     [request],
   );
 
-  const handleModelSave = useCallback(async (model: ModelEntry) => {
-    await request('models.save', model as unknown as Record<string, unknown>);
+  const handleModelSave = useCallback(async (model: ModelEntry & { index?: number }) => {
+    const payload: Record<string, unknown> = { ...model };
+    await request('models.save', payload);
   }, [request]);
 
-  const handleModelRemove = useCallback(async (modelName: string) => {
-    await request('models.remove', { model_name: modelName });
+  const handleModelRemove = useCallback(async (modelName: string, index?: number) => {
+    const payload: Record<string, unknown> = { model_name: modelName };
+    if (index !== undefined) payload.index = index;
+    await request('models.remove', payload);
   }, [request]);
 
   const handleModelsRefresh = useCallback(async () => {

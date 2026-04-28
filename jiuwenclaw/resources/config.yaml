@@ -125,6 +125,7 @@ models:
         custom_headers: {}
       model_config_obj:
         temperature: 0.95
+      is_default: true
   video:
       model_client_config:
         api_base: ${VIDEO_API_BASE}

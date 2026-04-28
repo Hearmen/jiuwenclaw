@@ -694,16 +694,20 @@ def _register_web_handlers(bind: WebHandlersBindParams) -> None:
             config = get_config()
             models = get_default_models(config)
             result = []
+            active_model = ""
             for entry in models:
                 mcc = entry.get("model_client_config", {})
                 mco = entry.get("model_config_obj", {})
+                is_default = entry.get("is_default", False)
                 result.append({
                     "model_name": mcc.get("model_name", ""),
                     "api_base": mcc.get("api_base", ""),
                     "api_key": mcc.get("api_key", ""),
                     "model_provider": mcc.get("client_provider", ""),
                     "temperature": mco.get("temperature", 0.95),
+                    "is_default": is_default,
                 })
+                # active_model 为列表首位的模型（主对话默认）
             active_model = result[0]["model_name"] if result else ""
             await channel.send_response(ws, req_id, ok=True, payload={
                 "models": result,
@@ -714,7 +718,7 @@ def _register_web_handlers(bind: WebHandlersBindParams) -> None:
             await channel.send_response(ws, req_id, ok=False, error=str(exc), code="INTERNAL_ERROR")
 
     async def _models_save(ws, req_id, params, session_id):
-        """新增或更新一个模型配置。model_name 已存在则更新，否则新增。
+        """新增或更新一个模型配置。允许同名 model_name，通过 index 参数定位。
 
         支持原子性重命名：传入 original_model_name 时，会先删除旧模型再添加新模型。
         """
@@ -725,7 +729,6 @@ def _register_web_handlers(bind: WebHandlersBindParams) -> None:
         if not model_name:
             await channel.send_response(ws, req_id, ok=False, error="model_name is required", code="BAD_REQUEST")
             return
-        # 支持 original_model_name 参数用于原子性重命名
         _raw_original = params.get("original_model_name")
         original_model_name = str(_raw_original).strip() if _raw_original is not None else None
         if original_model_name == "":
@@ -734,6 +737,13 @@ def _register_web_handlers(bind: WebHandlersBindParams) -> None:
         api_key = str(params.get("api_key") or "").strip()
         model_provider = str(params.get("model_provider") or "").strip()
         temperature = float(params.get("temperature", 0.95))
+        is_default = bool(params.get("is_default", False))
+        target_index = params.get("index")
+        if target_index is not None:
+            try:
+                target_index = int(target_index)
+            except (ValueError, TypeError):
+                target_index = None
 
         available_model_providers = [p.value for p in ProviderType]
         if model_provider and model_provider not in available_model_providers:
@@ -744,7 +754,6 @@ def _register_web_handlers(bind: WebHandlersBindParams) -> None:
             )
             return
 
-        # 加密 api_key（与 config.set 行为一致）
         if api_key:
             from jiuwenclaw.extensions.registry import ExtensionRegistry
             crypto = ExtensionRegistry.get_instance().get_crypto_provider()
@@ -763,27 +772,45 @@ def _register_web_handlers(bind: WebHandlersBindParams) -> None:
             "model_config_obj": {
                 "temperature": temperature,
             },
+            "is_default": is_default,
         }
 
         try:
-            # 读取原始列表（api_key 保持加密态，不解密）
             models = _get_raw_model_list()
 
             action = "created"
-            # 如果是重命名操作，先删除旧模型
             if original_model_name and original_model_name != model_name:
                 models = [m for m in models if _entry_model_name(m) != original_model_name]
                 action = "renamed"
 
-            # 按 model_name 查找并更新
-            for i, entry in enumerate(models):
-                if _entry_model_name(entry) == model_name:
-                    models[i] = new_entry
-                    if action != "renamed":
-                        action = "updated"
-                    break
+            if is_default:
+                for i, entry in enumerate(models):
+                    if _entry_model_name(entry) == model_name:
+                        entry["is_default"] = False
+
+            if target_index is not None:
+                found = False
+                for i, entry in enumerate(models):
+                    if i == target_index:
+                        models[i] = new_entry
+                        found = True
+                        if action != "renamed":
+                            action = "updated"
+                        break
+                if not found:
+                    models.append(new_entry)
             else:
-                models.append(new_entry)
+                for i, entry in enumerate(models):
+                    if _entry_model_name(entry) == model_name and not entry.get("is_default", False):
+                        models[i] = new_entry
+                        if action != "renamed":
+                            action = "updated"
+                        break
+                else:
+                    models.append(new_entry)
+
+            from jiuwenclaw.config import _infer_is_default
+            models = _infer_is_default(models)
 
             update_default_models_in_config(models)
 
@@ -807,7 +834,7 @@ def _register_web_handlers(bind: WebHandlersBindParams) -> None:
             await channel.send_response(ws, req_id, ok=False, error=str(exc), code="INTERNAL_ERROR")
 
     async def _models_remove(ws, req_id, params, session_id):
-        """删除一个模型配置。至少保留一个模型。"""
+        """删除一个模型配置。至少保留一个模型。支持 index 参数定位同名模型。"""
         if not isinstance(params, dict):
             await channel.send_response(ws, req_id, ok=False, error="params must be object", code="BAD_REQUEST")
             return
@@ -815,6 +842,12 @@ def _register_web_handlers(bind: WebHandlersBindParams) -> None:
         if not model_name:
             await channel.send_response(ws, req_id, ok=False, error="model_name is required", code="BAD_REQUEST")
             return
+        target_index = params.get("index")
+        if target_index is not None:
+            try:
+                target_index = int(target_index)
+            except (ValueError, TypeError):
+                target_index = None
 
         try:
             models = _get_raw_model_list()
@@ -826,14 +859,31 @@ def _register_web_handlers(bind: WebHandlersBindParams) -> None:
                 )
                 return
 
-            new_models = [m for m in models if _entry_model_name(m) != model_name]
-            if len(new_models) == len(models):
-                await channel.send_response(
-                    ws, req_id, ok=False,
-                    error=f"Model '{model_name}' not found",
-                    code="NOT_FOUND",
-                )
-                return
+            if target_index is not None:
+                if target_index < 0 or target_index >= len(models):
+                    await channel.send_response(
+                        ws, req_id, ok=False,
+                        error=f"Index {target_index} out of range",
+                        code="NOT_FOUND",
+                    )
+                    return
+                removed = models[target_index]
+                removed_name = _entry_model_name(removed)
+                new_models = models[:target_index] + models[target_index + 1:]
+            else:
+                new_models = [m for m in models if _entry_model_name(m) != model_name]
+                removed_name = model_name
+                if len(new_models) == len(models):
+                    await channel.send_response(
+                        ws, req_id, ok=False,
+                        error=f"Model '{model_name}' not found",
+                        code="NOT_FOUND",
+                    )
+                    return
+
+            # 删除后若同 model_name 组内无 is_default=true，自动将第一个设为默认
+            from jiuwenclaw.config import _infer_is_default
+            new_models = _infer_is_default(new_models)
 
             update_default_models_in_config(new_models)
             await _clear_agent_config_cache(_resolve(agent_client))
@@ -847,7 +897,7 @@ def _register_web_handlers(bind: WebHandlersBindParams) -> None:
                 if inspect.isawaitable(callback_result):
                     await callback_result
 
-            await channel.send_response(ws, req_id, ok=True, payload={"model_name": model_name})
+            await channel.send_response(ws, req_id, ok=True, payload={"model_name": removed_name})
         except Exception as exc:  # noqa: BLE001
             logger.warning("[models.remove] %s", exc)
             await channel.send_response(ws, req_id, ok=False, error=str(exc), code="INTERNAL_ERROR")
@@ -857,7 +907,7 @@ def _register_web_handlers(bind: WebHandlersBindParams) -> None:
         await _config_validate_model(ws, req_id, params, session_id)
 
     async def _models_set_active(ws, req_id, params, session_id):
-        """设置默认选中的模型（将其移到列表第一位）。"""
+        """设置默认选中的模型（将其移到列表第一位）。支持 index 参数定位同名模型。"""
         if not isinstance(params, dict):
             await channel.send_response(ws, req_id, ok=False, error="params must be object", code="BAD_REQUEST")
             return
@@ -865,14 +915,24 @@ def _register_web_handlers(bind: WebHandlersBindParams) -> None:
         if not model_name:
             await channel.send_response(ws, req_id, ok=False, error="model_name is required", code="BAD_REQUEST")
             return
+        target_index = params.get("index")
+        if target_index is not None:
+            try:
+                target_index = int(target_index)
+            except (ValueError, TypeError):
+                target_index = None
 
         try:
             models = _get_raw_model_list()
             target_idx = None
-            for i, entry in enumerate(models):
-                if _entry_model_name(entry) == model_name:
-                    target_idx = i
-                    break
+            if target_index is not None:
+                if 0 <= target_index < len(models):
+                    target_idx = target_index
+            else:
+                for i, entry in enumerate(models):
+                    if _entry_model_name(entry) == model_name:
+                        target_idx = i
+                        break
             if target_idx is None:
                 await channel.send_response(
                     ws, req_id, ok=False,
@@ -889,6 +949,59 @@ def _register_web_handlers(bind: WebHandlersBindParams) -> None:
             await channel.send_response(ws, req_id, ok=True, payload={"model_name": model_name})
         except Exception as exc:  # noqa: BLE001
             logger.warning("[models.set_active] %s", exc)
+            await channel.send_response(ws, req_id, ok=False, error=str(exc), code="INTERNAL_ERROR")
+
+    async def _models_set_default(ws, req_id, params, session_id):
+        """设置同 model_name 组内的默认条目（is_default 互斥切换）。"""
+        if not isinstance(params, dict):
+            await channel.send_response(ws, req_id, ok=False, error="params must be object", code="BAD_REQUEST")
+            return
+        model_name = str(params.get("model_name") or "").strip()
+        if not model_name:
+            await channel.send_response(ws, req_id, ok=False, error="model_name is required", code="BAD_REQUEST")
+            return
+        target_index = params.get("index")
+        if target_index is not None:
+            try:
+                target_index = int(target_index)
+            except (ValueError, TypeError):
+                target_index = None
+
+        try:
+            models = _get_raw_model_list()
+
+            # 先将同 model_name 组内所有条目的 is_default 置为 False
+            for entry in models:
+                if _entry_model_name(entry) == model_name:
+                    entry["is_default"] = False
+
+            # 设置目标条目的 is_default 为 True
+            if target_index is not None:
+                if 0 <= target_index < len(models) and _entry_model_name(models[target_index]) == model_name:
+                    models[target_index]["is_default"] = True
+                else:
+                    await channel.send_response(
+                        ws, req_id, ok=False,
+                        error=f"Index {target_index} does not match model_name '{model_name}'",
+                        code="NOT_FOUND",
+                    )
+                    return
+            else:
+                # 无 index 时，设置同组第一个匹配项
+                for entry in models:
+                    if _entry_model_name(entry) == model_name:
+                        entry["is_default"] = True
+                        break
+
+            from jiuwenclaw.config import _infer_is_default
+            models = _infer_is_default(models)
+
+            update_default_models_in_config(models)
+            await _clear_agent_config_cache(_resolve(agent_client))
+
+            await channel.send_response(ws, req_id, ok=True, payload={"model_name": model_name})
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("[models.set_default] %s", exc)
             await channel.send_response(ws, req_id, ok=False, error=str(exc), code="INTERNAL_ERROR")
 
     async def _channel_get(ws, req_id, params, session_id):
@@ -1882,6 +1995,7 @@ def _register_web_handlers(bind: WebHandlersBindParams) -> None:
     channel.register_method("models.remove", _models_remove)
     channel.register_method("models.validate", _models_validate)
     channel.register_method("models.set_active", _models_set_active)
+    channel.register_method("models.set_default", _models_set_default)
     channel.register_method("channel.get", _channel_get)
 
     channel.register_method("session.list", _session_list)

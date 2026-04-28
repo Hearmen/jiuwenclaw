@@ -63,8 +63,8 @@ interface ConfigPanelProps {
   /** 首次进入配置页时展开的分组 tag（如 third_party_api）；离开配置页时由 App 清空 */
   initialExpandGroupTag?: string | null;
   /** 多模型操作回调 */
-  onModelSave?: (model: ModelEntry) => Promise<void>;
-  onModelRemove?: (modelName: string) => Promise<void>;
+  onModelSave?: (model: ModelEntry & { index?: number }) => Promise<void>;
+  onModelRemove?: (modelName: string, index?: number) => Promise<void>;
   onModelValidate?: (fields: { api_base: string; api_key: string; model: string; model_provider: string }) => Promise<void>;
   onModelsRefresh?: () => Promise<void>;
   onSetActiveModel?: (modelName: string) => Promise<void>;
@@ -747,31 +747,77 @@ function MultiModelSection({
     });
   };
 
-  const handleSetActive = (modelName: string) => {
-    const idx = models.findIndex((m) => m.model_name === modelName);
-    if (idx > 0) {
-      const copy = [...models];
-      const [target] = copy.splice(idx, 1);
-      copy.unshift(target);
-      onModelsChange(copy);
-      setExpandedIdx((prev) => {
-        if (prev === null) return null;
-        if (prev === idx) return 0;
-        if (prev < idx) return prev + 1;
-        return prev;
-      });
+  const handleSetActive = (idx: number) => {
+    // 将目标条目移到列表首位，作为主对话默认模型
+    if (idx === 0) return;
+    const copy = [...models];
+    const [target] = copy.splice(idx, 1);
+    // 主对话默认一定是组内默认：将目标设为 is_default=true，同组其他条目置 false
+    const targetName = target.model_name;
+    target.is_default = true;
+    for (const m of copy) {
+      if (m.model_name === targetName) {
+        m.is_default = false;
+      }
     }
+    copy.unshift(target);
+    onModelsChange(copy);
+    setExpandedIdx((prev) => {
+      if (prev === null) return null;
+      if (prev === idx) return 0;
+      if (prev < idx) return prev + 1;
+      return prev;
+    });
+  };
+
+  const handleToggleDefault = (idx: number) => {
+    const model = models[idx];
+    const sameNameCount = models.filter((m) => m.model_name === model.model_name).length;
+    // 同名组仅一个条目时不可取消
+    if (sameNameCount <= 1) return;
+    const copy = [...models];
+    const newDefault = !copy[idx].is_default;
+    copy[idx] = { ...copy[idx], is_default: newDefault };
+
+    // 找到主对话默认所在的 index（列表首位）
+    const primaryDefaultName = copy[0].model_name;
+
+    if (newDefault) {
+      // 设为组内默认时，同组其他条目取消默认
+      for (let i = 0; i < copy.length; i++) {
+        if (i !== idx && copy[i].model_name === model.model_name) {
+          copy[i] = { ...copy[i], is_default: false };
+        }
+      }
+      // 如果切换的组是主对话默认所在组，则新的组内默认自动成为主对话默认
+      if (model.model_name === primaryDefaultName) {
+        const [newPrimary] = copy.splice(idx, 1);
+        copy.unshift(newPrimary);
+      }
+    } else {
+      // 取消默认时，同组第一个其他条目自动成为默认
+      const fallbackIdx = copy.findIndex((m, i) => i !== idx && m.model_name === model.model_name);
+      if (fallbackIdx >= 0) {
+        copy[fallbackIdx] = { ...copy[fallbackIdx], is_default: true };
+        // 如果取消的组是主对话默认所在组，则新的组内默认自动成为主对话默认
+        if (model.model_name === primaryDefaultName) {
+          const [newPrimary] = copy.splice(fallbackIdx, 1);
+          copy.unshift(newPrimary);
+        }
+      }
+    }
+    onModelsChange(copy);
+    setExpandedIdx(null);
   };
 
   const handleAddNew = () => {
     const name = newModel.model_name.trim();
     if (!name) return;
-    if (models.some((m) => m.model_name === name)) {
-      setLocalError(t("config.modelList.duplicateName"));
-      return;
-    }
     setLocalError(null);
-    onModelsChange([...models, { ...newModel, model_name: name }]);
+    // 新增条目：同名组已有条目时 is_default=false，否则 is_default=true
+    const sameNameExists = models.some((m) => m.model_name === name);
+    const entry: ModelEntry = { ...newModel, model_name: name, is_default: !sameNameExists };
+    onModelsChange([...models, entry]);
     setExpandedIdx(models.length); // 自动展开新增的条目
     setAddingNew(false);
     setNewModel({ model_name: "", api_base: "", api_key: "", model_provider: "OpenAI" });
@@ -805,7 +851,17 @@ function MultiModelSection({
       {models.map((model, idx) => {
         const isExpanded = expandedIdx === idx;
         const vr = validateResults[model.model_name];
-        const isDefault = idx === 0;
+        const isDefault = model.is_default !== false;
+        const isPrimaryDefault = idx === 0;
+        // 同名模型计数，用于区分显示
+        const sameNameIndices = models.reduce<number[]>((acc, m, i) => {
+          if (m.model_name === model.model_name) acc.push(i);
+          return acc;
+        }, []);
+        const sameNameCount = sameNameIndices.length;
+        const displayName = sameNameCount > 1
+          ? `${model.model_name} #${sameNameIndices.indexOf(idx) + 1}`
+          : model.model_name;
         return (
           <div key={idx} className="rounded-lg border border-border bg-secondary/20">
             <div className="flex items-center justify-between px-3 py-2">
@@ -817,9 +873,12 @@ function MultiModelSection({
                 <svg className={`w-3 h-3 transition-transform ${isExpanded ? "rotate-90" : ""}`} fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2}>
                   <path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" />
                 </svg>
-                <span className="truncate">{model.model_name || t("config.modelList.untitled")}</span>
-                {isDefault && (
-                  <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-accent/15 text-accent border border-accent/30">{t("config.modelList.default")}</span>
+                <span className="truncate">{displayName || t("config.modelList.untitled")}</span>
+                {isPrimaryDefault && (
+                  <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-accent/15 text-accent border border-accent/30">{t("config.modelList.primaryDefault")}</span>
+                )}
+                {!isPrimaryDefault && isDefault && sameNameCount > 1 && (
+                  <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-secondary/40 text-text-muted border border-border">{t("config.modelList.groupDefault")}</span>
                 )}
                 {vr === "ok" && (
                   <span className="w-5 h-5 rounded-full bg-ok-subtle text-ok flex items-center justify-center">
@@ -837,13 +896,13 @@ function MultiModelSection({
                 )}
               </button>
               <div className="flex items-center gap-1 ml-2">
-                {!isDefault && (
+                {!isPrimaryDefault && (
                   <button
                     type="button"
-                    onClick={() => handleSetActive(model.model_name)}
+                    onClick={() => handleSetActive(idx)}
                     className="text-[11px] px-2 py-0.5 rounded border border-border hover:bg-secondary/60"
                   >
-                    {t("config.modelList.setDefault")}
+                    {t("config.modelList.setPrimaryDefault")}
                   </button>
                 )}
                 <button
@@ -888,6 +947,20 @@ function MultiModelSection({
                     )}
                   </div>
                 ))}
+                {/* is_default 勾选框 */}
+                <div className="flex items-center gap-2 text-xs">
+                  <label className="w-28 text-text-muted shrink-0">{t("config.modelList.isDefault")}</label>
+                  <input
+                    type="checkbox"
+                    checked={isDefault}
+                    onChange={() => handleToggleDefault(idx)}
+                    disabled={sameNameCount <= 1}
+                    className="rounded border-border"
+                  />
+                  {sameNameCount <= 1 && (
+                    <span className="text-text-muted text-[10px]">{t("config.modelList.onlyOneInGroup")}</span>
+                  )}
+                </div>
               </div>
             )}
           </div>
@@ -966,8 +1039,21 @@ function MultiAgentSection({
     onAgentsChange(copy);
   };
 
-  const handleModelSelect = (idx: number, modelName: string) => {
-    const selectedModel = availableModels.find((m) => m.model_name === modelName);
+  const handleModelSelect = (idx: number, modelKey: string) => {
+    // modelKey 格式为 "model_name#index"，从中解析 index
+    const sepIdx = modelKey.lastIndexOf("#");
+    let selectedModel: ModelEntry | undefined;
+    if (sepIdx >= 0) {
+      const modelIdx = parseInt(modelKey.slice(sepIdx + 1), 10);
+      if (!isNaN(modelIdx) && modelIdx >= 0 && modelIdx < availableModels.length) {
+        selectedModel = availableModels[modelIdx];
+      }
+    }
+    if (!selectedModel) {
+      // 回退：按 model_name 查找
+      const modelName = sepIdx >= 0 ? modelKey.slice(0, sepIdx) : modelKey;
+      selectedModel = availableModels.find((m) => m.model_name === modelName);
+    }
     if (!selectedModel) return;
     const copy = [...agents];
     copy[idx] = {
@@ -1047,14 +1133,32 @@ function MultiAgentSection({
                 <div className="flex items-center gap-2 text-xs">
                   <label className="w-28 text-text-muted shrink-0">{t("config.keys.agentModel")}</label>
                   <select
-                    value={agent.model.model ?? ""}
+                    value={(() => {
+                      // 根据 agent 当前 model 配置反查 availableModels 中的 index
+                      const matchIdx = availableModels.findIndex(
+                        (m) => m.model_name === agent.model.model
+                          && (m.model_provider || "") === (agent.model.provider || "")
+                          && (m.api_base || "") === (agent.model.api_base || ""),
+                      );
+                      return matchIdx >= 0 ? `${agent.model.model}#${matchIdx}` : (agent.model.model ?? "");
+                    })()}
                     onChange={(e) => handleModelSelect(idx, e.target.value)}
                     className="flex-1 rounded border border-border bg-bg px-2 py-1 text-text text-xs"
                   >
                     <option value="">-- Select Model --</option>
-                    {availableModels.map((m) => (
-                      <option key={m.model_name} value={m.model_name}>{m.model_name}</option>
-                    ))}
+                    {availableModels.map((m, mi) => {
+                      const sameNameModels = availableModels.filter((x) => x.model_name === m.model_name);
+                      const sameNameCount = sameNameModels.length;
+                      const sameNameIdx = sameNameModels.indexOf(m);
+                      const label = sameNameCount > 1
+                        ? `${m.model_name} #${sameNameIdx + 1}`
+                        : m.model_name;
+                      return (
+                        <option key={`${m.model_name}#${mi}`} value={`${m.model_name}#${mi}`}>
+                          {label}
+                        </option>
+                      );
+                    })}
                   </select>
                 </div>
                 {agentFields.map((field) => (
@@ -1111,26 +1215,55 @@ function MultiAgentSection({
           <div className="flex items-center gap-2 text-xs">
             <label className="w-28 text-text-muted shrink-0">{t("config.keys.agentModel")}</label>
             <select
-              value={newAgent.model.model ?? ""}
+              value={(() => {
+                const matchIdx = availableModels.findIndex(
+                  (m) => m.model_name === newAgent.model.model
+                    && (m.model_provider || "") === (newAgent.model.provider || "")
+                    && (m.api_base || "") === (newAgent.model.api_base || ""),
+                );
+                return matchIdx >= 0 ? `${newAgent.model.model}#${matchIdx}` : (newAgent.model.model ?? "");
+              })()}
               onChange={(e) => {
-                const selectedModel = availableModels.find((m) => m.model_name === e.target.value);
+                const modelKey = e.target.value;
+                const sepIdx = modelKey.lastIndexOf("#");
+                let selectedModel: ModelEntry | undefined;
+                if (sepIdx >= 0) {
+                  const modelIdx = parseInt(modelKey.slice(sepIdx + 1), 10);
+                  if (!isNaN(modelIdx) && modelIdx >= 0 && modelIdx < availableModels.length) {
+                    selectedModel = availableModels[modelIdx];
+                  }
+                }
+                if (!selectedModel) {
+                  const modelName = sepIdx >= 0 ? modelKey.slice(0, sepIdx) : modelKey;
+                  selectedModel = availableModels.find((m) => m.model_name === modelName);
+                }
                 if (!selectedModel) return;
                 setNewAgent((p) => ({
                   ...p,
                   model: {
-                    provider: selectedModel.model_provider || "",
-                    api_base: selectedModel.api_base || "",
-                    api_key: selectedModel.api_key || "",
-                    model: selectedModel.model_name || "",
+                    provider: selectedModel!.model_provider || "",
+                    api_base: selectedModel!.api_base || "",
+                    api_key: selectedModel!.api_key || "",
+                    model: selectedModel!.model_name || "",
                   },
                 }));
               }}
               className="flex-1 rounded border border-border bg-bg px-2 py-1 text-text text-xs"
             >
               <option value="">-- Select Model --</option>
-              {availableModels.map((m) => (
-                <option key={m.model_name} value={m.model_name}>{m.model_name}</option>
-              ))}
+              {availableModels.map((m, mi) => {
+                const sameNameModels = availableModels.filter((x) => x.model_name === m.model_name);
+                const sameNameCount = sameNameModels.length;
+                const sameNameIdx = sameNameModels.indexOf(m);
+                const label = sameNameCount > 1
+                  ? `${m.model_name} #${sameNameIdx + 1}`
+                  : m.model_name;
+                return (
+                  <option key={`${m.model_name}#${mi}`} value={`${m.model_name}#${mi}`}>
+                    {label}
+                  </option>
+                );
+              })}
             </select>
           </div>
           {agentFields.map((field) => (
@@ -1936,6 +2069,7 @@ export function ConfigPanel({
             const isChanged = original && (
               other.api_base !== original.api_base || other.api_key !== original.api_key
               || other.model_provider !== original.model_provider
+              || other.is_default !== original.is_default
             );
             if (isChanged) {
               await onModelSave(other);
@@ -1943,16 +2077,18 @@ export function ConfigPanel({
           }
         } else {
           // 非改名场景：先 save 再 delete
-          for (const dm of draftModels) {
+          for (let i = 0; i < draftModels.length; i++) {
+            const dm = draftModels[i];
             if (!dm.model_name) continue;
             const original = storeAvailableModels.find((m) => m.model_name === dm.model_name);
             const isNew = !originalNames.has(dm.model_name);
             const isChanged = original && (
               dm.api_base !== original.api_base || dm.api_key !== original.api_key
               || dm.model_provider !== original.model_provider
+              || dm.is_default !== original.is_default
             );
             if ((isNew || isChanged) && onModelSave) {
-              await onModelSave(dm);
+              await onModelSave({ ...dm, index: i });
             }
           }
           // 再删除已移除的模型
@@ -1963,10 +2099,10 @@ export function ConfigPanel({
           }
         }
         // 默认模型变化时同步后端排序
-        const newDefault = draftModels[0]?.model_name;
-        const oldDefault = storeAvailableModels[0]?.model_name;
-        if (newDefault && newDefault !== oldDefault && onSetActiveModel) {
-          await onSetActiveModel(newDefault);
+        const newDefault = draftModels.find((m) => m.is_default !== false);
+        const oldDefault = storeAvailableModels.find((m) => m.is_default !== false);
+        if (newDefault && newDefault.model_name !== oldDefault?.model_name && onSetActiveModel) {
+          await onSetActiveModel(newDefault.model_name);
         }
         if (onModelsRefresh) await onModelsRefresh();
       }

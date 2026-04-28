@@ -452,8 +452,11 @@
       "duplicateName": "模型名称已存在",
       "lastModelWarning": "至少保留一个模型配置",
       "untitled": "未命名模型",
-      "default": "默认",
-      "setDefault": "设为默认"
+      "primaryDefault": "主对话默认",
+      "groupDefault": "组内默认",
+      "setPrimaryDefault": "设为主对话默认",
+      "isDefault": "组内默认",
+      "onlyOneInGroup": "同模型名仅一个，自动默认"
     },
     "agentList": {
       "addAgent": "添加Agent",

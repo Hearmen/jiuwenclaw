@@ -342,13 +342,37 @@ def resolve_model_config(
 ) -> tuple[dict[str, Any], dict[str, Any], str]:
     """从配置字典解析 model 相关参数.
 
+    优先从 models.defaults 列表中取 is_default=true 的条目，
+    回退到 models.default 单对象，再回退到 react 段。
+
     Args:
         config: 配置字典.
 
     Returns:
         (model_client_config dict, model_config_obj dict, model_name str).
     """
-    model_configs = config.get("models", {}).copy()
+    model_configs = config.get("models", {})
+
+    # 优先从 models.defaults 列表取 is_default=true 的条目
+    defaults_list = model_configs.get("defaults")
+    if isinstance(defaults_list, list) and defaults_list:
+        for entry in defaults_list:
+            if isinstance(entry, dict) and entry.get("is_default") is True:
+                mcc = (entry.get("model_client_config") or {}).copy()
+                mco = (entry.get("model_config_obj") or {}).copy()
+                model_name = mcc.get("model_name", "")
+                if model_name:
+                    return mcc, mco, model_name
+        # 无 is_default=true 时取第一个
+        first = defaults_list[0]
+        if isinstance(first, dict):
+            mcc = (first.get("model_client_config") or {}).copy()
+            mco = (first.get("model_config_obj") or {}).copy()
+            model_name = mcc.get("model_name", "")
+            if model_name:
+                return mcc, mco, model_name
+
+    # 回退到旧格式
     default_model_config = model_configs.get("default", {}).copy()
     react_config = config.get("react", {}).copy()
 

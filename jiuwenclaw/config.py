@@ -607,13 +607,58 @@ def _parse_custom_headers(value: str | None) -> dict[str, Any] | None:
         return None
 
 
-def _decrypt_model_entries(entries: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """解密模型条目中的 api_key 字段，返回深拷贝不改变原始数据。"""
+def _infer_is_default(entries: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """为模型条目列表推断 is_default 字段。
+
+    规则：
+    - 同 model_name 组内仅一个条目 → is_default = True
+    - 同 model_name 组内多个条目 → 第一个为 True，其余为 False
+    - 已有 is_default 字段且为 True 的条目保留，同组内其余置 False
+    """
+    from collections import OrderedDict
     import copy
 
     result = copy.deepcopy(entries)
 
-    # 获取 crypto provider（可选）
+    groups: OrderedDict[str, list[int]] = OrderedDict()
+    for i, entry in enumerate(result):
+        name = (entry.get("model_client_config") or {}).get("model_name", "")
+        if name not in groups:
+            groups[name] = []
+        groups[name].append(i)
+
+    for name, indices in groups.items():
+        if len(indices) == 1:
+            result[indices[0]]["is_default"] = True
+            continue
+
+        has_explicit = False
+        for idx in indices:
+            if result[idx].get("is_default") is True:
+                has_explicit = True
+                break
+
+        if has_explicit:
+            first_true = True
+            for idx in indices:
+                if result[idx].get("is_default") is True and first_true:
+                    result[idx]["is_default"] = True
+                    first_true = False
+                else:
+                    result[idx]["is_default"] = False
+        else:
+            for j, idx in enumerate(indices):
+                result[idx]["is_default"] = j == 0
+
+    return result
+
+
+def _decrypt_model_entries(entries: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """解密模型条目中的 api_key 字段，返回深拷贝不改变原始数据。同时推断 is_default。"""
+    import copy
+
+    result = copy.deepcopy(entries)
+
     reg_mod = sys.modules.get("jiuwenclaw.extensions.registry")
     crypto = None
     if reg_mod is not None and hasattr(reg_mod, "ExtensionRegistry"):
@@ -625,15 +670,15 @@ def _decrypt_model_entries(entries: list[dict[str, Any]]) -> list[dict[str, Any]
     for entry in result:
         mcc = entry.get("model_client_config")
         if isinstance(mcc, dict):
-            # 解密 api_key
             if mcc.get("api_key") and crypto:
                 try:
                     mcc["api_key"] = crypto.decrypt(mcc["api_key"])
                 except Exception:
                     pass
-            # 解析 custom_headers JSON 字符串
             if "custom_headers" in mcc:
                 mcc["custom_headers"] = _parse_custom_headers(mcc["custom_headers"])
+
+    result = _infer_is_default(result)
     return result
 
 
@@ -676,9 +721,15 @@ def update_default_models_in_config(models_list: list[dict[str, Any]]) -> None:
     if "models" not in data:
         data["models"] = {}
     data["models"]["defaults"] = models_list
-    # 同步 models.default 为第一个条目（兼容旧读取方）
-    if models_list:
-        data["models"]["default"] = models_list[0]
+    default_entry = None
+    for entry in models_list:
+        if isinstance(entry, dict) and entry.get("is_default") is True:
+            default_entry = entry
+            break
+    if default_entry is None and models_list:
+        default_entry = models_list[0]
+    if default_entry is not None:
+        data["models"]["default"] = default_entry
     _dump_yaml_round_trip(_CONFIG_YAML_PATH, data)
 
 
@@ -699,6 +750,33 @@ def _transform_front_team_model_config(model_raw: dict[str, Any]) -> dict[str, A
     model_client_config: dict[str, Any] = {}
     model_request_config: dict[str, Any] = {}
 
+    # 从 models.defaults 列表中按 #index 查找完整配置
+    model_value = model_raw.get("model")
+    if model_value and isinstance(model_value, str) and "#" in model_value:
+        sep = model_value.rfind("#")
+        model_name_part = model_value[:sep]
+        index_part = model_value[sep + 1:]
+        try:
+            target_index = int(index_part)
+        except ValueError:
+            target_index = None
+        if target_index is not None:
+            defaults_list = get_config_raw().get("models", {}).get("defaults")
+            if isinstance(defaults_list, list) and 0 <= target_index < len(defaults_list):
+                entry = defaults_list[target_index]
+                if isinstance(entry, dict):
+                    mcc = entry.get("model_client_config")
+                    if isinstance(mcc, dict):
+                        model_client_config.update({
+                            k: v for k, v in mcc.items()
+                            if k not in ("model_name",) and v is not None
+                        })
+                        model_request_config["model"] = resolve_env_vars(str(mcc.get("model_name", model_name_part)))
+                    mco = entry.get("model_config_obj")
+                    if isinstance(mco, dict):
+                        model_request_config.update(mco)
+
+    # 前端字段覆盖（优先级高于 #index 解析）
     if "provider" in model_raw and model_raw["provider"] is not None:
         model_client_config["client_provider"] = model_raw["provider"]
     if "api_base" in model_raw and model_raw["api_base"] is not None:
@@ -706,7 +784,12 @@ def _transform_front_team_model_config(model_raw: dict[str, Any]) -> dict[str, A
     if "api_key" in model_raw and model_raw["api_key"] is not None:
         model_client_config["api_key"] = model_raw["api_key"]
     if "model" in model_raw and model_raw["model"] is not None:
-        model_request_config["model"] = model_raw["model"]
+        # 若包含 #index，提取纯 model_name
+        raw_model = model_raw["model"]
+        if isinstance(raw_model, str) and "#" in raw_model:
+            model_request_config["model"] = raw_model[:raw_model.rfind("#")]
+        else:
+            model_request_config["model"] = raw_model
 
     transformed: dict[str, Any] = {}
     if model_client_config:
@@ -1098,17 +1181,19 @@ def migrate_config_from_template(
 
 # ---------- 模型配置管理 ----------
 def get_model_names() -> list[str]:
-    """获取可切换的模型名称列表。优先从 models.defaults 列表读取"""
+    """获取可切换的模型名称列表（去重）。优先从 models.defaults 列表读取。"""
     data = get_config_raw()
     models = data.get("models", {})
     defaults_list = models.get("defaults")
     if isinstance(defaults_list, list) and defaults_list:
-        names = []
+        seen: set[str] = set()
+        names: list[str] = []
         for entry in defaults_list:
             if not isinstance(entry, dict):
                 continue
             name = (entry.get("model_client_config") or {}).get("model_name", "")
-            if name:
+            if name and name not in seen:
+                seen.add(name)
                 names.append(resolve_env_vars(str(name)))
         return names
     skip = {"default", "defaults"}
@@ -1132,16 +1217,33 @@ def add_or_update_model_in_config(name: str, model_config: dict[str, Any]) -> No
     _dump_yaml_round_trip(_CONFIG_YAML_PATH, data)
 
 
-def get_model_config(name: str) -> dict[str, Any] | None:
-    """获取指定模型的原始配置（不解析环境变量）。优先从 models.defaults 列表中按 model_name 查找。"""
+def get_model_config(name: str, index: int | None = None) -> dict[str, Any] | None:
+    """获取指定模型的原始配置（不解析环境变量）。
+
+    优先从 models.defaults 列表中按 model_name 查找。
+    当存在同名模型时，可通过 index 参数指定第几个匹配项（0-based）。
+    若 index 为 None，返回 is_default=True 的条目；若无则返回第一个匹配。
+    """
     data = get_config_raw()
     models = data.get("models", {})
     defaults_list = models.get("defaults")
     if isinstance(defaults_list, list):
-        for entry in defaults_list:
+        matches: list[tuple[int, dict]] = []
+        for i, entry in enumerate(defaults_list):
             if not isinstance(entry, dict):
                 continue
             entry_name = (entry.get("model_client_config") or {}).get("model_name", "")
             if resolve_env_vars(str(entry_name)) == name:
+                matches.append((i, entry))
+        if not matches:
+            return models.get(name) if name in models else None
+        if index is not None:
+            for pos, entry in matches:
+                if pos == index:
+                    return entry
+            return None
+        for _, entry in matches:
+            if entry.get("is_default") is True:
                 return entry
+        return matches[0][1]
     return models.get(name) if name in models else None
