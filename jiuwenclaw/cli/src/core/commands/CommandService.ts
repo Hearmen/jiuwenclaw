@@ -11,9 +11,10 @@ export function parseSlashCommand(raw: string, commands: readonly SlashCommand[]
   const canonicalPath: string[] = [];
 
   for (const part of parts) {
-    let found = currentCommands.find((candidate) => candidate.name === part);
+    const lower = part.toLowerCase();
+    let found = currentCommands.find((candidate) => candidate.name.toLowerCase() === lower);
     if (!found) {
-      found = currentCommands.find((candidate) => candidate.altNames?.includes(part));
+      found = currentCommands.find((candidate) => candidate.altNames?.some((alt) => alt.toLowerCase() === lower));
     }
     if (!found) break;
     parentCommand = command;
@@ -60,7 +61,7 @@ export class CommandService {
   private registerCommand(command: SlashCommand): void {
     this.commands.set(command.name, command);
     for (const alias of command.altNames ?? []) {
-      this.aliases.set(alias, command.name);
+      this.aliases.set(alias.toLowerCase(), command.name);
     }
     for (const subCommand of command.subCommands ?? []) {
       this.registerCommand(subCommand);
@@ -68,7 +69,8 @@ export class CommandService {
   }
 
   resolve(name: string): SlashCommand | undefined {
-    const target = this.aliases.get(name) ?? name;
+    const lower = name.toLowerCase();
+    const target = this.aliases.get(lower) ?? lower;
     return this.commands.get(target);
   }
 
@@ -114,7 +116,7 @@ export class CommandService {
       .flatMap((command) =>
         [command.name, ...(command.altNames ?? [])].map((alias) => ({ command, alias })),
       )
-      .filter(({ alias }) => alias.startsWith(normalized))
+      .filter(({ alias }) => alias.toLowerCase().startsWith(normalized))
       .map(({ command }) => ({
         value: `/${command.name}`,
         description: command.description,
