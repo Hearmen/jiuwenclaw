@@ -662,6 +662,8 @@ team:
 
   workspace:
     enabled: true
+    root_path: ${JIUWEN_TEAM_WORKSPACE_ROOT:-/tmp/jiuwenclaw/shared_workspace/jiuwen_team}
+    version_control: false
 
   transport:
     type: pyzmq
@@ -761,6 +763,8 @@ modes:
 
       workspace:
         enabled: true
+        root_path: ${JIUWEN_TEAM_WORKSPACE_ROOT:-/tmp/jiuwenclaw/shared_workspace/jiuwen_team}
+        version_control: false
 
       transport:
         type: pyzmq

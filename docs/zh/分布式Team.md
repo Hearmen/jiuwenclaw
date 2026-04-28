@@ -184,12 +184,26 @@ cp "<REPO_ROOT>/jiuwenclaw/resources/config.team.distributed.teammate.yaml" \
 - teammate 发布自己的 bootstrap endpoint，leader 不需要知道 teammate 地址
 - `team.storage.params.connection_string` 指向 **同一数据库**（如 PostgreSQL，或各节点都能访问的 sqlite 文件）
 
-注意：`team.workspace.enabled=true` 只启用 team workspace 语义；未显式配置共同可见的 workspace root 时，leader 和 teammate 会分别在各自 HOME 下创建：
+注意：分布式模板已经显式配置了 team workspace root：
+
+```yaml
+team:
+  workspace:
+    enabled: true
+    root_path: ${JIUWEN_TEAM_WORKSPACE_ROOT:-/tmp/jiuwenclaw/shared_workspace/jiuwen_team}
+    version_control: false
+```
+
+部署时应在所有节点使用同一个 `JIUWEN_TEAM_WORKSPACE_ROOT`，并只把该目录作为 NFS 共享目录。不要共享 `.agent_teams`，该目录保存 team.db、成员 workspace、symlink 等本地运行状态，多节点共享会破坏 kickoff 和 workspace 初始化。
+
+NFS server/client 脚本、连通性检查、取消挂载：`scripts/nfs/README.md`。
+
+未显式配置共同可见的 workspace root 时，leader 和 teammate 会分别在各自 HOME 下创建：
 
 - `<LEADER_HOME>/.jiuwenclaw/.agent_teams/<team_name>/team-workspace`
 - `<TEAMMATE_HOME>/.jiuwenclaw/.agent_teams/<team_name>/team-workspace`
 
-这两个路径名字相同但不是同一个物理目录。需要让成员写出的文件被 leader 直接读取时，应配置双方都可访问的共享挂载路径，或通过消息 / DB / 文件传输工具回传结果。
+这两个路径名字相同但不是同一个物理目录。需要让成员写出的文件被 leader 直接读取时，应配置双方都可访问的 `team.workspace.root_path`，或通过消息 / DB / 文件传输工具回传结果。
 
 端口与防火墙需保证 leader/teammate 机器互通（多机时把示例中的 `127.0.0.1` 换成真实 IP）。
 

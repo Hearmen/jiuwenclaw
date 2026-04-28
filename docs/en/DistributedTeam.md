@@ -184,12 +184,26 @@ Both sides must agree on:
 - Teammate advertises its own bootstrap endpoint; leader does not need teammate addresses
 - `team.storage.params.connection_string` pointing at the **same database** (for example PostgreSQL, or a sqlite file visible to all nodes)
 
-Note: `team.workspace.enabled=true` enables team workspace semantics; unless both sides explicitly configure a jointly visible workspace root, leader and teammate create local directories under their own HOME:
+Note: the distributed templates explicitly configure the team workspace root:
+
+```yaml
+team:
+  workspace:
+    enabled: true
+    root_path: ${JIUWEN_TEAM_WORKSPACE_ROOT:-/tmp/jiuwenclaw/shared_workspace/jiuwen_team}
+    version_control: false
+```
+
+Use the same `JIUWEN_TEAM_WORKSPACE_ROOT` on every node, and only share that directory over NFS. Do not share `.agent_teams`: it stores team.db, member workspaces, symlinks, and other local runtime state; sharing it across nodes can break kickoff and workspace initialization.
+
+NFS scripts, checks, and teardown: see `scripts/nfs/README.md`.
+
+Unless both sides explicitly configure a jointly visible workspace root, leader and teammate create local directories under their own HOME:
 
 - `<LEADER_HOME>/.jiuwenclaw/.agent_teams/<team_name>/team-workspace`
 - `<TEAMMATE_HOME>/.jiuwenclaw/.agent_teams/<team_name>/team-workspace`
 
-These paths have the same shape but are not the same physical directory. If the leader must directly read files written by a teammate, use a shared mount path or return results through messages, DB state, or file transfer tooling.
+These paths have the same shape but are not the same physical directory. If the leader must directly read files written by a teammate, configure a shared `team.workspace.root_path` or return results through messages, DB state, or file transfer tooling.
 
 Open firewall ports as needed; replace `127.0.0.1` with real IPs for multi-host setups.
 

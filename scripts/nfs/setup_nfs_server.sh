@@ -3,23 +3,27 @@
 set -euo pipefail
 
 CLIENT_IP="${CLIENT_IP:-}"
-EXPORT_DIR="${EXPORT_DIR:-/root/.jiuwenclaw/.agent_teams}"
-MOUNT_POINT="${MOUNT_POINT:-/root/.jiuwenclaw/.agent_teams}"
+CLIENT_IPS=()
+DEFAULT_TEAM_WORKSPACE="${JIUWEN_TEAM_WORKSPACE_ROOT:-/tmp/jiuwenclaw/shared_workspace/jiuwen_team}"
+EXPORT_DIR="${EXPORT_DIR:-${DEFAULT_TEAM_WORKSPACE}}"
+MOUNT_POINT="${MOUNT_POINT:-${DEFAULT_TEAM_WORKSPACE}}"
+EXPORT_DIRS=()
+MOUNT_POINTS=()
 FSID="${FSID:-1002}"
 EXPORTS_FILE="/etc/exports.d/jiuwenclaw.exports"
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --client-ip)
-      CLIENT_IP="$2"
+      CLIENT_IPS+=("$2")
       shift 2
       ;;
     --export-dir)
-      EXPORT_DIR="$2"
+      EXPORT_DIRS+=("$2")
       shift 2
       ;;
     --mount-point)
-      MOUNT_POINT="$2"
+      MOUNT_POINTS+=("$2")
       shift 2
       ;;
     --fsid)
@@ -32,10 +36,13 @@ Usage:
   sudo bash scripts/nfs/setup_nfs_server.sh [options]
 
 Options:
-  --client-ip <ip>       Allowed NFS client IP. Required unless CLIENT_IP is set
-  --export-dir <path>    Server export directory. Default: /root/.jiuwenclaw/.agent_teams
-  --mount-point <path>   Local mount path. Default: /root/.jiuwenclaw/.agent_teams
-  --fsid <id>            Stable NFS filesystem id for this export. Default: 1002
+  --client-ip <ip>       Allowed NFS client IP. Repeat this option for multiple clients
+  --export-dir <path>    Server export directory. Repeatable when paired with --mount-point
+  --mount-point <path>   Local mount path. Repeatable and must match --export-dir count
+  --fsid <id>            Base NFS filesystem id. Each export increments from this base. Default: 1002
+
+Defaults:
+  export/mount path: ${JIUWEN_TEAM_WORKSPACE_ROOT:-/tmp/jiuwenclaw/shared_workspace/jiuwen_team}
 EOF
       exit 0
       ;;
@@ -51,8 +58,29 @@ if [[ "${EUID}" -ne 0 ]]; then
   exit 1
 fi
 
-if [[ -z "${CLIENT_IP}" ]]; then
-  echo "CLIENT_IP is required. Pass --client-ip <private-ip> or export CLIENT_IP first." >&2
+if [[ -n "${CLIENT_IP}" ]]; then
+  CLIENT_IPS+=("${CLIENT_IP}")
+fi
+
+if [[ "${#CLIENT_IPS[@]}" -eq 0 ]]; then
+  echo "At least one client IP is required. Pass --client-ip <private-ip> (repeatable) or export CLIENT_IP first." >&2
+  exit 1
+fi
+
+if [[ "${#EXPORT_DIRS[@]}" -eq 0 ]] && [[ -n "${EXPORT_DIR}" ]]; then
+  EXPORT_DIRS+=("${EXPORT_DIR}")
+fi
+if [[ "${#MOUNT_POINTS[@]}" -eq 0 ]] && [[ -n "${MOUNT_POINT}" ]]; then
+  MOUNT_POINTS+=("${MOUNT_POINT}")
+fi
+
+if [[ "${#EXPORT_DIRS[@]}" -ne "${#MOUNT_POINTS[@]}" ]]; then
+  echo "The number of --export-dir and --mount-point arguments must match." >&2
+  exit 1
+fi
+
+if [[ "${#EXPORT_DIRS[@]}" -eq 0 ]]; then
+  echo "At least one export mapping is required." >&2
   exit 1
 fi
 
@@ -90,14 +118,28 @@ echo "[1/6] Installing NFS server packages"
 install_nfs_server
 
 echo "[2/6] Preparing shared directories"
-mkdir -p "${EXPORT_DIR}"
-chmod 755 "${EXPORT_DIR}"
+for export_dir in "${EXPORT_DIRS[@]}"; do
+  mkdir -p "${export_dir}"
+  chmod 755 "${export_dir}"
+done
 
 echo "[3/6] Writing export rule to ${EXPORTS_FILE}"
 mkdir -p /etc/exports.d
-cat > "${EXPORTS_FILE}" <<EOF
-${EXPORT_DIR} ${CLIENT_IP}(rw,sync,no_subtree_check,no_root_squash,fsid=${FSID})
-EOF
+{
+  for idx in "${!EXPORT_DIRS[@]}"; do
+    export_dir="${EXPORT_DIRS[$idx]}"
+    export_fsid=$((FSID + idx))
+    first=1
+    for ip in "${CLIENT_IPS[@]}"; do
+      if [[ "${first}" -eq 1 ]]; then
+        printf "%s %s(rw,sync,no_subtree_check,no_root_squash,fsid=%s)\n" "${export_dir}" "${ip}" "${export_fsid}"
+        first=0
+      else
+        printf "%s %s(rw,sync,no_subtree_check,no_root_squash)\n" "${export_dir}" "${ip}"
+      fi
+    done
+  done
+} > "${EXPORTS_FILE}"
 
 echo "[4/6] Reloading exports"
 exportfs -rav
@@ -105,22 +147,27 @@ exportfs -rav
 echo "[5/6] Enabling NFS service"
 enable_nfs_service
 
-echo "[6/6] Creating local bind mount at ${MOUNT_POINT}"
-mkdir -p "${MOUNT_POINT}"
-if [[ "${EXPORT_DIR}" != "${MOUNT_POINT}" ]]; then
-  mountpoint -q "${MOUNT_POINT}" || mount --bind "${EXPORT_DIR}" "${MOUNT_POINT}"
-  ensure_fstab_line "${EXPORT_DIR} ${MOUNT_POINT} none bind 0 0" /etc/fstab
-fi
+echo "[6/6] Creating local bind mounts"
+for idx in "${!EXPORT_DIRS[@]}"; do
+  export_dir="${EXPORT_DIRS[$idx]}"
+  mount_point="${MOUNT_POINTS[$idx]}"
+  mkdir -p "${mount_point}"
+  if [[ "${export_dir}" != "${mount_point}" ]]; then
+    mountpoint -q "${mount_point}" || mount --bind "${export_dir}" "${mount_point}"
+    ensure_fstab_line "${export_dir} ${mount_point} none bind 0 0" /etc/fstab
+  fi
+done
 
 cat <<EOF
 
 NFS server is ready.
 
 Server node:
-  export dir : ${EXPORT_DIR}
-  mount path : ${MOUNT_POINT}
-  client ip  : ${CLIENT_IP}
-  fsid       : ${FSID}
+  clients    : ${CLIENT_IPS[*]}
+  fsid base  : ${FSID}
+
+Export mappings:
+$(for idx in "${!EXPORT_DIRS[@]}"; do printf "  [%s] %s -> %s (fsid=%s)\n" "$((idx + 1))" "${EXPORT_DIRS[$idx]}" "${MOUNT_POINTS[$idx]}" "$((FSID + idx))"; done)
 
 Next step on the client node:
   sudo bash scripts/nfs/setup_nfs_client.sh --server-ip <server-private-ip>

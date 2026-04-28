@@ -3,9 +3,11 @@
 set -euo pipefail
 
 SERVER_IP="${SERVER_IP:-}"
-EXPORT_DIR="${EXPORT_DIR:-/root/.jiuwenclaw/.agent_teams}"
-MOUNT_POINT="${MOUNT_POINT:-/root/.jiuwenclaw/.agent_teams}"
-FSTAB_LINE=""
+DEFAULT_TEAM_WORKSPACE="${JIUWEN_TEAM_WORKSPACE_ROOT:-/tmp/jiuwenclaw/shared_workspace/jiuwen_team}"
+EXPORT_DIR="${EXPORT_DIR:-${DEFAULT_TEAM_WORKSPACE}}"
+MOUNT_POINT="${MOUNT_POINT:-${DEFAULT_TEAM_WORKSPACE}}"
+EXPORT_DIRS=()
+MOUNT_POINTS=()
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -14,11 +16,11 @@ while [[ $# -gt 0 ]]; do
       shift 2
       ;;
     --export-dir)
-      EXPORT_DIR="$2"
+      EXPORT_DIRS+=("$2")
       shift 2
       ;;
     --mount-point)
-      MOUNT_POINT="$2"
+      MOUNT_POINTS+=("$2")
       shift 2
       ;;
     -h|--help)
@@ -28,8 +30,11 @@ Usage:
 
 Options:
   --server-ip <ip>       NFS server IP. Required unless SERVER_IP is set
-  --export-dir <path>    Server export directory. Default: /root/.jiuwenclaw/.agent_teams
-  --mount-point <path>   Local mount path. Default: /root/.jiuwenclaw/.agent_teams
+  --export-dir <path>    Server export directory. Repeatable when paired with --mount-point
+  --mount-point <path>   Local mount path. Repeatable and must match --export-dir count
+
+Defaults:
+  export/mount path: ${JIUWEN_TEAM_WORKSPACE_ROOT:-/tmp/jiuwenclaw/shared_workspace/jiuwen_team}
 EOF
       exit 0
       ;;
@@ -50,7 +55,22 @@ if [[ -z "${SERVER_IP}" ]]; then
   exit 1
 fi
 
-FSTAB_LINE="${SERVER_IP}:${EXPORT_DIR} ${MOUNT_POINT} nfs4 vers=4.1,_netdev,defaults 0 0"
+if [[ "${#EXPORT_DIRS[@]}" -eq 0 ]] && [[ -n "${EXPORT_DIR}" ]]; then
+  EXPORT_DIRS+=("${EXPORT_DIR}")
+fi
+if [[ "${#MOUNT_POINTS[@]}" -eq 0 ]] && [[ -n "${MOUNT_POINT}" ]]; then
+  MOUNT_POINTS+=("${MOUNT_POINT}")
+fi
+
+if [[ "${#EXPORT_DIRS[@]}" -ne "${#MOUNT_POINTS[@]}" ]]; then
+  echo "The number of --export-dir and --mount-point arguments must match." >&2
+  exit 1
+fi
+
+if [[ "${#EXPORT_DIRS[@]}" -eq 0 ]]; then
+  echo "At least one export mapping is required." >&2
+  exit 1
+fi
 
 install_nfs_client() {
   if command -v apt-get >/dev/null 2>&1; then
@@ -75,30 +95,42 @@ ensure_fstab_line() {
 }
 
 backup_existing_mount_point() {
-  if mountpoint -q "${MOUNT_POINT}"; then
+  local mount_point="$1"
+  if mountpoint -q "${mount_point}"; then
     return
   fi
 
-  if [[ -d "${MOUNT_POINT}" ]] && [[ -n "$(find "${MOUNT_POINT}" -mindepth 1 -maxdepth 1 2>/dev/null)" ]]; then
-    local backup_dir="${MOUNT_POINT}.pre_nfs_backup_$(date +%Y%m%d_%H%M%S)"
+  if [[ -d "${mount_point}" ]] && [[ -n "$(find "${mount_point}" -mindepth 1 -maxdepth 1 2>/dev/null)" ]]; then
+    local backup_dir="${mount_point}.pre_nfs_backup_$(date +%Y%m%d_%H%M%S)"
     echo "Backing up existing local workspace to ${backup_dir}"
-    mv "${MOUNT_POINT}" "${backup_dir}"
-    mkdir -p "${MOUNT_POINT}"
+    mv "${mount_point}" "${backup_dir}"
+    mkdir -p "${mount_point}"
   fi
 }
 
 echo "[1/4] Installing NFS client packages"
 install_nfs_client
 
-echo "[2/4] Creating mount point ${MOUNT_POINT}"
-mkdir -p "${MOUNT_POINT}"
-backup_existing_mount_point
+echo "[2/4] Creating mount points and preparing backups"
+for mount_point in "${MOUNT_POINTS[@]}"; do
+  mkdir -p "${mount_point}"
+  backup_existing_mount_point "${mount_point}"
+done
 
-echo "[3/4] Mounting ${SERVER_IP}:${EXPORT_DIR}"
-mountpoint -q "${MOUNT_POINT}" || mount -t nfs4 -o vers=4.1 "${SERVER_IP}:${EXPORT_DIR}" "${MOUNT_POINT}"
+echo "[3/4] Mounting exports"
+for idx in "${!EXPORT_DIRS[@]}"; do
+  export_dir="${EXPORT_DIRS[$idx]}"
+  mount_point="${MOUNT_POINTS[$idx]}"
+  mountpoint -q "${mount_point}" || mount -t nfs4 -o vers=4.1 "${SERVER_IP}:${export_dir}" "${mount_point}"
+done
 
-echo "[4/4] Persisting mount to /etc/fstab"
-ensure_fstab_line "${FSTAB_LINE}" /etc/fstab
+echo "[4/4] Persisting mounts to /etc/fstab"
+for idx in "${!EXPORT_DIRS[@]}"; do
+  export_dir="${EXPORT_DIRS[$idx]}"
+  mount_point="${MOUNT_POINTS[$idx]}"
+  fstab_line="${SERVER_IP}:${export_dir} ${mount_point} nfs4 vers=4.1,_netdev,defaults 0 0"
+  ensure_fstab_line "${fstab_line}" /etc/fstab
+done
 
 cat <<EOF
 
@@ -106,10 +138,9 @@ NFS client is ready.
 
 Client node:
   server     : ${SERVER_IP}
-  export dir : ${EXPORT_DIR}
-  mount path : ${MOUNT_POINT}
+$(for idx in "${!EXPORT_DIRS[@]}"; do printf "  [%s] %s -> %s\n" "$((idx + 1))" "${EXPORT_DIRS[$idx]}" "${MOUNT_POINTS[$idx]}"; done)
 
 Quick verification:
-  touch ${MOUNT_POINT}/nfs_client_probe.txt
-  ls -la ${MOUNT_POINT}
+  touch <mount-point>/nfs_client_probe.txt
+  ls -la <mount-point>
 EOF
