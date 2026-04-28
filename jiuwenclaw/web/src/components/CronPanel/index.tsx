@@ -4,7 +4,7 @@
  * 定时任务面板，使用 cron 表达式管理定时任务
  */
 
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useMemo } from 'react';
 import { useTranslation } from 'react-i18next';
 import { webRequest } from '../../services/webClient';
 import { useSessionStore } from '../../stores/sessionStore';
@@ -250,6 +250,7 @@ export default function CronPanel({ sessionId }: CronPanelProps) {
   const [previewJobId, setPreviewJobId] = useState<string | null>(null);
   const [previewRuns, setPreviewRuns] = useState<CronPreviewItem[]>([]);
   const [previewLoading, setPreviewLoading] = useState(false);
+  const [enabledChannels, setEnabledChannels] = useState<Set<string>>(new Set());
 
   // 时区选项
   const timezoneOptions = [
@@ -265,15 +266,35 @@ export default function CronPanel({ sessionId }: CronPanelProps) {
     { value: 'America/Chicago', label: 'America/Chicago' },
   ];
 
-  // 目标选项
-  const targetOptions = [
-    { value: 'web', label: t('cron.targets.web') },
-    { value: 'feishu', label: t('cron.targets.feishu') },
-    { value: 'wecom', label: t('cron.targets.wecom') },
-    { value: 'wechat', label: t('cron.targets.wechat') },
-    { value: 'xiaoyi', label: t('cron.targets.xiaoyi'), disabled: true, style: { color: '#8c8c96ff' } },
-    { value: 'dingtalk', label: t('cron.targets.dingtalk'), disabled: true, style: { color: '#8c8c96ff' } },
-  ];
+  // 加载频道列表
+  const fetchChannels = useCallback(async () => {
+    try {
+      const payload = await webRequest<{ channels?: unknown[] }>('channel.get');
+      const channels = payload?.channels || [];
+      const enabled = new Set<string>();
+      for (const item of channels) {
+        if (item && typeof item === 'object' && 'channel_id' in item) {
+          const channelId = (item as { channel_id: unknown }).channel_id;
+          if (typeof channelId === 'string' && channelId.trim()) {
+            enabled.add(channelId.trim().toLowerCase());
+          }
+        }
+      }
+      setEnabledChannels(enabled);
+    } catch {
+      // ignore errors, keep empty set
+    }
+  }, []);
+
+  // 目标选项 - 动态根据启用状态
+  const targetOptions = useMemo(() => [
+    { value: 'web', label: t('cron.targets.web'), disabled: !enabledChannels.has('web') },
+    { value: 'xiaoyi', label: t('cron.targets.xiaoyi'), disabled: !enabledChannels.has('xiaoyi') },
+    { value: 'feishu', label: t('cron.targets.feishu'), disabled: !enabledChannels.has('feishu') },
+    { value: 'whatsapp', label: t('cron.targets.whatsapp'), disabled: !enabledChannels.has('whatsapp') },
+    { value: 'wecom', label: t('cron.targets.wecom'), disabled: !enabledChannels.has('wecom') },
+    { value: 'wechat', label: t('cron.targets.wechat'), disabled: !enabledChannels.has('wechat') },
+  ], [t, enabledChannels]);
 
   // 加载任务列表
   const loadJobs = useCallback(async () => {
@@ -294,7 +315,8 @@ export default function CronPanel({ sessionId }: CronPanelProps) {
   // 初始化加载
   useEffect(() => {
     void loadJobs();
-  }, [loadJobs]);
+    void fetchChannels();
+  }, [loadJobs, fetchChannels]);
 
   // 成功消息自动消失
   useEffect(() => {
@@ -625,7 +647,7 @@ export default function CronPanel({ sessionId }: CronPanelProps) {
                           data-testid="cron-create-target"
                         >
                           {targetOptions.map((option) => (
-                            <option key={option.value} value={option.value} disabled={option.disabled} style={option.style}>
+                            <option key={option.value} value={option.value} disabled={option.disabled}>
                               {option.label}
                             </option>
                           ))}
@@ -783,7 +805,7 @@ export default function CronPanel({ sessionId }: CronPanelProps) {
                               className="w-full rounded-md border border-border bg-bg px-3 py-2 text-[13px] text-text outline-none focus:border-accent"
                             >
                               {targetOptions.map((option) => (
-                                <option key={option.value} value={option.value} disabled={option.disabled} style={option.style}>
+                                <option key={option.value} value={option.value} disabled={option.disabled}>
                                   {option.label}
                                 </option>
                               ))}

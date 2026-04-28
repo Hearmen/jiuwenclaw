@@ -565,11 +565,11 @@
     },
     "targets": {
       "web": "Web (web)",
-      "feishu": "Lark (feishu)",
-      "wechat": "WeChat (wechat)",
-      "wecom": "WeCom (wecom)",
       "xiaoyi": "Xiaoyi (xiaoyi)",
-      "dingtalk": "DingTalk (dingtalk)"
+      "feishu": "Lark (feishu)",
+      "whatsapp": "WhatsApp (whatsapp)",
+      "wecom": "WeCom (wecom)",
+      "wechat": "WeChat (wechat)"
     },
     "success": {
       "created": "Task created successfully",

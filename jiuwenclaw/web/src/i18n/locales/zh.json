@@ -565,11 +565,11 @@
     },
     "targets": {
       "web": "网页 (web)",
-      "feishu": "飞书 (feishu)",
-      "wechat": "微信 (wechat)",
-      "wecom": "企业微信 (wecom)",
       "xiaoyi": "小艺 (xiaoyi)",
-      "dingtalk": "钉钉 (dingtalk)"
+      "feishu": "飞书 (feishu)",
+      "whatsapp": "WhatsApp (whatsapp)",
+      "wecom": "企业微信 (wecom)",
+      "wechat": "微信 (wechat)"
     },
     "success": {
       "created": "任务创建成功",
