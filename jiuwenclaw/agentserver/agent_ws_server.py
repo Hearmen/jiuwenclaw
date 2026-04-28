@@ -57,6 +57,35 @@ logger = logging.getLogger(__name__)
 _STREAM_HEARTBEAT_INTERVAL_SECONDS = 10.0
 
 
+def resolve_agent_request_mode(raw_mode: Any) -> tuple[str, str | None, str]:
+    """Resolve request params.mode into manager mode, sub_mode, and canonical value."""
+    raw_value = getattr(raw_mode, "value", raw_mode)
+    mode_text = raw_value.strip().lower() if isinstance(raw_value, str) else ""
+    if not mode_text:
+        mode_text = "agent.plan"
+
+    parts = mode_text.split(".")
+    mode = parts[0] or "agent"
+    if mode == "team":
+        return "team", None, "team"
+
+    default_sub_modes = {
+        "agent": "plan",
+        "code": "normal",
+    }
+    sub_mode = parts[1] if len(parts) > 1 and parts[1] else default_sub_modes.get(mode)
+    canonical_mode = f"{mode}.{sub_mode}" if sub_mode else mode
+    return mode, sub_mode, canonical_mode
+
+
+def _apply_resolved_mode_to_request(request: AgentRequest) -> tuple[str, str | None]:
+    mode, sub_mode, canonical_mode = resolve_agent_request_mode(
+        request.params.get("mode", "agent.plan")
+    )
+    request.params["mode"] = canonical_mode
+    return mode, sub_mode
+
+
 def _payload_to_request(data: dict[str, Any]) -> AgentRequest:
     """将 Gateway 发送的 JSON 载荷解析为 AgentRequest."""
     from jiuwenclaw.schema.message import ReqMethod
@@ -489,11 +518,7 @@ class AgentWebSocketServer:
             await self._handle_acp_tool_response(ws, request, send_lock)
             return
 
-        mode = request.params.get("mode", "agent.plan").split(".")[0]
-        try:
-            sub_mode = request.params.get("mode", "agent.plan").split(".")[1]
-        except IndexError:
-            sub_mode ="plan"
+        mode, sub_mode = _apply_resolved_mode_to_request(request)
         trusted_dirs = request.params.get("trusted_dirs", None)
         agent = await self._agent_manager.get_agent(
             channel_id=channel_id,
@@ -528,11 +553,7 @@ class AgentWebSocketServer:
     async def _handle_stream(self, ws: Any, request: AgentRequest, send_lock: asyncio.Lock) -> None:
         """流式处理：调用 process_message_stream，逐条发送 E2AResponse 线 JSON。"""
         channel_id = request.channel_id or "default"
-        mode = request.params.get("mode", "agent.plan").split(".")[0]
-        try:
-            sub_mode = request.params.get("mode", "agent.plan").split(".")[1]
-        except IndexError:
-            sub_mode = "plan"
+        mode, sub_mode = _apply_resolved_mode_to_request(request)
         trusted_dirs = request.params.get("trusted_dirs", None)
         agent = await self._agent_manager.get_agent(
             channel_id=channel_id,
@@ -852,7 +873,7 @@ class AgentWebSocketServer:
             params = request.params or {}
 
             channel_id = request.channel_id or "default"
-            mode = params.get("mode", "agent.plan").split(".")[0]
+            mode, _, _ = resolve_agent_request_mode(params.get("mode", "agent.plan"))
             agent = await self._agent_manager.get_agent(
                 channel_id=channel_id,
                 mode=mode,
