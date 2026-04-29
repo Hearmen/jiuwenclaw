@@ -10,11 +10,14 @@ const CONFIG_FILE = join(CONFIG_DIR, "config.json");
 export interface TuiConfig {
   theme?: ThemeName;
   accentColor?: AccentColorName;
+  trustedDirs?: string[];
 }
 
 export function loadTuiConfig(): TuiConfig {
   try {
     if (!existsSync(CONFIG_FILE)) {
+      mkdirSync(CONFIG_DIR, { recursive: true });
+      writeFileSync(CONFIG_FILE, "{}\n", "utf8");
       return {};
     }
     const raw = readFileSync(CONFIG_FILE, "utf8").trim();

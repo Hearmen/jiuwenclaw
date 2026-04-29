@@ -1,11 +1,30 @@
 import { existsSync, statSync } from "node:fs";
 import { resolve } from "node:path";
 
+import { loadTuiConfig, saveTuiConfig } from "./tui-config-store.js";
+
 /**
- * In-memory trusted directories storage (session-based, no persistence).
+ * Trusted directories storage with persistence via ~/.jiuwenclaw-tui/config.json.
  * Managed at CLI startup and via /workspace commands.
  */
-let _trustedDirs: string[] = [];
+let _trustedDirs: string[] | null = null;
+
+/**
+ * Ensure _trustedDirs is loaded from persisted config.
+ */
+function ensureLoaded(): void {
+  if (_trustedDirs === null) {
+    const config = loadTuiConfig();
+    _trustedDirs = Array.isArray(config.trustedDirs) ? [...config.trustedDirs!] : [];
+  }
+}
+
+/**
+ * Persist current _trustedDirs to config file.
+ */
+function persist(): void {
+  saveTuiConfig({ trustedDirs: _trustedDirs! });
+}
 
 /**
  * Normalize a path for comparison (handle trailing separators, case on Windows)
@@ -26,7 +45,8 @@ function normalizePath(path: string): string {
  * @returns Array of trusted directory paths (normalized)
  */
 export function getTrustedDirs(): string[] {
-  return [..._trustedDirs];
+  ensureLoaded();
+  return [..._trustedDirs!];
 }
 
 /**
@@ -35,6 +55,7 @@ export function getTrustedDirs(): string[] {
  * @returns "added" if added, "exists" if already trusted, "not_found" if path doesn't exist, "invalid" if invalid path or not a directory
  */
 export function addTrustedDir(path: string): "added" | "exists" | "not_found" | "invalid" {
+  ensureLoaded();
   const normalized = normalizePath(path);
   if (!normalized) {
     return "invalid";
@@ -50,10 +71,11 @@ export function addTrustedDir(path: string): "added" | "exists" | "not_found" | 
   } catch {
     return "invalid";
   }
-  if (_trustedDirs.includes(normalized)) {
+  if (_trustedDirs!.includes(normalized)) {
     return "exists";
   }
-  _trustedDirs.push(normalized);
+  _trustedDirs!.push(normalized);
+  persist();
   return "added";
 }
 
@@ -63,6 +85,7 @@ export function addTrustedDir(path: string): "added" | "exists" | "not_found" | 
  * @returns "set" if set successfully, "not_found" if path doesn't exist, "invalid" if invalid path or not a directory
  */
 export function setTrustedDir(path: string): "set" | "not_found" | "invalid" {
+  ensureLoaded();
   const normalized = normalizePath(path);
   if (!normalized) {
     return "invalid";
@@ -79,6 +102,7 @@ export function setTrustedDir(path: string): "set" | "not_found" | "invalid" {
     return "invalid";
   }
   _trustedDirs = [normalized];
+  persist();
   return "set";
 }
 
@@ -88,15 +112,17 @@ export function setTrustedDir(path: string): "set" | "not_found" | "invalid" {
  * @returns true if removed, false if not found
  */
 export function removeTrustedDir(path: string): boolean {
+  ensureLoaded();
   const normalized = normalizePath(path);
   if (!normalized) {
     return false;
   }
-  const index = _trustedDirs.indexOf(normalized);
+  const index = _trustedDirs!.indexOf(normalized);
   if (index === -1) {
     return false;
   }
-  _trustedDirs.splice(index, 1);
+  _trustedDirs!.splice(index, 1);
+  persist();
   return true;
 }
 
@@ -104,7 +130,9 @@ export function removeTrustedDir(path: string): boolean {
  * Clear all trusted directories (will use default workspace only).
  */
 export function clearTrustedDirs(): void {
+  ensureLoaded();
   _trustedDirs = [];
+  persist();
 }
 
 /**
@@ -113,11 +141,12 @@ export function clearTrustedDirs(): void {
  * @returns true if trusted
  */
 export function isTrustedDir(path: string): boolean {
+  ensureLoaded();
   const normalized = normalizePath(path);
   if (!normalized) {
     return false;
   }
-  return _trustedDirs.includes(normalized);
+  return _trustedDirs!.includes(normalized);
 }
 
 /**
