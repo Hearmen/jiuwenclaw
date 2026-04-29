@@ -2,6 +2,7 @@
 
 - [Quick start](Quickstart.md)
 - [Quick start (TUI)](Quickstart_tui.md)
+- [Page overview (web UI)](Page-Overview.md)
 - [E2A protocol (Gateway↔Agent)](E2A-protocol.md)
 - [A2A integration](A2A.md)
 - [Configuration](Configuration.md)

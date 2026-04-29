@@ -3,6 +3,7 @@
 This section collects common usage notes and feature documentation for JiuwenClaw.
 
 - Install and run from scratch: [Quick start](Quickstart.md) / [TUI mode](Quickstart_tui.md)
+- Web UI layout and main areas: [Page overview](Page-Overview.md)（[简体中文版](../zh/页面概览.md)）
 - Unified Gateway↔Agent request envelope (E2A): [E2A protocol](E2A-protocol.md)（[中文版](../zh/E2A-protocol.md)）
 - A2A protocol integration: [A2A Integration Guide](A2A.md)（[中文版](../zh/A2A.md)）
 - ACP client configuration: [ACP Client Config](ACP_Client_Config.md)
