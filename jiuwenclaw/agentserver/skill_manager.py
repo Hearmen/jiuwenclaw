@@ -18,7 +18,7 @@ import tempfile
 import uuid
 from contextlib import contextmanager
 import zipfile
-from datetime import datetime, timezone
+from datetime import datetime, date, timezone
 from pathlib import Path, PurePosixPath, PureWindowsPath
 from typing import Any, Awaitable, Callable
 from urllib.parse import quote, urlparse
@@ -2131,6 +2131,16 @@ class SkillManager:
         return [str(val)]
 
     @staticmethod
+    def _convert_yaml_date(obj: Any) -> Any:
+        if isinstance(obj, dict):
+            return {k: SkillManager._convert_yaml_date(v) for k, v in obj.items()}
+        if isinstance(obj, list):
+            return [SkillManager._convert_yaml_date(item) for item in obj]
+        if isinstance(obj, date) and not isinstance(obj, datetime):
+            return obj.isoformat()
+        return obj
+
+    @staticmethod
     def _parse_skill_md(path: Path) -> dict | None:
         """解析 SKILL.md，提取 YAML frontmatter 和正文.
 
@@ -2156,6 +2166,7 @@ class SkillManager:
             try:
                 loaded = yaml.safe_load(fm_text)
                 if isinstance(loaded, dict):
+                    loaded = SkillManager._convert_yaml_date(loaded)
                     meta = {str(k): v for k, v in loaded.items()}
                 else:
                     meta = {}
