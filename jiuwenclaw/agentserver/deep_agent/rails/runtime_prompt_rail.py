@@ -142,23 +142,45 @@ class RuntimePromptRail(DeepAgentRail):
             # Trusted directories policy for TUI mode
             if self._trusted_dirs and len(self._trusted_dirs) > 0:
                 workspace_dir = str(get_agent_workspace_dir())
-                dirs_display = ", ".join(self._trusted_dirs)
+                project_dir = self._trusted_dirs[0]
+                other_dirs = self._trusted_dirs[1:]
+                other_dirs_display = ", ".join(other_dirs) if other_dirs else "无"
                 if self._language == "cn":
                     trusted_dirs_content = (
-                        "# 可信目录策略\n\n"
-                        f"- 默认工作空间：{workspace_dir}\n"
-                        f"- 用户可信目录：{dirs_display}\n"
-                        "- 文件操作（读取、编辑、执行）必须限制在上述目录范围内\n"
-                        "- 若用户请求的操作涉及超出可信目录范围的路径，必须先向用户确认是否允许此次操作\n"
+                        "# 工作目录策略\n\n"
+                        f"- 系统目录（不要在其中查找或运行项目文件）：{workspace_dir}\n"
+                        f"- 当前项目目录（你正在工作的项目，查询文件、运行测试、执行命令等均应在此目录下进行）：{project_dir}\n"
+                        f"- 其他可访问目录（可读写其中的资源，但不是当前项目目录）：{other_dirs_display}\n\n"
+                        "重要规则：\n"
+                        "- 命令执行工具（mcp_exec_command）默认的工作目录是系统目录，"
+                        "如果你要在项目目录下执行命令，必须将工具的 workdir 参数设置为当前项目目录，"
+                        f"即 workdir=\"{project_dir}\"，不要使用默认值或 cd 方式切换，"
+                        "因为 cd 只在子shell中生效，不会改变工具本身的工作目录\n"
+                        "- 查找项目文件、读取项目代码时，应在当前项目目录下搜索，不要在系统目录下查找\n"
+                        "- 不要在系统目录下运行项目测试或构建，系统目录仅用于存放配置和状态文件\n"
+                        "- 若用户请求的操作涉及超出上述目录范围的路径，必须先向用户确认是否允许此次操作\n"
                         "- 确认时需明确告知：操作的完整路径、操作类型（读取/编辑/执行）、潜在风险\n"
                     )
                 else:
                     trusted_dirs_content = (
-                        "# Trusted Directories Policy\n\n"
-                        f"- Default workspace: {workspace_dir}\n"
-                        f"- User trusted directories: {dirs_display}\n"
-                        "- File operations (read, edit, execute) must be limited to the above directories\n"
-                        "- If the user requests an operation involving paths outside trusted directories, "
+                        "# Working Directory Policy\n\n"
+                        f"- System directory (never search or run project files here): {workspace_dir}\n"
+                        f"- Current project directory (the project you are working on; "
+                        f"all file queries, test runs, command execution should happen here): {project_dir}\n"
+                        f"- Other accessible directories (read/write allowed, but not the current project): "
+                        f"{other_dirs_display}\n\n"
+                        "Important rules:\n"
+                        "- The command execution tool (mcp_exec_command) defaults its working directory "
+                        "to the system directory. When you need to execute commands in the project directory, "
+                        "you MUST set the tool's workdir parameter to the current project directory, "
+                        f"i.e. workdir=\"{project_dir}\". Do NOT rely on cd to switch directories, "
+                        "because cd only takes effect inside a subshell and does not change the tool's "
+                        "actual working directory\n"
+                        "- When searching for project files or reading project code, search within the "
+                        "current project directory, not the system directory\n"
+                        "- Never run project tests or builds in the system directory; "
+                        "the system directory is only for config and state files\n"
+                        "- If the user requests an operation involving paths outside the above directories, "
                         "you must first ask the user to confirm whether to allow this operation\n"
                         "- When confirming, clearly state: the full path, operation type (read/edit/execute), "
                         "potential risks\n"
