@@ -43,7 +43,7 @@ from jiuwenclaw.agentserver.team.distributed_runtime import (
 )
 from jiuwenclaw.agentserver.team.monitor_handler import TeamMonitorHandler
 from jiuwenclaw.agentserver.team.remote_member_bootstrap import release_a2x_reservations_for_team
-from jiuwenclaw.config import get_config
+from jiuwenclaw.config import get_config, get_default_models
 from jiuwenclaw.agentserver.team.team_runtime_inheritance import (
     MemberInfo,
     RAIL_WHITELIST,
@@ -239,6 +239,39 @@ class TeamManager:
         spec_dict = TeamManager._normalize_team_identity_fields(spec_dict)
         if TeamManager._is_distributed_mode(config_base):
             spec_dict = TeamManager._normalize_distributed_transport_fields(config_base, spec_dict)
+
+        # When models.defaults has more than one entry, populate model_pool
+        # and set model_pool_strategy to by_model_name so team members
+        # can be assigned different model endpoints from the pool.
+        default_models = get_default_models(config_base)
+        if len(default_models) > 1:
+            from openjiuwen.agent_teams.schema.team import ModelPoolEntry
+
+            pool_entries: list[dict] = []
+            for entry in default_models:
+                mcc = entry.get("model_client_config") or {}
+                mco = entry.get("model_config_obj") or {}
+                if not mcc.get("model_name"):
+                    continue
+                pool_entry = ModelPoolEntry(
+                    model_name=mcc["model_name"],
+                    api_key=mcc.get("api_key", ""),
+                    api_base_url=mcc.get("api_base", ""),
+                    api_provider=mcc.get("client_provider", ""),
+                    metadata={
+                        "client": {
+                            k: v for k, v in mcc.items()
+                            if k not in ("model_name", "api_key", "api_base", "client_provider") and v is not None
+                        },
+                        "request": dict(mco),
+                    },
+                )
+                pool_entries.append(pool_entry.model_dump())
+
+            if pool_entries:
+                spec_dict["model_pool"] = pool_entries
+                spec_dict["model_pool_strategy"] = "by_model_name"
+
         return TeamAgentSpec.model_validate(spec_dict)
 
     @staticmethod
