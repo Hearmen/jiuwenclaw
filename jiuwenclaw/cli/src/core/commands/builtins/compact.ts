@@ -21,7 +21,7 @@ export function createCompactCommand(): SlashCommand {
       try {
         const payload = await ctx.request<CompactResponse>(
           "command.compact",
-          {},
+          { mode: ctx.mode },
           600000,
         );
 

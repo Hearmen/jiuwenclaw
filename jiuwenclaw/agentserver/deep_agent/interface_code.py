@@ -264,6 +264,7 @@ class JiuwenClawCodeAdapter(JiuWenClawDeepAdapter):
             "RuntimePromptRail", "ResponsePromptRail",
             "JiuClawStreamEventRail", "SecurityRail",
             "LspRail", "ProjectMemoryRail", "PermissionInterruptRail",
+            "ContextProcessorRail",
         })
         rail_infos = [
             _RailBuildInfo("_runtime_prompt_rail", self._build_runtime_prompt_rail),
@@ -291,6 +292,7 @@ class JiuwenClawCodeAdapter(JiuWenClawDeepAdapter):
                 ConfirmInterruptRail,
                 {"tool_names": ["switch_mode"]},
             ),
+            _RailBuildInfo("_context_processor_rail", self._build_context_processor_rail),
         ]
 
         # 动态 Rails — 从 config.yaml::modes.code.rails 读取
@@ -489,7 +491,7 @@ class JiuwenClawCodeAdapter(JiuWenClawDeepAdapter):
 
     def _build_context_processor_rail(self) -> Any:
         """构建 ContextEngineeringRail."""
-        return ContextProcessorRail(preset=False)
+        return ContextProcessorRail(preset=True)
 
     def _build_skill_evolution_rail_via_config(self) -> Any:
         """构建 SkillEvolutionRail."""

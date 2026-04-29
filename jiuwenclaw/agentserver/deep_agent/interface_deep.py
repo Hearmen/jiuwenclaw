@@ -1700,8 +1700,12 @@ class JiuWenClawDeepAdapter:
                     .get("model_name", "gpt-4"),
                 },
             ),
+            _RailBuildInfo(
+                "_context_processor_rail",
+                _build_context_processor_rail,
+                {"config": self._config_cache},
+            ),
         ]
-        # ContextEngineeringRail 不在冷启动时挂载，由 _update_rails_for_mode 按 mode 按需注册/注销
 
         # SkillEvolutionRail 不在冷启动时挂载，由 _update_rails_for_mode 按 mode 按需注册/注销
         # 智能模式下关闭自演进，plan 模式下按配置启用
@@ -2405,12 +2409,18 @@ class JiuWenClawDeepAdapter:
             if self._context_assemble_rail is not None:
                 await self._instance.unregister_rail(self._context_assemble_rail)
                 self._context_assemble_rail = None
-            if self._context_processor_rail is not None:
-                await self._instance.unregister_rail(self._context_processor_rail)
-                self._context_processor_rail = None
             self._context_assemble_rail = _build_context_assemble_rail()
             self._context_assemble_mode = "agent.fast"
             await self._instance.register_rail(self._context_assemble_rail)
+
+        if self._context_processor_rail is None:
+            self._context_processor_rail = _build_context_processor_rail(self._config_cache)
+            if self._context_processor_rail is not None:
+                await self._instance.register_rail(self._context_processor_rail)
+                logger.info(
+                    "[JiuWenClawDeepAdapter] ContextProcessorRail registered for %s mode",
+                    mode or "agent.fast",
+                )
 
     @staticmethod
     def _acp_runtime_tools_enabled(
@@ -4349,9 +4359,15 @@ class JiuWenClawDeepAdapter:
             raise ValueError("Agent instance not available")
 
         context_engine = self._instance.react_agent.context_engine
+        react_agent = self._instance.react_agent
 
         context = context_engine.get_context(session_id=session_id)
-        raw_total_tokens = context.statistic().total_tokens if context else 0
+        if context is None:
+            return {"result": "noop", "stats": None}
+
+        raw_total_tokens = await self._count_full_context_tokens(
+            context, react_agent, session_id
+        )
 
         result = await context_engine.compress_context(
             session=session,
@@ -4363,14 +4379,78 @@ class JiuWenClawDeepAdapter:
         if result == "compressed":
             context = context_engine.get_context(session_id=session_id)
             if context:
+                total_tokens = await self._count_full_context_tokens(
+                    context, react_agent, session_id
+                )
+
                 stats = context.statistic()
                 response["stats"] = {
                     "total_messages": stats.total_messages,
-                    "total_tokens": stats.total_tokens,
+                    "total_tokens": total_tokens,
                     "raw_total_tokens": raw_total_tokens,
                 }
 
         return response
+
+    async def _count_full_context_tokens(
+        self,
+        context: Any,
+        react_agent: Any,
+        session_id: str,
+    ) -> int:
+        """计算完整上下文的 token 数（包含 system messages + context messages + tools）。
+        Args:
+            context: ModelContext 对象
+            react_agent: ReActAgent 对象
+            session_id: 会话ID
+
+        Returns:
+            完整上下文的 token 总数
+        """
+        from openjiuwen.core.foundation.llm import SystemMessage
+        from openjiuwen.core.foundation.tool import ToolInfo
+
+        token_counter = context.token_counter()
+        total_tokens = 0
+
+        # 1. 计算系统消息的 tokens
+        system_prompt = ""
+        if hasattr(react_agent, "prompt_builder") and react_agent.prompt_builder is not None:
+            system_prompt = react_agent.prompt_builder.build()
+        elif hasattr(react_agent, "system_prompt_builder") and react_agent.system_prompt_builder is not None:
+            system_prompt = react_agent.system_prompt_builder.build()
+
+        if system_prompt:
+            if token_counter is not None:
+                total_tokens += token_counter.count(system_prompt)
+            else:
+                total_tokens += len(system_prompt) // 4
+
+        # 2. 计算对话消息的 tokens
+        context_messages = context.get_messages()
+        if context_messages:
+            if token_counter is not None:
+                total_tokens += token_counter.count_messages(context_messages)
+            else:
+                total_tokens += sum(len(str(msg.content)) // 4 for msg in context_messages)
+
+        # 3. 计算工具定义的 tokens
+        tools: list[ToolInfo] = []
+        if hasattr(react_agent, "ability_manager") and react_agent.ability_manager is not None:
+            for card in react_agent.ability_manager.list() or []:
+                if hasattr(card, "to_tool_info"):
+                    tools.append(card.to_tool_info())
+                elif hasattr(card, "name") and hasattr(card, "description"):
+                    tools.append(ToolInfo(
+                        name=card.name,
+                        description=card.description or "",
+                        parameters=getattr(card, "input_params", {}),
+                    ))
+
+        if tools and token_counter is not None:
+            total_tokens += token_counter.count_tools(tools)
+
+        return total_tokens
 
     async def _watch_evolution_and_push(self, rid: str, cid: str, session_id: str) -> None:
         """等待演进后台 task 完成，通过 send_push 推送审批事件。
