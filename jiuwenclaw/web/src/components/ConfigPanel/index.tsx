@@ -813,6 +813,10 @@ function MultiModelSection({
   const handleAddNew = () => {
     const name = newModel.model_name.trim();
     if (!name) return;
+    if (!newModel.api_key.trim()) {
+      setLocalError(t("config.modelList.apiKeyRequired"));
+      return;
+    }
     setLocalError(null);
     // 新增条目：同名组已有条目时 is_default=false，否则 is_default=true
     const sameNameExists = models.some((m) => m.model_name === name);
@@ -927,7 +931,9 @@ function MultiModelSection({
               <div className="border-t border-border px-3 py-2 space-y-2">
                 {(["model_name", "api_base", "api_key", "model_provider"] as const).map((field) => (
                   <div key={field} className="flex items-center gap-2 text-xs">
-                    <label className="w-28 text-text-muted shrink-0">{field}</label>
+                    <label className="w-28 text-text-muted shrink-0">
+                      {field}{field === "api_key" && <span className="text-danger ml-0.5">*</span>}
+                    </label>
                     {field === "model_provider" ? (
                       <select
                         value={models[idx]?.[field] ?? ""}
@@ -943,6 +949,7 @@ function MultiModelSection({
                         value={models[idx]?.[field] ?? ""}
                         onChange={(e) => updateModel(idx, field, e.target.value)}
                         className="flex-1 rounded border border-border bg-bg px-2 py-1 text-text text-xs"
+                        placeholder={field === "api_key" ? t("config.modelList.apiKeyPlaceholder") : ""}
                       />
                     )}
                   </div>
@@ -971,7 +978,9 @@ function MultiModelSection({
         <div className="rounded-lg border border-accent/40 bg-accent/5 px-3 py-2 space-y-2">
           {(["model_name", "api_base", "api_key", "model_provider"] as const).map((field) => (
             <div key={field} className="flex items-center gap-2 text-xs">
-              <label className="w-28 text-text-muted shrink-0">{field}</label>
+              <label className="w-28 text-text-muted shrink-0">
+                {field}{field === "api_key" && <span className="text-danger ml-0.5">*</span>}
+              </label>
               {field === "model_provider" ? (
                 <select
                   value={newModel[field]}
@@ -987,7 +996,7 @@ function MultiModelSection({
                   value={newModel[field]}
                   onChange={(e) => setNewModel((p) => ({ ...p, [field]: e.target.value }))}
                   className="flex-1 rounded border border-border bg-bg px-2 py-1 text-text text-xs"
-                  placeholder={field === "model_name" ? "e.g. gpt-4o" : ""}
+                  placeholder={field === "model_name" ? "e.g. gpt-4o" : field === "api_key" ? t("config.modelList.apiKeyPlaceholder") : ""}
                 />
               )}
             </div>
@@ -2014,6 +2023,10 @@ export function ConfigPanel({
     [draftValues],
   );
   const hasMissingRequiredModelFields = missingRequiredModelFields.length > 0;
+  const hasMissingModelApiKey = useMemo(
+    () => draftModels.some((m) => !m.api_key.trim()),
+    [draftModels],
+  );
 
   const handleFieldChange = (key: string, value: string) => {
     setDraftValues((prev) => ({ ...prev, [key]: value }));
@@ -2037,6 +2050,10 @@ export function ConfigPanel({
     if (!hasChanges || saving) return;
     if (hasMissingRequiredModelFields) {
       setError(t('config.errors.requiredModelFields', { fields: missingRequiredModelFields.join('、') }));
+      return;
+    }
+    if (hasMissingModelApiKey) {
+      setError(t('config.modelList.apiKeyRequired'));
       return;
     }
     setSaving(true);
@@ -2162,7 +2179,7 @@ export function ConfigPanel({
             <button
               type="button"
               onClick={() => void handleSaveAndRestart()}
-              disabled={!hasChanges || saving || hasMissingRequiredModelFields || (isProcessing && mode !== 'team')}
+              disabled={!hasChanges || saving || hasMissingRequiredModelFields || hasMissingModelApiKey || (isProcessing && mode !== 'team')}
               className="btn primary !px-3 !py-1.5 disabled:opacity-50 disabled:cursor-not-allowed"
             >
               {saving ? t('common.saving') : t('common.save')}

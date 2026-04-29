@@ -220,7 +220,6 @@ _ACP_BLOCKED_DEFAULT_TOOL_NAMES = frozenset(
         "code",
     }
 )
-_PLACEHOLDER_API_KEYS = frozenset({"sk-xxxxxxxxx", "your-api-key", "your_api_key", "YOUR_API_KEY"})
 _PLACEHOLDER_API_BASES = frozenset({"https://example.com/compatible-mode/v1"})
 
 
@@ -240,10 +239,10 @@ def _get_skill_create_enabled(config: dict[str, Any] | None) -> bool:
 
 
 def _mcc_looks_usable(mcc: dict) -> bool:
-    """检查 model_client_config 是否包含有效的 API 凭据（非占位符）。"""
+    """检查 model_client_config 是否包含有效的 API 凭据。"""
     api_key = str(mcc.get("api_key", "") or "").strip()
     api_base = str(mcc.get("api_base", "") or "").strip()
-    return bool(api_key) and api_key not in _PLACEHOLDER_API_KEYS and api_base not in _PLACEHOLDER_API_BASES
+    return bool(api_key) and bool(api_base) and api_base not in _PLACEHOLDER_API_BASES
 
 
 def parse_int(value: Any, default: int) -> int:

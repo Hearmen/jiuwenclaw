@@ -457,7 +457,9 @@
       "groupDefault": "Group Default",
       "setPrimaryDefault": "Set as Primary Default",
       "isDefault": "Group Default",
-      "onlyOneInGroup": "Only one in group, auto-default"
+      "onlyOneInGroup": "Only one in group, auto-default",
+      "apiKeyRequired": "API Key is required, please fill it in before saving",
+      "apiKeyPlaceholder": "Local models don't need an API Key — enter any value, e.g. sk-1234"
     },
     "agentList": {
       "addAgent": "Add Agent",
