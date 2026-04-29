@@ -104,6 +104,7 @@ Set up heartbeat tasks with your to-do items, and JiuwenClaw will wake up on sch
 
 | Document | Description |
 | :--------------------------------------------------- | :------------------------------------------------------- |
+| [📖 Install guide](docs/en/InstallGuide.md)          | Full installation paths (pip, source, conda, Docker)     |
 | [📖 Quick Start](docs/en/Quickstart.md) | Get up and running with JiuwenClaw in 5 minutes |
 | [📖 Quick Start (TUI)](docs/en/Quickstart_tui.md) | Get up and running with JiuwenClaw-tui in 5 minutes |
 | [⚙️ Configuration & Workspace](docs/en/Configuration.md) | Environment setup and workspace management |
@@ -134,6 +135,7 @@ Set up heartbeat tasks with your to-do items, and JiuwenClaw will wake up on sch
 | [🔀 Multi-Instance Operation](docs/en/MultiInstance.md) | Running multiple independent instances on one machine |
 | [📦 Packaging Desktop App](docs/en/PackExeGuide.md) | Build standalone desktop executables |
 | [🚀 Development Practices](docs/en/development-practices/README.md) | Development practices and experience sharing |
+
 
 ## 🤝 Contributing
 

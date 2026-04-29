@@ -2,6 +2,7 @@
 
 这里汇总 JiuwenClaw 的常用使用说明与功能文档。
 
+- 从零开始安装与启动：见 [安装指南](安装指南.md)
 - 从零开始安装与启动：见 [快速开始](Quickstart.md) / [TUI 模式](Quickstart_tui.md)
 - 网页端界面与功能分区总览：见 [页面概览](页面概览.md)（[English: Page overview](../en/Page-Overview.md)）
 - Gateway 与 AgentServer 统一请求信封（E2A）：见 [E2A 协议](E2A-protocol.md)（[English](../en/E2A-protocol.md)）

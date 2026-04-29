@@ -144,6 +144,7 @@ jiuwenclaw-tui
 
 | 文档 | 核心内容 |
 |:-----|:---------|
+| [📖 安装指南](docs/zh/安装指南.md) | 从零安装（pip、源码、conda、Docker 等） |
 | [📖 快速开始](docs/zh/Quickstart.md) | 5分钟上手JiuwenClaw |
 | [📖 快速开始(TUI)](docs/zh/Quickstart_tui.md) | 5分钟上手JiuwenClaw-tui |
 | [⚙️ 配置与工作空间](docs/zh/配置信息.md) | 环境配置与工作区管理 |

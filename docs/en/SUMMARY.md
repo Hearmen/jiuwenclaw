@@ -1,5 +1,6 @@
 # Summary
 
+- [Install guide](InstallGuide.md)
 - [Quick start](Quickstart.md)
 - [Quick start (TUI)](Quickstart_tui.md)
 - [Page overview (web UI)](Page-Overview.md)
