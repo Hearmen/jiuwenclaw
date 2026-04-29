@@ -12,6 +12,9 @@ from jiuwenclaw.agentserver.deep_agent.rails.team_member_skill_toolkit_rail impo
 )
 from jiuwenclaw.agentserver.deep_agent.rails.ask_user_rail import StructuredAskUserRail
 from jiuwenclaw.agentserver.deep_agent.rails.stream_event_rail import JiuClawStreamEventRail
+from jiuwenclaw.agentserver.deep_agent.rails.security_review_and_skill_rail import (
+    SecurityReviewAndSkillRail,
+)
 
 __all__ = [
     "JiuClawStreamEventRail",
@@ -22,4 +25,5 @@ __all__ = [
     "RuntimePromptRail",
     "MemberSkillToolkitRail",
     "StructuredAskUserRail",
+    "SecurityReviewAndSkillRail",
 ]
