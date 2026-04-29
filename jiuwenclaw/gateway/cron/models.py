@@ -237,3 +237,8 @@ class CronRunState:
     finished_at: float | None = None
     result_text: str | None = None
     error: str | None = None
+    job_name: str | None = None
+    targets: str | None = None
+    session_id: str | None = None
+    chat_type: str | None = None
+    timezone: str | None = None

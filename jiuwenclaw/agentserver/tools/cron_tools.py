@@ -87,7 +87,7 @@ class CronTools:
             if agent_client is None:
                 try:
                     agent_client = AgentServerClient.get_instance()
-                except RuntimeError:
+                except (RuntimeError, AttributeError):
                     agent_client = None
             
             if message_handler is None:

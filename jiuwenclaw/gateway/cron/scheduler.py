@@ -276,8 +276,25 @@ class CronSchedulerService:
 
     async def _handle_event(self, ev: _Event) -> None:
         job = self._jobs.get(ev.job_id)
-        if job is None:
+        if job is None and ev.kind != "push_update":
             return
+        if job is None and ev.kind == "push_update":
+            state = self._runs.get(ev.run_id)
+            if state is None:
+                logger.info("[Cron] push_update skipped: no state and no job job_id=%s run_id=%s", ev.job_id, ev.run_id)
+                return
+            job = CronJob(
+                id=state.job_id,
+                name=state.job_name or "",
+                enabled=False,
+                expired=False,
+                cron_expr="",
+                timezone=state.timezone or "Asia/Shanghai",
+                targets=state.targets or "",
+                session_id=state.session_id,
+                chat_type=state.chat_type,
+            )
+            logger.info("[Cron] push_update using rebuilt job from state job_id=%s run_id=%s", ev.job_id, ev.run_id)
         # push_update 是对已触发任务的补发，即使单次任务已过期也必须放行，否则真正结果永远发不出去
         if not job.enabled and ev.kind != "push_update":
             return
@@ -332,6 +349,11 @@ class CronSchedulerService:
                 job_id=job.id,
                 wake_at_iso=wake_dt.isoformat(),
                 push_at_iso=push_dt.isoformat(),
+                job_name=job.name,
+                targets=job.targets,
+                session_id=job.session_id,
+                chat_type=job.chat_type,
+                timezone=job.timezone,
             )
             self._runs[run_id] = state
 
@@ -422,6 +444,11 @@ class CronSchedulerService:
                 job_id=job.id,
                 wake_at_iso=wake_dt.isoformat(),
                 push_at_iso=push_dt.isoformat(),
+                job_name=job.name,
+                targets=job.targets,
+                session_id=job.session_id,
+                chat_type=job.chat_type,
+                timezone=job.timezone,
             )
             self._runs[run_id] = state
 
