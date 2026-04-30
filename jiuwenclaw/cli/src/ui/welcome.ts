@@ -1,4 +1,5 @@
 import { visibleWidth } from "@mariozechner/pi-tui";
+import { spawnSync } from "node:child_process";
 import type { ConnectionStatus } from "../core/ws-client.js";
 import { padToWidth } from "./rendering/text.js";
 import { chalk } from "./theme.js";
@@ -58,6 +59,15 @@ function connectionHint(status: ConnectionStatus): string | null {
   }
 }
 
+function hasRipgrep(): boolean {
+  try {
+    const result = spawnSync("rg", ["--version"], { stdio: "ignore" });
+    return result.status === 0;
+  } catch {
+    return false;
+  }
+}
+
 export function buildWelcomeLines(
   width: number,
   connectionStatus: ConnectionStatus,
@@ -66,6 +76,7 @@ export function buildWelcomeLines(
 ): string[] {
   const artWidth = Math.max(...ART_TITLE_RAW.map((line) => visibleWidth(line)));
   const hint = connectionHint(connectionStatus);
+  const rgTip = hasRipgrep() ? null : "Tips: 未检测到 ripgrep (rg)，建议安装以优化文件搜索效果。";
   const version = modelInfo.version || "0.1.0";
   const provider = modelInfo.provider || "";
   const model = modelInfo.model || "";
@@ -103,6 +114,7 @@ export function buildWelcomeLines(
       centerLine(cmdBoxLine(commands), width),
       centerLine(cmdBottom, width),
       ...(hint ? [centerLine(chalk.hex("#FFFFFF")(hint), width)] : []),
+      ...(rgTip ? [centerLine(chalk.hex("#FFD700")(rgTip), width)] : []),
     ];
   }
 
@@ -122,5 +134,6 @@ export function buildWelcomeLines(
     padToWidth(chalk.hex("#FFFFFF")("│  ") + chalk.hex("#FFFFFF")("/exit - 退出                                               ") + chalk.hex("#FFFFFF")("│"), width),
     padToWidth(chalk.hex("#FFFFFF")("└────────────────────────────────────────────────────────────┘"), width),
     ...(hint ? [padToWidth(chalk.hex("#FFFFFF")(hint), width)] : []),
+    ...(rgTip ? [padToWidth(chalk.hex("#FFD700")(rgTip), width)] : []),
   ];
 }
