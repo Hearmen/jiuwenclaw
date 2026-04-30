@@ -89,6 +89,9 @@ def _generate_agent_data(project_root: Path) -> None:
     for entry in sorted(workspace_root.rglob("*")):
         if not entry.is_file() or entry.name.startswith("."):
             continue
+        # Skip files in hidden directories (e.g., .agent_history)
+        if any(part.startswith(".") for part in entry.relative_to(workspace_root).parts):
+            continue
         relative_folder_path = entry.parent.relative_to(agent_root).as_posix()
         folder_key = root_folder_key if relative_folder_path == "." else relative_folder_path
 

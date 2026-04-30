@@ -2520,7 +2520,10 @@ class SkillManager:
         folder_data: dict[str, list[dict[str, str | bool]]] = {}
         seen_paths: dict[str, set[str]] = {}
         for entry in sorted(agent_root.rglob("*")):
-            if not entry.is_file():
+            if not entry.is_file() or entry.name.startswith("."):
+                continue
+            # Skip files in hidden directories (e.g., .agent_history)
+            if any(part.startswith(".") for part in entry.relative_to(agent_root).parts):
                 continue
             relative_folder_path = entry.parent.relative_to(agent_root.parent).as_posix()
             folder_key = root_folder_key if relative_folder_path == "." else relative_folder_path
