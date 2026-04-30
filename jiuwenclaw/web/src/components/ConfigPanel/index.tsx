@@ -748,7 +748,20 @@ function MultiModelSection({
       return;
     }
     setLocalError(null);
-    onModelsChange(models.filter((_, i) => i !== idx));
+    const next = models.filter((_, i) => i !== idx);
+    // 维持不变量：主对话默认（首位）必须是其所在组的组内默认
+    if (next.length > 0) {
+      const headName = next[0].model_name;
+      if (!next[0].is_default) {
+        next[0] = { ...next[0], is_default: true };
+      }
+      for (let i = 1; i < next.length; i++) {
+        if (next[i].model_name === headName && next[i].is_default) {
+          next[i] = { ...next[i], is_default: false };
+        }
+      }
+    }
+    onModelsChange(next);
     // 调整展开索引：删除项在展开项之前则前移，删除的正是展开项则收起
     setExpandedIdx((prev) => {
       if (prev === null) return null;
@@ -788,24 +801,39 @@ function MultiModelSection({
     if (sameNameCount <= 1) return;
     const copy = [...models];
     const newDefault = !copy[idx].is_default;
+    const isPrimaryGroup = model.model_name === copy[0].model_name;
+    let newDefaultIdx = -1;
 
     if (newDefault) {
-      // 设为组内默认：同组其他条目取消默认，不重排列表顺序
+      // 设为组内默认：同组其他条目取消默认
       for (let i = 0; i < copy.length; i++) {
         if (copy[i].model_name === model.model_name) {
           copy[i] = { ...copy[i], is_default: i === idx };
         }
       }
+      newDefaultIdx = idx;
     } else {
       // 取消默认：同组第一个其他条目自动成为默认
       copy[idx] = { ...copy[idx], is_default: false };
       const fallbackIdx = copy.findIndex((m, i) => i !== idx && m.model_name === model.model_name);
       if (fallbackIdx >= 0) {
         copy[fallbackIdx] = { ...copy[fallbackIdx], is_default: true };
+        newDefaultIdx = fallbackIdx;
       }
     }
+    // 不变量：主对话默认（首位）必须是组内默认。当切换发生在主对话默认所在组时，
+    // 新的组内默认条目同步成为主对话默认（移到首位）。
+    if (isPrimaryGroup && newDefaultIdx > 0) {
+      const [newPrimary] = copy.splice(newDefaultIdx, 1);
+      copy.unshift(newPrimary);
+      setExpandedIdx((prev) => {
+        if (prev === null) return null;
+        if (prev === newDefaultIdx) return 0;
+        if (prev < newDefaultIdx) return prev + 1;
+        return prev;
+      });
+    }
     onModelsChange(copy);
-    // 不收起面板，让用户看到变化后的状态
   };
 
   const handleAddNew = () => {
