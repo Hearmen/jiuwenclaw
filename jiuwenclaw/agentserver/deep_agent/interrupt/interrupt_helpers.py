@@ -10,8 +10,6 @@ from __future__ import annotations
 import json
 from typing import Any
 
-from jiuwenclaw.agentserver.permissions.checker import collect_permission_rail_tool_names
-from jiuwenclaw.agentserver.permissions.core import get_permission_engine
 from jiuwenclaw.utils import logger
 
 
@@ -20,7 +18,7 @@ def build_permission_rail(
     llm: Any = None,
     model_name: str | None = None,
 ) -> Any | None:
-    """Build PermissionInterruptRail for tool permission checks.
+    """Build openjiuwen PermissionInterruptRail for tool permission checks.
 
     Args:
         config: Agent config dict containing permissions section
@@ -30,7 +28,20 @@ def build_permission_rail(
     Returns:
         PermissionInterruptRail instance or None if disabled
     """
-    from jiuwenclaw.agentserver.deep_agent.rails.permission_rail import PermissionInterruptRail
+    from openjiuwen.harness.rails.security.tool_security_rail import PermissionInterruptRail
+    from openjiuwen.harness.security.host import (
+        PermissionConfirmationRequest,
+        PermissionSceneHookInput,
+        ToolPermissionHost,
+    )
+    from openjiuwen.harness.security.models import PermissionConfirmResponse
+
+    from jiuwenclaw.agentserver.security.tool_permission_context import (
+        TOOL_PERMISSION_CHANNEL_ID,
+    )
+    from jiuwenclaw.config import get_config
+    from jiuwenclaw.e2a.acp_tool_updates import build_acp_tool_descriptor
+    from jiuwenclaw.utils import get_config_file, get_workspace_dir
 
     permission_config = config.get("permissions", {})
     logger.info(
@@ -42,11 +53,36 @@ def build_permission_rail(
         logger.info("[InterruptHelpers] Permission system is disabled, returning None")
         return None
 
-    tools_config = permission_config.get("tools", {})
-    tool_names = collect_permission_rail_tool_names(permission_config)
+    def _collect_optional_tool_tags(cfg: dict[str, Any]) -> list[str]:
+        # openjiuwen PermissionInterruptRail 会拦截所有工具；
+        # 这里的 tool_names 仅作为标签展示/日志辅助（尽量覆盖 tools + rules 声明）。
+        names: set[str] = set()
+        tools_cfg = cfg.get("tools") or {}
+        if isinstance(tools_cfg, dict):
+            for k in tools_cfg.keys():
+                label = str(k).strip()
+                if label:
+                    names.add(label)
+        rules = cfg.get("rules") or []
+        if isinstance(rules, list):
+            for entry in rules:
+                if not isinstance(entry, dict):
+                    continue
+                raw_tools = entry.get("tools")
+                if raw_tools is None:
+                    continue
+                if isinstance(raw_tools, str):
+                    raw_tools = [raw_tools]
+                if isinstance(raw_tools, list):
+                    for item in raw_tools:
+                        if isinstance(item, str) and item.strip():
+                            names.add(item.strip())
+        return sorted(names)
+
+    tool_names = _collect_optional_tool_tags(permission_config)
     logger.info(
         "[InterruptHelpers] tools_config keys: %s, rail tool_names (with rules): %s",
-        list(tools_config.keys()),
+        list((permission_config.get("tools") or {}).keys()),
         tool_names,
     )
     logger.info(
@@ -54,12 +90,186 @@ def build_permission_rail(
         tool_names, llm is not None, model_name,
     )
     try:
+        def _persist_allow_rule(permissions: dict[str, Any]) -> bool:
+            """Persist merged `permissions` config back to config.yaml.
+
+            openjiuwen PermissionInterruptRail calls this when user selects "always allow".
+            """
+            try:
+                from jiuwenclaw.config import _dump_yaml_round_trip, _load_yaml_round_trip
+
+                yaml_path = get_config_file()
+                data = _load_yaml_round_trip(yaml_path)
+                if not isinstance(data, dict):
+                    data = {}
+                data["permissions"] = permissions
+                _dump_yaml_round_trip(yaml_path, data)
+                return True
+            except Exception as exc:
+                logger.warning("[InterruptHelpers] persist_allow_rule failed: %s", exc)
+                return False
+
+        def _resolve_session_id(ctx: Any) -> str | None:
+            session = getattr(ctx, "session", None)
+            if session is None:
+                return None
+            for attr_name in ("get_session_id", "session_id"):
+                attr = getattr(session, attr_name, None)
+                try:
+                    value = attr() if callable(attr) else attr
+                except Exception:
+                    value = None
+                if isinstance(value, str) and value.strip():
+                    return value.strip()
+            return None
+
+        async def _request_permission_confirmation(
+            req: PermissionConfirmationRequest,
+        ) -> PermissionConfirmResponse | str | None:
+            channel = TOOL_PERMISSION_CHANNEL_ID.get() or "web"
+            if channel != "acp":
+                return "interrupt"
+
+            session_id = _resolve_session_id(req.ctx)
+            if not session_id:
+                return None
+
+            from jiuwenclaw.agentserver.tools.acp_output_tools import get_acp_output_manager
+
+            tool_call = req.tool_call
+            tool_name = getattr(tool_call, "name", "") if tool_call is not None else ""
+            tool_args_raw = getattr(tool_call, "arguments", None) if tool_call is not None else None
+            tool_call_id = str(getattr(tool_call, "id", "") or f"permission_{tool_name or 'tool'}").strip()
+            descriptor = build_acp_tool_descriptor(
+                tool_name,
+                tool_args_raw,
+                tool_call_id=tool_call_id,
+                status="pending",
+                kind="other",
+            )
+            title = str(descriptor.get("title") or f"Approve `{tool_name}`")
+            if getattr(req.result, "reason", None):
+                title = f"{title}: {req.result.reason}"
+
+            request_params: dict[str, Any] = {
+                "toolCall": {
+                    **descriptor,
+                    "title": title,
+                },
+                "options": [
+                    {"optionId": "allow-once", "name": "Allow once", "kind": "allow_once"},
+                    {"optionId": "allow-always", "name": "Always allow", "kind": "allow_always"},
+                    {"optionId": "reject-once", "name": "Reject", "kind": "reject_once"},
+                ],
+            }
+
+            try:
+                response = await get_acp_output_manager().send_jsonrpc_request(
+                    "session/request_permission",
+                    request_params,
+                    session_id=session_id,
+                )
+            except Exception as exc:
+                logger.warning("[InterruptHelpers] ACP permission request failed: %s", exc)
+                return None
+
+            if not isinstance(response, dict):
+                return None
+            if isinstance(response.get("error"), dict):
+                message = str(response["error"].get("message") or "Permission request failed")
+                return PermissionConfirmResponse(
+                    approved=False,
+                    auto_confirm=False,
+                    feedback=f"[PERMISSION_DENIED] {message}",
+                )
+
+            result_payload = response.get("result") if isinstance(response.get("result"), dict) else {}
+            outcome = result_payload.get("outcome") if isinstance(result_payload.get("outcome"), dict) else {}
+            outcome_kind = str(outcome.get("outcome") or "").strip().lower()
+            option_id = str(outcome.get("optionId") or "").strip().lower()
+
+            if outcome_kind == "selected":
+                if option_id == "allow-once":
+                    return PermissionConfirmResponse(approved=True, auto_confirm=False, feedback="")
+                if option_id == "allow-always":
+                    return PermissionConfirmResponse(approved=True, auto_confirm=True, feedback="")
+                return PermissionConfirmResponse(
+                    approved=False,
+                    auto_confirm=False,
+                    feedback="[PERMISSION_REJECTED] User rejected the request.",
+                )
+
+            if outcome_kind == "cancelled":
+                return PermissionConfirmResponse(
+                    approved=False,
+                    auto_confirm=False,
+                    feedback="[PERMISSION_REJECTED] Permission request was cancelled.",
+                )
+            return None
+
+        async def _permission_scene_hook(
+            inp: PermissionSceneHookInput,
+        ) -> tuple[str, ...] | None:
+            from jiuwenclaw.agentserver.security.owner_scopes import (
+                TOOL_PERMISSION_CONTEXT,
+                check_avatar_permission,
+                _resolve_owner_scope_level,
+            )
+
+            perm_ctx = TOOL_PERMISSION_CONTEXT.get()
+            if perm_ctx is None:
+                return None
+
+            if getattr(perm_ctx, "scene", None) == "group_digital_avatar":
+                if inp.user_input is not None:
+                    return ("reject", "[PERMISSION_DENIED] 数字分身场景不支持交互审批")
+                level = await check_avatar_permission(
+                    inp.normalized_tool_name,
+                    inp.tool_args,
+                    channel_id=str(getattr(perm_ctx, "channel_id", "") or ""),
+                    session_id=None,
+                )
+                if level == "allow":
+                    return ("approve",)
+                return ("reject", "[PERMISSION_DENIED] 该工具未被授权在数字分身场景下使用")
+
+            principal_user_id = str(getattr(perm_ctx, "principal_user_id", "") or "").strip()
+            channel_id = str(getattr(perm_ctx, "channel_id", "") or "").strip()
+            if not principal_user_id or not channel_id:
+                return None
+
+            perm_all = get_config().get("permissions") if isinstance(get_config(), dict) else {}
+            owner_scopes = perm_all.get("owner_scopes") if isinstance(perm_all, dict) else None
+            if not isinstance(owner_scopes, dict) or not owner_scopes:
+                return None
+
+            scope_cfg = (owner_scopes.get(channel_id) or {}).get(principal_user_id)
+            owner_level = _resolve_owner_scope_level(
+                scope_cfg, inp.normalized_tool_name, inp.tool_args
+            )
+            if owner_level is None:
+                return None
+            if owner_level == "allow":
+                return ("approve",)
+            return ("reject", f"[PERMISSION_DENIED] 该工具未被授权 (owner_scopes: {owner_level})")
+
+        host = ToolPermissionHost(
+            get_permissions_snapshot=lambda: (
+                get_config().get("permissions") if isinstance(get_config(), dict) else {}
+            ),
+            persist_allow_rule=_persist_allow_rule,
+            resolve_workspace_dir=get_workspace_dir,
+            permission_yaml_path=get_config_file(),
+            request_permission_confirmation=_request_permission_confirmation,
+            permission_scene_hook=_permission_scene_hook,
+        )
+
         permission_rail = PermissionInterruptRail(
             config=permission_config,
-            engine=get_permission_engine(),
             tool_names=tool_names,
             llm=llm,
             model_name=model_name,
+            host=host,
         )
         logger.info(
             "[InterruptHelpers] PermissionInterruptRail created successfully with tool_names=%s",

@@ -1,20 +1,18 @@
 # Copyright (c) Huawei Technologies Co., Ltd. 2025. All rights reserved.
 
-"""Owner-scoped 工具权限模块 — DeepAgent 链路专用.
+"""Owner-scoped 工具权限（数字分身 / DeepAgent）。
 
-独立封装，不修改已有 checker.py / core.py / patterns.py。
-与 React 链路的 owner_scopes.py 保持功能一致，但 import 路径指向 deep_agent/permissions。
+逻辑集中在 ``jiuwenclaw.agentserver.security``，与 openjiuwen 工具护栏配合使用。
 
 使用方式：
   1. interface_deep.py 入口处调用 setup_permission_context(request) 设置 ContextVar
-  2. AvatarPromptRail 和 PermissionInterruptRail 中使用 check_avatar_permission()
+  2. AvatarPromptRail 与 PermissionInterruptRail 场景钩子中使用 check_avatar_permission()
   3. finally 中调用 cleanup_permission_context(token)
 """
 
 from __future__ import annotations
 
 import contextvars
-import json
 import logging
 import threading
 from dataclasses import dataclass
@@ -30,7 +28,7 @@ class PermissionContext:
     """数字分身场景下的权限上下文。
 
     不放入 schema/agent.py，不序列化到 AgentRequest；
-    仅在 owner_scopes.py 内部使用，从 metadata 构建 → ContextVar → 匹配。
+    仅从 metadata 构建 → ContextVar → 匹配。
     """
     channel_id: str = ""
     group_digital_avatar: bool = False
@@ -112,16 +110,21 @@ async def check_avatar_permission(
     Returns:
         "allow" 或 "deny"
     """
-    from jiuwenclaw.agentserver.permissions.core import get_permission_engine
-    from jiuwenclaw.agentserver.permissions.models import PermissionLevel
+    from openjiuwen.harness.security.core import PermissionEngine as OJPermissionEngine
+    from openjiuwen.harness.security.models import PermissionLevel as OJPermissionLevel
+    from jiuwenclaw.config import get_config
+    from jiuwenclaw.utils import get_workspace_dir
 
     perm_ctx = TOOL_PERMISSION_CONTEXT.get()
     if perm_ctx is None or not perm_ctx.principal_user_id:
         logger.info("[check_avatar_permission] perm_ctx is None or no principal_user_id")
         return "deny"
 
-    engine = get_permission_engine()
-    owner_scopes = engine.config.get("owner_scopes")
+    perm_cfg = get_config().get("permissions") if isinstance(get_config(), dict) else {}
+    if not isinstance(perm_cfg, dict):
+        perm_cfg = {}
+    engine = OJPermissionEngine(config=perm_cfg, workspace_root=get_workspace_dir())
+    owner_scopes = perm_cfg.get("owner_scopes")
     logger.info(
         "[check_avatar_permission] tool=%s channel=%s user=%s owner_scopes_type=%s owner_scopes_keys=%s",
         tool_name, perm_ctx.channel_id, perm_ctx.principal_user_id,
@@ -144,7 +147,6 @@ async def check_avatar_permission(
         global_level, _rule = engine.evaluate_global_policy_directly(
             tool_name,
             tool_args,
-            channel_id,
             include_external_directory=True,
         )
         global_level_value = global_level.value if global_level is not None else None
@@ -153,7 +155,7 @@ async def check_avatar_permission(
         global_level_value = None
 
     if level is None:
-        if global_level_value == "allow":
+        if global_level_value == OJPermissionLevel.ALLOW.value:
             return "allow"
         return "deny"
 
@@ -205,12 +207,12 @@ def _resolve_owner_scope_level(
 
 
 def _match_args(pattern: str, tool_args: dict[str, Any]) -> bool:
-    """简化的参数模式匹配（复用 patterns 模块）。"""
+    """简化的参数模式匹配（复用 openjiuwen harness patterns）。"""
     try:
-        from jiuwenclaw.agentserver.permissions.patterns import (
+        from openjiuwen.harness.security.patterns import (
             match_command,
             match_path,
-            match_pattern,
+            match_wildcard as match_pattern,
             match_url,
         )
         for key, value in tool_args.items():

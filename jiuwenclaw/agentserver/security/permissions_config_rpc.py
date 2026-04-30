@@ -1,17 +1,16 @@
-# Copyright (c) Huawei Technologies Co., Ltd. 2026. All rights reserved.
+"""Permissions 配置 RPC（宿主侧）。
 
-"""Permissions 配置：E2A / AgentRequest 入口，返回 AgentResponse."""
+这是原 `jiuwenclaw.agentserver.permissions.config_rpc` 的新归档位置，
+用于减少对 legacy permissions 包路径的依赖。
+"""
 
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 from jiuwenclaw.schema.agent import AgentRequest, AgentResponse
 from jiuwenclaw.schema.message import ReqMethod
-
-if TYPE_CHECKING:
-    pass
 
 logger = logging.getLogger(__name__)
 
@@ -33,14 +32,6 @@ _PERMISSIONS_CFG_METHODS: frozenset[ReqMethod] = frozenset(
 
 def get_permissions_config_req_methods() -> frozenset[ReqMethod]:
     return _PERMISSIONS_CFG_METHODS
-
-
-def _hot_reload_permission_engine_from_config() -> None:
-    from jiuwenclaw.config import get_config
-    from jiuwenclaw.agentserver.permissions.core import get_permission_engine
-
-    perm_cfg = get_config().get("permissions", {})
-    get_permission_engine().update_config(perm_cfg)
 
 
 def _err(request: AgentRequest, message: str, *, code: str = "BAD_REQUEST") -> AgentResponse:
@@ -66,13 +57,13 @@ def _ok(request: AgentRequest, payload: dict[str, Any] | None) -> AgentResponse:
 def dispatch_permissions_config_request(request: AgentRequest) -> AgentResponse:
     """执行一条 permissions 配置 RPC（与原先 WebSocket register_method 语义一致）。"""
     from jiuwenclaw.config import (
-        get_permissions_approval_overrides,
-        get_permissions_rules,
-        get_permissions_tools,
         create_permissions_rule_in_config,
         delete_permissions_approval_override_in_config,
         delete_permissions_rule_in_config,
         delete_permissions_tool_in_config,
+        get_permissions_approval_overrides,
+        get_permissions_rules,
+        get_permissions_tools,
         replace_permissions_tools_in_config,
         update_permissions_rule_in_config,
         update_permissions_tool_in_config,
@@ -91,10 +82,6 @@ def dispatch_permissions_config_request(request: AgentRequest) -> AgentResponse:
                 return _err(request, "params must be object")
             tools = params.get("tools")
             replace_permissions_tools_in_config(tools)
-            try:
-                _hot_reload_permission_engine_from_config()
-            except Exception as e:
-                logger.warning("[%s] Failed to hot reload permission engine: %s", tag, e)
             return _ok(request, {"ok": True})
 
         if m == ReqMethod.PERMISSIONS_TOOLS_UPDATE:
@@ -106,10 +93,6 @@ def dispatch_permissions_config_request(request: AgentRequest) -> AgentResponse:
             if "level" not in params:
                 return _err(request, "level is required")
             payload = update_permissions_tool_in_config(tool, params.get("level"))
-            try:
-                _hot_reload_permission_engine_from_config()
-            except Exception as e:
-                logger.warning("[%s] Failed to hot reload permission engine: %s", tag, e)
             return _ok(request, dict(payload))
 
         if m == ReqMethod.PERMISSIONS_TOOLS_DELETE:
@@ -121,10 +104,6 @@ def dispatch_permissions_config_request(request: AgentRequest) -> AgentResponse:
             ok_del = delete_permissions_tool_in_config(tool)
             if not ok_del:
                 return _err(request, "tool not found in permissions.tools", code="NOT_FOUND")
-            try:
-                _hot_reload_permission_engine_from_config()
-            except Exception as e:
-                logger.warning("[%s] Failed to hot reload permission engine: %s", tag, e)
             return _ok(request, dict(get_permissions_tools()))
 
         if m == ReqMethod.PERMISSIONS_RULES_GET:
@@ -137,10 +116,6 @@ def dispatch_permissions_config_request(request: AgentRequest) -> AgentResponse:
             if not isinstance(rule, dict):
                 return _err(request, "rule must be object")
             stored = create_permissions_rule_in_config(rule)
-            try:
-                _hot_reload_permission_engine_from_config()
-            except Exception as e:
-                logger.warning("[%s] Failed to hot reload permission engine: %s", tag, e)
             return _ok(request, {"rule": stored})
 
         if m == ReqMethod.PERMISSIONS_RULES_UPDATE:
@@ -151,10 +126,6 @@ def dispatch_permissions_config_request(request: AgentRequest) -> AgentResponse:
             if not isinstance(patch, dict):
                 return _err(request, "patch must be object")
             merged = update_permissions_rule_in_config(str(rid or ""), patch)
-            try:
-                _hot_reload_permission_engine_from_config()
-            except Exception as e:
-                logger.warning("[%s] Failed to hot reload permission engine: %s", tag, e)
             return _ok(request, {"rule": merged})
 
         if m == ReqMethod.PERMISSIONS_RULES_DELETE:
@@ -163,10 +134,6 @@ def dispatch_permissions_config_request(request: AgentRequest) -> AgentResponse:
             ok_del = delete_permissions_rule_in_config(str(params.get("id") or ""))
             if not ok_del:
                 return _err(request, "rule not found", code="NOT_FOUND")
-            try:
-                _hot_reload_permission_engine_from_config()
-            except Exception as e:
-                logger.warning("[%s] Failed to hot reload permission engine: %s", tag, e)
             return _ok(request, {"ok": True})
 
         if m == ReqMethod.PERMISSIONS_APPROVAL_OVERRIDES_GET:
@@ -178,10 +145,6 @@ def dispatch_permissions_config_request(request: AgentRequest) -> AgentResponse:
             ok_del = delete_permissions_approval_override_in_config(str(params.get("id") or ""))
             if not ok_del:
                 return _err(request, "approval_override not found", code="NOT_FOUND")
-            try:
-                _hot_reload_permission_engine_from_config()
-            except Exception as e:
-                logger.warning("[%s] Failed to hot reload permission engine: %s", tag, e)
             return _ok(request, {"ok": True})
 
     except ValueError as e:
@@ -197,3 +160,4 @@ __all__ = [
     "dispatch_permissions_config_request",
     "get_permissions_config_req_methods",
 ]
+

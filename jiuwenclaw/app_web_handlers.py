@@ -2264,7 +2264,6 @@ def _register_web_handlers(bind: WebHandlersBindParams) -> None:
 
     async def _permissions_owner_scopes_set(ws, req_id, params, session_id):
         from jiuwenclaw.config import update_permissions_owner_scopes_in_config
-        from jiuwenclaw.agentserver.permissions.core import get_permission_engine
 
         if not isinstance(params, dict):
             await channel.send_response(ws, req_id, ok=False, error="params must be object", code="BAD_REQUEST")
@@ -2273,11 +2272,6 @@ def _register_web_handlers(bind: WebHandlersBindParams) -> None:
             owner_scopes = params.get("owner_scopes", {})
             deny_guidance = params.get("deny_guidance_message")
             update_permissions_owner_scopes_in_config(owner_scopes, deny_guidance)
-            try:
-                perm_cfg = get_config().get("permissions", {})
-                get_permission_engine().update_config(perm_cfg)
-            except Exception as e:
-                logger.warning("[permissions.owner_scopes.set] Failed to hot reload permission engine: %s", e)
             await channel.send_response(ws, req_id, ok=True, payload={"ok": True})
         except Exception as e:
             logger.exception("[permissions.owner_scopes.set] %s", e)
@@ -2306,7 +2300,7 @@ def _register_web_handlers(bind: WebHandlersBindParams) -> None:
 
         ac = _resolve(agent_client)
         if ac is None or not getattr(ac, "server_ready", False):
-            from jiuwenclaw.agentserver.permissions.config_rpc import dispatch_permissions_config_request
+            from jiuwenclaw.agentserver.security.permissions_config_rpc import dispatch_permissions_config_request
 
             resp = dispatch_permissions_config_request(synthetic)
             if not resp.ok:

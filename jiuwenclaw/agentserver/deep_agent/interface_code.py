@@ -55,7 +55,6 @@ from jiuwenclaw.agentserver.deep_agent.rails import (
     StructuredAskUserRail,
 )
 from jiuwenclaw.agentserver.memory.config import get_memory_mode
-from jiuwenclaw.agentserver.permissions.core import init_permission_engine
 from jiuwenclaw.agentserver.tools import SkillToolkit
 from jiuwenclaw.config import get_config
 
@@ -177,12 +176,8 @@ class JiuwenClawCodeAdapter(JiuWenClawDeepAdapter):
         tool_cards = await self._get_tool_cards(agent_card.id)
         self._tool_cards = tool_cards
 
-        permissions_cfg = config_base.get("permissions", {})
-        init_permission_engine(permissions_cfg)
-        logger.info(
-            "[JiuwenClawCodeAdapter] Permission engine initialized: enabled=%s",
-            permissions_cfg.get("enabled", True),
-        )
+        # 权限护栏由 openjiuwen PermissionInterruptRail + ToolPermissionHost 接管；
+        # 无需初始化 jiuwenclaw 内置 PermissionEngine（已弃用）。
 
         rails_list = self._build_agent_rails(config, config_base, mode="code")
 

@@ -151,10 +151,10 @@ def _parse_log_level(name: str, default: int = logging.INFO) -> int:
 
 
 def _log_component_from_logger_name(name: str) -> str:
-    """按 ``logging.getLogger(__name__)`` 的 logger 名划分 gateway / channel / agent_server / permissions。"""
+    """按 ``logging.getLogger(__name__)`` 的 logger 名划分 gateway / channel / agent_server / permissions（含 security）。"""
     if name.startswith("jiuwenclaw.channel"):
         return "channel"
-    if name.startswith("jiuwenclaw.agentserver.permissions.checker"):
+    if name.startswith("jiuwenclaw.agentserver.security"):
         return "permissions"
     if name.startswith("jiuwenclaw.agentserver"):
         return "agent_server"

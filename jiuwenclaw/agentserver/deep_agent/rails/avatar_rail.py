@@ -16,7 +16,7 @@ from openjiuwen.core.single_agent.rail.base import AgentCallbackContext
 from openjiuwen.harness.prompts import PromptSection
 from openjiuwen.harness.rails.base import DeepAgentRail
 
-from jiuwenclaw.agentserver.deep_agent.permissions.owner_scopes import (
+from jiuwenclaw.agentserver.security.owner_scopes import (
     TOOL_PERMISSION_CONTEXT,
     PermissionContext,
 )

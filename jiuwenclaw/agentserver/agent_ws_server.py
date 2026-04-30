@@ -30,10 +30,10 @@ from jiuwenclaw.e2a.wire_codec import (
 from jiuwenclaw.schema.agent import AgentRequest, AgentResponse, AgentResponseChunk
 from jiuwenclaw.schema.hook_event import AgentServerHookEvents
 from jiuwenclaw.agentserver.extensions import get_rail_manager
-from jiuwenclaw.agentserver.permissions.patterns import persist_cli_trusted_directory
+from jiuwenclaw.agentserver.security.permissions_persist import persist_cli_trusted_directory
 from jiuwenclaw.schema.hooks_context import AgentServerChatHookContext
 from jiuwenclaw.agentserver.agent_manager import AgentManager, ACP_DEFAULT_CAPABILITIES
-from jiuwenclaw.agentserver.permissions.config_rpc import get_permissions_config_req_methods
+from jiuwenclaw.agentserver.security.permissions_config_rpc import get_permissions_config_req_methods
 from jiuwenclaw.config import (
     get_config,
     get_mcp_server_config,
@@ -715,7 +715,7 @@ class AgentWebSocketServer:
 
     async def _handle_permissions_config(self, ws: Any, request: AgentRequest, send_lock: asyncio.Lock) -> None:
         """处理 permissions.* E2A 请求（与 Web ``register_method`` 同名 method）。"""
-        from jiuwenclaw.agentserver.permissions.config_rpc import dispatch_permissions_config_request
+        from jiuwenclaw.agentserver.security.permissions_config_rpc import dispatch_permissions_config_request
 
         resp = dispatch_permissions_config_request(request)
         wire = encode_agent_response_for_wire(resp, response_id=request.request_id)

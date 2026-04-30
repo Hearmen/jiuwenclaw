@@ -114,12 +114,11 @@ from jiuwenclaw.agentserver.deep_agent.rails import (
     ResponsePromptRail,
     RuntimePromptRail,
 )
-from jiuwenclaw.agentserver.deep_agent.permissions.owner_scopes import (
+from jiuwenclaw.agentserver.security.owner_scopes import (
     TOOL_PERMISSION_CONTEXT,
     setup_permission_context,
     cleanup_permission_context,
 )
-from jiuwenclaw.agentserver.permissions.core import init_permission_engine
 from jiuwenclaw.agentserver.memory import clear_memory_manager_cache
 from jiuwenclaw.agentserver.memory.config import (
     clear_config_cache,
@@ -128,7 +127,7 @@ from jiuwenclaw.agentserver.memory.config import (
     is_proactive_memory,
 )
 from jiuwenclaw.agentserver.memory.external_memory_config import is_builtin_memory_allowed
-from jiuwenclaw.agentserver.permissions.checker import TOOL_PERMISSION_CHANNEL_ID
+from jiuwenclaw.agentserver.security.tool_permission_context import TOOL_PERMISSION_CHANNEL_ID
 from jiuwenclaw.agentserver.session_metadata import build_server_push_message
 from jiuwenclaw.agentserver.skill_manager import SkillManager
 from jiuwenclaw.agentserver.tools.multimodal_config import (
@@ -237,6 +236,15 @@ def _get_skill_create_enabled(config: dict[str, Any] | None) -> bool:
     if env_skill_create is not None:
         return env_skill_create.lower() in ("true", "1", "yes")
     return (config or {}).get("evolution", {}).get("skill_create", False)
+
+
+def init_permission_engine(*_args: Any, **_kwargs: Any) -> None:
+    """Legacy shim for tests/older call sites.
+
+    The project now relies on openjiuwen's PermissionInterruptRail and does not
+    require a standalone permission engine initialization step.
+    """
+    return None
 
 
 def _mcc_looks_usable(mcc: dict) -> bool:
@@ -2093,12 +2101,8 @@ class JiuWenClawDeepAdapter:
         tool_cards = await self._get_tool_cards(agent_card.id)
         self._tool_cards = tool_cards
 
-        permissions_cfg = config_base.get("permissions", {})
-        init_permission_engine(permissions_cfg)
-        logger.info(
-            "[JiuWenClawDeepAdapter] Permission engine initialized: enabled=%s",
-            permissions_cfg.get("enabled", True),
-        )
+        # 权限护栏由 openjiuwen PermissionInterruptRail + ToolPermissionHost 接管；
+        # 无需初始化 jiuwenclaw 内置 PermissionEngine（已弃用）。
 
         rails_list = self._build_agent_rails(config, config_base, mode=mode)
 
