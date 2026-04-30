@@ -1048,6 +1048,10 @@ function MultiAgentSection({
     max_iterations: 0,
     completion_timeout: 0,
   });
+  // 临时保存 skills 输入框的原始值，支持中英文逗号
+  const [skillsInputValues, setSkillsInputValues] = useState<Record<number, string>>({});
+  // 新建 agent 时的 skills 临时输入值
+  const [newAgentSkillsInput, setNewAgentSkillsInput] = useState("");
 
   const updateAgentField = (idx: number, field: keyof AgentEntry, value: string | number) => {
     const copy = [...agents];
@@ -1184,11 +1188,19 @@ function MultiAgentSection({
                     {field === "skills" ? (
                       <input
                         type="text"
-                        value={(agent.skills || []).join(", ")}
+                        value={skillsInputValues[idx] ?? (agent.skills || []).join(", ")}
                         onChange={(e) => {
+                          setSkillsInputValues((prev) => ({ ...prev, [idx]: e.target.value }));
+                        }}
+                        onBlur={(e) => {
                           const copy = [...agents];
                           copy[idx] = { ...copy[idx], skills: e.target.value.split(/[,，]/).map((s) => s.trim()).filter(Boolean) };
                           onAgentsChange(copy);
+                          setSkillsInputValues((prev) => {
+                            const newValues = { ...prev };
+                            delete newValues[idx];
+                            return newValues;
+                          });
                         }}
                         className="flex-1 rounded border border-border bg-bg px-2 py-1 text-text text-xs"
                         placeholder={t("config.keys.agentSkillsPlaceholder")}
@@ -1289,8 +1301,12 @@ function MultiAgentSection({
               {field === "skills" ? (
                 <input
                   type="text"
-                  value={(newAgent.skills || []).join(", ")}
-                  onChange={(e) => setNewAgent((p) => ({ ...p, skills: e.target.value.split(/[,，]/).map((s) => s.trim()).filter(Boolean) }))}
+                  value={newAgentSkillsInput}
+                  onChange={(e) => setNewAgentSkillsInput(e.target.value)}
+                  onBlur={(e) => {
+                    setNewAgent((p) => ({ ...p, skills: e.target.value.split(/[,，]/).map((s) => s.trim()).filter(Boolean) }));
+                    setNewAgentSkillsInput("");
+                  }}
                   className="flex-1 rounded border border-border bg-bg px-2 py-1 text-text text-xs"
                   placeholder={t("config.keys.agentSkillsPlaceholder")}
                 />
@@ -1430,6 +1446,7 @@ function TeamItemSection({
                 onChange={(e) => updateTeamField(field, e.target.value)}
                 className="flex-1 rounded border border-border bg-bg px-2 py-1 text-text text-xs"
               >
+                <option value=""></option>
                 <option value="persistent">{t("config.team.lifecyclePersistent")}</option>
                 <option value="temporary">{t("config.team.lifecycleTemporary")}</option>
               </select>
@@ -1439,6 +1456,7 @@ function TeamItemSection({
                 onChange={(e) => updateTeamField(field, e.target.value)}
                 className="flex-1 rounded border border-border bg-bg px-2 py-1 text-text text-xs"
               >
+                <option value=""></option>
                 <option value="build_mode">{t("config.team.teammateModeBuild")}</option>
                 <option value="plan_mode">{t("config.team.teammateModePlan")}</option>
               </select>
@@ -1660,7 +1678,7 @@ function TeamsSection({
     team_name: "",
     lifecycle: "",
     teammate_mode: "",
-    spawn_mode: "",
+    spawn_mode: "inprocess",
     leader: { member_name: "", display_name: "", persona: "", agent_key: "" },
     teammate: { agent_key: "" },
     predefined_members: [],
@@ -1878,9 +1896,33 @@ export function ConfigPanel({
     return next;
   });
   const [draftModels, setDraftModels] = useState<ModelEntry[]>(() => storeAvailableModels.map((m) => ({ ...m })));
-  const [draftAgents, setDraftAgents] = useState<AgentEntry[]>([]);
+  
+  // 从 localStorage 加载缓存的 agents 和 teams
+  const loadCachedAgentsTeams = (): { agents: AgentEntry[]; teams: TeamEntry[] } | null => {
+    try {
+      const cached = localStorage.getItem('jiuwenclaw_agents_teams_cache');
+      if (cached) {
+        return JSON.parse(cached);
+      }
+    } catch (e) {
+      console.error('Failed to load cached agents/teams:', e);
+    }
+    return null;
+  };
+
+  // 保存到 localStorage
+  const saveCachedAgentsTeams = (agents: AgentEntry[], teams: TeamEntry[]) => {
+    try {
+      localStorage.setItem('jiuwenclaw_agents_teams_cache', JSON.stringify({ agents, teams }));
+    } catch (e) {
+      console.error('Failed to save agents/teams cache:', e);
+    }
+  };
+
+  const cached = loadCachedAgentsTeams();
+  const [draftAgents, setDraftAgents] = useState<AgentEntry[]>(cached?.agents || []);
   const [openAgents, setOpenAgents] = useState(false);
-  const [draftTeams, setDraftTeams] = useState<TeamEntry[]>([]);
+  const [draftTeams, setDraftTeams] = useState<TeamEntry[]>(cached?.teams || []);
   const [openTeams, setOpenTeams] = useState(false);
   const [agentsTeamsEdited, setAgentsTeamsEdited] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -1932,6 +1974,16 @@ export function ConfigPanel({
     for (let i = 0; i < 10; i++) {
       const teamName = normalizedConfig[`team_name_${i}`] || normalizedConfig[`team_${i}_name`];
       if (!teamName) continue;
+      // 解析 predefined_members JSON
+      let predefinedMembers: TeamMember[] = [];
+      const membersJson = normalizedConfig[`team_predefined_members_${i}`];
+      if (membersJson) {
+        try {
+          predefinedMembers = JSON.parse(membersJson);
+        } catch (e) {
+          console.error('[ConfigPanel] Failed to parse predefined_members:', e);
+        }
+      }
       teams.push({
         team_name: teamName,
         lifecycle: normalizedConfig[`team_lifecycle_${i}`] || normalizedConfig[`team_${i}_lifecycle`] || "",
@@ -1946,23 +1998,44 @@ export function ConfigPanel({
         teammate: {
           agent_key: normalizedConfig[`team_teammate_agent_key_${i}`] || normalizedConfig[`team_${i}_teammate_agent_key`] || "",
         },
-        predefined_members: [],
+        predefined_members: predefinedMembers,
       });
     }
     return teams;
   }, [normalizedConfig]);
 
   useEffect(() => {
-    if (draftAgents.length === 0 && agentsFromConfig.length > 0) {
+    // 优先从后端加载数据，如果后端有数据则使用后端数据
+    if (agentsFromConfig.length > 0) {
       setDraftAgents(agentsFromConfig);
+    } else if (draftAgents.length === 0) {
+      // 后端没有数据且草稿也为空时才使用缓存
+      const cached = loadCachedAgentsTeams();
+      if (cached?.agents) {
+        setDraftAgents(cached.agents);
+      }
     }
-  }, [agentsFromConfig, draftAgents.length]);
+  }, [agentsFromConfig]);
 
   useEffect(() => {
-    if (draftTeams.length === 0 && teamsFromConfig.length > 0) {
+    // 优先从后端加载数据，如果后端有数据则使用后端数据
+    if (teamsFromConfig.length > 0) {
       setDraftTeams(teamsFromConfig);
+    } else if (draftTeams.length === 0) {
+      // 后端没有数据且草稿也为空时才使用缓存
+      const cached = loadCachedAgentsTeams();
+      if (cached?.teams) {
+        setDraftTeams(cached.teams);
+      }
     }
-  }, [teamsFromConfig, draftTeams.length]);
+  }, [teamsFromConfig]);
+
+  // 自动保存 agents 和 teams 到 localStorage
+  useEffect(() => {
+    if (draftAgents.length > 0 || draftTeams.length > 0) {
+      saveCachedAgentsTeams(draftAgents, draftTeams);
+    }
+  }, [draftAgents, draftTeams]);
 
   const groups = useMemo<ConfigGroup[]>(() => {
     if (!Object.keys(normalizedConfig).length) return [];
@@ -2183,6 +2256,12 @@ export function ConfigPanel({
           agents: agentsPayload,
           team: draftTeams.map((t) => ({ ...t })),
         });
+        // 保存成功后清除 localStorage 缓存
+        try {
+          localStorage.removeItem('jiuwenclaw_agents_teams_cache');
+        } catch (e) {
+          console.error('Failed to clear agents/teams cache:', e);
+        }
         setAgentsTeamsEdited(false);
       }
       // 模型保存全部成功后，再保存非模型配置（视频/音频/embed/第三方等）并触发成功弹窗
@@ -2277,7 +2356,7 @@ export function ConfigPanel({
                 }
               />
             ))}
-            {false && otherGroups.some((g) => g.tag === "agents") && (
+            {otherGroups.some((g) => g.tag === "agents") && (
               <div id="config-group-agents" className="rounded-xl border border-border bg-card/70 backdrop-blur-sm overflow-hidden shadow-sm">
                 <button
                   onClick={() => setOpenAgents(!openAgents)}
@@ -2318,7 +2397,7 @@ export function ConfigPanel({
                 )}
               </div>
             )}
-            {false && otherGroups.some((g) => g.tag === "team") && (
+            {otherGroups.some((g) => g.tag === "team") && (
               <div id="config-group-team" className="rounded-xl border border-border bg-card/70 backdrop-blur-sm overflow-hidden shadow-sm">
                 <button
                   onClick={() => setOpenTeams(!openTeams)}

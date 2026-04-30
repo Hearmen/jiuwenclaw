@@ -517,6 +517,33 @@ function AppContent() {
       'config.set',
       payload as unknown as Record<string, string>
     );
+    // 更新前端配置缓存
+    const updates: Record<string, string> = {};
+    Object.entries(payload.agents).forEach(([name, agent], idx) => {
+      updates[`agent_name_${idx}`] = name;
+      updates[`agent_model_${idx}`] = agent.model.model;
+      updates[`agent_skills_${idx}`] = agent.skills.join(',');
+      updates[`agent_max_iterations_${idx}`] = String(agent.max_iterations);
+      updates[`agent_completion_timeout_${idx}`] = String(agent.completion_timeout);
+    });
+    payload.team.forEach((team, idx) => {
+      updates[`team_name_${idx}`] = team.team_name;
+      updates[`team_lifecycle_${idx}`] = team.lifecycle;
+      updates[`team_teammate_mode_${idx}`] = team.teammate_mode;
+      updates[`team_spawn_mode_${idx}`] = team.spawn_mode;
+      updates[`team_leader_member_name_${idx}`] = team.leader.member_name;
+      updates[`team_leader_display_name_${idx}`] = team.leader.display_name;
+      updates[`team_leader_persona_${idx}`] = team.leader.persona;
+      updates[`team_leader_agent_key_${idx}`] = team.leader.agent_key;
+      updates[`team_teammate_agent_key_${idx}`] = team.teammate.agent_key;
+      // 保存 predefined_members
+      if (team.predefined_members && team.predefined_members.length > 0) {
+        updates[`team_predefined_members_${idx}`] = JSON.stringify(team.predefined_members);
+      } else {
+        updates[`team_predefined_members_${idx}`] = "";
+      }
+    });
+    setServerConfig((prev: Record<string, unknown> | null) => ({ ...prev, ...updates }));
     setConfigError(null);
     setRestartModalOpen(true);
     setRestartSuccess(false);
