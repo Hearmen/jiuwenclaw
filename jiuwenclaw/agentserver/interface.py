@@ -122,8 +122,13 @@ def build_user_prompt(content: str, files: dict, channel: str, language: str, *,
 
     if language == "zh":
         prompt = "你收到一条消息：\n"
+        if channel == "cron":
+            prompt = "你收到一条消息，你的最终回复将直接发送给用户，请输出用户期望看到的内容，而非操作确认：\n"
     else:
         prompt = "You receive a new message:\n"
+        if channel == "cron":
+            prompt = ("You receive a message. Your final reply will be sent directly to the user. "
+                      "Output the content the user expects to see, not just a confirmation:\n")
     msg_data: dict[str, Any] = {
         "source": channel,
         "preferred_response_language": language,
