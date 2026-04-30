@@ -332,6 +332,8 @@ class CronTools:
                 if "CroniterBadDateError" in msg or "failed to find next date" in msg:
                     break
                 raise
+            if out and push_dt.isoformat() == out[-1]["push_at"]:
+                break
             wake_dt = push_dt - timedelta(seconds=max(0, int(job.wake_offset_seconds or 0)))
             out.append({"wake_at": wake_dt.isoformat(), "push_at": push_dt.isoformat()})
         return out

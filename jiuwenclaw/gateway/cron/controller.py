@@ -208,12 +208,12 @@ class CronController:
             try:
                 push_dt = _cron_next_push_dt(job.cron_expr, push_dt)
             except Exception as exc:  # noqa: BLE001
-                # croniter 对“单次且已到/已用完”的 7 段表达式会抛错。
-                # 预览场景希望返回已有结果（通常为 1 条），而不是让工具调用失败。
                 _msg = str(exc)
                 if "CroniterBadDateError" in _msg or "failed to find next date" in _msg:
                     break
                 raise
+            if out and push_dt.isoformat() == out[-1]["push_at"]:
+                break
             wake_dt = push_dt - timedelta(seconds=max(0, int(job.wake_offset_seconds or 0)))
             out.append({"wake_at": wake_dt.isoformat(), "push_at": push_dt.isoformat()})
         return out

@@ -98,8 +98,9 @@ function renderScheduleSummary(job: CronJob): string {
   return job.cron_expr || '';
 }
 
-function isValidCronField(value: string, min: number, max: number, stepDivisor: number | null): { valid: boolean; error?: string } {
+function isValidCronField(value: string, min: number, max: number, stepDivisor: number | null, allowQuestion: boolean = false): { valid: boolean; error?: string } {
   if (value === '*') return { valid: true };
+  if (allowQuestion && value === '?') return { valid: true };
   const parts = value.split(',');
   for (const part of parts) {
     if (part.includes('/')) {
@@ -121,16 +122,16 @@ function isValidCronField(value: string, min: number, max: number, stepDivisor: 
 }
 
 function getFieldError(min: number, max: number): string {
-  if (min === 0 && max === 59) return 'cron.errors.cronMinute';
+  if (min === 0 && max === 59) return 'cron.errors.cronSecondOrMinute';
   if (min === 0 && max === 23) return 'cron.errors.cronHour';
   if (min === 1 && max === 31) return 'cron.errors.cronDay';
   if (min === 1 && max === 12) return 'cron.errors.cronMonth';
-  if (min === 0 && max === 6) return 'cron.errors.cronWeek';
+  if (min === 1 && max === 7) return 'cron.errors.cronWeek';
   return 'cron.errors.cronFormat';
 }
 
 function getStepRangeError(min: number, max: number): string {
-  if (min === 0 && max === 59) return 'cron.errors.cronMinuteStep';
+  if (min === 0 && max === 59) return 'cron.errors.cronSecondOrMinuteStep';
   if (min === 0 && max === 23) return 'cron.errors.cronHourStep';
   return getFieldError(min, max);
 }
@@ -147,10 +148,14 @@ function isValidCronRange(range: string, min: number, max: number): boolean {
 
 function validateCronExpr(expr: string): { valid: boolean; error?: string } {
   const parts = expr.trim().split(/\s+/);
-  if (parts.length !== 5) {
+  if (parts.length !== 7) {
     return { valid: false, error: 'cron.errors.cronFormat' };
   }
-  const [minute, hour, day, month, week] = parts;
+  const [second, minute, hour, day, month, week, year] = parts;
+  const secondResult = isValidCronField(second, 0, 59, 60);
+  if (!secondResult.valid) {
+    return { valid: false, error: secondResult.error };
+  }
   const minuteResult = isValidCronField(minute, 0, 59, 60);
   if (!minuteResult.valid) {
     return { valid: false, error: minuteResult.error };
@@ -159,7 +164,7 @@ function validateCronExpr(expr: string): { valid: boolean; error?: string } {
   if (!hourResult.valid) {
     return { valid: false, error: hourResult.error };
   }
-  const dayResult = isValidCronField(day, 1, 31, null);
+  const dayResult = isValidCronField(day, 1, 31, null, true);
   if (!dayResult.valid) {
     return { valid: false, error: dayResult.error };
   }
@@ -167,9 +172,15 @@ function validateCronExpr(expr: string): { valid: boolean; error?: string } {
   if (!monthResult.valid) {
     return { valid: false, error: monthResult.error };
   }
-  const weekResult = isValidCronField(week, 0, 6, null);
+  const weekResult = isValidCronField(week, 1, 7, null, true);
   if (!weekResult.valid) {
     return { valid: false, error: weekResult.error };
+  }
+  if (year !== '*') {
+    const yearNum = parseInt(year, 10);
+    if (isNaN(yearNum) || yearNum < 1970 || yearNum > 2099) {
+      return { valid: false, error: 'cron.errors.cronYear' };
+    }
   }
   return { valid: true };
 }
