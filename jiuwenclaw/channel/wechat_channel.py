@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import asyncio
 import base64
-import binascii
 import copy
 import json
 import logging
@@ -21,9 +20,34 @@ from jiuwenclaw.schema.message import EventType, Message, ReqMethod
 from .base import BaseChannel, ChannelMetadata, RobotMessageRouter
 
 logger = logging.getLogger(__name__)
-main_logger = logging.getLogger("__main__")
 
 MAX_MESSAGES_SEND_TO_WECHAT = 10
+WECHAT_SEND_INTERVAL_SEC = 0.5
+WECHAT_TEXT_CHUNK_SIZE = 2000
+WECHAT_LIMIT_NOTICE_TEXT = (
+    "本轮回复较长，已触发发送保护。发送任意一条消息（或回复「继续」）可接收后续内容。"
+)
+WECHAT_UPSTREAM_BUSY_NOTICE_TEXT = "微信通道繁忙或触发频率限制，后续内容已暂存。请稍等片刻后发任意一条消息（或回复「继续」）接收。"
+WECHAT_CONTENT_SEND_LIMIT = max(1, MAX_MESSAGES_SEND_TO_WECHAT - 1)
+WECHAT_CONTINUE_EMPTY_NOTICE_TEXT = "暂无待续内容，请重新提问。"
+_CONTINUE_TOKEN = "继续"
+
+# iLink sendmessage：ret=-2 常见于短时发送过密；先退避重试，仍失败则暂存后续由用户再发一条消息拉取
+WECHAT_SENDMESSAGE_RETRYABLE_RETS = frozenset({-2})
+WECHAT_SENDMESSAGE_MAX_ATTEMPTS = 8
+WECHAT_SENDMESSAGE_RETRY_INITIAL_DELAY_SEC = 1.0
+WECHAT_SENDMESSAGE_RETRY_BACKOFF_CAP_SEC = 20.0
+
+
+class WechatSendMessageError(RuntimeError):
+    """sendmessage 业务层返回非 0 的 ret（HTTP 已 200）。"""
+
+    def __init__(
+        self, *args: object, ret: Any = None, response: dict[str, Any] | None = None
+    ) -> None:
+        super().__init__(*args)
+        self.ret = ret
+        self.response = response or {}
 
 
 class StreamDeltaAccumulator:
@@ -67,7 +91,9 @@ class StreamDeltaAccumulator:
 
 
 def format_tool_call_message(payload: dict[str, Any]) -> str:
-    tool_name = str(payload.get("tool_call", {}).get("name") or payload.get("name") or "工具调用")
+    tool_name = str(
+        payload.get("tool_call", {}).get("name") or payload.get("name") or "工具调用"
+    )
     args = payload.get("tool_call", {}).get("arguments")
     args_str = str(args) if args is not None else ""
     return f"[{tool_name}] 调用中...\n{args_str}".strip()
@@ -137,7 +163,9 @@ def _guess_image_mime_from_bytes(head: bytes) -> str | None:
 def _is_plausible_raster_image(mime: str, raw: bytes) -> bool:
     """过滤「魔数碰巧命中但并非有效位图」的 base64 载荷，避免浏览器裂图。"""
     if mime == "image/png":
-        if len(raw) < 64 or not (raw.startswith(b"\x89PNG\r\n\x1a\n") and raw[12:16] == b"IHDR"):
+        if len(raw) < 64 or not (
+            raw.startswith(b"\x89PNG\r\n\x1a\n") and raw[12:16] == b"IHDR"
+        ):
             return False
         width = int.from_bytes(raw[16:20], "big")
         height = int.from_bytes(raw[20:24], "big")
@@ -308,10 +336,8 @@ def clear_wechat_bound_session(conf: dict[str, Any]) -> dict[str, Any]:
         try:
             path.unlink()
             logger.info("WechatChannel 已删除本地凭据文件: %s", path)
-            main_logger.info("WechatChannel 已删除本地凭据文件: %s", path)
         except OSError as e:
             logger.warning("WechatChannel 删除凭据文件失败: %s: %s", path, e)
-            main_logger.warning("WechatChannel 删除凭据文件失败: %s: %s", path, e)
     out["bot_token"] = ""
     out["ilink_bot_id"] = ""
     out["ilink_user_id"] = ""
@@ -343,6 +369,12 @@ class WechatChannel(BaseChannel):
         self._delta_accumulator = StreamDeltaAccumulator()
         self._delta_leading: dict[str, str] = {}
         self.current_round: int = 0
+        self._current_round_session_key: str = ""
+        self._limit_notice_sent_session_keys: set[str] = set()
+        self._upstream_busy_notice_sent_session_keys: set[str] = set()
+        self._pending_overflow_messages: dict[str, list[str]] = {}
+        self._streaming_sessions: set[str] = set()
+        self._continue_active_sessions: set[str] = set()
 
     @property
     def channel_id(self) -> str:
@@ -350,6 +382,25 @@ class WechatChannel(BaseChannel):
 
     def on_message(self, callback: Callable[[Message], Any]) -> None:
         self._message_callback = callback
+
+    @staticmethod
+    def _normalize_continue_command(text: str) -> str:
+        t = str(text or "").strip().lower()
+        return re.sub(r"[。．!！?？,，\s]+$", "", t)
+
+    def _is_continue_command(self, text: str) -> bool:
+        norm = self._normalize_continue_command(text)
+        if not norm:
+            return False
+        token = self._normalize_continue_command(_CONTINUE_TOKEN)
+        return bool(token and token in norm)
+
+    def _has_pending_overflow_for_user(self, user_id: str) -> bool:
+        """是否有待发缓存（条数触顶或上游繁忙暂存的正文）。"""
+        for block in self._pending_overflow_messages.get(user_id) or []:
+            if str(block or "").strip():
+                return True
+        return False
 
     async def start(self) -> None:
         if self._running:
@@ -365,23 +416,30 @@ class WechatChannel(BaseChannel):
             self.config.auto_login,
             bool(self.config.bot_token),
         )
-        main_logger.info(
-            "WechatChannel 启动中: base_url=%s auto_login=%s token_present=%s",
-            self.config.base_url,
-            self.config.auto_login,
-            bool(self.config.bot_token),
-        )
 
         try:
             await self._load_or_login_credentials()
         except Exception as e:
             logger.exception("WechatChannel 登录阶段失败: %s", e)
-            main_logger.warning("WechatChannel 登录阶段失败: %s", e)
             raise
 
-        self._poll_task = asyncio.create_task(self._poll_loop(), name="wechat-channel-poll")
+        self._poll_task = asyncio.create_task(
+            self._poll_loop(), name="wechat-channel-poll"
+        )
         logger.info("WechatChannel 已启动（iLink 长轮询）")
-        main_logger.info("WechatChannel 已启动（iLink 长轮询）")
+        try:
+            import jiuwenclaw.channel.wechat_channel as _wc_mod
+
+            _src = getattr(_wc_mod, "__file__", "")
+        except Exception:
+            _src = ""
+        logger.info(
+            "WechatChannel 发送策略: hard_max=%s content_part_limit=%s interval_sec=%s module=%s",
+            MAX_MESSAGES_SEND_TO_WECHAT,
+            WECHAT_CONTENT_SEND_LIMIT,
+            WECHAT_SEND_INTERVAL_SEC,
+            _src,
+        )
 
         while self._running:
             await asyncio.sleep(1)
@@ -429,8 +487,8 @@ class WechatChannel(BaseChannel):
                 return
             content = self._extract_content(msg)
             if content:
-                if self.current_round == MAX_MESSAGES_SEND_TO_WECHAT - 1:
-                    logger.info(f"WechatChannel sendmessage: Message exceeds 10 messages, ignoring.")
+                if await self._should_skip_due_to_send_limit(msg):
+                    self._stash_overflow_content(msg, content)
                     return
                 await self._send_text_chunks_to_user(msg, content)
             return
@@ -438,13 +496,15 @@ class WechatChannel(BaseChannel):
         if msg.event_type == EventType.CHAT_TOOL_CALL:
             if not streaming:
                 return
-            if self.current_round == MAX_MESSAGES_SEND_TO_WECHAT - 1:
-                logger.info(f"WechatChannel sendmessage: Message exceeds 10 messages, ignoring.")
-                return
             flushed = self._take_accumulated_delta(msg)
             payload = msg.payload if isinstance(msg.payload, dict) else {}
             tool_call_str = format_tool_call_message(payload)
-            content = f"{flushed}\n\n{tool_call_str}" if flushed else f"\n{tool_call_str}"
+            content = (
+                f"{flushed}\n\n{tool_call_str}" if flushed else f"\n{tool_call_str}"
+            )
+            if await self._should_skip_due_to_send_limit(msg):
+                self._stash_overflow_content(msg, content)
+                return
             await self._send_text_chunks_to_user(msg, content)
             return
 
@@ -452,8 +512,8 @@ class WechatChannel(BaseChannel):
             return
 
         if msg.event_type == EventType.CHAT_ERROR:
-            if self.current_round == MAX_MESSAGES_SEND_TO_WECHAT - 1:
-                logger.info(f"WechatChannel sendmessage: Message exceeds 10 messages, ignoring.")
+            if await self._should_skip_due_to_send_limit(msg):
+                self._stash_overflow_content(msg, self._extract_content(msg))
                 return
             self._clear_delta_session(msg)
             err_line = self._extract_content(msg)
@@ -471,9 +531,20 @@ class WechatChannel(BaseChannel):
             sk = self._delta_session_key(msg)
             if not sk:
                 return
+            mk = self._message_session_key(msg)
+            if mk:
+                self._streaming_sessions.add(mk)
             flushed = self._delta_accumulator.add_chunk(sk, chunk, index=index)
             if flushed:
                 self._delta_leading[sk] = (self._delta_leading.get(sk) or "") + flushed
+            return
+
+        if self._is_stream_complete_marker(msg):
+            mk = self._message_session_key(msg)
+            if mk:
+                self._streaming_sessions.discard(mk)
+                self._continue_active_sessions.discard(mk)
+            self._clear_delta_session(msg)
             return
 
         allow_plain_res = (
@@ -488,8 +559,6 @@ class WechatChannel(BaseChannel):
         if msg.event_type not in final_like_events and not allow_plain_res:
             return
 
-        flushed_for_dedup: str | None = None
-
         user_id = self._extract_platform_user_id(msg)
         if not user_id:
             logger.warning("WechatChannel 无法确定回发目标用户")
@@ -498,21 +567,30 @@ class WechatChannel(BaseChannel):
             return
 
         content_str = self._strip_think_tags(self._extract_content(msg)).strip()
-        if (
-            msg.event_type == EventType.CHAT_FINAL
-            and flushed_for_dedup
-            and content_str == self._strip_think_tags(flushed_for_dedup).strip()
-        ):
-            return
         if not content_str or self._is_thinking_only_content(content_str):
             logger.debug("WechatChannel 消息内容为空或仅为思考占位，跳过发送")
             return
+        if await self._should_skip_due_to_send_limit(msg):
+            self._stash_overflow_content(msg, content_str)
+            return
         await self._send_text_chunks_to_user(msg, content_str)
         self._clear_delta_session(msg)
+        mk = self._message_session_key(msg)
+        if mk:
+            self._streaming_sessions.discard(mk)
+            self._continue_active_sessions.discard(mk)
         self.current_round = 0
+        self._current_round_session_key = ""
 
     def _delta_session_key(self, msg: Message) -> str:
         return str(msg.session_id or msg.id or "")
+
+    def _message_session_key(self, msg: Message) -> str:
+        """统一会话键：优先平台用户ID，避免内部 session_id 漂移导致缓存/限流错位。"""
+        user_id = self._extract_platform_user_id(msg)
+        if user_id:
+            return user_id
+        return self._delta_session_key(msg)
 
     def _take_accumulated_delta(self, msg: Message) -> str | None:
         sk = self._delta_session_key(msg)
@@ -544,16 +622,198 @@ class WechatChannel(BaseChannel):
                 user_id,
             )
             return
-        for part in self._chunk_text(cleaned, 2000):
-            await self._send_message(user_id, context_token, part)
-            await asyncio.sleep(0.25)
-        self.current_round += 1
+        parts = self._chunk_text(cleaned, WECHAT_TEXT_CHUNK_SIZE)
+        for idx, part in enumerate(parts):
+            if self.current_round >= WECHAT_CONTENT_SEND_LIMIT:
+                remaining = "".join(parts[idx:])
+                self._stash_overflow_content(msg, remaining)
+                self._refresh_round_for_msg(msg)
+                await self._send_limit_notice(msg)
+                return
+            try:
+                await self._send_message(user_id, context_token, part)
+            except WechatSendMessageError as exc:
+                if exc.ret in WECHAT_SENDMESSAGE_RETRYABLE_RETS:
+                    remaining = "".join(parts[idx:])
+                    self._stash_overflow_content(msg, remaining)
+                    await self._send_upstream_busy_notice_for_user(
+                        user_id,
+                        context_token,
+                        notice_session_key=self._message_session_key(msg),
+                    )
+                    return
+                raise
+            await asyncio.sleep(WECHAT_SEND_INTERVAL_SEC)
+            self.current_round += 1
+
+    def _refresh_round_for_msg(self, msg: Message) -> str:
+        sk = self._message_session_key(msg)
+        if not sk:
+            return ""
+        if sk != self._current_round_session_key:
+            self.current_round = 0
+            self._current_round_session_key = sk
+            self._limit_notice_sent_session_keys.discard(sk)
+            self._upstream_busy_notice_sent_session_keys.discard(sk)
+        return sk
+
+    async def _should_skip_due_to_send_limit(self, msg: Message) -> bool:
+        sk = self._refresh_round_for_msg(msg)
+        if self.current_round < WECHAT_CONTENT_SEND_LIMIT:
+            return False
+        logger.info(
+            "WechatChannel sendmessage content limit reached: "
+            "session_key=%s current_round=%s content_limit=%s hard_max=%s",
+            sk or "<empty>",
+            self.current_round,
+            WECHAT_CONTENT_SEND_LIMIT,
+            MAX_MESSAGES_SEND_TO_WECHAT,
+        )
+        await self._send_limit_notice(msg)
+        if sk and sk in self._continue_active_sessions:
+            # 续传窗口再次触顶，等待用户下一次“继续”。
+            self._continue_active_sessions.discard(sk)
+        return True
+
+    async def _send_text_notice_with_dedupe(
+        self,
+        user_id: str,
+        context_token: str,
+        *,
+        text: str,
+        notice_session_key: str | None,
+        sent_keys: set[str],
+        warn_label: str,
+    ) -> None:
+        """按会话键去重后发送一条固定文案（限流提示 / 通道繁忙提示等）。"""
+        if not user_id or not context_token:
+            return
+        key = notice_session_key or user_id
+        if key in sent_keys:
+            return
+        sent_keys.add(key)
+        try:
+            await self._send_message(user_id, context_token, text)
+        except Exception:
+            logger.warning("WechatChannel 发送%s失败", warn_label, exc_info=True)
+
+    async def _send_limit_notice_for_user(
+        self, user_id: str, context_token: str, *, notice_session_key: str | None = None
+    ) -> None:
+        """按用户发送限流提示；notice_session_key 用于去重（默认同 user_id）。"""
+        await self._send_text_notice_with_dedupe(
+            user_id,
+            context_token,
+            text=WECHAT_LIMIT_NOTICE_TEXT,
+            notice_session_key=notice_session_key,
+            sent_keys=self._limit_notice_sent_session_keys,
+            warn_label="限流提示",
+        )
+
+    async def _send_upstream_busy_notice_for_user(
+        self, user_id: str, context_token: str, *, notice_session_key: str | None = None
+    ) -> None:
+        await self._send_text_notice_with_dedupe(
+            user_id,
+            context_token,
+            text=WECHAT_UPSTREAM_BUSY_NOTICE_TEXT,
+            notice_session_key=notice_session_key,
+            sent_keys=self._upstream_busy_notice_sent_session_keys,
+            warn_label="通道繁忙提示",
+        )
+
+    async def _send_limit_notice(self, msg: Message) -> None:
+        user_id = self._extract_platform_user_id(msg)
+        if not user_id:
+            return
+        context_token = self._extract_context_token(msg, user_id)
+        await self._send_limit_notice_for_user(
+            user_id, context_token, notice_session_key=self._message_session_key(msg)
+        )
+
+    def _stash_overflow_content(self, msg: Message, content: str) -> None:
+        text = self._strip_think_tags(str(content or "")).strip()
+        if not text or self._is_thinking_only_content(text):
+            return
+        sk = self._message_session_key(msg)
+        if not sk:
+            return
+        bucket = self._pending_overflow_messages.setdefault(sk, [])
+        if bucket and bucket[-1] == text:
+            return
+        bucket.append(text)
+
+    async def _send_pending_overflow_for_session(
+        self, session_key: str, user_id: str, context_token: str
+    ) -> tuple[bool, bool]:
+        pending = self._pending_overflow_messages.get(session_key) or []
+        if not pending:
+            return False, False
+        sent_any = False
+        while pending and self.current_round < WECHAT_CONTENT_SEND_LIMIT:
+            text = pending.pop(0)
+            parts = self._chunk_text(text, WECHAT_TEXT_CHUNK_SIZE)
+            stop_after_upstream_busy = False
+            for idx, part in enumerate(parts):
+                if self.current_round >= WECHAT_CONTENT_SEND_LIMIT:
+                    remaining = "".join(parts[idx:])
+                    if remaining:
+                        pending.insert(0, remaining)
+                    await self._send_limit_notice_for_user(
+                        user_id, context_token, notice_session_key=session_key
+                    )
+                    break
+                try:
+                    await self._send_message(user_id, context_token, part)
+                except WechatSendMessageError as exc:
+                    if exc.ret in WECHAT_SENDMESSAGE_RETRYABLE_RETS:
+                        remaining = "".join(parts[idx:])
+                        if remaining:
+                            pending.insert(0, remaining)
+                        await self._send_upstream_busy_notice_for_user(
+                            user_id, context_token, notice_session_key=session_key
+                        )
+                        stop_after_upstream_busy = True
+                        break
+                    raise
+                await asyncio.sleep(WECHAT_SEND_INTERVAL_SEC)
+                self.current_round += 1
+                sent_any = True
+            if stop_after_upstream_busy:
+                break
+            if self.current_round >= WECHAT_CONTENT_SEND_LIMIT:
+                # 本条刚好用尽本轮配额且队列里还有后续缓存：必须立刻提示，否则要等到下一轮 send()。
+                if pending:
+                    await self._send_limit_notice_for_user(
+                        user_id, context_token, notice_session_key=session_key
+                    )
+                break
+        has_remaining = bool(pending)
+        if not has_remaining:
+            self._pending_overflow_messages.pop(session_key, None)
+        else:
+            self._pending_overflow_messages[session_key] = pending
+        return sent_any, has_remaining
+
+    async def _send_empty_continue_notice(
+        self, user_id: str, context_token: str
+    ) -> None:
+        try:
+            await self._send_message(
+                user_id, context_token, WECHAT_CONTINUE_EMPTY_NOTICE_TEXT
+            )
+        except Exception:
+            logger.warning(
+                "WechatChannel 发送空续传提示失败: user_id=%s", user_id, exc_info=True
+            )
 
     @staticmethod
     def _strip_think_tags(text: str) -> str:
         if not text or not isinstance(text, str):
             return text or ""
-        text = re.sub(r"<think>[\s\S]*?</think>", "", text, flags=re.IGNORECASE | re.DOTALL)
+        text = re.sub(
+            r"<think>[\s\S]*?</think>", "", text, flags=re.IGNORECASE | re.DOTALL
+        )
         text = re.sub(r"<think>[\s\S]*$", "", text, flags=re.IGNORECASE | re.DOTALL)
         return text
 
@@ -575,6 +835,13 @@ class WechatChannel(BaseChannel):
             return False
         source_chunk_type = str(payload.get("source_chunk_type") or "").strip().lower()
         return source_chunk_type == "llm_reasoning"
+
+    @staticmethod
+    def _is_stream_complete_marker(msg: Message) -> bool:
+        payload = getattr(msg, "payload", None) or {}
+        if not isinstance(payload, dict):
+            return False
+        return payload.get("is_complete") is True
 
     @staticmethod
     def _is_stream_accept_ack_only(msg: Message) -> bool:
@@ -614,7 +881,9 @@ class WechatChannel(BaseChannel):
 
     def get_metadata(self) -> ChannelMetadata:
         token_preview = (
-            self.config.bot_token[:8] + "..." if len(self.config.bot_token) > 8 else self.config.bot_token
+            self.config.bot_token[:8] + "..."
+            if len(self.config.bot_token) > 8
+            else self.config.bot_token
         )
         return ChannelMetadata(
             channel_id=self.channel_id,
@@ -629,7 +898,6 @@ class WechatChannel(BaseChannel):
         # 优先使用配置中的 bot_token
         if self.config.bot_token:
             logger.info("WechatChannel 使用配置中的 bot_token，跳过扫码登录")
-            main_logger.info("WechatChannel 使用配置中的 bot_token，跳过扫码登录")
             await push_wechat_login_ui(
                 phase="idle",
                 message="已使用配置中的 bot_token",
@@ -642,18 +910,24 @@ class WechatChannel(BaseChannel):
         # 再尝试读取本地凭据文件
         cred_path = Path(self.config.credential_file).expanduser()
         logger.info("WechatChannel 检查本地凭据: %s", cred_path)
-        main_logger.info("WechatChannel 检查本地凭据: %s", cred_path)
         if cred_path.exists():
             try:
                 data = json.loads(cred_path.read_text(encoding="utf-8"))
                 token = str(data.get("botToken") or data.get("bot_token") or "").strip()
                 if token:
                     self.config.bot_token = token
-                    self.config.base_url = str(data.get("baseUrl") or data.get("base_url") or self.config.base_url)
-                    self.config.ilink_bot_id = str(data.get("ilinkBotId") or data.get("ilink_bot_id") or "")
-                    self.config.ilink_user_id = str(data.get("ilinkUserId") or data.get("ilink_user_id") or "")
+                    self.config.base_url = str(
+                        data.get("baseUrl")
+                        or data.get("base_url")
+                        or self.config.base_url
+                    )
+                    self.config.ilink_bot_id = str(
+                        data.get("ilinkBotId") or data.get("ilink_bot_id") or ""
+                    )
+                    self.config.ilink_user_id = str(
+                        data.get("ilinkUserId") or data.get("ilink_user_id") or ""
+                    )
                     logger.info("WechatChannel 已加载本地凭据: %s", cred_path)
-                    main_logger.info("WechatChannel 已加载本地凭据: %s", cred_path)
                     # 与扫码成功一致：告知前端凭据来源，便于填回表单并「保存」写入 config（而非画二维码）
                     await push_wechat_login_ui(
                         phase="success",
@@ -671,7 +945,6 @@ class WechatChannel(BaseChannel):
                     return
             except Exception as e:
                 logger.warning("WechatChannel 读取凭据失败: %s", e)
-                main_logger.warning("WechatChannel 读取凭据失败: %s", e)
 
         if not self.config.auto_login:
             await push_wechat_login_ui(
@@ -684,7 +957,6 @@ class WechatChannel(BaseChannel):
             raise RuntimeError("WechatChannel 未配置 bot_token，且 auto_login=false")
 
         logger.info("WechatChannel 将进入扫码登录流程（bot_token 为空）")
-        main_logger.info("WechatChannel 将进入扫码登录流程（bot_token 为空）")
         await self._login_by_qrcode()
 
     async def _login_by_qrcode(self) -> None:
@@ -698,7 +970,6 @@ class WechatChannel(BaseChannel):
         )
         try:
             logger.info("WechatChannel 开始获取登录二维码")
-            main_logger.info("WechatChannel 开始获取登录二维码")
             qr_data = await self._get_qrcode()
             qrcode = str(qr_data.get("qrcode") or "").strip()
             qr_content = str(qr_data.get("qrcode_img_content") or qrcode).strip()
@@ -715,7 +986,6 @@ class WechatChannel(BaseChannel):
             )
 
             logger.info("请使用微信扫描二维码登录：%s", qr_content)
-            main_logger.info("请使用微信扫描二维码登录：%s", qr_content)
 
             deadline = time.time() + 5 * 60
             while time.time() < deadline:
@@ -724,7 +994,6 @@ class WechatChannel(BaseChannel):
                 st = str(status.get("status") or "").strip().lower()
                 if st == "scaned":
                     logger.info("已扫码，请在手机上确认")
-                    main_logger.info("已扫码，请在手机上确认")
                     await push_wechat_login_ui(
                         phase="scanned",
                         message="已扫码，请在手机上确认登录",
@@ -737,11 +1006,12 @@ class WechatChannel(BaseChannel):
                     if not token:
                         raise RuntimeError("登录成功但缺少 bot_token")
                     self.config.bot_token = token
-                    self.config.base_url = str(status.get("baseurl") or self.config.base_url)
+                    self.config.base_url = str(
+                        status.get("baseurl") or self.config.base_url
+                    )
                     self.config.ilink_bot_id = str(status.get("ilink_bot_id") or "")
                     self.config.ilink_user_id = str(status.get("ilink_user_id") or "")
                     logger.info("WechatChannel 登录成功")
-                    main_logger.info("WechatChannel 登录成功")
                     self._save_credentials()
                     await push_wechat_login_ui(
                         phase="success",
@@ -761,7 +1031,9 @@ class WechatChannel(BaseChannel):
 
             raise RuntimeError("登录超时，请重试")
         except Exception as e:
-            await push_wechat_login_ui(phase="error", message="", qr=None, credentials=None, error=str(e))
+            await push_wechat_login_ui(
+                phase="error", message="", qr=None, credentials=None, error=str(e)
+            )
             raise
 
     async def _poll_loop(self) -> None:
@@ -774,7 +1046,9 @@ class WechatChannel(BaseChannel):
             except Exception as e:
                 logger.error("WechatChannel 轮询错误: %s", e)
                 await asyncio.sleep(self._backoff_sec)
-                self._backoff_sec = min(self._backoff_sec * 2, self.config.backoff_max_sec)
+                self._backoff_sec = min(
+                    self._backoff_sec * 2, self.config.backoff_max_sec
+                )
 
     async def _get_qrcode(self) -> dict[str, Any]:
         http = self._require_http()
@@ -811,7 +1085,9 @@ class WechatChannel(BaseChannel):
             if ret is not None and ret != 0:
                 errcode = data.get("errcode")
                 errmsg = data.get("errmsg") or f"ret={ret}"
-                raise RuntimeError(f"getupdates 错误: errcode={errcode} errmsg={errmsg}")
+                raise RuntimeError(
+                    f"getupdates 错误: errcode={errcode} errmsg={errmsg}"
+                )
 
             cursor = data.get("get_updates_buf")
             if cursor:
@@ -837,26 +1113,47 @@ class WechatChannel(BaseChannel):
             },
             "base_info": {"channel_version": "2.0.0"},
         }
-        async with http.post(url, json=body, headers=self._headers()) as resp:
-            if resp.status != 200:
-                body_text = await resp.text()
-                raise RuntimeError(f"sendmessage 失败: HTTP {resp.status} {body_text}")
-            data = await self._read_json_response(resp, operation="sendmessage")
-            ret = data.get("ret")
-            if ret is not None and ret != 0:
+        delay = WECHAT_SENDMESSAGE_RETRY_INITIAL_DELAY_SEC
+        for attempt in range(WECHAT_SENDMESSAGE_MAX_ATTEMPTS):
+            async with http.post(url, json=body, headers=self._headers()) as resp:
+                if resp.status != 200:
+                    body_text = await resp.text()
+                    raise RuntimeError(
+                        f"sendmessage 失败: HTTP {resp.status} {body_text}"
+                    )
+                data = await self._read_json_response(resp, operation="sendmessage")
+                ret = data.get("ret")
+                if ret is None or ret == 0:
+                    return
                 errcode = data.get("errcode")
                 errmsg = data.get("errmsg") or f"ret={ret}"
                 logger.warning(
-                    "WechatChannel sendmessage 失败: ret=%s errcode=%s errmsg=%s response=%s to_user_id=%s",
+                    "WechatChannel sendmessage 失败: ret=%s errcode=%s errmsg=%s response=%s to_user_id=%s attempt=%s/%s",
                     ret,
                     errcode,
                     errmsg,
                     data,
                     user_id,
+                    attempt + 1,
+                    WECHAT_SENDMESSAGE_MAX_ATTEMPTS,
                 )
-                raise RuntimeError(f"sendmessage 错误: errcode={errcode} errmsg={errmsg} ret={ret}")
+                will_retry = (
+                    ret in WECHAT_SENDMESSAGE_RETRYABLE_RETS
+                    and attempt < WECHAT_SENDMESSAGE_MAX_ATTEMPTS - 1
+                )
+                if will_retry:
+                    await asyncio.sleep(delay)
+                    delay = min(delay * 2, WECHAT_SENDMESSAGE_RETRY_BACKOFF_CAP_SEC)
+                    continue
+                raise WechatSendMessageError(
+                    f"sendmessage 错误: errcode={errcode} errmsg={errmsg} ret={ret}",
+                    ret=ret,
+                    response=data,
+                )
 
-    async def _read_json_response(self, resp: aiohttp.ClientResponse, *, operation: str) -> dict[str, Any]:
+    async def _read_json_response(
+        self, resp: aiohttp.ClientResponse, *, operation: str
+    ) -> dict[str, Any]:
         """Read JSON response even when upstream returns a non-JSON content-type."""
         try:
             data = await resp.json(content_type=None)
@@ -899,6 +1196,7 @@ class WechatChannel(BaseChannel):
         # 持久化 last_user_id 和 context_token 供 cron/心跳推送使用
         try:
             from jiuwenclaw.config import update_channel_in_config
+
             updates: dict[str, str] = {"last_user_id": user_id}
             if context_token:
                 updates["last_context_token"] = context_token
@@ -912,7 +1210,55 @@ class WechatChannel(BaseChannel):
 
         content = text.strip()
         if ref_text.strip():
-            content = f"{content}\n\n{ref_text.strip()}" if content else ref_text.strip()
+            content = (
+                f"{content}\n\n{ref_text.strip()}" if content else ref_text.strip()
+            )
+        content_norm = content.strip()
+
+        # 有待发缓存时：任意一条用户消息（含「继续」）优先补发缓存，不转发给 Agent，不打断后台任务。
+        # 无缓存时仅「继续」仍走本分支，用于与旧习惯兼容（空缓存则提示暂无待续）。
+        should_drain_overflow = self._has_pending_overflow_for_user(user_id)
+        if context_token and (
+            should_drain_overflow or self._is_continue_command(content_norm)
+        ):
+            # 开启一轮新的发送窗口，尽量补发更多缓存。
+            self.current_round = 0
+            self._current_round_session_key = user_id
+            self._limit_notice_sent_session_keys.discard(user_id)
+            self._upstream_busy_notice_sent_session_keys.discard(user_id)
+            self._continue_active_sessions.add(user_id)
+            try:
+                sent, has_remaining = await self._send_pending_overflow_for_session(
+                    user_id, user_id, context_token
+                )
+            except Exception:
+                logger.warning(
+                    "WechatChannel 发送缓存续传内容失败: user_id=%s",
+                    user_id,
+                    exc_info=True,
+                )
+                sent, has_remaining = False, False
+            if sent:
+                if has_remaining:
+                    await self._send_limit_notice_for_user(
+                        user_id, context_token, notice_session_key=user_id
+                    )
+                    self._continue_active_sessions.discard(user_id)
+                return
+            if user_id in self._streaming_sessions:
+                return
+            self._continue_active_sessions.discard(user_id)
+            await self._send_empty_continue_notice(user_id, context_token)
+            return
+
+        # 用户有新输入时重置该会话发送计数，避免上轮达到上限后长期静默。
+        self.current_round = 0
+        self._current_round_session_key = user_id
+        self._limit_notice_sent_session_keys.discard(user_id)
+        self._upstream_busy_notice_sent_session_keys.discard(user_id)
+        self._continue_active_sessions.discard(user_id)
+        # 仅在无待发缓存时清空队列：用户新问题不应与旧缓存混发（有待发时已在上方分支处理）。
+        self._pending_overflow_messages.pop(user_id, None)
 
         req_id = str(wx_msg.get("message_id") or f"wechat_{int(time.time() * 1000)}")
         msg = Message(
@@ -1041,4 +1387,6 @@ class WechatChannel(BaseChannel):
             "ilinkBotId": self.config.ilink_bot_id,
             "ilinkUserId": self.config.ilink_user_id,
         }
-        path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+        path.write_text(
+            json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8"
+        )
