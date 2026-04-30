@@ -255,18 +255,52 @@ export const editorTheme: EditorTheme = {
 };
 
 export const markdownTheme: MarkdownTheme = {
-  heading: (value: string) => chalk.bold.hex(getThemeDefinition().markdownHeading)(value),
-  link: (value: string) => chalk.hex(getAccentHex())(value),
-  linkUrl: (value: string) => chalk.hex(getThemeDefinition().textDim)(value),
-  code: (value: string) => chalk.hex(getThemeDefinition().markdownCode)(value),
+  heading: (value: string) => {
+    if (value.startsWith("# ")) {
+      const text = value.slice(2);
+      return chalk.bold(text);
+    } else if (value.startsWith("## ")) {
+      const text = value.slice(3);
+      return chalk.bold(text);
+    } else if (value.startsWith("### ")) {
+      const text = value.slice(4);
+      return chalk.hex(getThemeDefinition().textPrimary)(text);
+    } else if (value.startsWith("#### ")) {
+      const text = value.slice(5);
+      return chalk.hex(getThemeDefinition().textPrimary)(text);
+    } else if (value.startsWith("##### ")) {
+      const text = value.slice(6);
+      return chalk.hex(getThemeDefinition().textPrimary)(text);
+    } else if (value.startsWith("###### ")) {
+      const text = value.slice(7);
+      return chalk.hex(getThemeDefinition().textPrimary)(text);
+    }
+    return chalk.bold(value);
+  },
+  link: (value: string) => chalk.underline.hex(getAccentHex())(value),
+  linkUrl: (value: string) => chalk.dim.hex(getThemeDefinition().textDim)(value),
+  code: (value: string) => chalk.bgHex("333333").hex("#98c379")(value),
   codeBlock: (value: string) => chalk.hex(getThemeDefinition().markdownCodeBlock)(value),
-  codeBlockBorder: (value: string) => chalk.hex(getThemeDefinition().borderPanel)(value),
-  quote: (value: string) => chalk.italic.hex(getThemeDefinition().textDim)(value),
-  quoteBorder: (value: string) => chalk.hex(getThemeDefinition().borderPanel)(value),
-  hr: (value: string) => chalk.hex(getThemeDefinition().borderPanel)(value),
-  listBullet: (value: string) => chalk.hex(getAccentHex())(value),
+  codeBlockBorder: (value: string) => chalk.dim.hex(getThemeDefinition().borderPanel)(value),
+  quote: (value: string) => chalk.italic.hex("#abb2bf")(value),
+  quoteBorder: (value: string) => chalk.hex("#61afef")(value),
+  hr: (value: string) => chalk.hex(getAccentHex())(value),
+  listBullet: (value: string) => {
+    if (value === "- " || value.startsWith("- ")) {
+      return chalk.hex(getAccentHex())("○ ");
+    }
+    return chalk.hex(getAccentHex())(value);
+  },
   bold: (value: string) => chalk.bold(value),
   italic: (value: string) => chalk.italic(value),
   strikethrough: (value: string) => chalk.strikethrough(value),
   underline: (value: string) => chalk.underline(value),
+  highlightCode: (code: string, lang?: string): string[] => {
+    const lines = code.split("\n");
+    const def = getThemeDefinition();
+    return lines.map((line) => {
+      return chalk.hex(def.markdownCodeBlock)(line);
+    });
+  },
+  codeBlockIndent: "  ",
 };

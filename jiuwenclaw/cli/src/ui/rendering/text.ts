@@ -56,9 +56,17 @@ export function renderMarkdownLines(
   paddingX = 0,
   paddingY = 0,
 ): string[] {
-  const markdown = new Markdown(text || "", paddingX, paddingY, markdownTheme);
+  const processedText = preprocessTaskList(text);
+  const markdown = new Markdown(processedText, paddingX, paddingY, markdownTheme);
   const lines = markdown.render(width);
-  return lines.length > 0 ? lines : [emptyLine(width)];
+  const filtered = filterCodeBlockBorders(lines);
+  return filtered.length > 0 ? filtered : [emptyLine(width)];
+}
+
+function preprocessTaskList(text: string): string {
+  return text
+    .replace(/^[-*]\s+\[x\]\s+/gm, (match) => match.replace("[x]", "☑").replace("[X]", "☑"))
+    .replace(/^[-*]\s+\[\s\]\s+/gm, (match) => match.replace("[ ]", "☐"));
 }
 
 export function renderStyledMarkdownLines(
@@ -68,9 +76,27 @@ export function renderStyledMarkdownLines(
   paddingX = 0,
   paddingY = 0,
 ): string[] {
-  const markdown = new Markdown(text || "", paddingX, paddingY, markdownTheme, style);
+  const processedText = preprocessTaskList(text);
+  const markdown = new Markdown(processedText, paddingX, paddingY, markdownTheme, style);
   const lines = markdown.render(width);
-  return lines.length > 0 ? lines : [emptyLine(width)];
+  const filtered = filterCodeBlockBorders(lines);
+  return filtered.length > 0 ? filtered : [emptyLine(width)];
+}
+
+function filterCodeBlockBorders(lines: string[]): string[] {
+  const result: string[] = [];
+  for (const line of lines) {
+    const stripped = line.replace(/\x1b\[[0-9;]*m/g, "");
+    const trimmed = stripped.trim();
+    if (trimmed === "```") continue;
+    const langMatch = trimmed.match(/^```(\w+)\s*$/);
+    if (langMatch) {
+      result.push(langMatch[1]);
+      continue;
+    }
+    result.push(line);
+  }
+  return result;
 }
 
 export function renderIndentedBlock(
