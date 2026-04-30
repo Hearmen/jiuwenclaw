@@ -2047,7 +2047,7 @@ export function ChannelsPanel({ isConnected }: ChannelsPanelProps) {
                                 </button>
                               </td>
                             </tr>
-                            {(['app_id', 'app_secret', 'encrypt_key', 'verification_token', 'chat_id'] as const).map((field) => (
+                            {(['app_id', 'app_secret', 'encrypt_key', 'verification_token'] as const).map((field) => (
                               <tr key={field} className="border-t border-border first:border-t-0 even:bg-secondary/10">
                                 <td className="px-4 py-2.5 align-middle mono text-xs text-text-muted w-[32%]">{field}</td>
                                 <td className="px-4 py-2.5 break-all text-[13px] align-middle">
@@ -2056,7 +2056,7 @@ export function ChannelsPanel({ isConnected }: ChannelsPanelProps) {
                                       type={isSensitiveField(field) && !visibleFields[field] ? 'password' : 'text'}
                                       value={draft[field]}
                                       onChange={(e) => handleFieldChange(field, e.target.value)}
-                                      placeholder={field === 'chat_id' ? t('channels.placeholders.chatId') : t('channels.placeholders.configValue')}
+                                      placeholder={t('channels.placeholders.configValue')}
                                       className={`w-full rounded-md border border-border bg-bg px-3 py-2 text-[13px] outline-none focus:border-accent ${
                                         isSensitiveField(field) ? 'pr-10' : ''
                                       }`}
@@ -2076,18 +2076,6 @@ export function ChannelsPanel({ isConnected }: ChannelsPanelProps) {
                                 </td>
                               </tr>
                             ))}
-                            <tr className="border-t border-border first:border-t-0 even:bg-secondary/10">
-                              <td className="px-4 py-2.5 align-top mono text-xs text-text-muted w-[32%]">allow_from</td>
-                              <td className="px-4 py-2.5 break-all text-[13px] align-middle">
-                                <textarea
-                                  value={draft.allow_from}
-                                  onChange={(e) => handleFieldChange('allow_from', e.target.value)}
-                                  placeholder={t('channels.placeholders.ids')}
-                                  rows={4}
-                                  className="w-full rounded-md border border-border bg-bg px-3 py-2 text-[13px] outline-none focus:border-accent resize-y"
-                                />
-                              </td>
-                            </tr>
                             <tr className="border-t border-border first:border-t-0 even:bg-secondary/10">
                               <td className="px-4 py-2.5 align-middle mono text-xs text-text-muted w-[32%]">group_digital_avatar</td>
                               <td className="px-4 py-2.5 align-middle">

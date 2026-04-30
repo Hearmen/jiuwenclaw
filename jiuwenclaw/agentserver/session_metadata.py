@@ -55,7 +55,7 @@ def _read_metadata(session_id: str) -> dict[str, Any]:
     if not fpath.exists():
         return {}
     try:
-        data = json.loads(fpath.read_text(encoding="utf-8"))
+        data = json.loads(fpath.read_text(encoding="utf-8") or '{}')
         if isinstance(data, dict):
             return data
     except Exception as exc:

@@ -820,7 +820,7 @@ class DingTalkChannel(BaseChannel):
                             file_name=file_name,
                         )
                     )
-                elif ext in {'.mp4', '.mov', '.avi', '.mkv', '.flv', '.webm'}:
+                elif ext == '.mp4':
                     await self._send_video(
                         DingTalkMessageSendRequest(
                             token=token,
@@ -909,7 +909,10 @@ class DingTalkChannel(BaseChannel):
         if not media_id:
             raise Exception("视频上传失败")
 
-        msg_param = json.dumps({"mediaId": media_id})
+        msg_param = json.dumps({
+            "videoMediaId": media_id,
+            "videoType": "mp4"
+        })
         await self._send_media_message(
             DingTalkMediaMessageRequest(
                 token=request.token,
