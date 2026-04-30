@@ -1006,10 +1006,15 @@ export class AppScreen implements Component, Focusable {
         return;
       }
 
+      const modelsMeta = payload.models ?? [];
       const items = selectable.map((m, i) => {
         const isCurrent = m === current;
+        const meta = modelsMeta.find((x) => x.name === m);
+        const displayName = (meta?.model_name && meta.model_name !== m)
+          ? `${m} (${meta.model_name})`
+          : m;
         return {
-          label: `${i + 1}. ${m}${isCurrent ? " (current)" : ""}`,
+          label: `${i + 1}. ${displayName}${isCurrent ? " (current)" : ""}`,
           value: m,
         };
       });

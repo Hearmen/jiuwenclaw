@@ -893,6 +893,7 @@ def register_cli_handlers(bind: CliHandlersBindParams) -> None:
                 "timeout": "timeout",
                 "verify_ssl": "verify_ssl",
                 "ssl_cert": "ssl_cert",
+                "alias": "alias",
             }
             # target 可能是 "model=gpt-5" 形式（前端把第一个 key=value 当作 name 参数解析）
             if "=" in target:
@@ -916,28 +917,62 @@ def register_cli_handlers(bind: CliHandlersBindParams) -> None:
                 client_cfg["model_name"] = target
             effective_name = client_cfg["model_name"]
 
+            # alias 为顶层字段，从 client_cfg 中提取；提前计算最终值确保唯一性校验基于实际存储值
+            entry_alias = client_cfg.pop("alias", None)
+            effective_alias = str(entry_alias).strip() if entry_alias else ""
+
             new_entry = {
                 "model_client_config": client_cfg,
                 "model_config_obj": model_cfg_obj,
             }
+            new_entry["alias"] = effective_alias
             try:
                 _raw = get_config_raw()
                 _raw_defs = (_raw.get("models") or {}).get("defaults")
                 if isinstance(_raw_defs, list):
-                    # 重名校验
-                    existing_names = [
-                        resolve_env_vars(str((e.get("model_client_config") or {}).get("model_name", "")))
-                        for e in _raw_defs if isinstance(e, dict)
-                    ]
-                    if effective_name in existing_names:
-                        await channel.send_response(
-                            ws, req_id, ok=False,
-                            error=f"Model '{effective_name}' already exists.",
-                        )
-                        return
+                    # alias 唯一性校验（仅在 alias 非空时执行）
+                    if effective_alias:
+                        for _e in _raw_defs:
+                            if not isinstance(_e, dict):
+                                continue
+                            _emn = resolve_env_vars(str((_e.get("model_client_config") or {}).get("model_name", "")))
+                            _ea = resolve_env_vars(str(_e.get("alias", "")))
+                            # 别名不能和其他模型的别名重复
+                            if _ea == effective_alias:
+                                await channel.send_response(
+                                    ws, req_id, ok=False,
+                                    error=f"Alias '{effective_alias}' is already used by model '{_emn}'",
+                                )
+                                return
+                            # 别名不能和其他模型的 model_name 冲突
+                            if _emn == effective_alias:
+                                await channel.send_response(
+                                    ws, req_id, ok=False,
+                                    error=f"Alias '{effective_alias}' conflicts with model name '{_emn}'",
+                                )
+                                return
                     _raw_defs.append(new_entry)
                     update_default_models_in_config(_raw_defs)
                 else:
+                    # 旧格式：通过 get_default_models 枚举现有模型，补做 alias 唯一性校验
+                    if effective_alias:
+                        for _e in get_default_models():
+                            if not isinstance(_e, dict):
+                                continue
+                            _emn = resolve_env_vars(str((_e.get("model_client_config") or {}).get("model_name", "")))
+                            _ea = resolve_env_vars(str(_e.get("alias", "")))
+                            if _ea == effective_alias:
+                                await channel.send_response(
+                                    ws, req_id, ok=False,
+                                    error=f"Alias '{effective_alias}' is already used by model '{_emn}'",
+                                )
+                                return
+                            if _emn == effective_alias:
+                                await channel.send_response(
+                                    ws, req_id, ok=False,
+                                    error=f"Alias '{effective_alias}' conflicts with model name '{_emn}'",
+                                )
+                                return
                     add_or_update_model_in_config(target, new_entry)
                 logger.info(
                     "[cli command.model] 新增模型: name=%s, "
@@ -986,7 +1021,17 @@ def register_cli_handlers(bind: CliHandlersBindParams) -> None:
             _defs = (_raw.get("models") or {}).get("defaults")
             if isinstance(_defs, list) and _defs:
                 _first_name = resolve_env_vars(str((_defs[0].get("model_client_config") or {}).get("model_name", "")))
-                payload["current"] = _first_name or os.getenv("MODEL_NAME", "unknown")
+                _first_alias = resolve_env_vars(str(_defs[0].get("alias", ""))) if _defs[0].get("alias") else ""
+                payload["current"] = _first_alias or _first_name or os.getenv("MODEL_NAME", "unknown")
+                payload["current_model_name"] = _first_name or os.getenv("MODEL_NAME", "unknown")
+                payload["models"] = [
+                    {
+                        "name": resolve_env_vars(str(e.get("alias", ""))) or
+                                resolve_env_vars(str((e.get("model_client_config") or {}).get("model_name", ""))),
+                        "model_name": resolve_env_vars(str((e.get("model_client_config") or {}).get("model_name", ""))),
+                    }
+                    for e in _defs if isinstance(e, dict)
+                ]
             else:
                 payload["current"] = os.getenv("MODEL_NAME", "unknown")
             await channel.send_response(ws, req_id, ok=True, payload=payload)
@@ -994,19 +1039,41 @@ def register_cli_handlers(bind: CliHandlersBindParams) -> None:
 
         target = str(model_name).strip()
         logger.info("[cli command.model] 切换模型: target=%s", target)
-        if target not in get_model_names():
+        _raw_defs_check = (get_config_raw().get("models") or {}).get("defaults") or []
+        _valid_names: set[str] = set()
+        for _e in _raw_defs_check:
+            if isinstance(_e, dict):
+                _mn = resolve_env_vars(str((_e.get("model_client_config") or {}).get("model_name", "")))
+                _al = resolve_env_vars(str(_e.get("alias", ""))) if _e.get("alias") else ""
+                if _mn:
+                    _valid_names.add(_mn)
+                if _al:
+                    _valid_names.add(_al)
+        if not _valid_names:
+            _valid_names = set(get_model_names())
+        if target not in _valid_names:
             logger.warning(
                 "[cli command.model] 模型不存在: %s, 可用: %s",
                 target,
                 get_model_names(),
             )
+            _avail_parts = []
+            for _e in _raw_defs_check:
+                if not isinstance(_e, dict):
+                    continue
+                _mn = resolve_env_vars(str((_e.get("model_client_config") or {}).get("model_name", "")))
+                _al = resolve_env_vars(str(_e.get("alias", ""))) if _e.get("alias") else ""
+                if _al and _mn and _al != _mn:
+                    _avail_parts.append(f"{_al} ({_mn})")
+                elif _mn:
+                    _avail_parts.append(_mn)
             await channel.send_response(
                 ws,
                 req_id,
                 ok=False,
                 error=(
                     f"Model '{target}' not found. "
-                    f"Available: {', '.join(get_model_names())}"
+                    f"Available: {', '.join(_avail_parts) or ', '.join(get_model_names())}"
                 ),
             )
             return
@@ -1015,16 +1082,17 @@ def register_cli_handlers(bind: CliHandlersBindParams) -> None:
         _raw_defaults = (_raw_cfg.get("models") or {}).get("defaults")
         if isinstance(_raw_defaults, list):
             _target_entry = None
-            _other_entries = []
-            for _e in _raw_defaults:
+            _target_idx = None
+            for _i, _e in enumerate(_raw_defaults):
                 if not isinstance(_e, dict):
-                    _other_entries.append(_e)
                     continue
                 _ename = resolve_env_vars(str((_e.get("model_client_config") or {}).get("model_name", "")))
-                if _ename == target:
+                _ealias = resolve_env_vars(str(_e.get("alias", ""))) if _e.get("alias") else ""
+                if _ename == target or _ealias == target:
                     _target_entry = _e
-                else:
-                    _other_entries.append(_e)
+                    _target_idx = _i
+                    break  # 取第一个匹配
+            _other_entries = [_e for _i, _e in enumerate(_raw_defaults) if _i != _target_idx]
             if _target_entry is None:
                 await channel.send_response(ws, req_id, ok=False, error=f"Model '{target}' config not found")
                 return
@@ -1047,9 +1115,11 @@ def register_cli_handlers(bind: CliHandlersBindParams) -> None:
                         await _cb
                 except Exception as _e2:
                     logger.warning("[cli model.switch] on_config_saved failed: %s", _e2)
-            logger.info("[cli command.model] 切换完成(新格式): current=%s", target)
+            _target_model_name = resolve_env_vars(
+                str((_target_entry.get("model_client_config") or {}).get("model_name", target)))
+            logger.info("[cli command.model] 切换完成(新格式): current=%s", _target_model_name)
             await channel.send_response(ws, req_id, ok=True, payload={
-                "current": target,
+                "current": _target_model_name,
                 "requested": target,
                 "type": "switched",
                 "applied": True,
@@ -1247,6 +1317,7 @@ def register_cli_handlers(bind: CliHandlersBindParams) -> None:
                     "api_key": mcc.get("api_key", ""),
                     "model_provider": mcc.get("client_provider", ""),
                     "temperature": mco.get("temperature", 0.95),
+                    "alias": entry.get("alias", ""),
                 })
             active_model = result[0]["model_name"] if result else ""
             await channel.send_response(ws, req_id, ok=True, payload={

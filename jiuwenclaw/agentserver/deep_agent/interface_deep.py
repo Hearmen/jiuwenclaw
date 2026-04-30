@@ -1292,6 +1292,8 @@ class JiuWenClawDeepAdapter:
             temperature=mco.get("temperature", 0.95),
         )
         mcc_fields = {k: v for k, v in mcc.items() if k != "model_name"}
+        if not mcc_fields.get("client_provider"):
+            mcc_fields["client_provider"] = "OpenAI"
         return Model(model_client_config=ModelClientConfig(**mcc_fields), model_config=m_config)
 
     def _build_model_cache_from_defaults(self, config: dict) -> None:
@@ -1322,6 +1324,10 @@ class JiuWenClawDeepAdapter:
             # 同时用纯 model_name 作为 key 指向 is_default=true 的条目
             if entry.get("is_default") is True:
                 self._model_cache[model_name] = self._model_cache[cache_key]
+
+            alias = entry.get("alias", "")
+            if alias and alias != model_name and alias not in self._model_cache:
+                self._model_cache[alias] = self._model_cache[cache_key]
 
     def _build_model_cache_legacy(self, config: dict) -> None:
         """回退到旧格式（models.default / react 段）构建单条目缓存。"""
@@ -1372,7 +1378,7 @@ class JiuWenClawDeepAdapter:
         return self._model
 
     def _resolve_model_for_request(self, request: AgentRequest) -> Model:
-        """根据请求中的 model_name 参数查找对应模型，未匹配则回退默认模型。
+        """根据请求中的 model_name 参数查找对应模型（支持别名），未匹配则回退默认模型。
 
         支持两种格式：
         - 纯 model_name：查找 is_default=true 的条目
@@ -2882,17 +2888,35 @@ class JiuWenClawDeepAdapter:
                     exc,
                 )
 
-    def _has_valid_model_config(self) -> bool:
+    def _has_valid_model_config(self, requested_model_name: str = "") -> bool:
         """检查是否有有效的模型配置。
 
-        优先用已解析的 self._model，其次从 config.yaml 重新解析。
-        与 _create_model 同源，不独立读取环境变量。
+        优先检查请求中实际要用的模型（requested_model_name），其次检查默认模型，
+        最后从 config.yaml 重新解析。与 _create_model 同源，不独立读取环境变量。
         """
+        def _mcc_obj_looks_usable(mcc_obj: Any) -> bool:
+            if not isinstance(mcc_obj, ModelClientConfig):
+                return False
+            return _mcc_looks_usable({
+                "api_key": mcc_obj.api_key,
+                "api_base": getattr(mcc_obj, "api_base", None),
+            })
+
+        # 优先检查请求中指定的模型（如用户在 UI 切换了模型）
+        if requested_model_name and requested_model_name in self._model_cache:
+            m = self._model_cache[requested_model_name]
+            if _mcc_obj_looks_usable(getattr(m, "model_client_config", None)):
+                return True
+
+        # 检查默认模型
         if self._model is not None:
-            mcc = getattr(self._model, "model_client_config", None)
-            if isinstance(mcc, ModelClientConfig):
-                if _mcc_looks_usable({"api_key": mcc.api_key, "api_base": getattr(mcc, "api_base", None)}):
-                    return True
+            if _mcc_obj_looks_usable(getattr(self._model, "model_client_config", None)):
+                return True
+
+        # 回退：检查 cache 中是否有任意一个有效模型
+        for m in self._model_cache.values():
+            if _mcc_obj_looks_usable(getattr(m, "model_client_config", None)):
+                return True
 
         try:
             mcc = get_config().get("models", {}).get("default", {}).get("model_client_config", {})
@@ -3616,7 +3640,8 @@ class JiuWenClawDeepAdapter:
         if self._instance is None:
             raise RuntimeError("JiuWenClawDeepAdapter 未初始化，请先调用 create_instance()")
 
-        if not self._has_valid_model_config():
+        _req_model = (request.params.get("model_name") or "") if isinstance(request.params, dict) else ""
+        if not self._has_valid_model_config(_req_model):
             return AgentResponse(
                 request_id=request.request_id,
                 channel_id=request.channel_id,
@@ -3714,7 +3739,8 @@ class JiuWenClawDeepAdapter:
         if self._instance is None:
             raise RuntimeError("JiuWenClawDeepAdapter 未初始化，请先调用 create_instance()")
 
-        if not self._has_valid_model_config():
+        _req_model = (request.params.get("model_name") or "") if isinstance(request.params, dict) else ""
+        if not self._has_valid_model_config(_req_model):
             yield AgentResponseChunk(
                 request_id=request.request_id,
                 channel_id=request.channel_id,

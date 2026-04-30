@@ -402,11 +402,11 @@ export const useSessionStore = create<SessionState>((set) => ({
   setAvailableModels: (models, activeModel) => {
     set(() => {
       const chatModels = models.filter((m) => m.is_default !== false);
-      const chatNames = chatModels.map((m) => m.model_name);
-      // 优先使用后端返回的 activeModel（默认模型），其次取 chatAvailableModels 第一个
-      const selected = (activeModel && chatNames.includes(activeModel))
-        ? activeModel
-        : chatNames[0] || null;
+      // 优先使用后端返回的 activeModel（默认模型），其次取第一个；有别名时存别名
+      const matchedModel = activeModel ? chatModels.find((m) => m.model_name === activeModel) : null;
+      const selected = matchedModel
+        ? (matchedModel.alias || matchedModel.model_name)
+        : (chatModels[0] ? (chatModels[0].alias || chatModels[0].model_name) : null);
       if (selected) {
         try { localStorage.setItem(MODEL_STORAGE_KEY, selected); } catch { /* noop */ }
       }

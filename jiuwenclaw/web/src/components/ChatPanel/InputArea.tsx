@@ -455,10 +455,10 @@ function ModelSelector() {
   if (chatAvailableModels.length === 1) {
     return (
       <span
-        className="text-xs text-text-muted px-2 truncate max-w-[140px]"
+        className="text-xs text-text-muted px-2 truncate max-w-[200px]"
         title={chatAvailableModels[0].model_name}
       >
-        {chatAvailableModels[0].model_name}
+        {chatAvailableModels[0].alias || chatAvailableModels[0].model_name}
       </span>
     );
   }
@@ -471,9 +471,9 @@ function ModelSelector() {
       className="chat-model-selector"
       data-testid="chat-model-selector"
     >
-      {chatAvailableModels.map((m) => (
-        <option key={m.model_name} value={m.model_name}>
-          {m.model_name}
+      {chatAvailableModels.map((m, idx) => (
+        <option key={`${m.model_name}-${idx}`} value={m.alias || m.model_name}>
+          {m.alias ? `${m.alias} (${m.model_name})` : m.model_name}
         </option>
       ))}
     </select>

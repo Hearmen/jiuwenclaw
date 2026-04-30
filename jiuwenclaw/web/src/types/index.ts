@@ -38,6 +38,8 @@ export interface ModelEntry {
   temperature?: number;
   /** 同 model_name 组内的默认勾选标识 */
   is_default?: boolean;
+  /** 可选别名，用于快捷切换模型（如 "mimo" → "xiaomi/mimo-v2-omni"） */
+  alias?: string;
   /** 用于原子性重命名操作，指定原模型名 */
   original_model_name?: string;
 }

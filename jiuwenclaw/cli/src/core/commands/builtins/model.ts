@@ -106,11 +106,16 @@ export function createModelCommand(): SlashCommand {
             ctx.addItem(addInfo(ctx.sessionId, "No switchable models in list", "m"));
             return;
           }
+          const modelsMeta = payload.models ?? [];
           const items = selectable.map((m, i) => {
             const isCurrent = m === current;
+            const meta = modelsMeta.find((x) => x.name === m);
+            const displayName = meta?.model_name && meta.model_name !== m
+              ? `${m} (${meta.model_name})`
+              : m;
             return {
               label: String(i + 1),
-              value: `${m}${isCurrent ? " (current)" : ""}`,
+              value: `${displayName}${isCurrent ? " (current)" : ""}`,
             };
           });
           ctx.addItem(
@@ -143,10 +148,10 @@ export function createModelCommand(): SlashCommand {
 
         const isSwitch = !!payload.requested;
         if (isSwitch) {
-          ctx.setModel(payload.requested ?? payload.current ?? "");
+          ctx.setModel(payload.current ?? payload.requested ?? "");
         }
         const title = isSwitch
-          ? `Switched to: ${payload.requested}`
+          ? `Switched to: ${payload.current ?? payload.requested}`
           : "Model Configuration";
         const icon = isSwitch ? "m" : "c";
 
@@ -154,7 +159,7 @@ export function createModelCommand(): SlashCommand {
           addInfo(
             ctx.sessionId,
             payload.requested
-              ? `Switched model config to: ${payload.requested}`
+              ? `Switched model config to: ${payload.current ?? payload.requested}`
               : `Current model: ${payload.current ?? "unknown"}`,
             icon,
             {

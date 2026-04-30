@@ -688,7 +688,7 @@ def get_default_models(config: dict[str, Any] | None = None) -> list[dict[str, A
     """获取默认模型列表，兼容新旧格式。
 
     优先级：models.defaults（列表） > models.default（单对象） > 环境变量回退
-    返回的 api_key 已解密。
+    返回的 api_key 已解密。每个条目可能含顶层 alias 字段。
     """
     if config is None:
         config = get_config()
@@ -703,7 +703,8 @@ def get_default_models(config: dict[str, Any] | None = None) -> list[dict[str, A
         return _decrypt_model_entries([models["default"]])
 
     # 回退：从环境变量构造（env var 已在 resolve_env_vars 中解密）
-    return [{
+    alias = os.getenv("MODEL_ALIAS", "")
+    entry: dict[str, Any] = {
         "model_client_config": {
             "api_base": os.getenv("API_BASE", ""),
             "api_key": os.getenv("API_KEY", ""),
@@ -714,7 +715,10 @@ def get_default_models(config: dict[str, Any] | None = None) -> list[dict[str, A
             "verify_ssl": False,
         },
         "model_config_obj": {"temperature": 0.95},
-    }]
+    }
+    if alias:
+        entry["alias"] = alias
+    return [entry]
 
 
 def update_default_models_in_config(models_list: list[dict[str, Any]]) -> None:
@@ -1193,10 +1197,14 @@ def get_model_names() -> list[str]:
         for entry in defaults_list:
             if not isinstance(entry, dict):
                 continue
-            name = (entry.get("model_client_config") or {}).get("model_name", "")
-            if name and name not in seen:
-                seen.add(name)
-                names.append(resolve_env_vars(str(name)))
+            model_name = (entry.get("model_client_config") or {}).get("model_name", "")
+            alias = entry.get("alias", "")
+            resolved_alias = resolve_env_vars(str(alias)) if alias else ""
+            resolved_name = resolve_env_vars(str(model_name)) if model_name else ""
+            display = resolved_alias or resolved_name
+            if display and display not in seen:
+                seen.add(display)
+                names.append(display)
         return names
     skip = {"default", "defaults"}
     return [k for k, v in models.items() if isinstance(v, dict) and k not in skip]
@@ -1238,6 +1246,13 @@ def get_model_config(name: str, index: int | None = None) -> dict[str, Any] | No
             if resolve_env_vars(str(entry_name)) == name:
                 matches.append((i, entry))
         if not matches:
+            # 按 alias 查找（alias 全局唯一，index 无意义）
+            for entry in defaults_list:
+                if not isinstance(entry, dict):
+                    continue
+                alias = entry.get("alias", "")
+                if alias and resolve_env_vars(str(alias)) == name:
+                    return entry
             return models.get(name) if name in models else None
         if index is not None:
             for pos, entry in matches:

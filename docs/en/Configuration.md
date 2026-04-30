@@ -36,6 +36,43 @@ These can be changed in the web app; values are written back to `.env` or config
 
 **Note**: After saving, the backend restarts to load new settings. Model fields (`api_base`, `api_key`, `model`, `model_provider`) are required.
 
+### Multi-model management and aliases
+
+The **model list** block in the Configuration panel supports maintaining multiple models simultaneously. Fields for each model entry:
+
+| Field | Required | Description |
+|-------|----------|-------------|
+| `model_name` | Yes | API-level model identifier (e.g. `gpt-4o`, `deepseek-chat`) |
+| `alias` | No | Display name / switch identifier; defaults to `model_name` if left empty |
+| `api_base` | Yes | API base URL for this model |
+| `api_key` | Yes | API key for this model |
+| `model_provider` | Yes | Provider (e.g. `OpenAI`, `DeepSeek`) |
+| `temperature` | No | Sampling temperature, default `0.95` |
+
+**`alias` rules**:
+- If left blank, the stored value is automatically set to `model_name`.
+- Must be globally unique across all configured models: cannot match another model's `alias` or `model_name`.
+- When switching models (web dropdown / CLI `\model <name>`), either `alias` or `model_name` can be used as the identifier.
+
+Multi-model configuration is saved to the `models.defaults` list in `config.yaml`. Example:
+
+```yaml
+models:
+  defaults:
+    - alias: my-gpt          # display name; used for switching in both UI and CLI
+      model_client_config:
+        api_base: https://api.openai.com/v1
+        api_key: ${API_KEY}
+        model_name: gpt-4o
+        client_provider: OpenAI
+        timeout: 1800
+        verify_ssl: false
+      model_config_obj:
+        temperature: 0.95
+```
+
+The first entry in the list is the default model; use the UI to drag-reorder or click "Set as default" to change it.
+
 ## 2. Not configurable in the web UI
 
 Edit **`config/config.yaml`** or **`.env`** directly; there is no UI for these.

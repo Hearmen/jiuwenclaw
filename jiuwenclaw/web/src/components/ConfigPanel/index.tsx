@@ -726,6 +726,19 @@ function MultiModelSection({
   };
 
   const updateModel = (idx: number, field: keyof ModelEntry, value: string) => {
+    if (field === "alias") {
+      const alias = value.trim();
+      if (alias) {
+        const conflict = models.find((m, i) => i !== idx && ((m.alias || "") === alias || m.model_name === alias));
+        if (conflict) {
+          setLocalError(`Alias '${alias}' is already used by model '${conflict.model_name}'`);
+        } else {
+          setLocalError(null);
+        }
+      } else {
+        setLocalError(null);
+      }
+    }
     const copy = [...models];
     copy[idx] = { ...copy[idx], [field]: value };
     onModelsChange(copy);
@@ -777,37 +790,24 @@ function MultiModelSection({
     if (sameNameCount <= 1) return;
     const copy = [...models];
     const newDefault = !copy[idx].is_default;
-    copy[idx] = { ...copy[idx], is_default: newDefault };
-
-    // 找到主对话默认所在的 index（列表首位）
-    const primaryDefaultName = copy[0].model_name;
 
     if (newDefault) {
-      // 设为组内默认时，同组其他条目取消默认
+      // 设为组内默认：同组其他条目取消默认，不重排列表顺序
       for (let i = 0; i < copy.length; i++) {
-        if (i !== idx && copy[i].model_name === model.model_name) {
-          copy[i] = { ...copy[i], is_default: false };
+        if (copy[i].model_name === model.model_name) {
+          copy[i] = { ...copy[i], is_default: i === idx };
         }
       }
-      // 如果切换的组是主对话默认所在组，则新的组内默认自动成为主对话默认
-      if (model.model_name === primaryDefaultName) {
-        const [newPrimary] = copy.splice(idx, 1);
-        copy.unshift(newPrimary);
-      }
     } else {
-      // 取消默认时，同组第一个其他条目自动成为默认
+      // 取消默认：同组第一个其他条目自动成为默认
+      copy[idx] = { ...copy[idx], is_default: false };
       const fallbackIdx = copy.findIndex((m, i) => i !== idx && m.model_name === model.model_name);
       if (fallbackIdx >= 0) {
         copy[fallbackIdx] = { ...copy[fallbackIdx], is_default: true };
-        // 如果取消的组是主对话默认所在组，则新的组内默认自动成为主对话默认
-        if (model.model_name === primaryDefaultName) {
-          const [newPrimary] = copy.splice(fallbackIdx, 1);
-          copy.unshift(newPrimary);
-        }
       }
     }
     onModelsChange(copy);
-    setExpandedIdx(null);
+    // 不收起面板，让用户看到变化后的状态
   };
 
   const handleAddNew = () => {
@@ -817,6 +817,14 @@ function MultiModelSection({
       setLocalError(t("config.modelList.apiKeyRequired"));
       return;
     }
+    const alias = newModel.alias?.trim() ?? "";
+    if (alias) {
+      const conflict = models.find((m) => (m.alias || "") === alias || m.model_name === alias);
+      if (conflict) {
+        setLocalError(`Alias '${alias}' is already used by model '${conflict.model_name}'`);
+        return;
+      }
+    }
     setLocalError(null);
     // 新增条目：同名组已有条目时 is_default=false，否则 is_default=true
     const sameNameExists = models.some((m) => m.model_name === name);
@@ -824,7 +832,7 @@ function MultiModelSection({
     onModelsChange([...models, entry]);
     setExpandedIdx(models.length); // 自动展开新增的条目
     setAddingNew(false);
-    setNewModel({ model_name: "", api_base: "", api_key: "", model_provider: "OpenAI" });
+    setNewModel({ model_name: "", api_base: "", api_key: "", model_provider: "OpenAI", alias: "" });
   };
 
   return (
@@ -868,13 +876,13 @@ function MultiModelSection({
           : model.model_name;
         return (
           <div key={idx} className="rounded-lg border border-border bg-secondary/20">
-            <div className="flex items-center justify-between px-3 py-2">
+            <div className="flex items-center justify-between px-3 py-2 gap-2">
               <button
                 type="button"
                 className="flex items-center gap-2 text-sm font-medium text-text truncate flex-1 text-left"
                 onClick={() => setExpandedIdx(isExpanded ? null : idx)}
               >
-                <svg className={`w-3 h-3 transition-transform ${isExpanded ? "rotate-90" : ""}`} fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2}>
+                <svg className={`w-3 h-3 transition-transform shrink-0 ${isExpanded ? "rotate-90" : ""}`} fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2}>
                   <path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" />
                 </svg>
                 <span className="truncate">{displayName || t("config.modelList.untitled")}</span>
@@ -899,7 +907,7 @@ function MultiModelSection({
                   </span>
                 )}
               </button>
-              <div className="flex items-center gap-1 ml-2">
+              <div className="flex items-center gap-1.5 shrink-0">
                 {!isPrimaryDefault && (
                   <button
                     type="button"
@@ -929,7 +937,7 @@ function MultiModelSection({
             </div>
             {isExpanded && (
               <div className="border-t border-border px-3 py-2 space-y-2">
-                {(["model_name", "api_base", "api_key", "model_provider"] as const).map((field) => (
+                {(["model_name", "alias", "api_base", "api_key", "model_provider"] as const).map((field) => (
                   <div key={field} className="flex items-center gap-2 text-xs">
                     <label className="w-28 text-text-muted shrink-0">
                       {field}{field === "api_key" && <span className="text-danger ml-0.5">*</span>}
@@ -976,7 +984,7 @@ function MultiModelSection({
 
       {addingNew ? (
         <div className="rounded-lg border border-accent/40 bg-accent/5 px-3 py-2 space-y-2">
-          {(["model_name", "api_base", "api_key", "model_provider"] as const).map((field) => (
+          {(["model_name", "alias", "api_base", "api_key", "model_provider"] as const).map((field) => (
             <div key={field} className="flex items-center gap-2 text-xs">
               <label className="w-28 text-text-muted shrink-0">
                 {field}{field === "api_key" && <span className="text-danger ml-0.5">*</span>}
@@ -993,7 +1001,7 @@ function MultiModelSection({
               ) : (
                 <input
                   type={field === "api_key" ? "password" : "text"}
-                  value={newModel[field]}
+                  value={newModel[field] ?? ""}
                   onChange={(e) => setNewModel((p) => ({ ...p, [field]: e.target.value }))}
                   className="flex-1 rounded border border-border bg-bg px-2 py-1 text-text text-xs"
                   placeholder={field === "model_name" ? "e.g. gpt-4o" : field === "api_key" ? t("config.modelList.apiKeyPlaceholder") : ""}
@@ -1893,7 +1901,7 @@ export function ConfigPanel({
   }, [normalizedConfig]);
 
   useEffect(() => {
-    setDraftModels(storeAvailableModels.map((m) => ({ ...m })));
+    setDraftModels(storeAvailableModels.map((m) => ({ ...m, alias: m.alias || "" })));
   }, [storeAvailableModels]);
 
   const agentsFromConfig = useMemo<AgentEntry[]>(() => {
@@ -2012,7 +2020,9 @@ export function ConfigPanel({
       const om = storeAvailableModels[i];
       if (!om) return true;
       return dm.model_name !== om.model_name || dm.api_base !== om.api_base
-        || dm.api_key !== om.api_key || dm.model_provider !== om.model_provider;
+        || dm.api_key !== om.api_key || dm.model_provider !== om.model_provider
+        || (dm.alias ?? "") !== (om.alias ?? "")
+        || dm.is_default !== om.is_default;
     });
   }, [draftModels, storeAvailableModels]);
 
@@ -2038,7 +2048,7 @@ export function ConfigPanel({
   const handleCancel = () => {
     if (!hasChanges) return;
     setDraftValues(normalizedConfig);
-    setDraftModels(storeAvailableModels.map((m) => ({ ...m })));
+    setDraftModels(storeAvailableModels.map((m) => ({ ...m, alias: m.alias || "" })));
     setDraftAgents(agentsFromConfig);
     setDraftTeams(teamsFromConfig);
     setAgentsTeamsEdited(false);
@@ -2056,6 +2066,21 @@ export function ConfigPanel({
       setError(t('config.modelList.apiKeyRequired'));
       return;
     }
+    // alias 唯一性校验
+    const aliasSeen = new Map<string, string>();
+    for (const m of draftModels) {
+      const a = (m.alias || "").trim();
+      if (!a) continue;
+      if (aliasSeen.has(a)) {
+        setError(`Alias '${a}' is used by multiple models`);
+        return;
+      }
+      aliasSeen.set(a, m.model_name);
+      if (draftModels.some((other) => other !== m && other.model_name === a)) {
+        setError(`Alias '${a}' conflicts with model name '${a}'`);
+        return;
+      }
+    }
     setSaving(true);
     setError(null);
     try {
@@ -2067,9 +2092,7 @@ export function ConfigPanel({
       const isRename = removedNames.length === 1 && addedNames.length === 1
         && draftModels.length === storeAvailableModels.length;
 
-      // 保存非模型配置（视频/音频/embed/第三方等）
-      await onSaveConfig(draftValues);
-      // 保存多模型变更
+      // 先保存多模型变更——若此步骤失败，后续成功弹窗不会弹出
       if (hasModelChanges) {
         if (isRename && onModelSave) {
           // 改名场景：先原子性处理改名，再处理其他模型的字段变更
@@ -2085,7 +2108,7 @@ export function ConfigPanel({
             const original = storeAvailableModels.find((m) => m.model_name === other.model_name);
             const isChanged = original && (
               other.api_base !== original.api_base || other.api_key !== original.api_key
-              || other.model_provider !== original.model_provider
+              || other.model_provider !== original.model_provider || other.alias !== original.alias
               || other.is_default !== original.is_default
             );
             if (isChanged) {
@@ -2097,11 +2120,27 @@ export function ConfigPanel({
           for (let i = 0; i < draftModels.length; i++) {
             const dm = draftModels[i];
             if (!dm.model_name) continue;
-            const original = storeAvailableModels.find((m) => m.model_name === dm.model_name);
-            const isNew = !originalNames.has(dm.model_name);
+            // 用 alias 作为身份标识匹配原始条目，避免重排后位置错位
+            const dmAlias = (dm.alias || "").trim();
+            let origIdx: number;
+            if (dmAlias) {
+              origIdx = storeAvailableModels.findIndex((m) => (m.alias || "").trim() === dmAlias);
+            } else {
+              // 无 alias：按 model_name 且同样无 alias 的条目匹配，找不到再按位置
+              const byName = storeAvailableModels.findIndex(
+                (m) => !(m.alias || "").trim() && m.model_name === dm.model_name
+              );
+              origIdx = byName >= 0 ? byName : i;
+            }
+            const original = origIdx >= 0 ? storeAvailableModels[origIdx] : storeAvailableModels[i];
+            const positionChanged = origIdx >= 0 && origIdx !== i;
+            // i >= storeAvailableModels.length 时是新增条目；alias 找不到对应原始条目也视为新增
+            const isNew = origIdx < 0 && (i >= storeAvailableModels.length || !originalNames.has(dm.model_name));
             const isChanged = original && (
+              positionChanged ||
               dm.api_base !== original.api_base || dm.api_key !== original.api_key
               || dm.model_provider !== original.model_provider
+              || (dm.alias ?? "") !== (original.alias ?? "")
               || dm.is_default !== original.is_default
             );
             if ((isNew || isChanged) && onModelSave) {
@@ -2146,6 +2185,8 @@ export function ConfigPanel({
         });
         setAgentsTeamsEdited(false);
       }
+      // 模型保存全部成功后，再保存非模型配置（视频/音频/embed/第三方等）并触发成功弹窗
+      await onSaveConfig(draftValues);
     } catch (saveError) {
       const message = saveError instanceof Error ? saveError.message : t('config.errors.saveFailed');
       setError(message);

@@ -70,6 +70,12 @@ def _entry_model_name(entry: dict) -> str:
     return _resolve_env_var_str(raw)
 
 
+def _entry_alias(entry: dict) -> str:
+    """从模型配置条目中提取并解析 alias。alias 为空时返回空字符串。"""
+    raw = entry.get("alias", "")
+    return _resolve_env_var_str(raw) if raw else ""
+
+
 # 仅满足 Channel 构造所需，不入队、不路由；仅用 channel_manager + message_handler 做入站/出站
 class _DummyBus:
     async def publish_user_messages(self, msg):  # noqa: ANN001, ARG002
@@ -706,6 +712,7 @@ def _register_web_handlers(bind: WebHandlersBindParams) -> None:
                     "model_provider": mcc.get("client_provider", ""),
                     "temperature": mco.get("temperature", 0.95),
                     "is_default": is_default,
+                    "alias": entry.get("alias", ""),
                 })
                 # active_model 为列表首位的模型（主对话默认）
             active_model = result[0]["model_name"] if result else ""
@@ -744,6 +751,7 @@ def _register_web_handlers(bind: WebHandlersBindParams) -> None:
                 target_index = int(target_index)
             except (ValueError, TypeError):
                 target_index = None
+        alias = str(params.get("alias") or "").strip()
 
         available_model_providers = [p.value for p in ProviderType]
         if model_provider and model_provider not in available_model_providers:
@@ -753,6 +761,31 @@ def _register_web_handlers(bind: WebHandlersBindParams) -> None:
                 code="BAD_REQUEST",
             )
             return
+        _existing = _get_raw_model_list()
+        if alias:
+            for chk_idx, entry in enumerate(_existing):
+                # 跳过正在编辑的条目本身（按 index 精准定位，避免误报自身冲突）
+                if target_index is not None and chk_idx == target_index:
+                    continue
+                ea = _entry_alias(entry)
+                emn = _entry_model_name(entry)
+                if ea == alias:
+                    # 同 model_name 组内换位（如设为主对话默认时列表重排），不视为冲突
+                    if emn == model_name:
+                        continue
+                    await channel.send_response(
+                        ws, req_id, ok=False,
+                        error=f"Alias '{alias}' is already used by model '{emn}'",
+                        code="BAD_REQUEST",
+                    )
+                    return
+                if emn == alias:
+                    await channel.send_response(
+                        ws, req_id, ok=False,
+                        error=f"Alias '{alias}' conflicts with model name '{emn}'",
+                        code="BAD_REQUEST",
+                    )
+                    return
 
         if api_key:
             from jiuwenclaw.extensions.registry import ExtensionRegistry
@@ -774,40 +807,50 @@ def _register_web_handlers(bind: WebHandlersBindParams) -> None:
             },
             "is_default": is_default,
         }
+        new_entry["alias"] = alias
 
         try:
             models = _get_raw_model_list()
 
             action = "created"
+
             if original_model_name and original_model_name != model_name:
-                models = [m for m in models if _entry_model_name(m) != original_model_name]
-                action = "renamed"
-
-            if is_default:
-                for i, entry in enumerate(models):
-                    if _entry_model_name(entry) == model_name:
-                        entry["is_default"] = False
-
-            if target_index is not None:
-                found = False
-                for i, entry in enumerate(models):
-                    if i == target_index:
-                        models[i] = new_entry
-                        found = True
-                        if action != "renamed":
-                            action = "updated"
-                        break
-                if not found:
-                    models.append(new_entry)
-            else:
-                for i, entry in enumerate(models):
-                    if _entry_model_name(entry) == model_name and not entry.get("is_default", False):
-                        models[i] = new_entry
-                        if action != "renamed":
-                            action = "updated"
-                        break
+                # 重命名场景：model_name 发生变化，优先用 target_index 精准定位
+                if target_index is not None and 0 <= target_index < len(models):
+                    models[target_index] = new_entry
+                    action = "renamed"
                 else:
+                    renamed = False
+                    for i, entry in enumerate(models):
+                        if _entry_model_name(entry) == original_model_name:
+                            models[i] = new_entry
+                            renamed = True
+                            break
+                    if renamed:
+                        action = "renamed"
+                    else:
+                        models.append(new_entry)
+            else:
+                if is_default:
+                    for i, entry in enumerate(models):
+                        if _entry_model_name(entry) == model_name:
+                            entry["is_default"] = False
+
+                if target_index is not None and 0 <= target_index < len(models):
+                    models[target_index] = new_entry
+                    action = "updated"
+                elif target_index is not None and target_index >= len(models):
+                    # index 越界 = 新增条目（前端追加到列表末尾时会出现此情况）
                     models.append(new_entry)
+                else:
+                    updated = False
+                    for i, entry in enumerate(models):
+                        if _entry_model_name(entry) == model_name:
+                            models[i] = new_entry
+                            updated = True
+                            break
+                    if not updated:
+                        models.append(new_entry)
 
             from jiuwenclaw.config import _infer_is_default
             models = _infer_is_default(models)
@@ -871,15 +914,20 @@ def _register_web_handlers(bind: WebHandlersBindParams) -> None:
                 removed_name = _entry_model_name(removed)
                 new_models = models[:target_index] + models[target_index + 1:]
             else:
-                new_models = [m for m in models if _entry_model_name(m) != model_name]
-                removed_name = model_name
-                if len(new_models) == len(models):
+                removed_idx = None
+                for i, entry in enumerate(models):
+                    if _entry_model_name(entry) == model_name:
+                        removed_idx = i
+                        break
+                if removed_idx is None:
                     await channel.send_response(
                         ws, req_id, ok=False,
                         error=f"Model '{model_name}' not found",
                         code="NOT_FOUND",
                     )
                     return
+                removed_name = _entry_model_name(models[removed_idx])
+                new_models = models[:removed_idx] + models[removed_idx + 1:]
 
             # 删除后若同 model_name 组内无 is_default=true，自动将第一个设为默认
             from jiuwenclaw.config import _infer_is_default

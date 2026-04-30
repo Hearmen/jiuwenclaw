@@ -458,7 +458,9 @@
       "isDefault": "组内默认",
       "onlyOneInGroup": "同模型名仅一个，自动默认",
       "apiKeyRequired": "API Key 为必填项，请填写后再保存",
-      "apiKeyPlaceholder": "本地模型无需 API Key 可随意填写，如 sk-1234"
+      "apiKeyPlaceholder": "本地模型无需 API Key 可随意填写，如 sk-1234",
+      "alias": "别名",
+      "aliasPlaceholder": "选填，默认为空"
     },
     "agentList": {
       "addAgent": "添加Agent",
