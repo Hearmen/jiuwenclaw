@@ -448,15 +448,8 @@ function AppContent() {
     [request],
   );
 
-  const handleModelSave = useCallback(async (model: ModelEntry & { index?: number }) => {
-    const payload: Record<string, unknown> = { ...model };
-    await request('models.save', payload);
-  }, [request]);
-
-  const handleModelRemove = useCallback(async (modelName: string, index?: number) => {
-    const payload: Record<string, unknown> = { model_name: modelName };
-    if (index !== undefined) payload.index = index;
-    await request('models.remove', payload);
+  const handleModelsReplaceAll = useCallback(async (models: ModelEntry[]) => {
+    await request('models.replace_all', { models });
   }, [request]);
 
   const handleModelsRefresh = useCallback(async () => {
@@ -469,12 +462,6 @@ function AppContent() {
       console.warn('Failed to refresh models list:', error);
     }
   }, [request, setAvailableModels]);
-
-  const handleSetActiveModel = useCallback(async (modelName: string) => {
-    await request('models.set_active', { model_name: modelName });
-    // 不调 handleModelsRefresh —— 避免 useEffect 重置 draftModels 覆盖未保存的编辑
-    // 前端侧由 MultiModelSection 本地重排 draftModels
-  }, [request]);
 
   const saveConfigAndRestart = useCallback(async (updates: Record<string, string>) => {
     const payload = await request<{ updated?: string[]; applied_without_restart?: boolean }>(
@@ -1168,11 +1155,9 @@ function AppContent() {
               onSaveConfig={saveConfigAndRestart}
               onValidateModel={validateModelConfig}
               initialExpandGroupTag={configInitialExpandGroup}
-              onModelSave={handleModelSave}
-              onModelRemove={handleModelRemove}
+              onModelsReplaceAll={handleModelsReplaceAll}
               onModelValidate={validateModelConfig}
               onModelsRefresh={handleModelsRefresh}
-              onSetActiveModel={handleSetActiveModel}
               onAgentsTeamsSave={handleAgentsTeamsSave}
             />
           </div>

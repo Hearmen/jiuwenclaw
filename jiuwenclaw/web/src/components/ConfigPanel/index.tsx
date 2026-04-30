@@ -62,12 +62,10 @@ interface ConfigPanelProps {
   }) => Promise<void>;
   /** 首次进入配置页时展开的分组 tag（如 third_party_api）；离开配置页时由 App 清空 */
   initialExpandGroupTag?: string | null;
-  /** 多模型操作回调 */
-  onModelSave?: (model: ModelEntry & { index?: number }) => Promise<void>;
-  onModelRemove?: (modelName: string, index?: number) => Promise<void>;
+  /** 一次性原子提交完整模型列表，覆盖增删改重排 */
+  onModelsReplaceAll?: (models: ModelEntry[]) => Promise<void>;
   onModelValidate?: (fields: { api_base: string; api_key: string; model: string; model_provider: string }) => Promise<void>;
   onModelsRefresh?: () => Promise<void>;
-  onSetActiveModel?: (modelName: string) => Promise<void>;
   /** 多Agent和Teams操作回调 */
   onAgentsTeamsSave?: (payload: {
     agents: Record<string, {
@@ -1877,11 +1875,9 @@ export function ConfigPanel({
   onSaveConfig,
   onValidateModel: _onValidateModel,
   initialExpandGroupTag = null,
-  onModelSave,
-  onModelRemove,
+  onModelsReplaceAll,
   onModelValidate,
   onModelsRefresh,
-  onSetActiveModel,
   onAgentsTeamsSave,
 }: ConfigPanelProps) {
   const { t } = useTranslation();
@@ -2157,82 +2153,11 @@ export function ConfigPanel({
     setSaving(true);
     setError(null);
     try {
-      // 先计算改名检测所需的值（在 storeAvailableModels 可能被更新之前）
-      const originalNames = new Set(storeAvailableModels.map((m) => m.model_name));
-      const draftNames = new Set(draftModels.map((m) => m.model_name));
-      const removedNames = [...originalNames].filter((n) => !draftNames.has(n));
-      const addedNames = [...draftNames].filter((n) => !originalNames.has(n));
-      const isRename = removedNames.length === 1 && addedNames.length === 1
-        && draftModels.length === storeAvailableModels.length;
-
       // 先保存多模型变更——若此步骤失败，后续成功弹窗不会弹出
-      if (hasModelChanges) {
-        if (isRename && onModelSave) {
-          // 改名场景：先原子性处理改名，再处理其他模型的字段变更
-          const newName = addedNames[0];
-          const oldName = removedNames[0];
-          const dm = draftModels.find((m) => m.model_name === newName);
-          if (dm) {
-            await onModelSave({ ...dm, original_model_name: oldName });
-          }
-          // 处理同次保存中其他模型的字段变更
-          for (const other of draftModels) {
-            if (other.model_name === newName) continue;
-            const original = storeAvailableModels.find((m) => m.model_name === other.model_name);
-            const isChanged = original && (
-              other.api_base !== original.api_base || other.api_key !== original.api_key
-              || other.model_provider !== original.model_provider || other.alias !== original.alias
-              || other.is_default !== original.is_default
-            );
-            if (isChanged) {
-              await onModelSave(other);
-            }
-          }
-        } else {
-          // 非改名场景：先 save 再 delete
-          for (let i = 0; i < draftModels.length; i++) {
-            const dm = draftModels[i];
-            if (!dm.model_name) continue;
-            // 用 alias 作为身份标识匹配原始条目，避免重排后位置错位
-            const dmAlias = (dm.alias || "").trim();
-            let origIdx: number;
-            if (dmAlias) {
-              origIdx = storeAvailableModels.findIndex((m) => (m.alias || "").trim() === dmAlias);
-            } else {
-              // 无 alias：按 model_name 且同样无 alias 的条目匹配，找不到再按位置
-              const byName = storeAvailableModels.findIndex(
-                (m) => !(m.alias || "").trim() && m.model_name === dm.model_name
-              );
-              origIdx = byName >= 0 ? byName : i;
-            }
-            const original = origIdx >= 0 ? storeAvailableModels[origIdx] : storeAvailableModels[i];
-            const positionChanged = origIdx >= 0 && origIdx !== i;
-            // i >= storeAvailableModels.length 时是新增条目；alias 找不到对应原始条目也视为新增
-            const isNew = origIdx < 0 && (i >= storeAvailableModels.length || !originalNames.has(dm.model_name));
-            const isChanged = original && (
-              positionChanged ||
-              dm.api_base !== original.api_base || dm.api_key !== original.api_key
-              || dm.model_provider !== original.model_provider
-              || (dm.alias ?? "") !== (original.alias ?? "")
-              || dm.is_default !== original.is_default
-            );
-            if ((isNew || isChanged) && onModelSave) {
-              await onModelSave({ ...dm, index: i });
-            }
-          }
-          // 再删除已移除的模型
-          for (const name of removedNames) {
-            if (onModelRemove) {
-              await onModelRemove(name);
-            }
-          }
-        }
-        // 默认模型变化时同步后端排序
-        const newDefault = draftModels.find((m) => m.is_default !== false);
-        const oldDefault = storeAvailableModels.find((m) => m.is_default !== false);
-        if (newDefault && newDefault.model_name !== oldDefault?.model_name && onSetActiveModel) {
-          await onSetActiveModel(newDefault.model_name);
-        }
+      // 走 replace_all 一次性原子提交完整列表：避免按 model_name/index 多步 save+remove
+      // 在同 model_name 多条目场景下出现位置错位、漏删、覆写等问题
+      if (hasModelChanges && onModelsReplaceAll) {
+        await onModelsReplaceAll(draftModels);
         if (onModelsRefresh) await onModelsRefresh();
       }
       // 保存 agents 和 teams

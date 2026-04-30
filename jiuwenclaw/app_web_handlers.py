@@ -950,6 +950,157 @@ def _register_web_handlers(bind: WebHandlersBindParams) -> None:
             logger.warning("[models.remove] %s", exc)
             await channel.send_response(ws, req_id, ok=False, error=str(exc), code="INTERNAL_ERROR")
 
+    async def _models_replace_all(ws, req_id, params, session_id):
+        """原子地用提交的列表整体替换 models.defaults。
+
+        前端在保存配置时一次性提交完整的最终列表，避免按 model_name/index 分多步
+        save+remove 在同 model_name 多条目场景下出现的位置覆写、漏删等问题。
+        """
+        if not isinstance(params, dict):
+            await channel.send_response(ws, req_id, ok=False, error="params must be object", code="BAD_REQUEST")
+            return
+        raw_models = params.get("models")
+        if not isinstance(raw_models, list) or not raw_models:
+            await channel.send_response(
+                ws, req_id, ok=False,
+                error="models must be a non-empty list",
+                code="BAD_REQUEST",
+            )
+            return
+
+        available_model_providers = [p.value for p in ProviderType]
+        parsed: list[dict] = []
+        aliases_seen: dict[str, int] = {}
+        for idx, item in enumerate(raw_models):
+            if not isinstance(item, dict):
+                await channel.send_response(
+                    ws, req_id, ok=False,
+                    error=f"models[{idx}] must be object",
+                    code="BAD_REQUEST",
+                )
+                return
+            model_name = str(item.get("model_name") or "").strip()
+            if not model_name:
+                await channel.send_response(
+                    ws, req_id, ok=False,
+                    error=f"models[{idx}].model_name is required",
+                    code="BAD_REQUEST",
+                )
+                return
+            api_key = str(item.get("api_key") or "").strip()
+            if not api_key:
+                await channel.send_response(
+                    ws, req_id, ok=False,
+                    error=f"models[{idx}].api_key is required",
+                    code="BAD_REQUEST",
+                )
+                return
+            api_base = str(item.get("api_base") or "").strip()
+            model_provider = str(item.get("model_provider") or "").strip()
+            if model_provider and model_provider not in available_model_providers:
+                await channel.send_response(
+                    ws, req_id, ok=False,
+                    error=f"models[{idx}].model_provider must be one of: {available_model_providers}",
+                    code="BAD_REQUEST",
+                )
+                return
+            try:
+                temperature = float(item.get("temperature", 0.95))
+            except (ValueError, TypeError):
+                temperature = 0.95
+            try:
+                timeout = int(item.get("timeout", 1800))
+            except (ValueError, TypeError):
+                timeout = 1800
+            verify_ssl = bool(item.get("verify_ssl", False))
+            is_default = bool(item.get("is_default", False))
+            alias = str(item.get("alias") or "").strip()
+
+            if alias:
+                if alias in aliases_seen:
+                    await channel.send_response(
+                        ws, req_id, ok=False,
+                        error=f"Alias '{alias}' is used by multiple models",
+                        code="BAD_REQUEST",
+                    )
+                    return
+                aliases_seen[alias] = idx
+
+            parsed.append({
+                "model_name": model_name,
+                "api_base": api_base,
+                "api_key": api_key,
+                "model_provider": model_provider,
+                "temperature": temperature,
+                "is_default": is_default,
+                "timeout": timeout,
+                "verify_ssl": verify_ssl,
+                "alias": alias,
+            })
+
+        # alias 与其他条目的 model_name 冲突校验
+        for i, p in enumerate(parsed):
+            a = p["alias"]
+            if not a:
+                continue
+            for j, q in enumerate(parsed):
+                if i == j:
+                    continue
+                if q["model_name"] == a:
+                    await channel.send_response(
+                        ws, req_id, ok=False,
+                        error=f"Alias '{a}' conflicts with model name '{a}'",
+                        code="BAD_REQUEST",
+                    )
+                    return
+
+        from jiuwenclaw.extensions.registry import ExtensionRegistry
+        crypto = ExtensionRegistry.get_instance().get_crypto_provider()
+
+        new_models: list[dict] = []
+        for p in parsed:
+            api_key_val = p["api_key"]
+            if api_key_val and crypto:
+                api_key_val = crypto.encrypt(api_key_val)
+            new_models.append({
+                "model_client_config": {
+                    "api_base": p["api_base"],
+                    "api_key": api_key_val,
+                    "model_name": p["model_name"],
+                    "client_provider": p["model_provider"],
+                    "timeout": p["timeout"],
+                    "verify_ssl": p["verify_ssl"],
+                },
+                "model_config_obj": {
+                    "temperature": p["temperature"],
+                },
+                "is_default": p["is_default"],
+                "alias": p["alias"],
+            })
+
+        try:
+            from jiuwenclaw.config import _infer_is_default
+            new_models = _infer_is_default(new_models)
+            update_default_models_in_config(new_models)
+
+            await _clear_agent_config_cache(_resolve(agent_client))
+            if on_config_saved:
+                config_payload = get_config()
+                callback_result = on_config_saved(
+                    set(),
+                    env_updates={},
+                    config_payload=config_payload,
+                )
+                if inspect.isawaitable(callback_result):
+                    await callback_result
+
+            await channel.send_response(ws, req_id, ok=True, payload={
+                "count": len(new_models),
+            })
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("[models.replace_all] %s", exc)
+            await channel.send_response(ws, req_id, ok=False, error=str(exc), code="INTERNAL_ERROR")
+
     async def _models_validate(ws, req_id, params, session_id):
         """测试指定模型配置是否可用（复用 config.validate_model 逻辑）。"""
         await _config_validate_model(ws, req_id, params, session_id)
@@ -2041,6 +2192,7 @@ def _register_web_handlers(bind: WebHandlersBindParams) -> None:
     channel.register_method("models.list", _models_list)
     channel.register_method("models.save", _models_save)
     channel.register_method("models.remove", _models_remove)
+    channel.register_method("models.replace_all", _models_replace_all)
     channel.register_method("models.validate", _models_validate)
     channel.register_method("models.set_active", _models_set_active)
     channel.register_method("models.set_default", _models_set_default)
