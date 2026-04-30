@@ -372,8 +372,8 @@ class CronController:
                         },
                         "wake_offset_seconds": {
                             "type": "integer",
-                            "description": "Seconds to wake before push. Default 60",
-                            "default": 60,
+                            "description": "Seconds to wake before push. Default 300",
+                            "default": 300,
                         },
                     },
                     "required": ["name", "cron_expr", "timezone", "description"],

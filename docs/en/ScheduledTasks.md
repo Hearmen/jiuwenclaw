@@ -25,7 +25,7 @@ How to create and manage a simple scheduled job in JiuwenClaw and push results t
    - **targets**: `web` and/or `feishu`
    - **enabled**: checked (`true`)
    - **description**: natural language for what the agent should do at fire time, e.g. a short health reminder in Chinese or English.
-   - **wake_offset_seconds** (optional): default `60` to wake the agent one minute early.
+   - **wake_offset_seconds** (optional): default `300` to wake the agent five minutes early.
 
 ![](../assets/images/定时任务1.png)
 

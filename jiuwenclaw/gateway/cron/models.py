@@ -142,7 +142,7 @@ class CronJob:
         enabled = bool(data.get("enabled", False))
         expired = bool(data.get("expired", False))
 
-        wake_offset_seconds_raw = data.get("wake_offset_seconds", 60)
+        wake_offset_seconds_raw = data.get("wake_offset_seconds", 300)
         try:
             wake_offset_seconds = int(wake_offset_seconds_raw)
         except Exception as exc:  # noqa: BLE001

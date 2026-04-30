@@ -76,7 +76,7 @@ function createEmptyJobInput(): CronJobInput {
     enabled: true,
     cron_expr: '',
     timezone: DEFAULT_CRON_TIMEZONE,
-    wake_offset_seconds: 60,
+    wake_offset_seconds: 300,
     description: '',
     targets: DEFAULT_CRON_TARGET,
   };
@@ -224,7 +224,7 @@ function normalizeJobForEdit(job: CronJob): UpdateCronJob {
     enabled: Boolean(job.enabled),
     cron_expr: resolveCronExpr(job),
     timezone: resolveTimezone(job),
-    wake_offset_seconds: Number.isFinite(job.wake_offset_seconds) ? job.wake_offset_seconds : 0,
+    wake_offset_seconds: Number.isFinite(job.wake_offset_seconds) ? job.wake_offset_seconds : 300,
     description: resolveDescription(job),
     targets: resolveTargets(job),
     created_at: job.created_at,
@@ -674,7 +674,7 @@ export default function CronPanel({ sessionId }: CronPanelProps) {
                                 enabled: true,
                                 cron_expr: '',
                                 timezone: DEFAULT_CRON_TIMEZONE,
-                                wake_offset_seconds: 0,
+                                wake_offset_seconds: 300,
                                 description: '',
                                 targets: DEFAULT_CRON_TARGET,
                               });
