@@ -407,21 +407,31 @@ export function useWebSocket(options: UseWebSocketOptions): UseWebSocketReturn {
   // 切换模式
   const switchMode = useCallback(
     async (sessionId: string, mode: AgentMode) => {
+      // 标记正在切换模式
+      useChatStore.getState().setSwitchingMode(true);
+      
+      // 只有在有任务执行时才调用 interrupt
       if (sessionId && sessionId !== 'new') {
-        try {
-          await interrupt(sessionId, 'cancel');
-        } catch {
-          // 忽略中断错误，继续切换模式
+        const state = useChatStore.getState();
+        if (state.isProcessing || state.isPaused) {
+          try {
+            await interrupt(sessionId, 'cancel');
+          } catch {
+            // 忽略中断错误
+          }
         }
       }
-      setProcessing(false);
-      setThinking(false);
+      
       setMode(mode);
       if (sessionId && sessionId !== 'new') {
         updateSession(sessionId, { mode });
       }
+      // 延迟重置标志
+      setTimeout(() => {
+        useChatStore.getState().setSwitchingMode(false);
+      }, 300);
     },
-    [setMode, updateSession, setProcessing, setThinking, interrupt]
+    [setMode, updateSession, interrupt]
   );
 
   // 发送用户回答
@@ -765,6 +775,8 @@ export function useWebSocket(options: UseWebSocketOptions): UseWebSocketReturn {
       webClient.on('chat.processing_status', ({ payload }) => {
         if (!shouldHandleSessionEvent(payload)) return;
         if (shouldDropDuplicatedEvent('chat.processing_status', payload)) return;
+        // 切换模式时忽略处理状态更新
+        if (useChatStore.getState().switchingMode) return;
         const isProcessingNow = Boolean(payload.is_processing);
         setProcessing(isProcessingNow);
         if (!isProcessingNow) {
@@ -812,6 +824,8 @@ export function useWebSocket(options: UseWebSocketOptions): UseWebSocketReturn {
       webClient.on('chat.interrupt_result', ({ payload }) => {
         if (!shouldHandleSessionEvent(payload)) return;
         if (shouldDropDuplicatedEvent('chat.interrupt_result', payload)) return;
+        // 切换模式时忽略中断结果
+        if (useChatStore.getState().switchingMode) return;
         const resultPayload = payload as unknown as InterruptResultPayload;
         setInterruptResult(resultPayload);
         if (resultPayload.intent === 'pause') {

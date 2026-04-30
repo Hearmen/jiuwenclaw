@@ -753,6 +753,12 @@ function AppContent() {
     if (mode === 'team' && sessionId) {
       cancel(sessionId);
     }
+    // 切换模式/新建会话时直接设置状态，避免闪现
+    useChatStore.getState().setSwitchingMode(true);
+    useChatStore.getState().setInterruptResult(null);
+    useChatStore.getState().setProcessing(false);
+    useChatStore.getState().setThinking(false);
+    useChatStore.getState().setPaused(false);
     disposeInFlightHistoryHandles();
     setHistoryPagerMeta(null);
     setHistoryLoadingMore(false);
@@ -792,6 +798,10 @@ function AppContent() {
       setNewSessionToastVisible(false);
       newSessionToastTimerRef.current = null;
     }, 2000);
+    // 延迟重置切换模式状态
+    setTimeout(() => {
+      useChatStore.getState().setSwitchingMode(false);
+    }, 300);
   }, [
     cancel,
     clearMessages,
@@ -812,6 +822,11 @@ function AppContent() {
   // 切换模式
   const handleSwitchMode = useCallback((mode: AgentMode) => {
     if (!sessionId || sessionId === 'new') return;
+    // 切换模式时直接设置状态，避免闪现
+    useChatStore.getState().setSwitchingMode(true);
+    useChatStore.getState().setProcessing(false);
+    useChatStore.getState().setThinking(false);
+    useChatStore.getState().setPaused(false);
     void switchMode(sessionId, mode);
   }, [sessionId, switchMode]);
 
