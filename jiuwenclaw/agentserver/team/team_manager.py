@@ -591,7 +591,6 @@ class TeamManager:
             # Build all member rails (common + skill rails via role).
             try:
                 member_rails = build_member_rails(
-                    skills_dir=str(member_skills_dir_resolved) if member_skills_dir_resolved else "",
                     member_info=MemberInfo(
                         agent_name=getattr(agent.card, "name", "team_member"),
                         model_name=resolved_model_name,

@@ -129,6 +129,7 @@ from jiuwenclaw.agentserver.memory.config import (
 )
 from jiuwenclaw.agentserver.memory.external_memory_config import is_builtin_memory_allowed
 from jiuwenclaw.agentserver.permissions.checker import TOOL_PERMISSION_CHANNEL_ID
+from jiuwenclaw.agentserver.session_metadata import build_server_push_message
 from jiuwenclaw.agentserver.skill_manager import SkillManager
 from jiuwenclaw.agentserver.tools.multimodal_config import (
     apply_audio_model_config_from_yaml,
@@ -4488,17 +4489,17 @@ class JiuWenClawDeepAdapter:
         transport = WebSocketGatewayPushTransport()
 
         async def _push_status(status: str, stage: str, message: str = "") -> None:
-            await transport.send_push({
-                "request_id": rid,
-                "channel_id": cid,
-                "session_id": session_id,
-                "payload": {
+            await transport.send_push(build_server_push_message(
+                session_id=session_id,
+                request_id=rid,
+                fallback_channel_id=cid,
+                payload={
                     "event_type": "chat.evolution_status",
                     "status": status,
                     "stage": stage,
                     "message": message,
                 },
-            })
+            ))
 
         async def _push_approval(evt) -> None:
             raw_payload = evt.payload if hasattr(evt, "payload") and isinstance(evt.payload, dict) else evt
@@ -4507,21 +4508,18 @@ class JiuWenClawDeepAdapter:
             evt_type = getattr(evt, "type", None)
             if evt_type and "event_type" not in payload:
                 payload["event_type"] = evt_type
-            await transport.send_push({
-                "request_id": rid,
-                "channel_id": cid,
-                "session_id": session_id,
-                "payload": payload,
-            })
+            await transport.send_push(build_server_push_message(
+                session_id=session_id,
+                request_id=rid,
+                fallback_channel_id=cid,
+                payload=payload,
+            ))
 
         try:
             if self._skill_evolution_rail is None:
                 return
 
-            events = await self._skill_evolution_rail.drain_pending_approval_events(
-                wait=True,
-                timeout=300,
-            )
+            events = await self._skill_evolution_rail.drain_pending_approval_events(wait=True)
             outcomes = self._skill_evolution_rail.drain_evolution_outcomes()
             await self._skill_evolution_rail.cleanup_background_tasks()
 

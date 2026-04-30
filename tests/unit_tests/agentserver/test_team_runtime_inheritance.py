@@ -175,7 +175,6 @@ def test_build_member_rails_accepts_team_workspace_info(tmp_path):
         return_value=object(),
     ):
         rails = build_member_rails(
-            skills_dir=str(tmp_path / "member-skills"),
             member_info=SimpleNamespace(agent_name="leader", model_name="demo-model", role="leader"),
             runtime=SimpleNamespace(channel="web", language="cn"),
             team_workspace=TeamWorkspaceInfo(
@@ -187,3 +186,35 @@ def test_build_member_rails_accepts_team_workspace_info(tmp_path):
         )
 
     assert isinstance(rails, list)
+
+
+def test_build_member_rails_uses_shared_skills_dir_for_member_evolution(tmp_path):
+    captured: dict[str, object] = {}
+
+    def _fake_build_skill_evolution_rail(*, skills_dir, config, team_trajectory_store):
+        captured["skills_dir"] = skills_dir
+        captured["config"] = config
+        captured["team_trajectory_store"] = team_trajectory_store
+        return object()
+
+    with patch(
+        "jiuwenclaw.agentserver.team.team_runtime_inheritance.FileTrajectoryStore",
+        return_value=object(),
+    ), patch(
+        "jiuwenclaw.agentserver.team.team_runtime_inheritance.build_skill_evolution_rail",
+        side_effect=_fake_build_skill_evolution_rail,
+    ):
+        build_member_rails(
+            member_info=SimpleNamespace(agent_name="member", model_name="demo-model", role="member"),
+            runtime=SimpleNamespace(channel="web", language="cn"),
+            team_workspace=TeamWorkspaceInfo(
+                skills_dir=str(tmp_path / "team-shared-skills"),
+                trajectories_dir=str(tmp_path / "trajectories"),
+                team_id="demo-team",
+                config={"evolution": {"auto_scan": False}},
+            ),
+        )
+
+    assert captured["skills_dir"] == str(tmp_path / "team-shared-skills")
+    assert captured["config"] == {"evolution": {"auto_scan": False}}
+    assert captured["team_trajectory_store"] is not None

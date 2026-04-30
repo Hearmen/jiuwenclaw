@@ -454,6 +454,100 @@ class TestChannelMetadata:
 
 
 # ===========================================================================
+# delivery_context
+# ===========================================================================
+class TestDeliveryContext:
+    @staticmethod
+    def test_delivery_context_can_refresh_route_metadata(sessions_dir):
+        from jiuwenclaw.agentserver.session_metadata import (
+            _METADATA_QUEUE,
+            get_session_delivery_context,
+            set_session_delivery_context,
+        )
+
+        set_session_delivery_context(
+            session_id="sess_delivery",
+            channel_id="feishu",
+            source_request_id="req-1",
+            route_metadata={"feishu_chat_id": "oc_old"},
+        )
+        _METADATA_QUEUE.join()
+
+        set_session_delivery_context(
+            session_id="sess_delivery",
+            channel_id="feishu",
+            source_request_id="req-2",
+            route_metadata={"feishu_chat_id": "oc_new"},
+        )
+        _METADATA_QUEUE.join()
+
+        data = _read_json(sessions_dir / "sess_delivery" / "metadata.json")
+        context = get_session_delivery_context("sess_delivery")
+
+        assert data["delivery_context"]["source_request_id"] == "req-2"
+        assert data["delivery_context"]["route_metadata"]["feishu_chat_id"] == "oc_new"
+        assert context is not None
+        assert context["channel_id"] == "feishu"
+        assert context["route_metadata"]["feishu_chat_id"] == "oc_new"
+
+    @staticmethod
+    def test_delivery_context_keeps_previous_route_metadata_when_new_request_has_none(sessions_dir):
+        from jiuwenclaw.agentserver.session_metadata import (
+            _METADATA_QUEUE,
+            get_session_delivery_context,
+            set_session_delivery_context,
+        )
+
+        set_session_delivery_context(
+            session_id="sess_delivery_keep",
+            channel_id="wecom",
+            source_request_id="req-1",
+            route_metadata={"conversation_id": "conv-1"},
+        )
+        _METADATA_QUEUE.join()
+
+        set_session_delivery_context(
+            session_id="sess_delivery_keep",
+            channel_id="wecom",
+            source_request_id="req-2",
+            route_metadata=None,
+        )
+        _METADATA_QUEUE.join()
+
+        context = get_session_delivery_context("sess_delivery_keep")
+        assert context is not None
+        assert context["source_request_id"] == "req-2"
+        assert context["route_metadata"]["conversation_id"] == "conv-1"
+
+    @staticmethod
+    def test_build_server_push_message_uses_saved_delivery_context(sessions_dir):
+        from jiuwenclaw.agentserver.session_metadata import (
+            _METADATA_QUEUE,
+            build_server_push_message,
+            set_session_delivery_context,
+        )
+
+        set_session_delivery_context(
+            session_id="sess_push",
+            channel_id="telegram",
+            source_request_id="req-origin",
+            route_metadata={"telegram_chat_id": "chat-1"},
+        )
+        _METADATA_QUEUE.join()
+
+        push = build_server_push_message(
+            session_id="sess_push",
+            request_id="push-1",
+            payload={"event_type": "chat.ask_user_question"},
+            fallback_channel_id="web",
+        )
+
+        assert push["channel_id"] == "telegram"
+        assert push["session_id"] == "sess_push"
+        assert push["metadata"]["telegram_chat_id"] == "chat-1"
+
+
+# ===========================================================================
 # 需求验证: 会话标题稳定性
 # ===========================================================================
 class TestTitleStability:

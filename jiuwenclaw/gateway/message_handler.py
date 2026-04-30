@@ -10,7 +10,7 @@ import os
 import re
 import secrets
 import time
-from abc import ABC, abstractmethod
+from abc import ABC
 from dataclasses import dataclass, replace
 from enum import Enum
 from pathlib import Path
@@ -1238,7 +1238,7 @@ class MessageHandler(ABC):
             return
 
         # Track evolution state on the server_push path as well.
-        self._handle_evolution_chunk(chunk, session_id)
+        await self._handle_evolution_chunk(chunk, session_id, bus_metadata)
 
         out = self._chunk_to_message(
             chunk, session_id=session_id, metadata=bus_metadata
@@ -1494,6 +1494,62 @@ class MessageHandler(ABC):
         if self._is_evolution_approval_request_id(request_id):
             self._pending_evolution_approval[session_id] = str(request_id)
 
+    def _build_auto_accept_evolution_answer(
+        self,
+        *,
+        channel_id: str,
+        session_id: str,
+        request_id: str,
+        metadata: dict[str, Any] | None = None,
+    ) -> "Message":
+        from jiuwenclaw.schema.message import Message, ReqMethod
+
+        return Message(
+            id=f"auto_evolve_answer_{int(time.time() * 1000):x}_{secrets.token_hex(3)}",
+            type="req",
+            channel_id=channel_id,
+            session_id=session_id,
+            params={
+                "request_id": request_id,
+                "answers": [{"selected_options": ["接收"]}],
+                "source": "auto_accept",
+            },
+            timestamp=time.time(),
+            ok=True,
+            req_method=ReqMethod.CHAT_ANSWER,
+            is_stream=False,
+            metadata=metadata,
+        )
+
+    def _maybe_auto_accept_replaced_evolution_approval(
+        self,
+        *,
+        session_id: str | None,
+        incoming_request_id: str,
+        channel_id: str,
+        metadata: dict[str, Any] | None = None,
+    ) -> None:
+        if not session_id or not incoming_request_id:
+            return
+
+        previous_request_id = self._pending_evolution_approval.get(session_id)
+        if not previous_request_id or previous_request_id == incoming_request_id:
+            return
+
+        auto_answer = self._build_auto_accept_evolution_answer(
+            channel_id=channel_id,
+            session_id=session_id,
+            request_id=previous_request_id,
+            metadata=metadata,
+        )
+        self._user_messages.put_nowait(auto_answer)
+        logger.info(
+            "[MessageHandler] auto-accept superseded evolution approval: session_id=%s old=%s new=%s",
+            session_id,
+            previous_request_id,
+            incoming_request_id,
+        )
+
     def _clear_pending_evolution_approval(self, session_id: str | None) -> None:
         if not session_id:
             return
@@ -1512,7 +1568,35 @@ class MessageHandler(ABC):
     def _is_session_evolution_in_progress(self, session_id: str | None) -> bool:
         return isinstance(session_id, str) and session_id in self._session_evolution_in_progress
 
-    def _handle_evolution_chunk(self, chunk, session_id: str | None) -> None:
+    def _finish_evolution_approval_if_current(
+        self,
+        session_id: str | None,
+        answered_request_id: str | None,
+    ) -> dict[str, Any] | None:
+        if not session_id or not answered_request_id:
+            return None
+
+        current_request_id = self._pending_evolution_approval.get(session_id)
+        if current_request_id != answered_request_id:
+            logger.info(
+                "[MessageHandler] stale evolution approval resolved, "
+                "keep current pending: session_id=%s answered=%s current=%s",
+                session_id,
+                answered_request_id,
+                current_request_id,
+            )
+            return None
+
+        self._clear_pending_evolution_approval(session_id)
+        self._clear_session_evolution_in_progress(session_id)
+        return self._pop_queued_supplement_input(session_id)
+
+    async def _handle_evolution_chunk(
+        self,
+        chunk,
+        session_id: str | None,
+        request_metadata: dict[str, Any] | None = None,
+    ) -> None:
         """处理 chunk 中的演进状态和审批事件，更新 Gateway 状态机。
 
         在 process_stream 和 _handle_agent_server_push 两条路径中复用。
@@ -1543,6 +1627,12 @@ class MessageHandler(ABC):
             event_type == "chat.ask_user_question"
             and self._is_evolution_approval_request_id(approval_request_id)
         ):
+            self._maybe_auto_accept_replaced_evolution_approval(
+                session_id=session_id,
+                incoming_request_id=str(approval_request_id),
+                channel_id=str(getattr(chunk, "channel_id", "") or ""),
+                metadata=request_metadata,
+            )
             self._mark_pending_evolution_approval(session_id, approval_request_id)
             logger.info(
                 "[MessageHandler] evolution approval detected: session_id=%s request_id=%s",
@@ -1648,9 +1738,10 @@ class MessageHandler(ABC):
                         if resp is not None and hasattr(resp, "payload") and isinstance(resp.payload, dict):
                             resolved = resp.payload.get("resolved", False) is True
                         if resolved:
-                            self._clear_pending_evolution_approval(msg.session_id)
-                            self._clear_session_evolution_in_progress(msg.session_id)
-                            queued_payload = self._pop_queued_supplement_input(msg.session_id)
+                            queued_payload = self._finish_evolution_approval_if_current(
+                                msg.session_id,
+                                str(answer_request_id or ""),
+                            )
                             queued_input = str((queued_payload or {}).get("new_input") or "").strip()
                             queued_attachments = (queued_payload or {}).get("attachments")
                             if queued_input:
@@ -1931,7 +2022,7 @@ class MessageHandler(ABC):
                         chunk.request_id,
                     )
                     continue
-                self._handle_evolution_chunk(chunk, session_id)
+                await self._handle_evolution_chunk(chunk, session_id, request_metadata)
                 # 携带 request metadata，供 Feishu/Xiaoyi 用平台身份回发
                 # 检查是否是 processing_status=false 事件
                 payload = chunk.payload or {}

@@ -88,9 +88,11 @@ export function InlineQuestionCard({ onSubmit }: InlineQuestionCardProps) {
     doSubmit(selections);
   }, [allAnswered, submitted, selections, doSubmit]);
 
-  // Support skill evolution (skill_evolve_*) and new skill creation (skill_create_*)
-  const isEvolution = (pendingQuestion?.request_id?.startsWith('skill_evolve_') ||
-                       pendingQuestion?.request_id?.startsWith('skill_create_')) ?? false;
+  // Support skill evolution, team skill evolution, and new skill creation flows.
+  const isEvolution = (
+    pendingQuestion?.request_id?.startsWith('skill_evolve_') ||
+    pendingQuestion?.request_id?.startsWith('team_skill_evolve_')
+  ) ?? false;
 
   if (!pendingQuestion) {
     return null;

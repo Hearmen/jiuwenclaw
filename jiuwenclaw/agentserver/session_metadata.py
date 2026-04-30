@@ -1,6 +1,7 @@
 """会话元数据管理模块"""
 from __future__ import annotations
 
+import copy
 import json
 import logging
 import queue
@@ -26,6 +27,7 @@ _CACHE_LOCK = threading.Lock()
 
 # 会话标题自动生成的截取长度
 _TITLE_MAX_LEN = 50
+_DELIVERY_KIND_SERVER_PUSH = "server_push"
 
 
 def _current_timestamp() -> float:
@@ -217,6 +219,109 @@ def update_session_metadata(
 def get_session_metadata(session_id: str) -> dict[str, Any]:
     """获取会话元数据"""
     return _read_metadata(session_id)
+
+
+def set_session_delivery_context(
+    *,
+    session_id: str,
+    channel_id: str | None,
+    source_request_id: str | None,
+    route_metadata: dict[str, Any] | None,
+    delivery_kind: str = _DELIVERY_KIND_SERVER_PUSH,
+) -> dict[str, Any]:
+    """刷新 session 级 delivery context，供异步 server_push 恢复路由上下文。"""
+    metadata = _read_metadata(session_id)
+    current_context_raw = metadata.get("delivery_context")
+    current_context = (
+        copy.deepcopy(current_context_raw)
+        if isinstance(current_context_raw, dict)
+        else {}
+    )
+
+    normalized_channel_id = str(
+        channel_id
+        or current_context.get("channel_id")
+        or metadata.get("channel_id")
+        or ""
+    ).strip()
+    normalized_request_id = str(
+        source_request_id or current_context.get("source_request_id") or ""
+    ).strip()
+
+    previous_route_metadata = current_context.get("route_metadata")
+    if not isinstance(previous_route_metadata, dict):
+        previous_route_metadata = None
+
+    normalized_route_metadata = (
+        copy.deepcopy(route_metadata)
+        if isinstance(route_metadata, dict) and route_metadata
+        else previous_route_metadata
+    )
+
+    if not metadata:
+        metadata = {
+            "session_id": session_id,
+            "channel_id": normalized_channel_id,
+            "user_id": "",
+            "created_at": _current_timestamp(),
+            "last_message_at": _current_timestamp(),
+            "title": "",
+            "message_count": 0,
+            "mode": "unknown",
+        }
+    else:
+        if normalized_channel_id:
+            metadata["channel_id"] = normalized_channel_id
+        metadata["last_message_at"] = _current_timestamp()
+
+    delivery_context: dict[str, Any] = {
+        "delivery_kind": str(delivery_kind or _DELIVERY_KIND_SERVER_PUSH).strip()
+        or _DELIVERY_KIND_SERVER_PUSH,
+        "session_id": session_id,
+        "channel_id": normalized_channel_id,
+        "source_request_id": normalized_request_id,
+        "updated_at": _current_timestamp(),
+    }
+    if normalized_route_metadata:
+        delivery_context["route_metadata"] = normalized_route_metadata
+
+    metadata["delivery_context"] = delivery_context
+    _enqueue_write(session_id, metadata)
+    return copy.deepcopy(delivery_context)
+
+
+def get_session_delivery_context(session_id: str) -> dict[str, Any] | None:
+    """读取 session 级 delivery context。"""
+    metadata = _read_metadata(session_id)
+    context = metadata.get("delivery_context")
+    if not isinstance(context, dict):
+        return None
+    return copy.deepcopy(context)
+
+
+def build_server_push_message(
+    *,
+    session_id: str,
+    request_id: str,
+    payload: dict[str, Any],
+    fallback_channel_id: str | None = None,
+) -> dict[str, Any]:
+    """基于 session delivery context 构造 evolution watcher 的 server_push 消息。"""
+    delivery_context = get_session_delivery_context(session_id) or {}
+    route_metadata = delivery_context.get("route_metadata")
+    channel_id = str(
+        delivery_context.get("channel_id") or fallback_channel_id or "default"
+    ).strip() or "default"
+
+    message: dict[str, Any] = {
+        "request_id": request_id,
+        "channel_id": channel_id,
+        "session_id": session_id,
+        "payload": dict(payload),
+    }
+    if isinstance(route_metadata, dict) and route_metadata:
+        message["metadata"] = copy.deepcopy(route_metadata)
+    return message
 
 
 def remove_team_mode_session_dirs_at_startup() -> None:

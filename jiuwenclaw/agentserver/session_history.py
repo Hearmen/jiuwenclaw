@@ -128,7 +128,10 @@ def append_history_record(
 
     # 更新会话元数据
     try:
-        from jiuwenclaw.agentserver.session_metadata import update_session_metadata
+        from jiuwenclaw.agentserver.session_metadata import (
+            set_session_delivery_context,
+            update_session_metadata,
+        )
         update_session_metadata(
             session_id=sid,
             channel_id=cid,
@@ -139,5 +142,12 @@ def append_history_record(
             channel_metadata=channel_metadata,
             mode=mode,
         )
+        if role_norm == "user":
+            set_session_delivery_context(
+                session_id=sid,
+                channel_id=cid,
+                source_request_id=rid,
+                route_metadata=channel_metadata,
+            )
     except Exception as exc:
         logger.warning("更新会话元数据失败: %s", exc)

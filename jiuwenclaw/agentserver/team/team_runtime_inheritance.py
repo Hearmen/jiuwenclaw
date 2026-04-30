@@ -114,7 +114,6 @@ TOOL_WHITELIST = frozenset({
 
 
 def build_member_rails(
-    skills_dir: str,
     member_info: MemberInfo | None = None,
     runtime: RuntimeInfo | None = None,
     team_workspace: TeamWorkspaceInfo | None = None,
@@ -122,10 +121,9 @@ def build_member_rails(
     """为 Team 成员创建 rails 列表.
 
     Args:
-        skills_dir: 成员 skills 目录路径，非 leader 时用于 SkillEvolutionRail
         member_info: 成员身份信息（agent_name, role）
         runtime: 运行时环境信息（channel, language）
-        team_workspace: 团队共享 workspace 信息
+        team_workspace: 团队共享 workspace 信息，其中 skills_dir 为 team shared skills root
 
     Returns:
         rail 实例列表
@@ -267,9 +265,9 @@ def build_member_rails(
                 logger.warning("[TeamRuntime] TeamSkillCreateRail failed: %s", exc, exc_info=True)
 
     # Non-leader: SkillEvolutionRail for member skill self-evolution.
-    if role != "leader" and skills_dir:
+    if role != "leader" and team_ws_skills_dir:
         evo_rail = build_skill_evolution_rail(
-            skills_dir=skills_dir,
+            skills_dir=team_ws_skills_dir,
             config=config,
             team_trajectory_store=shared_team_trajectory_store,
         )
