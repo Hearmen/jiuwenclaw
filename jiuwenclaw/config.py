@@ -799,6 +799,9 @@ def _transform_front_team_model_config(model_raw: dict[str, Any]) -> dict[str, A
 
     transformed: dict[str, Any] = {}
     if model_client_config:
+        model_client_config.setdefault("timeout", 1800)
+        model_client_config.setdefault("verify_ssl", False)
+        model_client_config.setdefault("custom_headers", {})
         transformed["model_client_config"] = model_client_config
     if model_request_config:
         transformed["model_request_config"] = model_request_config

@@ -238,6 +238,9 @@ modes:
         }
         assert all("agent_key" not in item for item in saved["predefined_members"])
         assert saved["agents"]["leader"]["model"]["model_client_config"]["client_provider"] == "OpenAI"
+        assert saved["agents"]["leader"]["model"]["model_client_config"]["timeout"] == 1800
+        assert saved["agents"]["leader"]["model"]["model_client_config"]["verify_ssl"] is False
+        assert saved["agents"]["leader"]["model"]["model_client_config"]["custom_headers"] == {}
         assert saved["agents"]["leader"]["model"]["model_request_config"]["model"] == "gpt-4.1"
         assert saved["agents"]["analyst"]["skills"] == ["team-management"]
         assert saved["agents"]["coder"]["skills"] == ["coding"]
