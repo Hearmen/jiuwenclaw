@@ -739,6 +739,16 @@ function MultiModelSection({
     }
     const copy = [...models];
     copy[idx] = { ...copy[idx], [field]: value };
+    // 主对话默认（首位）换组：成为新组的组内默认，新组原默认让位
+    if (field === "model_name" && idx === 0) {
+      copy[0] = { ...copy[0], is_default: true };
+      const newName = value;
+      for (let i = 1; i < copy.length; i++) {
+        if (copy[i].model_name === newName && copy[i].is_default) {
+          copy[i] = { ...copy[i], is_default: false };
+        }
+      }
+    }
     onModelsChange(copy);
   };
 
