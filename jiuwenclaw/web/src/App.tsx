@@ -759,6 +759,11 @@ function AppContent() {
     useChatStore.getState().setProcessing(false);
     useChatStore.getState().setThinking(false);
     useChatStore.getState().setPaused(false);
+    // 集群模式下新建会话时清空成员列表和事件列表
+    if (mode === 'team') {
+      useSessionStore.getState().setTeamMembers([]);
+      useSessionStore.getState().setTeamTaskEvents([]);
+    }
     disposeInFlightHistoryHandles();
     setHistoryPagerMeta(null);
     setHistoryLoadingMore(false);
@@ -827,6 +832,11 @@ function AppContent() {
     useChatStore.getState().setProcessing(false);
     useChatStore.getState().setThinking(false);
     useChatStore.getState().setPaused(false);
+    // 切换到集群模式时清空成员列表和事件列表
+    if (mode === 'team') {
+      useSessionStore.getState().setTeamMembers([]);
+      useSessionStore.getState().setTeamTaskEvents([]);
+    }
     void switchMode(sessionId, mode);
   }, [sessionId, switchMode]);
 
