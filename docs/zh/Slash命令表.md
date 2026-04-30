@@ -210,7 +210,7 @@
 | `/skills marketplace` 或 `/skills marketplace list` | 列出市场源（名称、URL、启用状态、最后更新时间） |
 | `/skills marketplace add <name> <url>` | 添加新的市场源 |
 | `/skills marketplace remove <name>` | 移除市场源（同时清理缓存） |
-| `/skills marketplace toggle <name> <on|off>` | 启用或禁用市场源（`on`/`true`/`1` 为启用，其余为禁用） |
+| `/skills marketplace toggle <name> <on或off>` | 启用或禁用市场源（`on`/`true`/`1` 为启用，其余为禁用） |
 | `/skills use <skill_name>, <query>` | 使用指定技能执行查询 |
 
 #### 概念说明

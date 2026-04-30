@@ -188,7 +188,7 @@ Manage skills lifecycle: listing, installing, uninstalling, and marketplace sour
 | `/skills marketplace` or `/skills marketplace list` | List marketplace sources (name, URL, enabled status, last updated) |
 | `/skills marketplace add <name> <url>` | Add a new marketplace source |
 | `/skills marketplace remove <name>` | Remove a marketplace source (also clears its cache) |
-| `/skills marketplace toggle <name> <on|off>` | Enable or disable a marketplace source (`on`/`true`/`1` = enable, otherwise disable) |
+| `/skills marketplace toggle <name> <on or off>` | Enable or disable a marketplace source (`on`/`true`/`1` = enable, otherwise disable) |
 | `/skills use <skill_name>, <query>` | Execute a query using a specific skill |
 
 #### Concepts
