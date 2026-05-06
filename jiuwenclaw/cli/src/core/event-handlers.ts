@@ -465,6 +465,93 @@ function handleContextCompressed(
   return true;
 }
 
+function asRecord(value: unknown): Record<string, unknown> {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : {};
+}
+
+function readString(value: unknown, fallback = ""): string {
+  return typeof value === "string" ? value : fallback;
+}
+
+function readNumber(value: unknown): number | null {
+  return typeof value === "number" && Number.isFinite(value) ? value : null;
+}
+
+function formatNumber(value: unknown): string {
+  const n = readNumber(value);
+  return n == null ? "-" : Math.round(n).toLocaleString("en-US");
+}
+
+function formatPercent(value: unknown): string {
+  const n = readNumber(value);
+  return n == null ? "-" : `${Math.round(n)}%`;
+}
+
+function formatDuration(value: unknown): string {
+  const n = readNumber(value);
+  if (n == null) return "-";
+  return n >= 1000 ? `${(n / 1000).toFixed(1)}s` : `${Math.round(n)}ms`;
+}
+
+function formatChange(before: unknown, after: unknown, formatter = formatNumber): string {
+  const beforeText = formatter(before);
+  const afterText = formatter(after);
+  if (afterText === "-") return beforeText;
+  return `${beforeText} -> ${afterText}`;
+}
+
+function handleContextCompressionState(
+  delegate: AppEventDelegate,
+  payload: Record<string, unknown>,
+  activeSessionId: string,
+): boolean {
+  const before = asRecord(payload.before);
+  const after = asRecord(payload.after);
+  const saved = asRecord(payload.saved);
+  const status = readString(payload.status, "unknown");
+  const phase = readString(payload.phase, "unknown");
+  const processor = readString(payload.processor, "unknown") || "unknown";
+  const model = readString(payload.model);
+  const summary = readString(payload.summary);
+  const error = readString(payload.error);
+
+  const savedParts = [
+    `${formatNumber(saved.tokens)} tokens`,
+    `${formatNumber(saved.messages)} messages`,
+    formatPercent(saved.percent),
+  ].filter((part) => !part.startsWith("-"));
+
+  appendEntry(delegate, {
+    kind: "info",
+    id: createId("context-compression"),
+    sessionId: activeSessionId,
+    content: `Context compression ${status}`,
+    icon: "i",
+    meta: {
+      title: `Context compression ${status}`,
+      items: [
+        { label: "Processor", value: processor },
+        { label: "Phase", value: phase },
+        ...(model ? [{ label: "Model", value: model }] : []),
+        { label: "Messages", value: formatChange(before.messages, after.messages) },
+        { label: "Tokens", value: formatChange(before.tokens, after.tokens) },
+        {
+          label: "Context",
+          value: formatChange(before.context_percent, after.context_percent, formatPercent),
+        },
+        ...(savedParts.length ? [{ label: "Saved", value: savedParts.join(" | ") }] : []),
+        { label: "Duration", value: formatDuration(payload.duration_ms) },
+        ...(summary ? [{ label: "Summary", description: summary }] : []),
+        ...(error ? [{ label: "Error", description: error }] : []),
+      ],
+    },
+    at: new Date().toISOString(),
+  });
+  return true;
+}
+
 function handleSubtaskUpdate(
   delegate: AppEventDelegate,
   payload: Record<string, unknown>,
@@ -758,6 +845,9 @@ export function handleIncomingFrame(delegate: AppEventDelegate, frame: EventFram
 
     case "context.compressed":
       return handleContextCompressed(delegate, payload);
+
+    case "context_compression_state":
+      return handleContextCompressionState(delegate, payload, activeSessionId);
 
     case "chat.subtask_update":
       return handleSubtaskUpdate(delegate, payload);

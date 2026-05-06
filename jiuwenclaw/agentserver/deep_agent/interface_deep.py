@@ -4252,6 +4252,18 @@ class JiuWenClawDeepAdapter:
                         }
                     return {"event_type": "context.compressed", "rate": 0}
 
+                if chunk_type == "context_compression_state":
+                    if hasattr(payload, "model_dump"):
+                        state_payload = payload.model_dump(mode="json")
+                    elif isinstance(payload, dict):
+                        state_payload = payload
+                    else:
+                        state_payload = {"summary": str(payload)}
+                    return {
+                        "event_type": "context_compression_state",
+                        **state_payload,
+                    }
+
                 if chunk_type == "chat.ask_user_question":
                     return {
                         "event_type": "chat.ask_user_question",
