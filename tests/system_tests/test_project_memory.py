@@ -400,7 +400,8 @@ class TestExploreAgentSubagentIntegration:
         names = [s.agent_card.name for s in subagents]
         assert any(n.lower() == "explore" or n == "explore_agent" for n in names)
 
-    def test_explore_agent_explicitly_disabled(self, monkeypatch):
+    def test_explore_agent_always_enabled(self, monkeypatch):
+        """explore_agent 是 Code 模式核心子代理，始终启用，enabled: False 被忽略。"""
         from openjiuwen.core.foundation.llm import (
             Model,
             ModelClientConfig,
@@ -426,13 +427,15 @@ class TestExploreAgentSubagentIntegration:
             model_config=ModelRequestConfig(model_name="mock-model"),
         )
 
-        # Config with explore_agent explicitly disabled
+        # explore_agent 的 enabled: False 被忽略，仍然挂载
         subagents = adapter._build_configured_subagents(
             model,
             {"max_iterations": 8, "subagents": {"explore_agent": {"enabled": False}}},
             {},
         )
-        assert subagents is None
+        assert subagents is not None
+        names = [s.agent_card.name for s in subagents]
+        assert "explore_agent" in names
 
     def test_explore_agent_with_custom_max_iterations(self, monkeypatch):
         from openjiuwen.core.foundation.llm import (

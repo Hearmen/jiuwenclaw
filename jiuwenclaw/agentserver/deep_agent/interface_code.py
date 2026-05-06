@@ -18,7 +18,7 @@ from __future__ import annotations
 import logging
 import os
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Callable
 
 from openjiuwen.core.foundation.llm import Model
 from openjiuwen.core.foundation.store.base_embedding import EmbeddingConfig
@@ -57,19 +57,21 @@ from jiuwenclaw.agentserver.deep_agent.rails import (
 from jiuwenclaw.agentserver.memory.config import get_memory_mode
 from jiuwenclaw.agentserver.tools import SkillToolkit
 from jiuwenclaw.config import get_config
+from jiuwenclaw.utils import get_agent_workspace_dir
 
 logger = logging.getLogger(__name__)
+
 
 # 名字 → 构建方法映射（rail/tool 名字与类方法名对照）
 _RAIL_BUILD_NAMES: dict[str, str] = {
     "SysOperationRail": "_build_filesystem_rail",
+    "FileSystemRail": "_build_filesystem_rail",     # 别名映射
     "SkillUseRail": "_build_skill_rail_via_config",
     "LspRail": "_build_lsp_rail_via_config",
     "HeartbeatRail": "_build_heartbeat_rail",
     "AvatarPromptRail": "_build_avatar_rail",
     "TaskPlanningRail": "_build_task_planning_rail",
     "SubagentRail": "_build_subagent_rail",
-    "MemoryRail": "_build_memory_rail_via_config",
     "ContextAssembleRail": "_build_context_assemble_rail",
     "ContextProcessorRail": "_build_context_processor_rail",
     "SkillEvolutionRail": "_build_skill_evolution_rail_via_config",
@@ -86,47 +88,15 @@ _TOOL_BUILD_NAMES: dict[str, str] = {
 }
 
 
-def _subagent_list_has_name(
-    subagents: list[SubAgentConfig | DeepAgent], name: str
-) -> bool:
-    for spec in subagents:
-        if isinstance(spec, SubAgentConfig):
-            if spec.agent_card.name == name:
-                return True
-        else:
-            card = getattr(spec, "card", None)
-            if getattr(card, "name", None) == name:
-                return True
-    return False
+@dataclass
+class _RailBuildInfo:
+    """Rail 构建信息 — 统一固定和动态 Rails 的构建流程."""
+    attr_name: str
+    build_func: Callable
+    params: dict = None
 
-
-def _append_explore_and_plan_subagents(
-    subagents: list[SubAgentConfig | DeepAgent],
-    resolved_language: str,
-    model: Model,
-    workspace: str | None = None,
-) -> list[SubAgentConfig | DeepAgent]:
-    # explore_agent / plan_agent 是 code 模式的核心子代理 — 默认启用
-    effective = list(subagents)
-    if not _subagent_list_has_name(effective, "explore_agent"):
-        effective.append(
-            build_explore_agent_config(
-                model=model,
-                workspace=workspace,
-                language=resolved_language,
-                max_iterations=25,
-            )
-        )
-    if not _subagent_list_has_name(effective, "plan_agent"):
-        effective.append(
-            build_plan_agent_config(
-                model=model,
-                workspace=workspace,
-                language=resolved_language,
-                max_iterations=25,
-            )
-        )
-    return effective
+    def __post_init__(self):
+        self.params = self.params or {}
 
 
 class JiuwenClawCodeAdapter(JiuWenClawDeepAdapter):
@@ -134,18 +104,30 @@ class JiuwenClawCodeAdapter(JiuWenClawDeepAdapter):
 
     继承 JiuWenClawDeepAdapter，只重写：
     - create_instance(): 统一使用 create_deep_agent()，不传多模态/上下文引擎参数
-    - _build_agent_rails(): 固定 Rails (含 LspRail/ProjectMemoryRail) + 从 config.yaml 读取动态 Rails
+    - _build_agent_rails(): 固定 Rails (含 LspRail/ProjectMemoryRail/CodingMemoryRail) + 从 config.yaml 读取动态 Rails
     - _get_tool_cards(): 从 config.yaml 读取动态 Tools
-    - _build_configured_subagents(): 增加 code_agent / explore_agent
+    - _build_configured_subagents(): 固定 explore_agent/plan_agent + 按配置启用 code_agent/browser_agent
     - _update_rails_for_mode(): code 模式 rail 生命周期
     - _update_runtime_config(): 保留 ProjectMemoryRail 语言同步
     """
+
+    # 固定 Rails 名字集合 — 用于动态 Rails 去重
+    _FIXED_RAIL_NAMES = frozenset({
+        "RuntimePromptRail", "ResponsePromptRail",
+        "JiuClawStreamEventRail", "SecurityRail",
+        "LspRail", "ProjectMemoryRail", "PermissionInterruptRail",
+        "ContextProcessorRail",
+        "SysOperationRail", "CodingMemoryRail",
+        "AgentModeRail", "StructuredAskUserRail", "ConfirmInterruptRail",
+        "FileSystemRail",  # 别名
+    })
 
     def __init__(self) -> None:
         super().__init__()
         # Code 模式专属 rails — 父类不定义这些属性
         self._lsp_rail: LspRail | None = None
         self._project_memory_rail: ProjectMemoryRail | None = None
+        self._coding_memory_rail: CodingMemoryRail | None = None
 
     # ─── 初始化 ──────────────────────────────
 
@@ -169,6 +151,7 @@ class JiuwenClawCodeAdapter(JiuWenClawDeepAdapter):
         self._project_dir = self._instance_overrides.get(
             "project_dir", config.get("project_dir")
         )
+        self._workspace_dir = config.get("workspace_dir", str(get_agent_workspace_dir()))
 
         model = self._create_model(config_base)
         agent_card = AgentCard(name=self._agent_name, id='jiuwenclaw')
@@ -186,13 +169,7 @@ class JiuwenClawCodeAdapter(JiuWenClawDeepAdapter):
             raise RuntimeError("sys_operation is not available, maybe task is not running")
         self._sys_operation = sys_operation
 
-        raw_subagents = self._build_configured_subagents(model, config, config_base) or []
-        configured_subagents = _append_explore_and_plan_subagents(
-            raw_subagents,
-            resolved_language=self._resolve_runtime_language(),
-            model=model,
-            workspace=self._workspace_dir or "./",
-        )
+        configured_subagents = self._build_configured_subagents(model, config, config_base) or []
 
         self._instance = create_deep_agent(
             model=model,
@@ -241,26 +218,9 @@ class JiuwenClawCodeAdapter(JiuWenClawDeepAdapter):
     ) -> list[Any]:
         """Build rails for code mode: fixed rails + dynamic rails from config.
 
-        Code 模式固定包含 LspRail 和 ProjectMemoryRail。
+        Code 模式固定包含 LspRail、ProjectMemoryRail、CodingMemoryRail。
         """
-
-        @dataclass
-        class _RailBuildInfo:
-            attr_name: str
-            build_func: Any
-            params: dict = None
-
-            def __post_init__(self):
-                self.params = self.params or {}
-
-        # 固定 Rails — code 模式特有：LspRail + ProjectMemoryRail 始终挂载
-        # 已注册的固定 rail 名字集合，用于动态 rails 去重
-        _fixed_rail_names = frozenset({
-            "RuntimePromptRail", "ResponsePromptRail",
-            "JiuClawStreamEventRail", "SecurityRail",
-            "LspRail", "ProjectMemoryRail", "PermissionInterruptRail",
-            "ContextProcessorRail",
-        })
+        # 固定 Rails — code 模式特有
         rail_infos = [
             _RailBuildInfo("_runtime_prompt_rail", self._build_runtime_prompt_rail),
             _RailBuildInfo("_response_prompt_rail", self._build_response_prompt_rail),
@@ -279,12 +239,13 @@ class JiuwenClawCodeAdapter(JiuWenClawDeepAdapter):
                     ).get("model_client_config", {}).get("model_name", "gpt-4"),
                 },
             ),
-            _RailBuildInfo("_code_filesystem_rail", SysOperationRail, {}),
-            _RailBuildInfo("_code_agent_mode_rail", AgentModeRail, {}),
-            _RailBuildInfo("_code_ask_user_rail", StructuredAskUserRail, {}),
+            _RailBuildInfo("_code_filesystem_rail", self._build_filesystem_rail),
+            _RailBuildInfo("_coding_memory_rail", self._build_coding_memory_rail),
+            _RailBuildInfo("_code_agent_mode_rail", self._build_agent_mode_rail),
+            _RailBuildInfo("_code_ask_user_rail", self._build_structured_ask_user_rail),
             _RailBuildInfo(
                 "_code_confirm_interrupt_rail",
-                ConfirmInterruptRail,
+                self._build_confirm_interrupt_rail,
                 {"tool_names": ["switch_mode"]},
             ),
             _RailBuildInfo("_context_processor_rail", self._build_context_processor_rail),
@@ -296,34 +257,40 @@ class JiuwenClawCodeAdapter(JiuWenClawDeepAdapter):
         configured_rails = mode_config.get("rails") or []
 
         for rail_name in configured_rails:
-            if rail_name in _fixed_rail_names:
+            if rail_name in self._FIXED_RAIL_NAMES:
                 logger.info(
                     "[JiuwenClawCodeAdapter] Rail %s already in fixed set, skipping dynamic registration",
                     rail_name,
                 )
                 continue
-            rail_instance = self._get_rail_build_func(rail_name)
-            if rail_instance is None:
+            method_name = _RAIL_BUILD_NAMES.get(rail_name)
+            if method_name is None:
+                if rail_name == "MemoryRail":
+                    logger.warning(
+                        "[JiuwenClawCodeAdapter] MemoryRail is not supported in code mode; "
+                        "use CodingMemoryRail instead. Skipping",
+                    )
+                else:
+                    logger.warning(
+                        "[JiuwenClawCodeAdapter] Unknown rail name in config: %s, skipping",
+                        rail_name,
+                    )
+                continue
+            method = getattr(self, method_name, None)
+            if method is None:
                 logger.warning(
-                    "[JiuwenClawCodeAdapter] Unknown rail name in config: %s, skipping",
-                    rail_name,
+                    "[JiuwenClawCodeAdapter] Build method %s not found, skipping",
+                    method_name,
                 )
                 continue
             attr_name = f"_dynamic_{rail_name}"
-            setattr(self, attr_name, rail_instance)
-
-            def _make_passthrough(inst):
-                return lambda **kw: inst
-
-            rail_infos.append(
-                _RailBuildInfo(attr_name, _make_passthrough(rail_instance))
-            )
+            rail_infos.append(_RailBuildInfo(attr_name, method))
             logger.info(
-                "[JiuwenClawCodeAdapter] Dynamic rail %s registered from config",
+                "[JiuwenClawCodeAdapter] Dynamic rail %s queued from config",
                 rail_name,
             )
 
-        # 构建并注册
+        # 统一构建并注册
         rails_list = []
         for info in rail_infos:
             logger.info(
@@ -350,15 +317,41 @@ class JiuwenClawCodeAdapter(JiuWenClawDeepAdapter):
         )
         return rails_list
 
-    def _get_rail_build_func(self, rail_name: str) -> Any | None:
-        """根据 rail 名字调用对应构建方法."""
-        method_name = _RAIL_BUILD_NAMES.get(rail_name)
-        if method_name is None:
+    # ─── Code 专属 Rail 构建 ────────────────
+
+    def _build_filesystem_rail(self) -> SysOperationRail | None:
+        """构建 SysOperationRail（FileSystemRail）."""
+        try:
+            fs_rail = SysOperationRail()
+            logger.info("[JiuwenClawCodeAdapter] SysOperationRail create success")
+            return fs_rail
+        except Exception as exc:
+            logger.warning("[JiuwenClawCodeAdapter] SysOperationRail create failed: %s", exc)
             return None
-        method = getattr(self, method_name, None)
-        if method is None:
+
+    def _build_agent_mode_rail(self) -> AgentModeRail | None:
+        """构建 AgentModeRail."""
+        try:
+            return AgentModeRail()
+        except Exception as exc:
+            logger.warning("[JiuwenClawCodeAdapter] AgentModeRail create failed: %s", exc)
             return None
-        return method()
+
+    def _build_structured_ask_user_rail(self) -> StructuredAskUserRail | None:
+        """构建 StructuredAskUserRail."""
+        try:
+            return StructuredAskUserRail()
+        except Exception as exc:
+            logger.warning("[JiuwenClawCodeAdapter] StructuredAskUserRail create failed: %s", exc)
+            return None
+
+    def _build_confirm_interrupt_rail(self, tool_names: list[str] | None = None) -> ConfirmInterruptRail | None:
+        """构建 ConfirmInterruptRail."""
+        try:
+            return ConfirmInterruptRail(tool_names=tool_names or ["switch_mode"])
+        except Exception as exc:
+            logger.warning("[JiuwenClawCodeAdapter] ConfirmInterruptRail create failed: %s", exc)
+            return None
 
     def _build_lsp_rail_via_config(self) -> Any:
         """构建 LspRail（带 project_dir 参数）."""
@@ -367,8 +360,6 @@ class JiuwenClawCodeAdapter(JiuWenClawDeepAdapter):
             self._project_dir,
         )
         return self._build_lsp_rail(workspace_dir=self._project_dir)
-
-    # ─── Code 专属 Rail 构建 ────────────────
 
     def _build_lsp_rail(self, workspace_dir: str | None = None) -> LspRail | None:
         """Build LspRail（code 模式专属）."""
@@ -381,11 +372,15 @@ class JiuwenClawCodeAdapter(JiuWenClawDeepAdapter):
         return lsp_rail
 
     def _build_coding_memory_rail(self) -> CodingMemoryRail | None:
-        """构建 CodingMemoryRail（code_agent subagent 使用）.
+        """构建 CodingMemoryRail（主 Agent 和 code_agent subagent 共用）.
 
-        Returns:
-            CodingMemoryRail 实例，失败返回 None
+        通过 self._coding_memory_rail 缓存避免重复构建。
         """
+        # 单例保护：如果已构建，直接返回缓存实例
+        if self._coding_memory_rail is not None:
+            logger.info("[JiuwenClawCodeAdapter] CodingMemoryRail reuse cached instance")
+            return self._coding_memory_rail
+
         try:
             config = get_config()
             embed_config = config.get("embed") if isinstance(config, dict) else None
@@ -410,6 +405,8 @@ class JiuwenClawCodeAdapter(JiuWenClawDeepAdapter):
                 ),
                 language="cn" if language == "zh" else "en",
             )
+            # 缓存实例，供 code_agent 复用
+            self._coding_memory_rail = coding_memory_rail
             logger.info("[JiuwenClawCodeAdapter] CodingMemoryRail create success")
             return coding_memory_rail
 
@@ -471,22 +468,20 @@ class JiuwenClawCodeAdapter(JiuWenClawDeepAdapter):
 
     def _build_skill_rail_via_config(self) -> Any:
         """构建 SkillUseRail（从 config 读取参数）."""
+        include_tools = not self._is_acp_tool_profile(self._instance_overrides)
         return self._build_skill_rail(
             self._config_cache,
-            include_tools=self._skill_include_tools_for_profile(),
+            include_tools=include_tools,
         )
-
-    def _build_memory_rail_via_config(self) -> Any:
-        """构建 MemoryRail."""
-        return self._build_memory_rail("code")
 
     def _build_context_assemble_rail(self) -> Any:
         """构建 ContextEngineeringRail."""
         return ContextAssembleRail()
 
     def _build_context_processor_rail(self) -> Any:
-        """构建 ContextEngineeringRail."""
-        return ContextProcessorRail(preset=True)
+        """构建 ContextProcessorRail — 复用父类逻辑."""
+        from jiuwenclaw.agentserver.deep_agent.interface_deep import _build_context_processor_rail
+        return _build_context_processor_rail(self._config_cache)
 
     def _build_skill_evolution_rail_via_config(self) -> Any:
         """构建 SkillEvolutionRail."""
@@ -494,15 +489,29 @@ class JiuwenClawCodeAdapter(JiuWenClawDeepAdapter):
 
     # ─── Subagent 配置 ──────────────────────────
 
+    @staticmethod
+    def _subagent_list_has_name(subagents: list, name: str) -> bool:
+        """检查 subagents 列表中是否已包含指定名字的 subagent."""
+        for spec in subagents:
+            if isinstance(spec, SubAgentConfig):
+                if spec.agent_card.name == name:
+                    return True
+            else:
+                card = getattr(spec, "card", None)
+                if getattr(card, "name", None) == name:
+                    return True
+        return False
+
     def _build_configured_subagents(
             self,
             model: Model,
             config: dict[str, Any],
             config_base: dict[str, Any] | None = None,
     ) -> list[Any] | None:
-        """Build subagents for code mode: code_agent + explore_agent + browser_agent.
+        """Build subagents for code mode: explore_agent + plan_agent + code_agent + browser_agent.
 
-        Code 模式默认启用 explore_agent，并按配置启用 code_agent。
+        explore_agent / plan_agent 固定挂载（Code 模式核心子代理）。
+        code_agent / browser_agent 按配置启用。
         """
         react_cfg = config if isinstance(config, dict) else {}
         subagents_cfg = react_cfg.get("subagents")
@@ -511,17 +520,47 @@ class JiuwenClawCodeAdapter(JiuWenClawDeepAdapter):
         workspace = self._workspace_dir or "./"
         subagents: list[Any] = []
 
+        # ── 固定挂载：explore_agent（Code 模式核心子代理，始终启用）──
+        if not self._subagent_list_has_name(subagents, "explore_agent"):
+            explore_agent_cfg = subagents_cfg.get("explore_agent") if isinstance(subagents_cfg, dict) else None
+            subagents.append(
+                build_explore_agent_config(
+                    model=model,
+                    workspace=workspace,
+                    language=resolved_language,
+                    max_iterations=parse_int(
+                        explore_agent_cfg.get("max_iterations") if isinstance(explore_agent_cfg, dict) else None,
+                        react_cfg.get("max_iterations", 15),
+                    ),
+                )
+            )
+
+        # ── 固定挂载：plan_agent（Code 模式核心子代理，始终启用）──
+        if not self._subagent_list_has_name(subagents, "plan_agent"):
+            plan_agent_cfg = subagents_cfg.get("plan_agent") if isinstance(subagents_cfg, dict) else None
+            subagents.append(
+                build_plan_agent_config(
+                    model=model,
+                    workspace=workspace,
+                    language=resolved_language,
+                    max_iterations=parse_int(
+                        plan_agent_cfg.get("max_iterations") if isinstance(plan_agent_cfg, dict) else None,
+                        react_cfg.get("max_iterations", 15),
+                    ),
+                )
+            )
+
         if isinstance(subagents_cfg, dict):
             # code_agent subagent — 按配置启用
             code_agent_cfg = subagents_cfg.get("code_agent")
             if self._is_subagent_enabled(code_agent_cfg):
                 code_agent_rails = None
-                if get_memory_mode(get_config()) == "local":
-                    coding_memory_rail = self._build_coding_memory_rail()
-                    if coding_memory_rail is not None:
-                        # SysOperationRail is default rail for code_agent;
-            # passing rails overrides defaults, must include it explicitly
-                        code_agent_rails = [SysOperationRail(), coding_memory_rail]
+                # 复用主 Agent 已构建的 CodingMemoryRail
+                coding_memory_rail = self._coding_memory_rail
+                if coding_memory_rail is not None:
+                    # SysOperationRail is default rail for code_agent;
+                    # passing rails overrides defaults, must include it explicitly
+                    code_agent_rails = [SysOperationRail(), coding_memory_rail]
                 subagents.append(
                     build_code_agent_config(
                         model,
@@ -565,21 +604,6 @@ class JiuwenClawCodeAdapter(JiuWenClawDeepAdapter):
                     )
                 )
 
-        # explore_agent 是 code 模式的核心子代理 — 默认启用
-        explore_agent_cfg = subagents_cfg.get("explore_agent") if isinstance(subagents_cfg, dict) else None
-        if self._is_subagent_default_enabled(explore_agent_cfg):
-            subagents.append(
-                build_explore_agent_config(
-                    model=model,
-                    workspace=workspace,
-                    language=resolved_language,
-                    max_iterations=parse_int(
-                        explore_agent_cfg.get("max_iterations") if isinstance(explore_agent_cfg, dict) else None,
-                        react_cfg.get("max_iterations", 15),
-                    ),
-                )
-            )
-
         return subagents or None
 
     # ─── Rail 生命周期(mode切换) ───────────────────
@@ -590,10 +614,10 @@ class JiuwenClawCodeAdapter(JiuWenClawDeepAdapter):
         code.normal / code.plan 等模式：
         - 保留 SubagentRail（主 Agent 通过 task_tool 派发 explore/plan 子代理）
         - 保留 ProjectMemoryRail（code 模式始终挂载）
+        - 保留 CodingMemoryRail（code 模式始终挂载）
         - 卸载 TaskPlanningRail、SkillEvolutionRail
-        - 按 config 注册/卸载 MemoryRail
         """
-        # 卸载非 code 专属 rails（SubagentRail 在 code 模式保留）
+        # 卸载非 code 专属 rails
         rail_specs = (
             ("_task_planning_rail", "TaskPlanningRail"),
             ("_skill_evolution_rail", "SkillEvolutionRail"),
@@ -629,8 +653,16 @@ class JiuwenClawCodeAdapter(JiuWenClawDeepAdapter):
                     mode,
                 )
 
-        # code 模式，根据 config 选择是否注册或者卸载 memory rail
-        await self._handle_memory_rail_by_config("fast")
+        # code 模式保留 CodingMemoryRail；若缺失则补充注册
+        if self._coding_memory_rail is None:
+            coding_memory_rail = self._build_coding_memory_rail()
+            if coding_memory_rail is not None:
+                # _build_coding_memory_rail 已缓存到 self._coding_memory_rail
+                await self._instance.register_rail(coding_memory_rail)
+                logger.info(
+                    "[JiuwenClawCodeAdapter] CodingMemoryRail (re)registered for %s",
+                    mode,
+                )
 
     # ─── Runtime config ──────────────────────────
 
@@ -699,7 +731,8 @@ class JiuwenClawCodeAdapter(JiuWenClawDeepAdapter):
                         Runner.resource_mgr.add_tool(tool_instance)
                     tool_cards.append(tool_instance.card)
             else:
-                Runner.resource_mgr.add_tool(result)
+                if not Runner.resource_mgr.get_tool(result.card.id):
+                    Runner.resource_mgr.add_tool(result)
                 tool_cards.append(result.card)
             logger.info(
                 "[JiuwenClawCodeAdapter] Tool %s registered from config",
@@ -766,17 +799,12 @@ class JiuwenClawCodeAdapter(JiuWenClawDeepAdapter):
             return None
 
     def _build_skill_toolkit(self, agent_id: str) -> list[Any] | None:
-        """注册 SkillToolkit 工具."""
+        """构建 SkillToolkit 工具（不注册到 Runner，由 _get_tool_cards 统一注册）."""
         try:
             skill_toolkit = SkillToolkit(manager=self._skill_manager)
-            skill_tool_names: list[str] = []
-            for tool in skill_toolkit.get_tools():
-                if not Runner.resource_mgr.get_tool(tool.card.id):
-                    Runner.resource_mgr.add_tool(tool)
-                skill_tool_names.append(tool.card.name)
             logger.info(
-                "[JiuwenClawCodeAdapter] SkillToolkit registered: tools=%s",
-                skill_tool_names,
+                "[JiuwenClawCodeAdapter] SkillToolkit built: tools=%s",
+                [t.card.name for t in skill_toolkit.get_tools()],
             )
             return skill_toolkit.get_tools()
         except Exception as exc:
