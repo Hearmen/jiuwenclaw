@@ -173,7 +173,7 @@ class JiuClawStreamEventRail(DeepAgentRail):
             tool_result_payload = {
                 "tool_name": getattr(tool_call, "name", "") if tool_call else "",
                 "tool_call_id": getattr(tool_call, "id", "") if tool_call else "",
-                "result": str(result)[:1000] if result is not None else "",
+                "result": str(result)[:60000] if result is not None else "",
             }
             if raw_output is not None:
                 tool_result_payload["raw_output"] = raw_output
