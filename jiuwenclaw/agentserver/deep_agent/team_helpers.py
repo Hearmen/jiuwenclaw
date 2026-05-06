@@ -266,8 +266,8 @@ async def _handle_team_evolve_list_command(
     lines = [
         f'📊 Skill "{skill_name}" — 经验库摘要\n',
         f"共 {len(records)} 条经验 | 平均分：{avg_score:.2f}\n",
-        " #  │ Score │ Used    │ Effect  │ Section          │ Content (preview)",
-        "────┼───────┼─────────┼─────────┼──────────────────┼──────────────────────────",
+        "| # | Score | Used | Effect | Section | Content (preview) |",
+        "|---|---:|---|---|---|---|",
     ]
     for i, record in enumerate(records, 1):
         stats = record.usage_stats
@@ -281,9 +281,10 @@ async def _handle_team_evolve_list_command(
         else:
             used_str = "0/0"
             effect_str = "+0/-0"
-        preview = record.change.content.split("\n")[0][:40]
+        section = str(record.change.section).replace("|", "\\|")
+        preview = record.change.content.split("\n")[0][:40].replace("|", "\\|")
         lines.append(
-            f" {i:<2} │ {record.score:.2f}  │ {used_str:<7} │ {effect_str:<7} │ {record.change.section:<16} │ {preview}"
+            f"| {i} | {record.score:.2f} | {used_str} | {effect_str} | {section} | {preview} |"
         )
 
     lines.append(f"\n提示：使用 /evolve_simplify {skill_name} 执行智能整理")
@@ -299,7 +300,127 @@ async def _handle_team_slash_command(
     query: str,
 ) -> dict[str, Any] | None:
     """Handle team-only slash commands before entering the team stream."""
-    return await _handle_team_evolve_list_command(channel_id, session_id, query)
+    evolve_list_result = await _handle_team_evolve_list_command(channel_id, session_id, query)
+    if evolve_list_result is not None:
+        return evolve_list_result
+
+    stripped = str(query or "").strip()
+    if not (
+        stripped.startswith("/evolve_simplify")
+        or stripped == "/evolve"
+        or stripped.startswith("/evolve ")
+    ):
+        return None
+
+    tm = get_team_manager(channel_id)
+    rail = tm.get_team_skill_rail(session_id)
+    if rail is None:
+        return {
+            "output": "团队技能演进不可用：未找到 TeamSkillRail。",
+            "result_type": "error",
+        }
+
+    store = rail.store
+
+    if stripped.startswith("/evolve_simplify"):
+        parts = stripped.split(maxsplit=2)
+        skill_name = parts[1] if len(parts) > 1 else ""
+        user_intent = parts[2] if len(parts) > 2 else None
+
+        if not skill_name:
+            return {
+                "output": "请指定 Skill 名称：`/evolve_simplify <skill_name> [user_intent]`",
+                "result_type": "error",
+            }
+
+        if not store.skill_exists(skill_name):
+            available = "、".join(store.list_skill_names()) or "（无可用 Skill）"
+            return {
+                "output": f"未找到 Skill '{skill_name}'。当前可用：{available}",
+                "result_type": "error",
+            }
+
+        try:
+            simplify_result = await rail.request_simplify(skill_name, user_intent)
+        except Exception as exc:
+            logger.warning(
+                "[TeamHelpers] evolve_simplify failed: session_id=%s error=%s",
+                session_id,
+                exc,
+            )
+            return {
+                "output": f"团队技能整理分析失败：{exc}",
+                "result_type": "error",
+            }
+
+        if not simplify_result:
+            return {
+                "output": f"Skill '{skill_name}' 经验库状态良好，无需整理。",
+                "result_type": "answer",
+            }
+
+        if isinstance(simplify_result, str):
+            output = simplify_result
+        elif isinstance(simplify_result, dict):
+            ordered_keys = ("archived", "retained", "merged", "removed", "updated")
+            parts = [f"{key}={simplify_result[key]}" for key in ordered_keys if key in simplify_result]
+            output = (
+                f"Skill '{skill_name}' 整理完成：{', '.join(parts)}"
+                if parts
+                else f"Skill '{skill_name}' 整理完成。"
+            )
+        else:
+            output = f"Skill '{skill_name}' 整理完成。"
+
+        return {
+            "output": output,
+            "result_type": "answer",
+        }
+
+    parts = stripped.split(maxsplit=2)
+    if len(parts) < 2:
+        return {
+            "output": "请补充演进意图：`/evolve <skill_name> <user_query>`",
+            "result_type": "error",
+        }
+
+    skill_name = parts[1].strip()
+    user_query = parts[2].strip() if len(parts) > 2 else ""
+
+    if not store.skill_exists(skill_name):
+        available = "、".join(store.list_skill_names()) or "（无可用 Skill）"
+        return {
+            "output": f"未找到 Skill '{skill_name}'。当前可用：{available}",
+            "result_type": "error",
+        }
+
+    if not user_query:
+        return {
+            "output": "请补充演进意图：`/evolve <skill_name> <user_query>`",
+            "result_type": "error",
+        }
+
+    try:
+        # Slash-command evolve returns before the normal team stream loop starts.
+        # Launch the per-session watcher first so approval events still reach
+        # session-bound clients such as TUI via the existing push path.
+        _ensure_team_evolution_watcher(channel_id, session_id)
+        await rail.request_user_evolution(skill_name, user_query)
+    except Exception as exc:
+        logger.warning(
+            "[TeamHelpers] evolve failed: session_id=%s error=%s",
+            session_id,
+            exc,
+        )
+        return {
+            "output": f"团队技能演进请求失败：{exc}",
+            "result_type": "error",
+        }
+
+    return {
+        "output": f"Skill '{skill_name}' 演进请求已提交，请等待审批。",
+        "result_type": "answer",
+    }
 
 
 async def process_team_message_stream(

@@ -3264,8 +3264,8 @@ class JiuWenClawDeepAdapter:
         lines = [
             f'📊 Skill "{skill_name}" — 经验库摘要\n',
             f"共 {len(records)} 条经验 | 平均分：{avg_score:.2f}\n",
-            " #  │ Score │ Used    │ Effect  │ Section          │ Content (preview)",
-            "────┼───────┼─────────┼─────────┼──────────────────┼──────────────────────────",
+            "| # | Score | Used | Effect | Section | Content (preview) |",
+            "|---|---:|---|---|---|---|",
         ]
         for i, r in enumerate(records, 1):
             stats = r.usage_stats
@@ -3279,9 +3279,10 @@ class JiuWenClawDeepAdapter:
             else:
                 used_str = "0/0"
                 effect_str = "+0/-0"
-            preview = r.change.content.split("\n")[0][:40]
+            section = str(r.change.section).replace("|", "\\|")
+            preview = r.change.content.split("\n")[0][:40].replace("|", "\\|")
             lines.append(
-                f" {i:<2} │ {r.score:.2f}  │ {used_str:<7} │ {effect_str:<7} │ {r.change.section:<16} │ {preview}"
+                f"| {i} | {r.score:.2f} | {used_str} | {effect_str} | {section} | {preview} |"
             )
 
         lines.append(f"\n提示：使用 /evolve_simplify {skill_name} 执行智能整理")

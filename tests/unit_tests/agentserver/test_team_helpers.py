@@ -69,6 +69,15 @@ class _TeamHelpersTestApi:
         handler = getattr(team_helpers, "_handle_team_evolve_list_command")
         return await handler(channel_id, session_id, query)
 
+    @staticmethod
+    async def handle_team_slash_command(
+        channel_id: str | None,
+        session_id: str,
+        query: str,
+    ) -> dict[str, object] | None:
+        handler = getattr(team_helpers, "_handle_team_slash_command")
+        return await handler(channel_id, session_id, query)
+
 
 @pytest.mark.anyio
 async def test_team_evolution_monitor_pushes_status_with_real_request_id(monkeypatch):
@@ -443,3 +452,127 @@ async def test_process_team_message_stream_handles_team_evolve_list(monkeypatch)
     assert chunks[0].payload["event_type"] == "chat.final"
     assert 'Skill "demo-skill"' in chunks[0].payload["content"]
     assert chunks[1].is_complete is True
+
+
+@pytest.mark.anyio
+async def test_handle_team_slash_command_requires_explicit_evolve_intent(monkeypatch):
+    class _FakeStore:
+        @staticmethod
+        def skill_exists(skill_name: str) -> bool:
+            return skill_name == "demo-skill"
+
+        @staticmethod
+        def list_skill_names() -> list[str]:
+            return ["demo-skill"]
+
+    rail = SimpleNamespace(
+        store=_FakeStore(),
+        request_user_evolution=None,
+    )
+
+    class _FakeManager:
+        @staticmethod
+        def get_team_skill_rail(session_id: str):
+            return rail
+
+    monkeypatch.setattr(team_helpers, "get_team_manager", lambda channel_id: _FakeManager())
+
+    result = await _TeamHelpersTestApi.handle_team_slash_command(
+        "web",
+        "sess-team-evolve",
+        "/evolve demo-skill",
+    )
+
+    assert result == {
+        "output": "请补充演进意图：`/evolve <skill_name> <user_query>`",
+        "result_type": "error",
+    }
+
+
+@pytest.mark.anyio
+async def test_handle_team_slash_command_submits_explicit_evolve_request(monkeypatch):
+    recorded_calls: list[tuple[str, str]] = []
+    watcher_calls: list[tuple[str | None, str]] = []
+
+    class _FakeStore:
+        @staticmethod
+        def skill_exists(skill_name: str) -> bool:
+            return skill_name == "demo-skill"
+
+        @staticmethod
+        def list_skill_names() -> list[str]:
+            return ["demo-skill"]
+
+    class _FakeRail:
+        store = _FakeStore()
+
+        @staticmethod
+        async def request_user_evolution(skill_name: str, user_query: str):
+            recorded_calls.append((skill_name, user_query))
+            return "team_skill_evolve_req1"
+
+    class _FakeManager:
+        @staticmethod
+        def get_team_skill_rail(session_id: str):
+            return _FakeRail()
+
+    monkeypatch.setattr(team_helpers, "get_team_manager", lambda channel_id: _FakeManager())
+    monkeypatch.setattr(
+        team_helpers,
+        "_ensure_team_evolution_watcher",
+        lambda channel_id, session_id: watcher_calls.append((channel_id, session_id)),
+    )
+
+    result = await _TeamHelpersTestApi.handle_team_slash_command(
+        "web",
+        "sess-team-evolve",
+        "/evolve demo-skill improve review flow",
+    )
+
+    assert recorded_calls == [("demo-skill", "improve review flow")]
+    assert watcher_calls == [("web", "sess-team-evolve")]
+    assert result == {
+        "output": "Skill 'demo-skill' 演进请求已提交，请等待审批。",
+        "result_type": "answer",
+    }
+
+
+@pytest.mark.anyio
+async def test_handle_team_slash_command_simplify_reports_noop(monkeypatch):
+    recorded_calls: list[tuple[str, str | None]] = []
+
+    class _FakeStore:
+        @staticmethod
+        def skill_exists(skill_name: str) -> bool:
+            return skill_name == "demo-skill"
+
+        @staticmethod
+        def list_skill_names() -> list[str]:
+            return ["demo-skill"]
+
+    class _FakeRail:
+        store = _FakeStore()
+
+        @staticmethod
+        async def request_simplify(skill_name: str, user_intent: str | None):
+            recorded_calls.append((skill_name, user_intent))
+            return None
+
+    class _FakeManager:
+        @staticmethod
+        def get_team_skill_rail(session_id: str):
+            return _FakeRail()
+
+    monkeypatch.setattr(team_helpers, "get_team_manager", lambda channel_id: _FakeManager())
+
+    result = await _TeamHelpersTestApi.handle_team_slash_command(
+        "web",
+        "sess-team-simplify",
+        "/evolve_simplify demo-skill",
+    )
+
+    assert recorded_calls == [("demo-skill", None)]
+    assert result == {
+        "output": "Skill 'demo-skill' 经验库状态良好，无需整理。",
+        "result_type": "answer",
+    }
