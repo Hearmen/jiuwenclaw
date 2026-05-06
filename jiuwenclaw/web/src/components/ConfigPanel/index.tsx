@@ -2133,7 +2133,9 @@ export function ConfigPanel({
       return dm.model_name !== om.model_name || dm.api_base !== om.api_base
         || dm.api_key !== om.api_key || dm.model_provider !== om.model_provider
         || (dm.alias ?? "") !== (om.alias ?? "")
-        || dm.is_default !== om.is_default;
+        || dm.is_default !== om.is_default
+        || (dm.temperature ?? 0.95) !== (om.temperature ?? 0.95)
+        || (dm.timeout ?? 1800) !== (om.timeout ?? 1800);
     });
   }, [draftModels, storeAvailableModels]);
 

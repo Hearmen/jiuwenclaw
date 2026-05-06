@@ -388,7 +388,7 @@ function AppContent() {
     }
     // 同步获取多模型列表
     try {
-      const resp = await request<{ models: Array<{ model_name: string; api_base: string; api_key: string; model_provider: string; temperature?: number; alias?: string }>; active_model: string }>('models.list');
+      const resp = await request<{ models: ModelEntry[]; active_model: string }>('models.list');
       if (resp?.models) {
         setAvailableModels(resp.models, resp.active_model);
       }

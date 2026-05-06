@@ -42,6 +42,12 @@ export interface ModelEntry {
   alias?: string;
   /** 用于原子性重命名操作，指定原模型名 */
   original_model_name?: string;
+  /**
+   * 持久化条目在 models.defaults 中的索引；由 models.list 透传。
+   * replace_all 据此识别"未编辑字段"并保留 YAML 占位符（如 ${API_KEY}）。
+   * 新增条目不带此字段。
+   */
+  origin_index?: number;
 }
 
 export interface OffloadFileListResponse {

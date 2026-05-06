@@ -55,25 +55,100 @@ _ENV_FILE = get_env_file()
 load_dotenv(dotenv_path=_ENV_FILE, override=True)
 
 
-def _resolve_env_var_str(value: str) -> str:
-    """Resolve ${VAR:-default} patterns in a string using current environment."""
-    return re.sub(
-        r'\$\{([^:}]+)(?::-([^}]*))?\}',
-        lambda m: os.getenv(m.group(1), m.group(2) if m.group(2) is not None else ""),
-        value,
+def _values_match(parsed_val: Any, resolved_val: Any) -> bool:
+    """Compare a frontend-sent value against the resolved value of a model entry.
+
+    Numeric and stringified env-var output (e.g. ``${TEMP:-0.95}`` resolves to ``"0.95"``)
+    are normalized so that ``0.95 == "0.95"`` is treated as "unchanged".
+    """
+    if isinstance(parsed_val, bool) or isinstance(resolved_val, bool):
+        return bool(parsed_val) == bool(resolved_val)
+    if parsed_val is None and resolved_val is None:
+        return True
+    try:
+        return float(parsed_val) == float(resolved_val)
+    except (TypeError, ValueError):
+        pass
+    return str(parsed_val if parsed_val is not None else "") == str(
+        resolved_val if resolved_val is not None else ""
     )
 
 
-def _entry_model_name(entry: dict) -> str:
-    """从模型配置条目中提取并解析 model_name。"""
-    raw = entry.get("model_client_config", {}).get("model_name", "")
-    return _resolve_env_var_str(raw)
+def _merge_models_for_replace_all(
+    parsed: list[dict[str, Any]],
+    raw_defaults: list[dict[str, Any]],
+    resolved_defaults: list[dict[str, Any]],
+    crypto: Any,
+) -> list[dict[str, Any]]:
+    """Merge the frontend draft with the persisted YAML so that env-var placeholders
+    (``${VAR:-default}``) survive when the user edits unrelated fields.
 
+    For each frontend entry that carries an ``origin_index`` pointing at a still-existing
+    persisted entry, we deep-copy the raw entry (preserving placeholders, custom_headers,
+    etc.) and only overwrite the fields whose value differs from the resolved snapshot
+    the frontend was originally shown. New entries (no ``origin_index``) fall back to
+    encrypting/storing the frontend payload verbatim.
+    """
+    import copy as _copy
 
-def _entry_alias(entry: dict) -> str:
-    """从模型配置条目中提取并解析 alias。alias 为空时返回空字符串。"""
-    raw = entry.get("alias", "")
-    return _resolve_env_var_str(raw) if raw else ""
+    out: list[dict[str, Any]] = []
+    for item in parsed:
+        origin_idx = item.get("origin_index")
+        raw_entry = None
+        resolved_entry = None
+        if isinstance(origin_idx, int) and 0 <= origin_idx < len(raw_defaults):
+            raw_entry = raw_defaults[origin_idx]
+            if 0 <= origin_idx < len(resolved_defaults):
+                resolved_entry = resolved_defaults[origin_idx]
+
+        if raw_entry is not None and isinstance(raw_entry, dict):
+            new_entry = _copy.deepcopy(raw_entry)
+            new_mcc = new_entry.setdefault("model_client_config", {})
+            new_mco = new_entry.setdefault("model_config_obj", {})
+            resolved_mcc = (resolved_entry or {}).get("model_client_config", {}) or {}
+            resolved_mco = (resolved_entry or {}).get("model_config_obj", {}) or {}
+
+            if not _values_match(item["model_name"], resolved_mcc.get("model_name")):
+                new_mcc["model_name"] = item["model_name"]
+            if not _values_match(item["api_base"], resolved_mcc.get("api_base")):
+                new_mcc["api_base"] = item["api_base"]
+            if not _values_match(item["model_provider"], resolved_mcc.get("client_provider")):
+                new_mcc["client_provider"] = item["model_provider"]
+            if not _values_match(item["temperature"], resolved_mco.get("temperature")):
+                new_mco["temperature"] = item["temperature"]
+            if not _values_match(item["timeout"], resolved_mcc.get("timeout")):
+                new_mcc["timeout"] = item["timeout"]
+            if not _values_match(item["alias"], (resolved_entry or {}).get("alias")):
+                new_entry["alias"] = item["alias"]
+            new_entry["is_default"] = item["is_default"]
+            # api_key: resolved holds the decrypted plaintext shown to the frontend.
+            # Unchanged → keep raw (placeholder or ciphertext); changed → encrypt new value.
+            if not _values_match(item["api_key"], resolved_mcc.get("api_key")):
+                new_mcc["api_key"] = (
+                    crypto.encrypt(item["api_key"]) if (item["api_key"] and crypto) else item["api_key"]
+                )
+        else:
+            # New entry — frontend payload is the source of truth.
+            new_entry = {
+                "model_client_config": {
+                    "api_base": item["api_base"],
+                    "api_key": (
+                        crypto.encrypt(item["api_key"]) if (item["api_key"] and crypto) else item["api_key"]
+                    ),
+                    "model_name": item["model_name"],
+                    "client_provider": item["model_provider"],
+                    "timeout": item["timeout"],
+                    "verify_ssl": item["verify_ssl"],
+                },
+                "model_config_obj": {
+                    "temperature": item["temperature"],
+                },
+                "is_default": item["is_default"],
+                "alias": item["alias"],
+            }
+
+        out.append(new_entry)
+    return out
 
 
 # 仅满足 Channel 构造所需，不入队、不路由；仅用 channel_manager + message_handler 做入站/出站
@@ -684,24 +759,18 @@ def _register_web_handlers(bind: WebHandlersBindParams) -> None:
 
     # ── models.* handlers ────────────────────────────────────────
 
-    def _get_raw_model_list() -> list[dict]:
-        """从 config.yaml 原始内容读取模型列表（api_key 保持加密态）。"""
-        raw = get_config_raw()
-        raw_models = raw.get("models", {})
-        if "defaults" in raw_models and isinstance(raw_models["defaults"], list) and raw_models["defaults"]:
-            return list(raw_models["defaults"])
-        if "default" in raw_models and isinstance(raw_models["default"], dict):
-            return [dict(raw_models["default"])]
-        return []
-
     async def _models_list(ws, req_id, params, session_id):
-        """返回已配置的所有默认模型列表（与 config.get 一致，返回解密后的完整值）。"""
+        """返回已配置的所有默认模型列表（与 config.get 一致，返回解密后的完整值）。
+
+        每条带 ``origin_index`` 指向 ``models.defaults`` 中的位置，配合 replace_all
+        在保存时识别"未编辑字段"并保留原 YAML 占位符（如 ``${API_KEY}``）。
+        """
         try:
             config = get_config()
             models = get_default_models(config)
             result = []
             active_model = ""
-            for entry in models:
+            for idx, entry in enumerate(models):
                 mcc = entry.get("model_client_config", {})
                 mco = entry.get("model_config_obj", {})
                 is_default = entry.get("is_default", False)
@@ -713,6 +782,7 @@ def _register_web_handlers(bind: WebHandlersBindParams) -> None:
                     "temperature": mco.get("temperature", 0.95),
                     "is_default": is_default,
                     "alias": entry.get("alias", ""),
+                    "origin_index": idx,
                 })
                 # active_model 为列表首位的模型（主对话默认）
             active_model = result[0]["model_name"] if result else ""
@@ -724,237 +794,15 @@ def _register_web_handlers(bind: WebHandlersBindParams) -> None:
             logger.warning("[models.list] %s", exc)
             await channel.send_response(ws, req_id, ok=False, error=str(exc), code="INTERNAL_ERROR")
 
-    async def _models_save(ws, req_id, params, session_id):
-        """新增或更新一个模型配置。允许同名 model_name，通过 index 参数定位。
-
-        支持原子性重命名：传入 original_model_name 时，会先删除旧模型再添加新模型。
-        """
-        if not isinstance(params, dict):
-            await channel.send_response(ws, req_id, ok=False, error="params must be object", code="BAD_REQUEST")
-            return
-        model_name = str(params.get("model_name") or "").strip()
-        if not model_name:
-            await channel.send_response(ws, req_id, ok=False, error="model_name is required", code="BAD_REQUEST")
-            return
-        _raw_original = params.get("original_model_name")
-        original_model_name = str(_raw_original).strip() if _raw_original is not None else None
-        if original_model_name == "":
-            original_model_name = None
-        api_base = str(params.get("api_base") or "").strip()
-        api_key = str(params.get("api_key") or "").strip()
-        model_provider = str(params.get("model_provider") or "").strip()
-        temperature = float(params.get("temperature", 0.95))
-        is_default = bool(params.get("is_default", False))
-        target_index = params.get("index")
-        if target_index is not None:
-            try:
-                target_index = int(target_index)
-            except (ValueError, TypeError):
-                target_index = None
-        alias = str(params.get("alias") or "").strip()
-
-        available_model_providers = [p.value for p in ProviderType]
-        if model_provider and model_provider not in available_model_providers:
-            await channel.send_response(
-                ws, req_id, ok=False,
-                error=f"Model provider must be one of: {available_model_providers}",
-                code="BAD_REQUEST",
-            )
-            return
-        _existing = _get_raw_model_list()
-        if alias:
-            for chk_idx, entry in enumerate(_existing):
-                # 跳过正在编辑的条目本身（按 index 精准定位，避免误报自身冲突）
-                if target_index is not None and chk_idx == target_index:
-                    continue
-                ea = _entry_alias(entry)
-                emn = _entry_model_name(entry)
-                if ea == alias:
-                    # 同 model_name 组内换位（如设为主对话默认时列表重排），不视为冲突
-                    if emn == model_name:
-                        continue
-                    await channel.send_response(
-                        ws, req_id, ok=False,
-                        error=f"Alias '{alias}' is already used by model '{emn}'",
-                        code="BAD_REQUEST",
-                    )
-                    return
-                if emn == alias:
-                    await channel.send_response(
-                        ws, req_id, ok=False,
-                        error=f"Alias '{alias}' conflicts with model name '{emn}'",
-                        code="BAD_REQUEST",
-                    )
-                    return
-
-        if api_key:
-            from jiuwenclaw.extensions.registry import ExtensionRegistry
-            crypto = ExtensionRegistry.get_instance().get_crypto_provider()
-            if crypto:
-                api_key = crypto.encrypt(api_key)
-
-        new_entry = {
-            "model_client_config": {
-                "api_base": api_base,
-                "api_key": api_key,
-                "model_name": model_name,
-                "client_provider": model_provider,
-                "timeout": int(params.get("timeout", 1800)),
-                "verify_ssl": bool(params.get("verify_ssl", False)),
-            },
-            "model_config_obj": {
-                "temperature": temperature,
-            },
-            "is_default": is_default,
-        }
-        new_entry["alias"] = alias
-
-        try:
-            models = _get_raw_model_list()
-
-            action = "created"
-
-            if original_model_name and original_model_name != model_name:
-                # 重命名场景：model_name 发生变化，优先用 target_index 精准定位
-                if target_index is not None and 0 <= target_index < len(models):
-                    models[target_index] = new_entry
-                    action = "renamed"
-                else:
-                    renamed = False
-                    for i, entry in enumerate(models):
-                        if _entry_model_name(entry) == original_model_name:
-                            models[i] = new_entry
-                            renamed = True
-                            break
-                    if renamed:
-                        action = "renamed"
-                    else:
-                        models.append(new_entry)
-            else:
-                if is_default:
-                    for i, entry in enumerate(models):
-                        if _entry_model_name(entry) == model_name:
-                            entry["is_default"] = False
-
-                if target_index is not None and 0 <= target_index < len(models):
-                    models[target_index] = new_entry
-                    action = "updated"
-                elif target_index is not None and target_index >= len(models):
-                    # index 越界 = 新增条目（前端追加到列表末尾时会出现此情况）
-                    models.append(new_entry)
-                else:
-                    updated = False
-                    for i, entry in enumerate(models):
-                        if _entry_model_name(entry) == model_name:
-                            models[i] = new_entry
-                            updated = True
-                            break
-                    if not updated:
-                        models.append(new_entry)
-
-            from jiuwenclaw.config import _infer_is_default
-            models = _infer_is_default(models)
-
-            update_default_models_in_config(models)
-
-            await _clear_agent_config_cache(_resolve(agent_client))
-            if on_config_saved:
-                config_payload = get_config()
-                callback_result = on_config_saved(
-                    set(),
-                    env_updates={},
-                    config_payload=config_payload,
-                )
-                if inspect.isawaitable(callback_result):
-                    await callback_result
-
-            await channel.send_response(ws, req_id, ok=True, payload={
-                "model_name": model_name,
-                "action": action,
-            })
-        except Exception as exc:  # noqa: BLE001
-            logger.warning("[models.save] %s", exc)
-            await channel.send_response(ws, req_id, ok=False, error=str(exc), code="INTERNAL_ERROR")
-
-    async def _models_remove(ws, req_id, params, session_id):
-        """删除一个模型配置。至少保留一个模型。支持 index 参数定位同名模型。"""
-        if not isinstance(params, dict):
-            await channel.send_response(ws, req_id, ok=False, error="params must be object", code="BAD_REQUEST")
-            return
-        model_name = str(params.get("model_name") or "").strip()
-        if not model_name:
-            await channel.send_response(ws, req_id, ok=False, error="model_name is required", code="BAD_REQUEST")
-            return
-        target_index = params.get("index")
-        if target_index is not None:
-            try:
-                target_index = int(target_index)
-            except (ValueError, TypeError):
-                target_index = None
-
-        try:
-            models = _get_raw_model_list()
-            if len(models) <= 1:
-                await channel.send_response(
-                    ws, req_id, ok=False,
-                    error="At least one model configuration is required",
-                    code="BAD_REQUEST",
-                )
-                return
-
-            if target_index is not None:
-                if target_index < 0 or target_index >= len(models):
-                    await channel.send_response(
-                        ws, req_id, ok=False,
-                        error=f"Index {target_index} out of range",
-                        code="NOT_FOUND",
-                    )
-                    return
-                removed = models[target_index]
-                removed_name = _entry_model_name(removed)
-                new_models = models[:target_index] + models[target_index + 1:]
-            else:
-                removed_idx = None
-                for i, entry in enumerate(models):
-                    if _entry_model_name(entry) == model_name:
-                        removed_idx = i
-                        break
-                if removed_idx is None:
-                    await channel.send_response(
-                        ws, req_id, ok=False,
-                        error=f"Model '{model_name}' not found",
-                        code="NOT_FOUND",
-                    )
-                    return
-                removed_name = _entry_model_name(models[removed_idx])
-                new_models = models[:removed_idx] + models[removed_idx + 1:]
-
-            # 删除后若同 model_name 组内无 is_default=true，自动将第一个设为默认
-            from jiuwenclaw.config import _infer_is_default
-            new_models = _infer_is_default(new_models)
-
-            update_default_models_in_config(new_models)
-            await _clear_agent_config_cache(_resolve(agent_client))
-            if on_config_saved:
-                config_payload = get_config()
-                callback_result = on_config_saved(
-                    set(),
-                    env_updates={},
-                    config_payload=config_payload,
-                )
-                if inspect.isawaitable(callback_result):
-                    await callback_result
-
-            await channel.send_response(ws, req_id, ok=True, payload={"model_name": removed_name})
-        except Exception as exc:  # noqa: BLE001
-            logger.warning("[models.remove] %s", exc)
-            await channel.send_response(ws, req_id, ok=False, error=str(exc), code="INTERNAL_ERROR")
-
     async def _models_replace_all(ws, req_id, params, session_id):
         """原子地用提交的列表整体替换 models.defaults。
 
         前端在保存配置时一次性提交完整的最终列表，避免按 model_name/index 分多步
         save+remove 在同 model_name 多条目场景下出现的位置覆写、漏删等问题。
+
+        每条 entry 可携带 ``origin_index`` 指向 ``models.defaults`` 中的原始位置；
+        命中后 raw YAML 中的占位符（如 ``${API_KEY}``）以及 custom_headers 等未在
+        前端暴露的字段会被保留，仅当字段值与前端最初看到的解析值不一致时才覆写。
         """
         if not isinstance(params, dict):
             await channel.send_response(ws, req_id, ok=False, error="params must be object", code="BAD_REQUEST")
@@ -987,8 +835,19 @@ def _register_web_handlers(bind: WebHandlersBindParams) -> None:
                     code="BAD_REQUEST",
                 )
                 return
+            origin_index_raw = item.get("origin_index")
+            if origin_index_raw is None:
+                origin_index = None
+            else:
+                try:
+                    origin_index = int(origin_index_raw)
+                except (TypeError, ValueError):
+                    origin_index = None
             api_key = str(item.get("api_key") or "").strip()
-            if not api_key:
+            # New entries must carry a non-empty api_key. Existing entries may legitimately
+            # be empty when the source is ``${API_KEY:-}`` and the env var is unset; in that
+            # case origin_index lets replace_all preserve the original placeholder.
+            if not api_key and origin_index is None:
                 await channel.send_response(
                     ws, req_id, ok=False,
                     error=f"models[{idx}].api_key is required",
@@ -1018,9 +877,10 @@ def _register_web_handlers(bind: WebHandlersBindParams) -> None:
 
             if alias:
                 if alias in aliases_seen:
+                    prev_idx = aliases_seen[alias]
                     await channel.send_response(
                         ws, req_id, ok=False,
-                        error=f"Alias '{alias}' is used by multiple models",
+                        error=f"Alias '{alias}' is used by both models[{prev_idx}] and models[{idx}]",
                         code="BAD_REQUEST",
                     )
                     return
@@ -1036,6 +896,7 @@ def _register_web_handlers(bind: WebHandlersBindParams) -> None:
                 "timeout": timeout,
                 "verify_ssl": verify_ssl,
                 "alias": alias,
+                "origin_index": origin_index,
             })
 
         # alias 与其他条目的 model_name 冲突校验
@@ -1049,7 +910,7 @@ def _register_web_handlers(bind: WebHandlersBindParams) -> None:
                 if q["model_name"] == a:
                     await channel.send_response(
                         ws, req_id, ok=False,
-                        error=f"Alias '{a}' conflicts with model name '{a}'",
+                        error=f"Alias '{a}' on models[{i}] conflicts with model_name on models[{j}]",
                         code="BAD_REQUEST",
                     )
                     return
@@ -1057,26 +918,13 @@ def _register_web_handlers(bind: WebHandlersBindParams) -> None:
         from jiuwenclaw.extensions.registry import ExtensionRegistry
         crypto = ExtensionRegistry.get_instance().get_crypto_provider()
 
-        new_models: list[dict] = []
-        for p in parsed:
-            api_key_val = p["api_key"]
-            if api_key_val and crypto:
-                api_key_val = crypto.encrypt(api_key_val)
-            new_models.append({
-                "model_client_config": {
-                    "api_base": p["api_base"],
-                    "api_key": api_key_val,
-                    "model_name": p["model_name"],
-                    "client_provider": p["model_provider"],
-                    "timeout": p["timeout"],
-                    "verify_ssl": p["verify_ssl"],
-                },
-                "model_config_obj": {
-                    "temperature": p["temperature"],
-                },
-                "is_default": p["is_default"],
-                "alias": p["alias"],
-            })
+        raw_cfg = get_config_raw()
+        raw_defaults = raw_cfg.get("models", {}).get("defaults") if isinstance(raw_cfg, dict) else None
+        if not isinstance(raw_defaults, list):
+            raw_defaults = []
+        resolved_defaults = get_default_models()
+
+        new_models = _merge_models_for_replace_all(parsed, raw_defaults, resolved_defaults, crypto)
 
         try:
             from jiuwenclaw.config import _infer_is_default
@@ -1104,104 +952,6 @@ def _register_web_handlers(bind: WebHandlersBindParams) -> None:
     async def _models_validate(ws, req_id, params, session_id):
         """测试指定模型配置是否可用（复用 config.validate_model 逻辑）。"""
         await _config_validate_model(ws, req_id, params, session_id)
-
-    async def _models_set_active(ws, req_id, params, session_id):
-        """设置默认选中的模型（将其移到列表第一位）。支持 index 参数定位同名模型。"""
-        if not isinstance(params, dict):
-            await channel.send_response(ws, req_id, ok=False, error="params must be object", code="BAD_REQUEST")
-            return
-        model_name = str(params.get("model_name") or "").strip()
-        if not model_name:
-            await channel.send_response(ws, req_id, ok=False, error="model_name is required", code="BAD_REQUEST")
-            return
-        target_index = params.get("index")
-        if target_index is not None:
-            try:
-                target_index = int(target_index)
-            except (ValueError, TypeError):
-                target_index = None
-
-        try:
-            models = _get_raw_model_list()
-            target_idx = None
-            if target_index is not None:
-                if 0 <= target_index < len(models):
-                    target_idx = target_index
-            else:
-                for i, entry in enumerate(models):
-                    if _entry_model_name(entry) == model_name:
-                        target_idx = i
-                        break
-            if target_idx is None:
-                await channel.send_response(
-                    ws, req_id, ok=False,
-                    error=f"Model '{model_name}' not found",
-                    code="NOT_FOUND",
-                )
-                return
-            if target_idx != 0:
-                target = models.pop(target_idx)
-                models.insert(0, target)
-                update_default_models_in_config(models)
-                await _clear_agent_config_cache(_resolve(agent_client))
-
-            await channel.send_response(ws, req_id, ok=True, payload={"model_name": model_name})
-        except Exception as exc:  # noqa: BLE001
-            logger.warning("[models.set_active] %s", exc)
-            await channel.send_response(ws, req_id, ok=False, error=str(exc), code="INTERNAL_ERROR")
-
-    async def _models_set_default(ws, req_id, params, session_id):
-        """设置同 model_name 组内的默认条目（is_default 互斥切换）。"""
-        if not isinstance(params, dict):
-            await channel.send_response(ws, req_id, ok=False, error="params must be object", code="BAD_REQUEST")
-            return
-        model_name = str(params.get("model_name") or "").strip()
-        if not model_name:
-            await channel.send_response(ws, req_id, ok=False, error="model_name is required", code="BAD_REQUEST")
-            return
-        target_index = params.get("index")
-        if target_index is not None:
-            try:
-                target_index = int(target_index)
-            except (ValueError, TypeError):
-                target_index = None
-
-        try:
-            models = _get_raw_model_list()
-
-            # 先将同 model_name 组内所有条目的 is_default 置为 False
-            for entry in models:
-                if _entry_model_name(entry) == model_name:
-                    entry["is_default"] = False
-
-            # 设置目标条目的 is_default 为 True
-            if target_index is not None:
-                if 0 <= target_index < len(models) and _entry_model_name(models[target_index]) == model_name:
-                    models[target_index]["is_default"] = True
-                else:
-                    await channel.send_response(
-                        ws, req_id, ok=False,
-                        error=f"Index {target_index} does not match model_name '{model_name}'",
-                        code="NOT_FOUND",
-                    )
-                    return
-            else:
-                # 无 index 时，设置同组第一个匹配项
-                for entry in models:
-                    if _entry_model_name(entry) == model_name:
-                        entry["is_default"] = True
-                        break
-
-            from jiuwenclaw.config import _infer_is_default
-            models = _infer_is_default(models)
-
-            update_default_models_in_config(models)
-            await _clear_agent_config_cache(_resolve(agent_client))
-
-            await channel.send_response(ws, req_id, ok=True, payload={"model_name": model_name})
-        except Exception as exc:  # noqa: BLE001
-            logger.warning("[models.set_default] %s", exc)
-            await channel.send_response(ws, req_id, ok=False, error=str(exc), code="INTERNAL_ERROR")
 
     async def _channel_get(ws, req_id, params, session_id):
         """返回已注册的 channel 列表."""
@@ -2190,12 +1940,8 @@ def _register_web_handlers(bind: WebHandlersBindParams) -> None:
     channel.register_method("config.set", _config_set)
     channel.register_method("config.validate_model", _config_validate_model)
     channel.register_method("models.list", _models_list)
-    channel.register_method("models.save", _models_save)
-    channel.register_method("models.remove", _models_remove)
     channel.register_method("models.replace_all", _models_replace_all)
     channel.register_method("models.validate", _models_validate)
-    channel.register_method("models.set_active", _models_set_active)
-    channel.register_method("models.set_default", _models_set_default)
     channel.register_method("channel.get", _channel_get)
 
     channel.register_method("session.list", _session_list)
