@@ -74,7 +74,7 @@ export function addTrustedDir(path: string): "added" | "exists" | "not_found" | 
   if (_trustedDirs!.includes(normalized)) {
     return "exists";
   }
-  _trustedDirs!.push(normalized);
+  _trustedDirs!.unshift(normalized);
   persist();
   return "added";
 }
