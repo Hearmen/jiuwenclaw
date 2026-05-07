@@ -98,6 +98,16 @@ export function createWorkspaceCommand(): SlashCommand {
           }
           const result = ctx.addTrustedDir(resolvedPath);
           if (result === "added") {
+            // Sync to server-side permissions
+            try {
+              ctx.sendEventOnly("command.add_dir", {
+              path: resolvedPath,
+              remember: true
+            });
+            } catch (error) {
+              // Ignore sync errors, still add locally
+              console.warn("Failed to sync trusted directory to server:", error);
+            }
             ctx.addItem(
               addInfo(ctx.sessionId, `Trusted directory added: ${resolvedPath}`, "c", {
                 view: "kv",
@@ -156,6 +166,16 @@ export function createWorkspaceCommand(): SlashCommand {
 
           // Execute the set operation
           ctx.setTrustedDir(directoryPath);
+          // Sync to server-side permissions
+          try {
+            ctx.sendEventOnly("command.add_dir", {
+              path: directoryPath,
+              remember: true
+            });
+          } catch (error) {
+            // Ignore sync errors, still set locally
+            console.warn("Failed to sync trusted directory to server:", error);
+          }
           ctx.addItem(
             addInfo(ctx.sessionId, `Trusted directory set: ${directoryPath}`, "c", {
               view: "kv",

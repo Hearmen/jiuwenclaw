@@ -172,7 +172,39 @@ def persist_cli_trusted_directory(raw_path: str) -> dict[str, Any]:
 
     写入：
     - `permissions.external_directory`：目录 allow
-    - `permissions.approval_overrides`：追加 path/command 两条 allow override（可选）
+    """
+    if not isinstance(raw_path, str) or not raw_path.strip():
+        return {"ok": False, "error": "path is empty"}
+
+    try:
+        resolved = Path(raw_path.strip()).expanduser().resolve(strict=False)
+    except (OSError, RuntimeError) as e:
+        return {"ok": False, "error": f"invalid path: {e}"}
+
+    dir_norm = resolved.as_posix().rstrip("/")
+    if not dir_norm:
+        return {"ok": False, "error": "path resolves to empty"}
+
+    from ruamel.yaml.scalarstring import DoubleQuotedScalarString
+
+    data, yaml_path = _load_config_yaml_round_trip()
+    permissions = _ensure_permissions_dict(data)
+    ext_cfg = _ensure_external_directory_dict(permissions)
+    ext_cfg[DoubleQuotedScalarString(dir_norm)] = DoubleQuotedScalarString("allow")
+
+    _dump_config_yaml_round_trip(yaml_path, data)
+    return {
+        "ok": True,
+        "normalized": dir_norm,
+    }
+
+
+def persist_cli_trusted_directory_with_overrides(raw_path: str) -> dict[str, Any]:
+    """CLI `command.add_dir`：全局信任目录子树（包含覆盖规则）。
+
+    写入：
+    - `permissions.external_directory`：目录 allow
+    - `permissions.approval_overrides`：追加 path/command 两条 allow override
     """
     if not isinstance(raw_path, str) or not raw_path.strip():
         return {"ok": False, "error": "path is empty"}
@@ -249,6 +281,7 @@ def persist_cli_trusted_directory(raw_path: str) -> dict[str, Any]:
 __all__ = [
     "build_command_allow_pattern",
     "persist_cli_trusted_directory",
+    "persist_cli_trusted_directory_with_overrides",
     "persist_external_directory_allow",
     "persist_permission_allow_rule",
 ]

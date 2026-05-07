@@ -103,7 +103,7 @@ function resolveFdBinary(): string | null {
 }
 
 function isPermissionRequest(source: string | undefined, questionText: string): boolean {
-  return source === "permission" || PERMISSION_TOOL_RE.test(questionText);
+  return source === "permission_interrupt" || PERMISSION_TOOL_RE.test(questionText);
 }
 
 function parsePermissionSummary(questionText: string): PermissionSummary {
@@ -1683,12 +1683,12 @@ export class AppScreen implements Component, Focusable {
     const items: SelectItem[] = question.options.map((option) => ({
       value: option.label,
       label:
-        pendingQuestion.source === "permission"
+        pendingQuestion.source === "permission_interrupt"
           ? normalizePermissionOptionLabel(option.label)
           : option.label,
       description: option.description,
     }));
-    const maxVisible = pendingQuestion.source === "permission" ? 4 : 6;
+    const maxVisible = pendingQuestion.source === "permission_interrupt" ? 4 : 6;
     const list = new SelectList(
       items,
       Math.min(Math.max(items.length, 1), maxVisible),
