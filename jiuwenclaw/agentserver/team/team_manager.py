@@ -598,6 +598,7 @@ class TeamManager:
                     ),
                     runtime=RuntimeInfo(channel=resolved_channel),
                     team_workspace=TeamWorkspaceInfo(
+                        root_dir=str(Path(team_ws_root)),
                         skills_dir=str(team_ws_skills_dir),
                         trajectories_dir=str(team_ws_trajectories_dir),
                         team_id=spec.team_name,

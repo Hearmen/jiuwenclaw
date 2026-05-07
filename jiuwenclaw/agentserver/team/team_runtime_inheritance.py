@@ -29,6 +29,7 @@ from jiuwenclaw.agentserver.deep_agent.rails.avatar_rail import AvatarPromptRail
 from jiuwenclaw.agentserver.deep_agent.rails.response_prompt_rail import ResponsePromptRail
 from jiuwenclaw.agentserver.deep_agent.rails.runtime_prompt_rail import RuntimePromptRail
 from jiuwenclaw.agentserver.deep_agent.rails.stream_event_rail import JiuClawStreamEventRail
+from jiuwenclaw.agentserver.team.rails import TeamWorkspaceReportPathRail
 
 logger = logging.getLogger(__name__)
 
@@ -51,6 +52,7 @@ class RuntimeInfo:
 @dataclass
 class TeamWorkspaceInfo:
     """Team 共享 workspace 信息."""
+    root_dir: str | None = None
     skills_dir: str | None = None
     trajectories_dir: str | None = None
     team_id: str | None = None
@@ -69,6 +71,7 @@ RAIL_WHITELIST = frozenset({
     "TeamSkillRail",
     "TeamSkillCreateRail",
     "SkillEvolutionRail",
+    "TeamWorkspaceReportPathRail",
 })
 
 TOOL_WHITELIST = frozenset({
@@ -138,6 +141,7 @@ def build_member_rails(
     role = member_info.role
     channel = runtime.channel
     language = runtime.language
+    team_ws_root = team_workspace.root_dir
     team_ws_skills_dir = team_workspace.skills_dir
     team_trajectories_dir = team_workspace.trajectories_dir
     team_id = team_workspace.team_id
@@ -217,6 +221,21 @@ def build_member_rails(
         logger.info("[TeamRuntime] AvatarPromptRail created")
     except Exception as exc:
         logger.warning("[TeamRuntime] AvatarPromptRail failed: %s", exc)
+
+    if team_ws_root:
+        try:
+            rail = TeamWorkspaceReportPathRail(
+                root_dir=team_ws_root,
+                team_id=team_id,
+                language=language,
+            )
+            rails_list.append(rail)
+            logger.info(
+                "[TeamRuntime] TeamWorkspaceReportPathRail created: root_dir=%s",
+                team_ws_root,
+            )
+        except Exception as exc:
+            logger.warning("[TeamRuntime] TeamWorkspaceReportPathRail failed: %s", exc)
 
     # Leader-only: TeamSkillRail for team skill evolution.
     if role == "leader" and team_ws_skills_dir:
