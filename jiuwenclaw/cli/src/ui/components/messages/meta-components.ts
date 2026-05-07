@@ -1,7 +1,7 @@
 import type { Component } from "@mariozechner/pi-tui";
 import type { HistoryItem } from "../../../core/types.js";
 import { palette } from "../../theme.js";
-import { prefixedLines, renderWrappedText, summarize } from "../../rendering/text.js";
+import { padToWidth, prefixedLines, renderWrappedText, summarize } from "../../rendering/text.js";
 import { renderClaudeResponseLines, renderMediaItems } from "./shared.js";
 
 export class SystemMessageComponent implements Component {
@@ -27,6 +27,16 @@ export class ErrorMessageComponent implements Component {
       palette.status.error,
       "  ",
     );
+  }
+}
+
+export class CommandEchoComponent implements Component {
+  constructor(private readonly entry: Extract<HistoryItem, { kind: "command_echo" }>) {}
+
+  invalidate(): void {}
+
+  render(width: number): string[] {
+    return [padToWidth(palette.surface.user(`❯ ${this.entry.content}`), width)];
   }
 }
 

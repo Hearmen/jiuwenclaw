@@ -23,7 +23,7 @@ import {
   syncComposerImageTokens,
 } from "../core/attachments.js";
 import { CommandService, parseSlashCommand } from "../core/commands/CommandService.js";
-import { addError, addInfo } from "../core/commands/helpers.js";
+import { addCommandEcho, addError, addInfo } from "../core/commands/helpers.js";
 import type { FileAttachment } from "../core/protocol.js";
 import {
   type ModelListPayload,
@@ -746,18 +746,21 @@ export class AppScreen implements Component, Focusable {
       if (/^\/(?:resume|continue)\s*$/.test(text)) {
         this.editor.addToHistory(text);
         this.editor.setText("");
+        this.state.addItem(addCommandEcho(snapshot.sessionId, text));
         await this.openResumeSessionList();
         return;
       }
       if (/^\/model\s*$/.test(text)) {
         this.editor.addToHistory(text);
         this.editor.setText("");
+        this.state.addItem(addCommandEcho(snapshot.sessionId, text));
         await this.openModelList();
         return;
       }
       this.beginPendingSubmittedInput(text, snapshot);
       this.editor.addToHistory(text);
       this.editor.setText("");
+      this.state.addItem(addCommandEcho(snapshot.sessionId, text));
       try {
         await this.commands.execute(text, {
           ...this.state.getCommandContext(),

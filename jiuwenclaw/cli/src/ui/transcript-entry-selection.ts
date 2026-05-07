@@ -43,7 +43,8 @@ export function selectTranscriptEntries(snapshot: AppSnapshot): SelectedTranscri
         entry.kind === "assistant" ||
         entry.kind === "thinking" ||
         entry.kind === "error" ||
-        entry.kind === "info",
+        entry.kind === "info" ||
+        entry.kind === "command_echo",
     );
   } else if (snapshot.transcriptFoldMode === "thinking") {
     entries = entries.filter((entry) => entry.kind !== "thinking");

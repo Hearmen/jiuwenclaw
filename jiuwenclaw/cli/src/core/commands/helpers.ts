@@ -14,6 +14,7 @@ export function makeItem(
   const id = `${kind}-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
   if (kind === "info") return { kind, id, sessionId, content, icon, meta, at: now() };
   if (kind === "error") return { kind, id, sessionId, content, at: now() };
+  if (kind === "command_echo") return { kind, id, sessionId, content, at: now() };
   return { kind: "system", id, sessionId, content, at: now() };
 }
 
@@ -28,6 +29,10 @@ export function addInfo(
 
 export function addError(sessionId: string, content: string): HistoryItem {
   return makeItem(sessionId, "error", content);
+}
+
+export function addCommandEcho(sessionId: string, content: string): HistoryItem {
+  return makeItem(sessionId, "command_echo", content);
 }
 
 export function addDiff(

@@ -1,5 +1,5 @@
 import { generateSessionId } from "../../session-state.js";
-import { addError, addInfo } from "../helpers.js";
+import { addCommandEcho, addError, addInfo } from "../helpers.js";
 import { CommandKind, type SlashCommand } from "../types.js";
 
 export function createClearCommand(): SlashCommand {
@@ -28,6 +28,7 @@ export function createClearCommand(): SlashCommand {
       ctx.updateSession(nextId);
       ctx.setSessionTitle("");
       ctx.clearEntries();
+      ctx.addItem(addCommandEcho(nextId, "/clear"));
       ctx.addItem(addInfo(nextId, `Started a fresh conversation in ${nextId}`, "i"));
       await ctx.restoreHistory(nextId);
     },

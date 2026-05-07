@@ -204,6 +204,7 @@ export type HistoryItem =
       meta?: SystemMeta;
       at: string;
     }
+  | { kind: "command_echo"; id: string; sessionId: string; content: string; at: string }
   | { kind: "error"; id: string; sessionId: string; content: string; at: string }
   | {
       kind: "info";

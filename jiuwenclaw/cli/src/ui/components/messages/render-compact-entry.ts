@@ -1,5 +1,6 @@
 import type { HistoryItem } from "../../../core/types.js";
 import {
+  CommandEchoComponent,
   CompactAssistantMessageComponent,
   CompactMessageComponent,
   DiffComponent,
@@ -63,6 +64,11 @@ export function renderCompactEntry(
       return {
         lines: new DiffComponent(entry).render(width),
         gapAfter: shouldGapAfterEntry(entry, true),
+      };
+    case "command_echo":
+      return {
+        lines: new CommandEchoComponent(entry).render(width),
+        gapAfter: false,
       };
     default:
       return {

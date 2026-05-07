@@ -1,6 +1,7 @@
 import type { HistoryItem } from "../../../core/types.js";
 import {
   AssistantMessageComponent,
+  CommandEchoComponent,
   DiffComponent,
   ErrorMessageComponent,
   InfoMessageComponent,
@@ -62,6 +63,11 @@ export function renderDetailedEntry(
       return {
         lines: new SystemMessageComponent(entry).render(width),
         gapAfter: shouldGapAfterEntry(entry, false),
+      };
+    case "command_echo":
+      return {
+        lines: new CommandEchoComponent(entry).render(width),
+        gapAfter: false,
       };
     case "error":
       return {

@@ -33,6 +33,7 @@ export function shouldGapAfterEntry(entry: HistoryItem, compact: boolean): boole
     case "system":
     case "info":
     case "diff":
+    case "command_echo":
       return false;
   }
 }

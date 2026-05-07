@@ -5,6 +5,7 @@ export {
   UserMessageComponent,
 } from "./content-components.js";
 export {
+  CommandEchoComponent,
   CompactMessageComponent,
   ErrorMessageComponent,
   InfoMessageComponent,
