@@ -75,9 +75,9 @@ JiuwenClaw提供两种安装方式：`pip安装`或`源码安装`。
 
 - 安装前端依赖
 
-  进入前端目录 jiuwenclaw/web 安装依赖：
+  进入前端目录 jiuwenclaw/channels/web/frontend 安装依赖：
   ```bash
-  cd jiuwenclaw/web
+  cd jiuwenclaw/channels/web/frontend
   npm install
   ```
 
@@ -123,9 +123,9 @@ JiuwenClaw提供两种安装方式：`pip安装`或`源码安装`。
 
 - 安装前端依赖
 
-  进入前端目录 jiuwenclaw/web 安装依赖：
+  进入前端目录 jiuwenclaw/channels/web/frontend 安装依赖：
   ```bash
-  cd jiuwenclaw/web
+  cd jiuwenclaw/channels/web/frontend
   npm install
   ```
 

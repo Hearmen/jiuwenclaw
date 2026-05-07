@@ -78,9 +78,9 @@ Suitable for users who perform custom development or adaptation based on JiuwenC
 
 - Install frontend dependencies
 
-  Navigate to the frontend directory `jiuwenclaw/web` and install dependencies:
+  Navigate to the frontend directory `jiuwenclaw/channels/web/frontend` and install dependencies:
   ```bash
-  cd jiuwenclaw/web
+  cd jiuwenclaw/channels/web/frontend
   npm install
   ```
 
@@ -129,9 +129,9 @@ Suitable for users who perform custom development or adaptation based on JiuwenC
 
 - Install frontend dependencies
 
-  Navigate to the frontend directory `jiuwenclaw/web` and install dependencies:
+  Navigate to the frontend directory `jiuwenclaw/channels/web/frontend` and install dependencies:
   ```bash
-  cd jiuwenclaw/web
+  cd jiuwenclaw/channels/web/frontend
   npm install
   ```
 

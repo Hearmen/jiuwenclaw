@@ -9,7 +9,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from jiuwenclaw.agentserver.deep_agent import team_helpers
+from jiuwenclaw.server.runtime.agent_adapter import team_helpers
 
 
 class _FakeTransport:
@@ -93,7 +93,7 @@ async def test_team_evolution_monitor_pushes_status_with_real_request_id(monkeyp
     rail = _FakeRail([[reasoning_event, approval_event]], pending_first=False)
 
     monkeypatch.setattr(
-        "jiuwenclaw.agentserver.gateway_push.WebSocketGatewayPushTransport",
+        "jiuwenclaw.server.gateway_push.WebSocketGatewayPushTransport",
         _FakeTransport,
     )
     monkeypatch.setattr(
@@ -139,7 +139,7 @@ async def test_team_evolution_monitor_uses_delivery_context_metadata(monkeypatch
         return message
 
     monkeypatch.setattr(
-        "jiuwenclaw.agentserver.gateway_push.WebSocketGatewayPushTransport",
+        "jiuwenclaw.server.gateway_push.WebSocketGatewayPushTransport",
         _FakeTransport,
     )
     monkeypatch.setattr(
@@ -190,7 +190,7 @@ async def test_team_evolution_monitor_rebinds_to_real_request_id_after_provision
             return []
 
     monkeypatch.setattr(
-        "jiuwenclaw.agentserver.gateway_push.WebSocketGatewayPushTransport",
+        "jiuwenclaw.server.gateway_push.WebSocketGatewayPushTransport",
         _FakeTransport,
     )
     monkeypatch.setattr(team_helpers, "parse_stream_chunk", lambda evt: None)
@@ -243,7 +243,7 @@ async def test_team_evolution_monitor_pushes_start_before_drain_finishes(monkeyp
             return []
 
     monkeypatch.setattr(
-        "jiuwenclaw.agentserver.gateway_push.WebSocketGatewayPushTransport",
+        "jiuwenclaw.server.gateway_push.WebSocketGatewayPushTransport",
         _FakeTransport,
     )
 
@@ -284,7 +284,7 @@ async def test_team_evolution_monitor_does_not_end_when_wait_timeout_returns_emp
             return []
 
     monkeypatch.setattr(
-        "jiuwenclaw.agentserver.gateway_push.WebSocketGatewayPushTransport",
+        "jiuwenclaw.server.gateway_push.WebSocketGatewayPushTransport",
         _FakeTransport,
     )
 

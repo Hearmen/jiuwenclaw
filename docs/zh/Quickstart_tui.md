@@ -84,9 +84,9 @@ JiuwenClaw提供两种安装方式：`pip安装`或`源码安装`。
 
 - 安装前端依赖
 
-  进入前端目录 jiuwenclaw/web 安装依赖：
+  进入前端目录 jiuwenclaw/channels/web/frontend 安装依赖：
   ```bash
-  cd jiuwenclaw/web
+  cd jiuwenclaw/channels/web/frontend
   npm install
   ```
 
@@ -111,9 +111,9 @@ JiuwenClaw提供两种安装方式：`pip安装`或`源码安装`。
   运行完成后即可在网页前端访问JiuwenClaw服务。
 
 - 安装TUI依赖
-  另外打开新终端界面，进入TUI目录 jiuwenclaw/cli 安装依赖：
+  另外打开新终端界面，进入TUI目录 jiuwenclaw/channels/tui/frontend 安装依赖：
   ```bash
-  cd jiuwenclaw/cli
+  cd jiuwenclaw/channels/tui/frontend
   npm install
   ```
 
@@ -145,9 +145,9 @@ JiuwenClaw提供两种安装方式：`pip安装`或`源码安装`。
 
 - 安装前端依赖
 
-  进入前端目录 jiuwenclaw/web 安装依赖：
+  进入前端目录 jiuwenclaw/channels/web/frontend 安装依赖：
   ```bash
-  cd jiuwenclaw/web
+  cd jiuwenclaw/channels/web/frontend
   npm install
   ```
 
@@ -173,9 +173,9 @@ JiuwenClaw提供两种安装方式：`pip安装`或`源码安装`。
   运行完成后即可在网页前端访问JiuwenClaw服务。
 
 - 安装TUI依赖
-  另外打开新终端界面，进入TUI目录 jiuwenclaw/cli 安装依赖：
+  另外打开新终端界面，进入TUI目录 jiuwenclaw/channels/tui/frontend 安装依赖：
   ```bash
-  cd jiuwenclaw/cli
+  cd jiuwenclaw/channels/tui/frontend
   npm install
   ```
 

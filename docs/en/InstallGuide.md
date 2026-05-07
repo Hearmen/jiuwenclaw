@@ -134,9 +134,9 @@ npm run build
 
 # Copy build output into the user workspace
 # Windows:
-xcopy /E /I dist %USERPROFILE%\.jiuwenclaw\web\dist
+xcopy /E /I dist %USERPROFILE%\.jiuwenclaw\channels\web\frontend\dist
 # macOS/Linux:
-cp -r dist ~/.jiuwenclaw/web/dist
+cp -r dist ~/.jiuwenclaw/channels/web/frontend/dist
 
 # Back to repo root
 cd ..
@@ -146,7 +146,7 @@ cd ..
 
 - `uv pip install -e .` is an editable install that points at your source tree.
 - `web/dist` is ignored by `.gitignore` and is not shipped in the repo.
-- You must build and copy artifacts to `~/.jiuwenclaw/web/dist`.
+- You must build and copy artifacts to `~/.jiuwenclaw/channels/web/frontend/dist`.
 
 #### 4. First launch
 
@@ -231,9 +231,9 @@ npm run build
 
 # Copy build output into the user workspace
 # Windows:
-xcopy /E /I dist %USERPROFILE%\.jiuwenclaw\web\dist
+xcopy /E /I dist %USERPROFILE%\.jiuwenclaw\channels\web\frontend\dist
 # macOS/Linux:
-cp -r dist ~/.jiuwenclaw/web/dist
+cp -r dist ~/.jiuwenclaw/channels/web/frontend/dist
 
 # Back to repo root
 cd ..
@@ -243,7 +243,7 @@ cd ..
 
 - `pip install -e .` is an editable install that points at your source tree.
 - `web/dist` is ignored by `.gitignore` and is not shipped in the repo.
-- You must build and copy artifacts to `~/.jiuwenclaw/web/dist`.
+- You must build and copy artifacts to `~/.jiuwenclaw/channels/web/frontend/dist`.
 
 #### 5. First launch
 
@@ -306,9 +306,9 @@ npm run build
 
 # Copy build output
 # Windows:
-xcopy /E /I dist %USERPROFILE%\.jiuwenclaw\web\dist
+xcopy /E /I dist %USERPROFILE%\.jiuwenclaw\channels\web\frontend\dist
 # macOS/Linux:
-cp -r dist ~/.jiuwenclaw/web/dist
+cp -r dist ~/.jiuwenclaw/channels/web/frontend/dist
 
 cd ..
 ```

@@ -4,10 +4,7 @@
 
 from pathlib import Path
 
-from jiuwenclaw.agentserver.team.config_loader import (
-    load_team_spec_dict,
-    resolve_team_sqlite_db_path,
-)
+from jiuwenclaw.agents.harness.team.config_loader import load_team_spec_dict, resolve_team_sqlite_db_path
 
 
 def _wrap_modes_team(team_mapping: dict[str, dict]) -> dict:
@@ -73,11 +70,11 @@ def test_load_team_spec_dict_supports_member_specific_agents(monkeypatch, tmp_pa
     }
 
     monkeypatch.setattr(
-        "jiuwenclaw.agentserver.team.config_loader.get_config",
+        "jiuwenclaw.agents.harness.team.config_loader.get_config",
         lambda: config,
     )
     monkeypatch.setattr(
-        "jiuwenclaw.agentserver.team.config_loader.get_agent_teams_home",
+        "jiuwenclaw.agents.harness.team.config_loader.get_agent_teams_home",
         lambda: fake_agent_teams_home,
     )
 
@@ -142,11 +139,11 @@ def test_load_team_spec_dict_uses_first_team_from_modes_team(monkeypatch, tmp_pa
     }
 
     monkeypatch.setattr(
-        "jiuwenclaw.agentserver.team.config_loader.get_config",
+        "jiuwenclaw.agents.harness.team.config_loader.get_config",
         lambda: config,
     )
     monkeypatch.setattr(
-        "jiuwenclaw.agentserver.team.config_loader.get_agent_teams_home",
+        "jiuwenclaw.agents.harness.team.config_loader.get_agent_teams_home",
         lambda: tmp_path / ".agent_teams",
     )
 
@@ -188,11 +185,11 @@ def test_load_team_spec_dict_keeps_role_defaults_when_member_alias_is_added(monk
     }
 
     monkeypatch.setattr(
-        "jiuwenclaw.agentserver.team.config_loader.get_config",
+        "jiuwenclaw.agents.harness.team.config_loader.get_config",
         lambda: config,
     )
     monkeypatch.setattr(
-        "jiuwenclaw.agentserver.team.config_loader.get_agent_teams_home",
+        "jiuwenclaw.agents.harness.team.config_loader.get_agent_teams_home",
         lambda: tmp_path / ".agent_teams",
     )
 
@@ -233,11 +230,11 @@ def test_load_team_spec_dict_preserves_explicit_empty_skills(monkeypatch, tmp_pa
     }
 
     monkeypatch.setattr(
-        "jiuwenclaw.agentserver.team.config_loader.get_config",
+        "jiuwenclaw.agents.harness.team.config_loader.get_config",
         lambda: config,
     )
     monkeypatch.setattr(
-        "jiuwenclaw.agentserver.team.config_loader.get_agent_teams_home",
+        "jiuwenclaw.agents.harness.team.config_loader.get_agent_teams_home",
         lambda: tmp_path / ".agent_teams",
     )
 
@@ -280,15 +277,15 @@ def test_load_team_spec_dict_no_auto_fill_skills_when_missing(monkeypatch, tmp_p
     }
 
     monkeypatch.setattr(
-        "jiuwenclaw.agentserver.team.config_loader.get_config",
+        "jiuwenclaw.agents.harness.team.config_loader.get_config",
         lambda: config,
     )
     monkeypatch.setattr(
-        "jiuwenclaw.agentserver.team.config_loader.get_agent_teams_home",
+        "jiuwenclaw.agents.harness.team.config_loader.get_agent_teams_home",
         lambda: tmp_path / ".agent_teams",
     )
     monkeypatch.setattr(
-        "jiuwenclaw.agentserver.team.config_loader.get_agent_skills_dir",
+        "jiuwenclaw.agents.harness.team.config_loader.get_agent_skills_dir",
         lambda: global_skills_dir,
     )
 
@@ -314,11 +311,11 @@ def test_resolve_team_sqlite_db_path_defaults_to_agent_teams_home(monkeypatch, t
     )
 
     monkeypatch.setattr(
-        "jiuwenclaw.agentserver.team.config_loader.get_config",
+        "jiuwenclaw.agents.harness.team.config_loader.get_config",
         lambda: config,
     )
     monkeypatch.setattr(
-        "jiuwenclaw.agentserver.team.config_loader.get_agent_teams_home",
+        "jiuwenclaw.agents.harness.team.config_loader.get_agent_teams_home",
         lambda: tmp_path / ".agent_teams",
     )
 
@@ -357,11 +354,11 @@ def test_load_team_spec_dict_preserves_arbitrary_team_top_level_fields(monkeypat
     }
 
     monkeypatch.setattr(
-        "jiuwenclaw.agentserver.team.config_loader.get_config",
+        "jiuwenclaw.agents.harness.team.config_loader.get_config",
         lambda: config,
     )
     monkeypatch.setattr(
-        "jiuwenclaw.agentserver.team.config_loader.get_agent_teams_home",
+        "jiuwenclaw.agents.harness.team.config_loader.get_agent_teams_home",
         lambda: tmp_path / ".agent_teams",
     )
 

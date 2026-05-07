@@ -8,7 +8,7 @@ from pathlib import Path
 
 import pytest
 
-from jiuwenclaw.agentserver.team.team_manager import (
+from jiuwenclaw.agents.harness.team.team_manager import (
     TeamManager,
     cleanup_team_runtime_state_once,
     get_team_manager,
@@ -132,7 +132,7 @@ async def test_create_team_does_not_run_global_runtime_cleanup(monkeypatch: pyte
         raise AssertionError("global runtime cleanup should not run during create_team")
 
     monkeypatch.setattr(
-        "jiuwenclaw.agentserver.team.team_manager.cleanup_team_runtime_state_once",
+        "jiuwenclaw.agents.harness.team.team_manager.cleanup_team_runtime_state_once",
         fail_cleanup,
     )
 

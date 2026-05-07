@@ -11,7 +11,7 @@ COPY --chown=app:app . /app/jiuwenclaw/
 USER app
 
 # Build web
-WORKDIR /app/jiuwenclaw/jiuwenclaw/web
+WORKDIR /app/jiuwenclaw/jiuwenclaw/channels/web/frontend
 RUN npm install
 RUN npm run build
 

@@ -138,7 +138,7 @@ def _install_jiuwenclaw_stubs():
     # Patch only the two attrs we need; the module-scoped autouse fixture
     # in this package's conftest.py restores them after this module's tests
     # finish.
-    import jiuwenclaw.utils as utils_stub
+    import jiuwenclaw.common.utils as utils_stub
     utils_stub.get_config_file = _get_config_file
     utils_stub.get_agent_workspace_dir = _get_agent_workspace_dir
 
@@ -146,8 +146,8 @@ def _install_jiuwenclaw_stubs():
 _install_jiuwenclaw_stubs()
 _install_agent_core_stubs()
 
-from jiuwenclaw.agentserver.memory import external_memory_builder as emb  # noqa: E402
-from jiuwenclaw.agentserver.memory import external_memory_config as emc  # noqa: E402
+from jiuwenclaw.agents.harness.common.memory import external_memory_builder as emb  # noqa: E402
+from jiuwenclaw.agents.harness.common.memory import external_memory_config as emc  # noqa: E402
 
 
 @pytest.fixture(autouse=True)

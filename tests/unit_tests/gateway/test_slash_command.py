@@ -10,7 +10,8 @@ import pytest
 # 避免 `import jiuwenclaw.gateway.slash_command` 触发 `jiuwenclaw.gateway.__init__`
 # 进而级联导入 channel/wecom/lark_oapi，在开启 warning->error 的 CI 中导致 collection 失败。
 _MODULE_PATH = (
-    Path(__file__).resolve().parents[3] / "jiuwenclaw" / "gateway" / "slash_command.py"
+        Path(__file__).resolve().parents[
+            3] / "jiuwenclaw" / "gateway" / "message_handler" / "command_parser" / "slash_command.py"
 )
 _SPEC = importlib.util.spec_from_file_location("ut_gateway_slash_command", _MODULE_PATH)
 assert _SPEC and _SPEC.loader

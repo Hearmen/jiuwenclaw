@@ -14,20 +14,20 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from jiuwenclaw.agentserver.deep_agent.interface_code import JiuwenClawCodeAdapter
-from jiuwenclaw.agentserver.deep_agent.interface_deep import JiuWenClawDeepAdapter
-from jiuwenclaw.agentserver.deep_agent.rails.project_memory import (
+from jiuwenclaw.server.runtime.agent_adapter.interface_code import JiuwenClawCodeAdapter
+from jiuwenclaw.server.runtime.agent_adapter.interface_deep import JiuWenClawDeepAdapter
+from jiuwenclaw.agents.harness.common.rails.project_memory import (
     SECTION_NAME,
     clear_project_memory_cache,
     discover_and_load_memory_files,
     merge_memory_content,
 )
-from jiuwenclaw.agentserver.deep_agent.rails.project_memory.files import (
+from jiuwenclaw.agents.harness.common.rails.project_memory.files import (
     GitWorktreeInfo,
     LoadedMemoryFile,
     PRIORITY,
 )
-from jiuwenclaw.agentserver.deep_agent.rails.project_memory_rail import (
+from jiuwenclaw.agents.harness.common.rails import (
     ProjectMemoryRail,
 )
 

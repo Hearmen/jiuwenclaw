@@ -82,15 +82,31 @@ Edit **`config/config.yaml`** or **`.env`** directly; there is no UI for these.
 | Path | Description |
 |------|-------------|
 | `react.agent_name` | Agent name, default `main_agent` |
+| `react.enable_task_loop` | Enable task loop, default `false` |
 | `react.max_iterations` | Max iterations, default 100 |
+| `react.model_name` | Model name override for the agent (env: `MODEL_NAME`, default `deepseek-chat`) |
+| `react.answer_chunk_size` | Answer streaming chunk size, default 500 |
+| `react.stream_chunk_threshold` | Stream chunk threshold, default 50 |
+| `react.stream_character_threshold` | Stream character threshold, default 2000 |
 | `react.context_engine_config.enable_reload` | Enable context reload |
+| `react.context_engine_config.enable_kv_cache_release` | Enable KV cache release |
+| `react.context_engine_config.enabled` | Enable context engine, default `true` |
+| `react.subagents.code_agent.enabled` | Enable code sub-agent, default `false` |
+| `react.subagents.research_agent.enabled` | Enable research sub-agent, default `false` |
 | `react.evolution.enabled` | Enable online skill evolution |
+| `react.evolution.auto_scan` | Auto-scan skills after each turn |
+| `react.evolution.skill_create` | Enable SkillCreateRail (single agent) and TeamSkillCreateRail (leader) |
 | `react.evolution.skill_base_dir` | Skill root, default `agent/skills` |
-| `tools` | Enabled tools (e.g. `todo`, `skill`) |
+| `react.a2x_registry.base_url` | A2X registry base URL |
+| `react.a2x_registry.timeout` | A2X registry timeout, default 30.0 |
+| `react.a2x_registry.dataset` | Dataset name, default `team_pool` |
+| `react.a2x_registry.role` | Role: `teammate` or `teamleader` |
+| `tools` | Enabled tool list, e.g. `[todo, skill]` |
 | `browser.remote_debugging_address` | Remote debugging address |
 | `browser.remote_debugging_port` | Remote debugging port |
 | `browser.user_data_dir` | Chrome user data directory |
 | `browser.profile_directory` | Chrome profile directory |
+| `browser.chrome_path` | Chrome executable path (string or per-OS map) |
 
 See also:
 - [Modes](Modes.md) — `modes` section configuration
@@ -104,6 +120,7 @@ Configure multiple model profiles for different use cases (main agent, video, au
 |------|-------------|
 | `models.default.model_client_config` | Default (main) model connection: `api_base`, `api_key`, `model_name`, `client_provider`, `timeout`, `verify_ssl`, `custom_headers` |
 | `models.default.model_config_obj` | Default model generation params: `temperature`, etc. |
+| `models.default.is_default` | Mark this profile as the default, default `true` |
 | `models.video.model_client_config` | Video processing model |
 | `models.audio.model_client_config` | Audio processing model |
 | `models.vision.model_client_config` | Vision / image understanding model |
@@ -112,10 +129,19 @@ Configure multiple model profiles for different use cases (main agent, video, au
 
 Each sub-model section supports the same `model_client_config` keys: `api_base`, `api_key`, `model_name`, `client_provider`, `timeout`, `verify_ssl`. Environment variable substitution (e.g. `${VIDEO_API_BASE}`) is used throughout.
 
-### 2.3 memory.external section (External Memory)
+### 2.2b `embed` section (Embedding Configuration)
 
 | Path | Description |
 |------|-------------|
+| `embed.embed_api_key` | Embedding API key |
+| `embed.embed_base_url` | Embedding API base URL |
+| `embed.embed_model` | Embedding model name |
+
+### 2.3 memory section (Memory System)
+
+| Path | Description |
+|------|-------------|
+| `memory.mode` | Builtin memory storage mode: `local` \| `cloud` (env: `MEMORY_MODE`, default `local`) |
 | `memory.engine` | Engine switch: `builtin` \| `external` \| `both` \| `none` |
 | `memory.external.provider` | Provider name: `openjiuwen` \| `mem0` \| `openviking` \| `<plugin>` |
 | `memory.external.user_id` | Data isolation identifier |
@@ -123,15 +149,29 @@ Each sub-model section supports the same `model_client_config` keys: `api_base`,
 
 See [Memory](Memory.md) for details.
 
-### 2.4 team.runtime section (Distributed Team)
+### 2.4 team section (Distributed Team)
 
 | Path | Description |
 |------|-------------|
+| `team.team_name` | Team name, default `jiuwen_team` |
+| `team.lifecycle` | Lifecycle mode: `persistent` |
 | `team.runtime.mode` | Runtime mode: `local` \| `distributed` |
 | `team.runtime.role` | Process role: `leader` \| `teammate` |
 | `team.runtime.member_name` | Teammate name identifier |
 | `team.teammate_mode` | Teammate build method: `build_mode` |
 | `team.spawn_mode` | Teammate process mode: `inprocess` |
+| `team.leader.member_name` | Leader member name, default `team_leader` |
+| `team.leader.display_name` | Leader display name |
+| `team.leader.persona` | Leader persona description |
+| `team.agents.leader.workspace.stable_base` | Leader workspace stable base |
+| `team.agents.leader.max_iterations` | Leader max iterations, default 200 |
+| `team.agents.leader.completion_timeout` | Leader completion timeout, default 600.0 |
+| `team.agents.teammate.workspace.stable_base` | Teammate workspace stable base |
+| `team.agents.teammate.max_iterations` | Teammate max iterations, default 200 |
+| `team.agents.teammate.completion_timeout` | Teammate completion timeout, default 600.0 |
+| `team.workspace.enabled` | Enable team workspace, default `true` |
+| `team.transport.type` | Transport type: `inprocess` |
+| `team.storage.type` | Storage type: `sqlite` |
 
 See [Distributed Team](DistributedTeam.md) for details.
 
@@ -144,8 +184,10 @@ See [Distributed Team](DistributedTeam.md) for details.
 | `task_memory.embedding_model` | Embedding model for experience memory |
 | `task_memory.api_key` | API key for experience memory (empty = main key) |
 | `task_memory.api_base` | API base URL for experience memory (empty = main base) |
+| `task_memory.retrieval_algo` | Retrieval algorithm: `ACE` \| `ReasoningBank` \| `ReMe`, default `ACE` |
+| `task_memory.summary_algo` | Summary algorithm: `ACE` \| `ReasoningBank` \| `ReMe`, default `ACE` |
 
-When enabled, the agent gains `experience_retrieve`, `experience_learn`, and `experience_clear` tools. Available retrieval algorithms: `ACE`, `ReasoningBank`, `ReMe`.
+When enabled, the agent gains `experience_retrieve`, `experience_learn`, and `experience_clear` tools. Available retrieval algorithms: `ACE`, `ReasoningBank`, `ReMe`. Default: `ACE`.
 
 ### 2.6 email_settings section (Email)
 
@@ -153,8 +195,8 @@ When enabled, the agent gains `experience_retrieve`, `experience_learn`, and `ex
 |------|-------------|
 | `email_settings.email_address` | Sender email address |
 | `email_settings.token` | Email authorization code |
-| `email_settings.smtp_server` | SMTP server, default `smtp.gmail.com` |
-| `email_settings.port` | SMTP port, default `587` |
+| `email_settings.smtp_server` | SMTP server, default `smtp.gmail.com` (env: `SMTP_SERVER`) |
+| `email_settings.port` | SMTP port, default `587` (env: `EMAIL_PORT`) |
 
 ### 2.7 extensions section (Extension Packages)
 
@@ -170,35 +212,46 @@ When enabled, the agent gains `experience_retrieve`, `experience_learn`, and `ex
 
 Browser MCP runtime is configured via environment variables (see below).
 
-### 2.9 updater section (Auto-Update)
+### 2.9 channels section (Channel Configuration)
+
+Per-channel settings in `config.yaml`. See [Channels](Channels.md) for the full per-channel configuration reference.
+
+Supported channels: `feishu`, `feishu_enterprise`, `xiaoyi`, `dingtalk`, `telegram`, `discord`, `whatsapp`, `wechat`, `wecom`.
+
+### 2.10 updater section (Auto-Update)
 
 | Path | Description |
 |------|-------------|
 | `updater.enabled` | Enable auto-update, default `true` |
 | `updater.repo_owner` | GitHub repository owner |
 | `updater.repo_name` | GitHub repository name |
+| `updater.release_api_url` | Custom release API URL (empty = use default) |
 | `updater.asset_name_pattern` | Release asset name pattern |
+| `updater.sha256_name_pattern` | SHA256 checksum file name pattern |
 | `updater.timeout_seconds` | Update check timeout, default `20` |
 
 ---
 
-### 2.10 gateway section (Gateway Routing)
+### 2.11 gateway section (Gateway Routing)
 
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
 | `gateway.session_map_scope` | string | `per_chat_bot` | SessionMap scope: `per_chat_bot` (shared session per chat+bot) or `per_chat_bot_user` (session per user). Enterprise channels only (e.g. Feishu Enterprise). |
 
-### 2.11 logging section (Logging)
+### 2.12 logging section (Logging)
 
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
 | `logging.level` | string | `INFO` | Global log level |
 | `logging.console_level` | string | `INFO` | Console log level |
 | `logging.gateway` | string | `INFO` | Gateway module log level |
+| `logging.channel` | string | `INFO` | Channel module log level |
+| `logging.agent_server` | string | `INFO` | Agent server log level |
+| `logging.full` | string | `INFO` | Full (aggregate) log level |
 
 Log files are stored in `~/.jiuwenclaw/agent/.logs/`, split into `gateway.log`, `channel.log`, `agent_server.log`; `full.log` is the aggregate.
 
-### 2.12 telemetry section (OpenTelemetry)
+### 2.13 telemetry section (OpenTelemetry)
 
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
@@ -219,34 +272,34 @@ Log files are stored in `~/.jiuwenclaw/agent/.logs/`, split into `gateway.log`, 
 | `telemetry.metrics.protocol` | string | | Metrics protocol; falls back to `telemetry.protocol` |
 | `telemetry.metrics.headers` | map | `{}` | Metrics-specific headers |
 
-### 2.13 Other Settings
+### 2.14 Other Settings
 
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
 | `preferred_language` | string | `zh` | Agent default reply language (`zh` / `en`) |
 
-### 2.14 Environment-only fields
+### 2.15 Environment-only fields
 
 | Variable | Description |
 |----------|-------------|
 | `HEARTBEAT_TIMEOUT` | Heartbeat request timeout (seconds) |
 | `HEARTBEAT_RELAY_CHANNEL_ID` | Heartbeat relay channel (overrides `target` in config) |
 | `HEARTBEAT_INTERVAL` | Heartbeat interval (seconds), overrides `every` in config |
-| `BROWSER_RUNTIME_MCP_ENABLED` | Enable browser MCP runtime |
-| `BROWSER_RUNTIME_MCP_CLIENT_TYPE` | MCP client type (`stdio` / `sse` / `streamable-http`) |
-| `BROWSER_RUNTIME_MCP_SERVER_PATH` | MCP server URL |
+| `BROWSER_RUNTIME_MCP_ENABLED` | Enable browser MCP runtime (`0`/`1`), default `1` |
+| `BROWSER_RUNTIME_MCP_CLIENT_TYPE` | MCP client type (`stdio` / `sse` / `streamable-http`), recommended `streamable-http` |
 | `BROWSER_RUNTIME_MCP_SERVER_ID` | MCP server identifier, default `playwright_runtime_wrapper` |
 | `BROWSER_RUNTIME_MCP_SERVER_NAME` | MCP server display name, default `playwright-runtime-wrapper` |
+| `BROWSER_RUNTIME_MCP_SERVER_PATH` | MCP server URL/path (default `http://127.0.0.1:8940/mcp` for streamable-http) |
 | `BROWSER_RUNTIME_MCP_TIMEOUT_S` | MCP server request timeout (seconds), default `300` |
 | `BROWSER_RUNTIME_MCP_HOST` | MCP server host, default `127.0.0.1` |
 | `BROWSER_RUNTIME_MCP_PORT` | MCP server port, default `8940` |
 | `BROWSER_RUNTIME_MCP_PATH` | MCP server path, default `/mcp` |
-| `BROWSER_RUNTIME_MCP_COMMAND` | MCP server command (stdio mode, empty = use default) |
-| `BROWSER_RUNTIME_MCP_ARGS` | MCP server args (stdio mode, empty = use default) |
-| `BROWSER_RUNTIME_MCP_AUTO_SSE_FALLBACK` | Auto SSE fallback (stdio mode), default `1` |
-| `PLAYWRIGHT_CDP_URL` | Playwright CDP URL for Chrome |
-| `PLAYWRIGHT_TOOL_TIMEOUT_S` | Playwright tool timeout (seconds) |
-| `BROWSER_TIMEOUT_S` | Browser task timeout (seconds) |
+| `BROWSER_RUNTIME_MCP_COMMAND` | MCP server command (stdio mode, empty = use current python executable) |
+| `BROWSER_RUNTIME_MCP_ARGS` | MCP server args (stdio mode, empty = use built-in default) |
+| `BROWSER_RUNTIME_MCP_AUTO_SSE_FALLBACK` | Auto SSE fallback in stdio mode (`0`/`1`), default `1` |
+| `PLAYWRIGHT_CDP_URL` | Playwright CDP URL for Chrome, default `http://127.0.0.1:9222` |
+| `PLAYWRIGHT_TOOL_TIMEOUT_S` | Playwright tool timeout (seconds), default `300` |
+| `BROWSER_TIMEOUT_S` | Browser task timeout (seconds), default `300` |
 | `BROWSER_DRIVER` | Browser driver mode: `managed` / `remote` / `extension` |
 | `BROWSER_ALLOW_SHORT_TIMEOUT_OVERRIDE` | Allow model-provided timeout shorter than `BROWSER_TIMEOUT_S`; default `0` (off) |
 | `BROWSER_PROFILE_NAME` | Browser profile name, default `Default` |
@@ -255,32 +308,52 @@ Log files are stored in `~/.jiuwenclaw/agent/.logs/`, split into `gateway.log`, 
 | `CUSTOM_HEADERS` | Custom HTTP headers for model API calls (JSON or empty) |
 | `VIDEO_API_BASE` | Video model API base URL |
 | `VIDEO_API_KEY` | Video model API key |
+| `VIDEO_MODEL_NAME` | Video model name |
 | `VIDEO_PROVIDER` | Video model provider |
 | `AUDIO_API_BASE` | Audio model API base URL |
 | `AUDIO_API_KEY` | Audio model API key |
+| `AUDIO_MODEL_NAME` | Audio model name, default `openai/gpt-4o-audio-preview` |
 | `AUDIO_PROVIDER` | Audio model provider |
 | `VISION_API_BASE` | Vision model API base URL |
 | `VISION_API_KEY` | Vision model API key |
+| `VISION_MODEL_NAME` | Vision model name, default `bytedance-seed/seed-2.0-mini` |
 | `VISION_PROVIDER` | Vision model provider |
-| `IMAGE_GEN_API_BASE` | Image generation model API base URL |
+| `IMAGE_GEN_API_BASE` | Image generation model API base URL, default `https://dashscope.aliyuncs.com/api/v1` |
 | `IMAGE_GEN_API_KEY` | Image generation model API key |
-| `IMAGE_GEN_PROVIDER` | Image generation model provider |
-| `FREE_SEARCH_DDG_URL` | DuckDuckGo HTML endpoint URL |
+| `IMAGE_GEN_MODEL_NAME` | Image generation model name, default `qwen-image-max` |
+| `IMAGE_GEN_PROVIDER` | Image generation model provider, default `DashScope` |
+| `JINA_API_KEY` | Jina search API key |
+| `SERPER_API_KEY` | Serper search API key |
+| `PERPLEXITY_API_KEY` | Perplexity API key |
+| `GITHUB_TOKEN` | GitHub Personal Access Token |
+| `FREE_SEARCH_PROXY_URL` | Optional HTTP/HTTPS proxy for free search |
+| `FREE_SEARCH_DDG_URL` | DuckDuckGo HTML endpoint URL, default `https://html.duckduckgo.com/html/` |
 | `FREE_SEARCH_SSL_VERIFY` | Enable SSL verification for free search; default `true`, set `false` behind corporate proxies |
 | `NO_PROXY` | Comma-separated hosts to bypass proxy |
 | `EMAIL_ADDRESS` | Sender email address (maps to `email_settings.email_address`) |
 | `EMAIL_TOKEN` | Email authorization code (maps to `email_settings.token`) |
+| `SMTP_SERVER` | SMTP server (maps to `email_settings.smtp_server`) |
+| `EMAIL_PORT` | SMTP port (maps to `email_settings.port`) |
 | `EVOLUTION_AUTO_SCAN` | Auto-scan evolvable skills after each turn (`true`/`false`) |
 | `SKILLNET_DOWNLOAD_TIMEOUT` | SkillNet download timeout (seconds), default 60 |
 | `SKILLNET_MAX_RETRIES` | SkillNet download max retries, default 3 |
-| `TEAM_SKILLS_HUB_BASE_URL` | TeamSkillsHub market URL (empty = default) |
+| `TEAM_SKILLS_HUB_BASE_URL` | TeamSkillsHub market URL (empty = default `https://teamskills.openjiuwen.com`) |
 | `TEAM_SKILLS_HUB_USER_TOKEN` | TeamSkillsHub user token (mutually exclusive with system token) |
 | `TEAM_SKILLS_HUB_SYSTEM_TOKEN` | TeamSkillsHub system token (mutually exclusive with user token) |
 | `TEAM_SKILLS_HUB_TIMEOUT` | TeamSkillsHub request timeout (seconds), default 60 |
 | `TEAM_SKILLS_HUB_ALLOWED_DOWNLOAD_HOSTS` | TeamSkillsHub ZIP download host allowlist, comma-separated |
 | `MEMORY_MODE` | Memory mode (empty = `local` default) |
+| `MEMORY_ENGINE` | Memory engine: `builtin` \| `external` \| `both` \| `none` |
+| `MEMORY_EXTERNAL_PROVIDER` | External memory provider: `openjiuwen` \| `mem0` \| `openviking` \| `<plugin>` |
+| `MEM0_API_KEY` | Mem0 API key |
+| `MEM0_USER_ID` | Mem0 user ID, default `jiuwenclaw-user` |
+| `MEM0_AGENT_ID` | Mem0 agent ID, default `jiuwenclaw` |
+| `OPENVIKING_ENDPOINT` | OpenViking endpoint, default `http://127.0.0.1:1933` |
+| `OPENVIKING_API_KEY` | OpenViking API key |
+| `OPENVIKING_ACCOUNT` | OpenViking account, default `root` |
+| `OPENVIKING_USER` | OpenViking user, default `default` |
 | `EXTENSION_DIRS` | Extension search directories, semicolon-separated (maps to `extensions.extension_dirs`) |
-| `OTEL_ENABLED` | Enable OpenTelemetry (maps to `telemetry.enabled`) |
+| `OTEL_ENABLED` | Enable OpenTelemetry (`true`/`false`), takes priority over `telemetry.enabled` |
 | `OTEL_EXPORTER` | OTLP exporter type (maps to `telemetry.exporter`) |
 | `OTEL_ENDPOINT` | OTLP endpoint (maps to `telemetry.endpoint`) |
 | `JIUWENCLAW_CONFIG_DIR` | Custom config directory path |
@@ -291,7 +364,7 @@ See `.env.template` for more variables.
 
 ---
 
-### 2.15 Precedence
+### 2.16 Precedence
 
 - **Environment variables** override **`config.yaml`**
 - Example: `react.model_name: ${MODEL_NAME:-deepseek-chat}` reads `MODEL_NAME` first, then falls back to `deepseek-chat`.

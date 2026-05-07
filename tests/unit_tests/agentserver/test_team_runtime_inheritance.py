@@ -7,8 +7,7 @@ from unittest.mock import patch
 
 from openjiuwen.core.foundation.tool import ToolCard
 
-from jiuwenclaw.agentserver.team.rails import TeamWorkspaceReportPathRail
-from jiuwenclaw.agentserver.team.team_runtime_inheritance import (
+from jiuwenclaw.agents.harness.team.team_runtime_inheritance import (
     TeamWorkspaceInfo,
     build_evolution_llm,
     build_member_rails,
@@ -114,8 +113,8 @@ def test_build_evolution_llm_from_config():
     }
     fake_model = object()
     with patch("openjiuwen.core.foundation.llm.ModelClientConfig", return_value=None), \
-         patch("openjiuwen.core.foundation.llm.ModelRequestConfig"), \
-         patch("openjiuwen.core.foundation.llm.Model", return_value=fake_model):
+            patch("openjiuwen.core.foundation.llm.ModelRequestConfig"), \
+            patch("openjiuwen.core.foundation.llm.Model", return_value=fake_model):
         model, model_name = build_evolution_llm(config)
 
     assert model_name == "test-model"
@@ -131,8 +130,8 @@ def test_build_evolution_llm_fallback_to_react_config():
     }
     fake_model = object()
     with patch("openjiuwen.core.foundation.llm.ModelClientConfig", return_value=None), \
-         patch("openjiuwen.core.foundation.llm.ModelRequestConfig"), \
-         patch("openjiuwen.core.foundation.llm.Model", return_value=fake_model):
+            patch("openjiuwen.core.foundation.llm.ModelRequestConfig"), \
+            patch("openjiuwen.core.foundation.llm.Model", return_value=fake_model):
         model, model_name = build_evolution_llm(config)
 
     assert model_name == "react-model"
@@ -142,8 +141,8 @@ def test_build_evolution_llm_default_model_name():
     config = {"models": {"default": {}}, "react": {}}
     fake_model = object()
     with patch("openjiuwen.core.foundation.llm.ModelClientConfig", return_value=None), \
-         patch("openjiuwen.core.foundation.llm.ModelRequestConfig"), \
-         patch("openjiuwen.core.foundation.llm.Model", return_value=fake_model):
+            patch("openjiuwen.core.foundation.llm.ModelRequestConfig"), \
+            patch("openjiuwen.core.foundation.llm.Model", return_value=fake_model):
         model, model_name = build_evolution_llm(config)
 
     assert model_name == "gpt-4"
@@ -172,8 +171,8 @@ def test_build_member_rails_accepts_team_workspace_info(tmp_path):
     )
 
     with patch(
-        "jiuwenclaw.agentserver.team.team_runtime_inheritance.FileTrajectoryStore",
-        return_value=object(),
+            "jiuwenclaw.agents.harness.team.team_runtime_inheritance.FileTrajectoryStore",
+            return_value=object(),
     ):
         rails = build_member_rails(
             member_info=SimpleNamespace(agent_name="leader", model_name="demo-model", role="leader"),

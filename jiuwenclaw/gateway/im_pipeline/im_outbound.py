@@ -18,12 +18,12 @@ import re
 import secrets
 from typing import TYPE_CHECKING, Any
 
-from jiuwenclaw.config import _parse_custom_headers
-from jiuwenclaw.gateway.interaction_context import PendingInteraction
+from jiuwenclaw.common.config import _parse_custom_headers
+from jiuwenclaw.gateway.routing.interaction_context import PendingInteraction
 
 if TYPE_CHECKING:
     from jiuwenclaw.gateway.im_pipeline.im_inbound import IMPlatformAdapter
-    from jiuwenclaw.schema.message import Message
+    from jiuwenclaw.common.schema.message import Message
 
 logger = logging.getLogger(__name__)
 
@@ -72,7 +72,7 @@ class IMOutboundPipeline:
             return True
 
         try:
-            from jiuwenclaw.config import get_config
+            from jiuwenclaw.common.config import get_config
             cfg = get_config() or {}
         except Exception:
             cfg = {}

@@ -30,16 +30,16 @@ JiuwenClaw’s **Skills** system lets you extend the agent with new capabilities
 
 ## 3. Backend behavior
 
-Implementation: `jiuwenclaw/agentserver/skill_manager.py`.
+Implementation: `jiuwenclaw/server/runtime/skill/skill_manager.py`.
 
 ### 3.1 Storage
 
-- **`workspace/agent/skills/`**: Active skills, one folder each.
-- **`workspace/agent/skills/_marketplace/`**: Cloned marketplace repos (cache).
+- **`~/.jiuwenclaw/agent/jiuwenclaw_workspace/skills/`**: Active skills, one folder each.
+- **`~/.jiuwenclaw/agent/jiuwenclaw_workspace/skills/_marketplace/`**: Cloned marketplace repos (cache).
 
 ### 3.2 State file
 
-**`workspace/skills_state.json`** stores marketplace sources, install records (name, market, version, commit, time), and local imports.
+**`~/.jiuwenclaw/agent/jiuwenclaw_workspace/skills/skills_state.json`** stores marketplace sources, install records (name, market, version, commit, time), and local imports.
 
 ### 3.3 Logic
 

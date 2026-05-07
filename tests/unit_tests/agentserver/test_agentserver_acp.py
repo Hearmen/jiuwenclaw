@@ -4,19 +4,19 @@ import types
 
 import pytest
 
-from jiuwenclaw.agentserver import agent_ws_server as agent_ws_server_module
-from jiuwenclaw.agentserver.agent_manager import ACP_DEFAULT_CAPABILITIES
-from jiuwenclaw.agentserver.tools import acp_output_tools
-from jiuwenclaw.agentserver.tools.acp_output_tools import AcpOutputRequest, get_acp_output_manager
-from jiuwenclaw.agentserver.deep_agent import interface_deep as interface_deep_module
-from jiuwenclaw.agentserver.stream_utils import parse_stream_chunk
-from jiuwenclaw.agentserver.deep_agent.interface_deep import (
+from jiuwenclaw.server import agent_ws_server as agent_ws_server_module
+from jiuwenclaw.server.runtime.agent_manager import ACP_DEFAULT_CAPABILITIES
+from jiuwenclaw.agents.harness.common.tools import acp_output_tools
+from jiuwenclaw.agents.harness.common.tools.acp_output_tools import AcpOutputRequest, get_acp_output_manager
+from jiuwenclaw.server.runtime.agent_adapter import interface_deep as interface_deep_module
+from jiuwenclaw.server.utils.stream_utils import parse_stream_chunk
+from jiuwenclaw.server.runtime.agent_adapter.interface_deep import (
     _build_context_assemble_rail,
     _build_context_processor_rail,
 )
-from jiuwenclaw.e2a.gateway_normalize import e2a_from_agent_fields
-from jiuwenclaw.schema.agent import AgentRequest
-from jiuwenclaw.schema.message import ReqMethod
+from jiuwenclaw.common.e2a.gateway_normalize import e2a_from_agent_fields
+from jiuwenclaw.common.schema.agent import AgentRequest
+from jiuwenclaw.common.schema.message import ReqMethod
 
 
 class FakeWebSocket:

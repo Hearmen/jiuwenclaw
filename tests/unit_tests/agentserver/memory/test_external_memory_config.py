@@ -59,12 +59,12 @@ def _get_agent_workspace_dir():
 # leaks str-returning stubs into every later test in the session). Patch
 # only the two attrs we need; the module-scoped autouse fixture in this
 # package's conftest.py restores them after this module's tests finish.
-import jiuwenclaw.utils as utils_stub  # noqa: E402
+import jiuwenclaw.common.utils as utils_stub  # noqa: E402
 
 utils_stub.get_config_file = _get_config_file
 utils_stub.get_agent_workspace_dir = _get_agent_workspace_dir
 
-from jiuwenclaw.agentserver.memory import external_memory_config as emc  # noqa: E402
+from jiuwenclaw.agents.harness.common.memory import external_memory_config as emc  # noqa: E402
 
 
 # ---------------------------------------------------------------------------

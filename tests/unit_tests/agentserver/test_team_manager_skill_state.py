@@ -7,7 +7,7 @@ from pathlib import Path
 
 from openjiuwen.agent_teams.schema.blueprint import TeamAgentSpec
 
-from jiuwenclaw.agentserver.team.team_manager import TeamManager
+from jiuwenclaw.agents.harness.team.team_manager import TeamManager
 
 
 def test_member_skill_state_inherits_marketplaces_and_rebuilds_installed_skills(monkeypatch, tmp_path):
@@ -37,15 +37,15 @@ def test_member_skill_state_inherits_marketplaces_and_rebuilds_installed_skills(
     )
 
     monkeypatch.setattr(
-        "jiuwenclaw.agentserver.team.team_manager.get_agent_skills_dir",
+        "jiuwenclaw.agents.harness.team.team_manager.get_agent_skills_dir",
         lambda: global_skills_dir,
     )
     monkeypatch.setattr(
-        "jiuwenclaw.agentserver.team.team_runtime_inheritance.build_member_rails",
+        "jiuwenclaw.agents.harness.team.team_runtime_inheritance.build_member_rails",
         lambda **kwargs: [],
     )
     monkeypatch.setattr(
-        "jiuwenclaw.agentserver.extensions.rail_manager.get_rail_manager",
+        "jiuwenclaw.agents.harness.common.plugins.rail_manager.get_rail_manager",
         lambda: type(
             "_DummyRailManager",
             (),
