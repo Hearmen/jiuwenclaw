@@ -37,7 +37,7 @@ export function ExtensionsPanel({ isConnected }: ExtensionsPanelProps) {
       if (payload?.extensions) {
         setExtensions(payload.extensions);
       } else {
-        throw new Error('加载扩展列表失败');
+        throw new Error(t('extensions.loadListFailed'));
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
@@ -52,7 +52,7 @@ export function ExtensionsPanel({ isConnected }: ExtensionsPanelProps) {
 
   const handleImport = useCallback(async () => {
     if (!folderPath.trim()) {
-      setError('请输入扩展文件夹路径');
+      setError(t('extensions.enterFolderPath'));
       return;
     }
 
@@ -68,7 +68,7 @@ export function ExtensionsPanel({ isConnected }: ExtensionsPanelProps) {
         setExtensions((prev) => [...prev, extension]);
         setFolderPath(''); // 清空输入框
       } else {
-        throw new Error('导入扩展失败');
+        throw new Error(t('extensions.importFailed'));
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
@@ -79,7 +79,7 @@ export function ExtensionsPanel({ isConnected }: ExtensionsPanelProps) {
 
   const handleDelete = useCallback(
     async (name: string) => {
-      if (!confirm(`确定要删除扩展 "${name}" 吗？`)) {
+      if (!confirm(t('extensions.confirmDelete', { name }))) {
         return;
       }
 
@@ -116,13 +116,11 @@ export function ExtensionsPanel({ isConnected }: ExtensionsPanelProps) {
         const extension = await webRequest<RailExtension>('extensions.toggle', { name, enabled });
         console.log("===> extension:", extension)
         if (extension) {
-          // 确认后端更新成功，使用返回的数据
-          console.log("===> extension:", extension)
           setExtensions(prev =>
             prev.map(ext => (ext.name === name ? extension : ext))
           );
         } else {
-          throw new Error('切换扩展状态失败');
+          throw new Error(t('extensions.toggleFailed'));
         }
       } catch (err) {
         // 发生错误，回滚到之前的状态
@@ -140,10 +138,10 @@ export function ExtensionsPanel({ isConnected }: ExtensionsPanelProps) {
   return (
     <div className="extensions-panel">
       <div className="extensions-panel__title">
-        {t('extensions.title', '能力扩展')}
+        {t('extensions.title')}
       </div>
       <p className="extensions-panel__description">
-        {t('extensions.description', '管理自定义 Rail 扩展')}
+        {t('extensions.description')}
       </p>
 
       {error && (
@@ -155,7 +153,7 @@ export function ExtensionsPanel({ isConnected }: ExtensionsPanelProps) {
       {/* 导入区域 */}
       <div className="extensions-panel__import-section">
         <h3 className="extensions-panel__import-title">
-          {t('extensions.importTitle', '导入能力扩展')}
+          {t('extensions.importTitle')}
         </h3>
         <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
           <div style={{ display: 'flex', gap: '0.5rem' }}>
@@ -163,7 +161,7 @@ export function ExtensionsPanel({ isConnected }: ExtensionsPanelProps) {
               type="text"
               value={folderPath}
               onChange={(e) => setFolderPath(e.target.value)}
-              placeholder="输入扩展文件夹路径 (例如: D:/extensions/my_extension)"
+              placeholder={t('extensions.folderPathPlaceholder')}
               disabled={loading || !isConnected}
               style={{
                 flex: 1,
@@ -178,11 +176,11 @@ export function ExtensionsPanel({ isConnected }: ExtensionsPanelProps) {
               disabled={loading || !isConnected || !folderPath.trim()}
               className="extensions-panel__import-button"
             >
-              {loading ? '导入中...' : t('extensions.importButton', '导入')}
+              {loading ? t('extensions.importing') : t('extensions.importButton')}
             </button>
           </div>
           <span className="extensions-panel__import-hint">
-            {t('extensions.importHint', '文件夹要求：1) 英文名称 2) 包含 rail.py 入口文件')}
+            {t('extensions.importHint')}
           </span>
         </div>
       </div>
@@ -191,13 +189,13 @@ export function ExtensionsPanel({ isConnected }: ExtensionsPanelProps) {
       <div className="extensions-panel__list">
         {loading && extensions.length === 0 && (
           <div className="extensions-panel__loading">
-            {t('common.loading', '加载中...')}
+            {t('common.loading')}
           </div>
         )}
 
         {!loading && extensions.length === 0 && (
           <div className="extensions-panel__empty">
-            {t('extensions.noExtensions', '暂无能力扩展')}
+            {t('extensions.noExtensions')}
           </div>
         )}
 
@@ -248,7 +246,7 @@ export function ExtensionsPanel({ isConnected }: ExtensionsPanelProps) {
                     disabled={loading || !isConnected}
                     className="extensions-panel__delete-button"
                   >
-                    {t('extensions.deleteButton', '删除')}
+                    {t('extensions.deleteButton')}
                   </button>
                 </div>
               </div>
@@ -260,24 +258,12 @@ export function ExtensionsPanel({ isConnected }: ExtensionsPanelProps) {
       {/* 帮助提示 */}
       <div className="extensions-panel__help">
         <h4 className="extensions-panel__help-title">
-          {t('extensions.helpTitle', '使用说明')}
+          {t('extensions.helpTitle')}
         </h4>
         <ul className="extensions-panel__help-list">
-          <li>
-            {t('extensions.help0', '扩展文件夹必须包含 rail.py 作为入口文件')}
-          </li>
-          <li>
-            {t(
-              'extensions.help1',
-              'Rail 扩展文件必须继承 DeepAgentRail 或 AgentRail 基类'
-            )}
-          </li>
-          <li>
-            {t(
-              'extensions.help2',
-              '扩展文件夹会被保存到 ~/.jiuwenclaw/agent/jiuwenclaw_workspace/extensions/ 目录'
-            )}
-          </li>
+          <li>{t('extensions.help0')}</li>
+          <li>{t('extensions.help1')}</li>
+          <li>{t('extensions.help2')}</li>
         </ul>
       </div>
     </div>
