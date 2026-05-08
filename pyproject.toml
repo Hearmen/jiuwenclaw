@@ -84,8 +84,8 @@ namespaces = false
 [tool.setuptools.package-data]
 "*" = ["LICENSE"]
 jiuwenclaw = [
-    "web/dist/**/*",
-    "web/dist/*",
+    "channels/web/frontend/dist/**/*",
+    "channels/web/frontend/dist/*",
     # config / env 模板放在 resources 目录
     "resources/**/*",
     "resources/*",
@@ -93,7 +93,7 @@ jiuwenclaw = [
 ]
 
 [tool.setuptools.exclude-package-data]
-jiuwenclaw = ["web/node_modules/**", "web/node_modules/*"]
+jiuwenclaw = ["channels/web/frontend/node_modules/**", "channels/web/frontend/node_modules/*"]
 
 [tool.uv.sources]
 jiuwenclaw-tui = { path = "./packages/jiuwenclaw-tui" }

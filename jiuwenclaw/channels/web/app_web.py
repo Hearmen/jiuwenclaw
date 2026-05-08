@@ -34,32 +34,26 @@ from jiuwenclaw.common.utils import get_agent_root_dir, get_logs_dir, \
 
 
 def _get_package_dir() -> Path:
-    """Get the jiuwenclaw package directory (for package-internal files)."""
-    if is_package_installation():
-        # In package mode, app_web.py is at site-packages/jiuwenclaw/app_web.py
-        # So parent is site-packages/jiuwenclaw/
-        return Path(__file__).resolve().parent
-    else:
-        # In source mode, app_web.py is at <repo>/jiuwenclaw/app_web.py
-        # So parent is <repo>/jiuwenclaw/
-        return Path(__file__).resolve().parent
+    """Get the jiuwenclaw/channels/web package directory."""
+    # app_web.py is at jiuwenclaw/channels/web/app_web.py
+    # So parent is jiuwenclaw/channels/web/
+    return Path(__file__).resolve().parent
 
 
 def _default_dist_dir() -> Path:
-    """Return default dist directory for local repo layout."""
+    """Return default dist directory for frontend static files."""
+    # Priority 1: user workspace channels/web/frontend/dist
     root = get_root_dir()
-    # Try user workspace web/dist first (if copied from package)
-    if (root / "web" / "dist").exists():
-        return root / "web" / "dist"
-    # Try package internal web/dist (package installation)
+    user_dist = root / "channels" / "web" / "frontend" / "dist"
+    if user_dist.exists():
+        return user_dist
+    # Priority 2: package internal channels/web/frontend/dist
     package_dir = _get_package_dir()
-    if (package_dir / "web" / "dist").exists():
-        return package_dir / "web" / "dist"
-    # Try source mode frontend/dist (in-source development)
-    if (package_dir / "frontend" / "dist").exists():
-        return package_dir / "frontend" / "dist"
-    # Fallback
-    return root / "web" / "dist"
+    dist_dir = package_dir / "frontend" / "dist"
+    if dist_dir.exists():
+        return dist_dir
+    # Fallback: return package internal path
+    return dist_dir
 
 
 def _normalize_lang_suffix(name: str) -> str:

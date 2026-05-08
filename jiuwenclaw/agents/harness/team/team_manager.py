@@ -16,7 +16,7 @@ from typing import Any, Callable
 from openjiuwen.agent_teams.agent.team_agent import TeamAgent
 from openjiuwen.agent_teams.paths import team_home
 from openjiuwen.agent_teams.schema.blueprint import TeamAgentSpec
-from openjiuwen.agent_teams.spawn.context import reset_session_id, set_session_id
+from openjiuwen.agent_teams.context import reset_session_id, set_session_id
 from openjiuwen.harness import DeepAgent
 
 from jiuwenclaw.agents.harness.team.bootstrap import configure_agent_teams_home
