@@ -81,6 +81,14 @@ class JiuClawStreamEventRail(DeepAgentRail):
     def reset_abort(self) -> None:
         self._abort_requested = False
 
+    def reset_for_new_task(self) -> None:
+        """为新任务重置暂停状态.
+
+        只解除 pause 阻塞，不影响 abort 标志。
+        用于 cancel 操作后允许新任务启动，避免因 pause 状态残留导致新任务永久阻塞。
+        """
+        self._pause_event.set()
+
     # ------------------------------------------------------------------
     # before_invoke (Outer event on DeepAgent): capture conversation_id
     # ------------------------------------------------------------------

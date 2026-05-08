@@ -2953,6 +2953,13 @@ class JiuWenClawDeepAdapter:
             # cancel（默认）：仅做当前 session 的清理与回执。
             # 真正停止运行中的任务由 facade 层的 SessionManager.cancel_session_task(session_id) 完成，
             # 避免共享 DeepAgent 实例上的全局 abort 误伤其它并发 session。
+            # 解除 pause 状态，允许新任务启动（否则新任务会阻塞在 _pause_event.wait()）
+            if self._stream_event_rail is not None:
+                self._stream_event_rail.reset_for_new_task()
+                logger.info(
+                    "[JiuWenClawDeepAdapter] interrupt(cancel): 已解除 pause 阻塞，允许新任务启动"
+                )
+
             updated_todos = None
             if request.session_id:
                 try:
