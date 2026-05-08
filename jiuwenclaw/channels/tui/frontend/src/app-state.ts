@@ -874,7 +874,40 @@ readonly request = async <T = Record<string, unknown>>(
         return a.originalIndex - b.originalIndex;
       })
       .map((item) => item.entry);
-    this.entries = [...coalesceAssistantHistoryEntries(ordered)];
+
+    const restored = coalesceAssistantHistoryEntries(ordered);
+
+    // Merge: keep existing frontend entries that aren't in the restored set,
+    // so that live entries accumulated during streaming aren't lost on reconnection.
+    const restoredById = new Map<string, HistoryItem>();
+    for (const entry of restored) {
+      restoredById.set(entry.id, entry);
+    }
+
+    // Build merged set: restored entries + frontend-only entries (not in restored).
+    // For entries present in both, prefer the restored version (server-authoritative).
+    const merged: HistoryItem[] = [];
+    for (const entry of restored) {
+      merged.push(entry);
+    }
+    for (const entry of this.entries) {
+      if (!restoredById.has(entry.id)) {
+        merged.push(entry);
+      }
+    }
+
+    // Sort merged entries by timestamp for consistent display order.
+    const sorted = merged
+      .map((entry, originalIndex) => ({ entry, originalIndex, ts: Date.parse(entry.at) }))
+      .sort((a, b) => {
+        const ta = Number.isNaN(a.ts) ? 0 : a.ts;
+        const tb = Number.isNaN(b.ts) ? 0 : b.ts;
+        if (ta !== tb) return ta - tb;
+        return a.originalIndex - b.originalIndex;
+      })
+      .map((item) => item.entry);
+
+    this.entries = [...sorted];
     this.rebuildToolExecutionState();
     this.emitChange();
   }

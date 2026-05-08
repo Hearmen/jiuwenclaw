@@ -158,6 +158,19 @@ def _resolve_execution_plan(command: str, shell_type: str) -> tuple[list[str] | 
     raise RuntimeError(f"Unsupported shell_type: {normalized}")
 
 
+def _resolve_encoding(resolved_shell: str) -> str:
+    """Choose subprocess text encoding based on the resolved shell type.
+
+    - bash / sh on Windows (e.g. Git Bash / MSYS2) output UTF-8 by default.
+    - cmd uses the system code page (typically CP936/GBK on Chinese Windows).
+    - PowerShell also uses the system code page by default; safest to use
+      the system code page and rely on ``errors='replace'`` for edge cases.
+    """
+    if os.name == "nt" and resolved_shell in ("bash", "sh"):
+        return "utf-8"
+    return locale.getpreferredencoding(False) or "utf-8"
+
+
 def _run_command_sync(
     command: str,
     timeout_seconds: int,
@@ -165,9 +178,8 @@ def _run_command_sync(
     shell_type: str,
 ) -> tuple[subprocess.CompletedProcess[str], str]:
     plan, use_shell, resolved_shell = _resolve_execution_plan(command, shell_type)
-    # Windows 下 cmd 的输出通常是系统代码页（常见 CP936/GBK），
-    # 这里不要强行按 UTF-8 解码，否则会出现中文乱码（如 .lnk 名称）。
-    encoding = locale.getpreferredencoding(False) or "utf-8"
+    # bash/sh on Windows output UTF-8; cmd/PowerShell use system code page.
+    encoding = _resolve_encoding(resolved_shell)
     result = subprocess.run(
         plan,
         shell=use_shell,

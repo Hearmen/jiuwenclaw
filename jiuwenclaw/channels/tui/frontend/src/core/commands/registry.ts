@@ -6,6 +6,7 @@ import { createCompactCommand } from "./builtins/compact.js";
 import { createConfigCommand } from "./builtins/config.js";
 import { createCopyCommand } from "./builtins/copy.js";
 import { createDiffCommand } from "./builtins/diff.js";
+import { createExportCommand } from "./builtins/export.js";
 import {
   createEvolveCommand,
   createEvolveListCommand,
@@ -40,6 +41,7 @@ export function createBuiltinCommands(): SlashCommand[] {
     createConfigCommand(),
     createCopyCommand(),
     createDiffCommand(),
+    createExportCommand(),
     createEvolveCommand(),
     createEvolveListCommand(),
     createEvolveRebuildCommand(),
