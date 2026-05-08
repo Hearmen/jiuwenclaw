@@ -217,6 +217,15 @@ export function createMcpCommand(): SlashCommand {
             );
             return;
           }
+          if (/[^a-zA-Z0-9_-]/.test(name)) {
+            ctx.addItem(
+              addError(
+                ctx.sessionId,
+                `Invalid name "${name}". Names can only contain letters, numbers, hyphens, and underscores.`,
+              ),
+            );
+            return;
+          }
 
           const payload: Record<string, unknown> = {
             action: "add",

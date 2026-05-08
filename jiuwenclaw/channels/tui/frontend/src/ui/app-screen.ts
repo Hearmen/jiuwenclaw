@@ -70,6 +70,11 @@ type ModelListState = {
   current: string;
 };
 
+type ThemeListState = {
+  list: SelectList;
+  current: string;
+};
+
 type ConfigEditorPhase = "select_group" | "select_item" | "select_value" | "input_value";
 
 type ConfigEditorState = {
@@ -340,6 +345,7 @@ export class AppScreen implements Component, Focusable {
   private otherInputMode = false;
   private resumeSessionList: ResumeSessionListState | null = null;
   private modelList: ModelListState | null = null;
+  private themeList: ThemeListState | null = null;
   private configEditorState: ConfigEditorState | null = null;
   private startupPromptList: SelectList | null = null;
   private showTodos = true;
@@ -583,6 +589,12 @@ export class AppScreen implements Component, Focusable {
       return;
     }
 
+    if (!snapshot.pendingQuestion && this.themeList !== null) {
+      this.themeList.list.handleInput(data);
+      this.tui.requestRender();
+      return;
+    }
+
     if (!snapshot.pendingQuestion && this.showTeamPanel) {
       if (matchesKey(data, "left")) {
         this.viewedTeamMemberId = null;
@@ -662,6 +674,7 @@ export class AppScreen implements Component, Focusable {
       ...this.buildConfigEditorLines(width),
       ...this.buildResumeSessionListLines(width),
       ...this.buildModelListLines(width),
+      ...this.buildThemeListLines(width),
       ...this.buildPendingQuestionLines(snapshot, width),
     ];
     return buildAppScreenLines(snapshot, {
@@ -755,6 +768,13 @@ export class AppScreen implements Component, Focusable {
         this.editor.setText("");
         this.state.addItem(addCommandEcho(snapshot.sessionId, text));
         await this.openModelList();
+        return;
+      }
+      if (/^\/theme\s*$/.test(text)) {
+        this.editor.addToHistory(text);
+        this.editor.setText("");
+        this.state.addItem(addCommandEcho(snapshot.sessionId, text));
+        this.openThemeList();
         return;
       }
       this.beginPendingSubmittedInput(text, snapshot);
@@ -1090,6 +1110,45 @@ export class AppScreen implements Component, Focusable {
       ),
       ...this.modelList.list.render(width),
       padToWidth(palette.text.dim("choose model · Enter switch · Esc cancel"), width),
+    ];
+  }
+
+  private openThemeList(): void {
+    const snapshot = this.state.getSnapshot();
+    const current = snapshot.themeName ?? "dark";
+    const options: readonly ["dark", "light"] = ["dark", "light"];
+    const items: SelectItem[] = options.map((theme) => ({
+      value: theme,
+      label: theme === current ? `${theme} ✔` : theme,
+    }));
+    const list = new SelectList(items, Math.min(Math.max(items.length, 1), 8), selectListTheme, {
+      minPrimaryColumnWidth: 24,
+      maxPrimaryColumnWidth: 42,
+    });
+    list.onSelect = (item) => {
+      this.themeList = null;
+      this.state.setThemeName(item.value as "dark" | "light");
+      this.state.addItem(
+        addInfo(this.state.getSnapshot().sessionId, `Theme set to ${item.value}`, "t"),
+      );
+      this.tui.requestRender();
+    };
+    list.onCancel = () => {
+      this.themeList = null;
+      this.tui.requestRender();
+    };
+    this.themeList = { list, current };
+    this.tui.requestRender();
+  }
+
+  private buildThemeListLines(width: number): string[] {
+    if (!this.themeList) {
+      return [];
+    }
+    return [
+      padToWidth(palette.status.warning("Theme"), width),
+      ...this.themeList.list.render(width),
+      padToWidth(palette.text.dim("↑/↓ choose · Enter to select · Esc to cancel"), width),
     ];
   }
 

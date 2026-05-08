@@ -122,7 +122,7 @@ uv pip install -e .
 
 ```bash
 # Enter front-end directory
-cd web
+cd jiuwenclaw/channels/web
 
 # Install front-end dependencies
 npm install
@@ -251,7 +251,7 @@ pip install -e .
 
 ```bash
 # Enter front-end directory
-cd web
+cd jiuwenclaw/channels/web
 
 # Install front-end dependencies
 npm install
@@ -326,7 +326,7 @@ git pull
 pip install -e .
 
 # Rebuild the front end (when it changed)
-cd web
+cd jiuwenclaw/channels/web
 npm install
 npm run build
 
@@ -530,4 +530,4 @@ pip uninstall jiuwenclaw
 
 ---
 
-*Last updated: 2026-04-09*
+*Last updated: 2026-05-09*
