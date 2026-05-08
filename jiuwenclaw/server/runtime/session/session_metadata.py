@@ -153,6 +153,7 @@ def update_session_metadata(
     title: str | None = None,
     clear_title: bool = False,
     increment_message_count: bool = False,
+    set_message_count: int | None = None,
     user_content: str | None = None,
     channel_metadata: dict[str, Any] | None = None,
     mode: str | None = None,
@@ -201,6 +202,8 @@ def update_session_metadata(
             metadata["title"] = title
         if increment_message_count:
             metadata["message_count"] = metadata.get("message_count", 0) + 1
+        if set_message_count is not None:
+            metadata["message_count"] = set_message_count
 
         # 自动生成标题: 当 title 为空且提供了用户消息内容时
         if not metadata.get("title") and user_content:

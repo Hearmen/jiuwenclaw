@@ -400,6 +400,12 @@ export class AppScreen implements Component, Focusable {
     this.unsubscribe = this.state.onChange(() => {
       this.handleStateChange();
     });
+    // Inject editor refs into app-state so tryAutoRestoreAfterCancel can
+    // check input emptiness and populate the input field after auto-restore.
+    this.state.setInputRef((text: string) => {
+      this.editor.setText(text);
+    });
+    this.state.getInputValueRef(() => this.editor.getText());
     // Initialize startup prompt for workspace trust
     this.initStartupPrompt();
   }
@@ -856,6 +862,8 @@ export class AppScreen implements Component, Focusable {
           subMatch?.[1] === "config" ? "config" :
           undefined;
         await this.openStatusView(tab);
+        return;
+      }
       if (/^\/theme\s*$/.test(text)) {
         this.editor.addToHistory(text);
         this.editor.setText("");
@@ -871,6 +879,9 @@ export class AppScreen implements Component, Focusable {
         await this.commands.execute(text, {
           ...this.state.getCommandContext(),
           exitApp: this.exit,
+          setInput: (text: string) => {
+            this.editor.setText(text);
+          },
           enterConfigEditor: (focusKey, configPayload) => {
             this.openConfigEditor(focusKey, configPayload);
           },

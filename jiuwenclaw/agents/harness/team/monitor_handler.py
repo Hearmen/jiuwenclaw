@@ -53,7 +53,7 @@ class TeamMonitorHandler:
             return
 
         try:
-            from openjiuwen.agent_teams.spawn.context import set_session_id, reset_session_id
+            from openjiuwen.agent_teams.context import set_session_id, reset_session_id
             
             token = set_session_id(self._session_id)
             try:
@@ -241,7 +241,7 @@ class TeamMonitorHandler:
             return ""
 
         try:
-            from openjiuwen.agent_teams.spawn.context import set_session_id, reset_session_id
+            from openjiuwen.agent_teams.context import set_session_id, reset_session_id
             
             token = set_session_id(self._session_id)
             try:

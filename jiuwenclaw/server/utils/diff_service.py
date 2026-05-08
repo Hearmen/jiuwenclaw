@@ -38,7 +38,7 @@ class DiffService:
     def _compute_turn_diffs(self, session_id: str) -> list[dict[str, Any]]:
         """计算 turn-based diffs."""
         history = self._read_history(session_id)
-        agent_history = self._read_agent_history()
+        agent_history = self._read_agent_history(session_id)
 
         if not history:
             return []
@@ -158,14 +158,33 @@ class DiffService:
         except Exception:
             return []
 
-    def _read_agent_history(self) -> dict[str, Any]:
-        """读取 .agent_history（同时读取两个可能的位置并合并）."""
+    def _read_agent_history(self, session_id: str | None = None) -> dict[str, Any]:
+        """读取 .agent_history（同时读取全局与 session-specific 文件并合并）.
+
+        Args:
+            session_id: 若提供，额外扫描匹配该 session 的 file_ops 文件。
+        """
         result: dict[str, Any] = {}
 
         paths = [
             get_agent_workspace_dir() / ".agent_history" / f"file_ops_{self._agent_id}.json",
             get_user_workspace_dir() / ".agent_history" / f"file_ops_{self._agent_id}.json",
         ]
+
+        # session-specific file_ops（如 file_ops_jiuwenclaw_tui_xxx.json）
+        if session_id:
+            for base_dir in (get_agent_workspace_dir(), get_user_workspace_dir()):
+                hist_dir = base_dir / ".agent_history"
+                if not hist_dir.is_dir():
+                    continue
+                for f in hist_dir.iterdir():
+                    name = f.name
+                    if (
+                        name.startswith(f"file_ops_{self._agent_id}_")
+                        and name.endswith(".json")
+                        and session_id in name
+                    ):
+                        paths.append(f)
 
         for history_file in paths:
             if history_file.exists():
@@ -286,6 +305,66 @@ class DiffService:
         turn["stats"]["linesRemoved"] = sum(
             f["linesRemoved"] for f in turn["files"].values()
         )
+
+    def get_files_to_restore(
+        self, session_id: str, turn_index: int
+    ) -> dict[str, dict[str, Any]]:
+        """返回需要恢复的文件及其目标内容.
+
+        对于在 turn_index 及之后所有 turn 中被修改的文件，
+        找到它们在 turn_index 开始前的状态（old_content of the first
+        edit at/after the target turn），以便恢复操作将文件写回。
+
+        Args:
+            session_id: 会话 ID
+            turn_index: 目标回退轮次（1-based，即 /rewind 使用的编号）
+
+        Returns:
+            { file_path: { "restore_content": str | None, "action": "write" | "delete" } }
+            restore_content 为 None 表示文件在目标 turn 之前不存在，应删除。
+        """
+        history = self._read_history(session_id)
+        if not history:
+            return {}
+
+        # 1. 找到目标 turn 的起始时间（第 N 条 user 消息的 timestamp）
+        user_count = 0
+        target_timestamp: float | None = None
+        for record in history:
+            if record.get("role") == "user":
+                user_count += 1
+                if user_count == turn_index:
+                    target_timestamp = record.get("timestamp")
+                    break
+
+        if target_timestamp is None:
+            return {}
+
+        # 2. 读取 file_ops 日志
+        agent_history = self._read_agent_history(session_id)
+
+        # 3. 对于每个文件，找到第一条 timestamp >= target_timestamp 的 entry
+        #    该 entry 的 old_content 即为目标 turn 开始前的文件状态
+        files_to_restore: dict[str, dict[str, Any]] = {}
+        for file_path, entries in agent_history.items():
+            # entries 按 timestamp 排序（写入时序）
+            for entry in entries:
+                edit_time = self._iso_to_timestamp(entry["timestamp"])
+                if edit_time >= target_timestamp:
+                    if entry.get("old_content") is not None:
+                        files_to_restore[file_path] = {
+                            "restore_content": entry["old_content"],
+                            "action": "write",
+                        }
+                    else:
+                        # 文件由 agent 创建，恢复时应删除
+                        files_to_restore[file_path] = {
+                            "restore_content": None,
+                            "action": "delete",
+                        }
+                    break  # 只需要第一条匹配的 entry
+
+        return files_to_restore
 
 
 _diff_service: DiffService | None = None

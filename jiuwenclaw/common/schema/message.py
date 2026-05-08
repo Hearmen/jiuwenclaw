@@ -34,6 +34,11 @@ class ReqMethod(Enum):
     SESSION_CREATE = "session.create"
     SESSION_DELETE = "session.delete"
     SESSION_RENAME = "session.rename"
+    SESSION_FORK = "session.fork"
+    SESSION_REWIND = "session.rewind"
+    SESSION_REWIND_AND_RESTORE = "session.rewind_and_restore"
+    SESSION_RESTORE_FILES = "session.restore_files"
+    HISTORY_LIST_TURNS = "history.list_turns"
 
     PATH_GET = "path.get"
     PATH_SET = "path.set"

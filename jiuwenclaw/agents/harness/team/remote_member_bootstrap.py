@@ -1214,7 +1214,7 @@ async def _ensure_dynamic_member_execution_loop(
         return False, False
     try:
         from openjiuwen.agent_teams.agent.team_agent import TeamAgent
-        from openjiuwen.agent_teams.spawn.context import reset_session_id, set_session_id
+        from openjiuwen.agent_teams.context import reset_session_id, set_session_id
 
         from jiuwenclaw.server.agent_ws_server import AgentWebSocketServer
         from jiuwenclaw.agents.harness.team.team_manager import get_team_manager

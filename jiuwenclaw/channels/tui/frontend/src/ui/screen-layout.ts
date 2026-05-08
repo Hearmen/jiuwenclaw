@@ -101,9 +101,10 @@ function buildStatusLines(
   const connectionLabel = connectionStatusLabel(snapshot.connectionStatus);
   if (connectionLabel) left.push(connectionLabel);
   if (snapshot.sessionTitle) {
-    const displayTitle = snapshot.sessionTitle.length > 30
-      ? snapshot.sessionTitle.slice(0, 30) + "..."
-      : snapshot.sessionTitle;
+    // Lowercase "(Branch)" / "(Branch N)" for the status bar — less
+    // prominent than the uppercase metadata version used in /resume list.
+    const raw = snapshot.sessionTitle.replace("(Branch", "(branch");
+    const displayTitle = raw.length > 30 ? raw.slice(0, 30) + "..." : raw;
     left.push(displayTitle);
   }
   if (snapshot.mode !== "agent.plan") left.push(`mode:${snapshot.mode}`);

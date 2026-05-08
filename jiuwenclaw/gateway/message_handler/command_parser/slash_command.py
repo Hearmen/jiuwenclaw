@@ -25,6 +25,8 @@ class GatewaySlashCommand(str, Enum):
     SWITCH = "/switch"
     SKILLS = "/skills"
     SKILLS_LIST = "/skills list"
+    BRANCH = "/branch"
+    REWIND = "/rewind"
 
 
 class ModeSubcommand(str, Enum):
@@ -62,6 +64,8 @@ CONTROL_MESSAGE_TEXTS: frozenset[str] = frozenset(
         *_VALID_MODE_LINES,
         *_VALID_SWITCH_LINES,
         GatewaySlashCommand.SKILLS_LIST.value,
+        GatewaySlashCommand.BRANCH.value,
+        GatewaySlashCommand.REWIND.value,
     }
 )
 
@@ -77,6 +81,11 @@ class ParsedControlAction(str, Enum):
     SWITCH_OK = "switch_ok"
     SWITCH_BAD = "switch_bad"
     SKILLS_OK = "skills_ok"
+    BRANCH_OK = "branch_ok"
+    REWIND_OK = "rewind_ok"
+    REWIND_BAD = "rewind_bad"
+    REWIND_CONFIRM = "rewind_confirm"
+    REWIND_CANCEL = "rewind_cancel"
 
 
 @dataclass(frozen=True)
@@ -88,16 +97,26 @@ class ParsedChannelControl:
     """mode_ok 时为 agent|code|team|agent.plan|agent.fast|code.plan|code.normal 之一。"""
     switch_subcommand: str | None = None
     """switch_ok 时为 plan|fast|normal 之一。"""
+    branch_name: str | None = None
+    """branch_ok 时为用户指定的分支名称（可为空字符串）。"""
+    rewind_turn: int | None = None
+    """rewind_ok 时为用户指定的回退轮次编号；None 表示未指定。"""
+    rewind_pending_turn: int | None = None
+    """rewind_ok 时记录原始轮次编号，用于 confirm/cancel 两步确认。"""
 
 
 def parse_channel_control_text(text: str) -> ParsedChannelControl:
-    """解析单条用户文本是否为 /new_session、/mode、/switch、/skills list 控制指令。
+    """解析单条用户文本是否为 /new_session、/mode、/switch、/skills list、/branch、/rewind 控制指令。
 
     - 含换行则视为非控制（与原 _handle_channel_control 一致）。
     - /new_session 仅整行精确匹配为合法；带后缀为非法但仍为控制指令。
     - /mode 仅白名单整行合法；支持 agent|code|team 及四个直达模式值；其它以 /mode 开头且单行非法。
     - /switch 仅白名单整行合法；其它以 /switch 开头且单行非法。
     - /skills list 仅整行精确匹配（/skills 本身不再触发）。
+    - /branch [name] 合法；name 为可选自定义分支标题。
+    - /rewind [N] 合法；N 为可选回退轮次编号（正整数）；无参数或非整数参数为非法。
+    - /rewind confirm N 确认执行之前发起的 /rewind N。
+    - /rewind cancel 取消之前发起的 /rewind N。
     """
     if not text:
         return ParsedChannelControl(ParsedControlAction.NONE)
@@ -123,13 +142,44 @@ def parse_channel_control_text(text: str) -> ParsedChannelControl:
         return ParsedChannelControl(ParsedControlAction.MODE_BAD)
     if t.startswith(GatewaySlashCommand.SWITCH.value):
         return ParsedChannelControl(ParsedControlAction.SWITCH_BAD)
+    if t == GatewaySlashCommand.BRANCH.value:
+        return ParsedChannelControl(ParsedControlAction.BRANCH_OK, branch_name="")
+    if t.startswith(f"{GatewaySlashCommand.BRANCH.value} "):
+        name = t[len(GatewaySlashCommand.BRANCH.value):].strip()
+        return ParsedChannelControl(ParsedControlAction.BRANCH_OK, branch_name=name)
+    if t == GatewaySlashCommand.REWIND.value:
+        return ParsedChannelControl(ParsedControlAction.REWIND_BAD)
+    # /rewind cancel — 取消之前的 /rewind（须在 /rewind N 前解析）
+    if t == "/rewind cancel":
+        return ParsedChannelControl(ParsedControlAction.REWIND_CANCEL)
+    # /rewind confirm N — 二步确认执行（须在 /rewind N 前解析）
+    if t.startswith("/rewind confirm "):
+        arg = t[len("/rewind confirm "):].strip()
+        try:
+            turn = int(arg)
+            if turn < 1:
+                return ParsedChannelControl(ParsedControlAction.REWIND_BAD)
+            return ParsedChannelControl(
+                ParsedControlAction.REWIND_CONFIRM, rewind_turn=turn
+            )
+        except (ValueError, TypeError):
+            return ParsedChannelControl(ParsedControlAction.REWIND_BAD)
+    if t.startswith(f"{GatewaySlashCommand.REWIND.value} "):
+        arg = t[len(GatewaySlashCommand.REWIND.value):].strip()
+        try:
+            turn = int(arg)
+            if turn < 1:
+                return ParsedChannelControl(ParsedControlAction.REWIND_BAD)
+            return ParsedChannelControl(ParsedControlAction.REWIND_OK, rewind_turn=turn)
+        except (ValueError, TypeError):
+            return ParsedChannelControl(ParsedControlAction.REWIND_BAD)
     return ParsedChannelControl(ParsedControlAction.NONE)
 
 
 def is_control_like_for_im_batching(text: str) -> bool:
     """飞书/企微等：控制类消息不走合并窗口（与历史行为一致并补全 mode 变体与 /skills list）。
 
-    单条文本、且为已知控制句、或以 /mode / /switch / /new_session 为前缀（含非法变体）时返回 True。
+    单条文本、且为已知控制句、或以 /mode / /switch / /new_session / /branch / /rewind 为前缀时返回 True。
     """
     if not text:
         return False
@@ -148,6 +198,10 @@ def is_control_like_for_im_batching(text: str) -> bool:
     if t.startswith(GatewaySlashCommand.SWITCH.value):
         return True
     if t.startswith(GatewaySlashCommand.NEW_SESSION.value):
+        return True
+    if t.startswith(GatewaySlashCommand.BRANCH.value):
+        return True
+    if t.startswith(GatewaySlashCommand.REWIND.value):
         return True
     return False
 
@@ -210,6 +264,20 @@ FIRST_BATCH_REGISTRY: tuple[SlashCommandEntry, ...] = (
         scope="client",
         req_method=None,
         notes="TUI 本地保存工作区路径；随 chat.send params.workspace_dir 发往 Gateway/AgentServer。",
+    ),
+    SlashCommandEntry(
+        id="branch",
+        canonical_text=f"{GatewaySlashCommand.BRANCH.value} [name]",
+        scope="gateway",
+        req_method="session.fork",
+        notes="受控通道分叉当前会话；Gateway 调 session.fork 并以通知回复；CLI 同路径见 builtins/branch.ts。",
+    ),
+    SlashCommandEntry(
+        id="rewind",
+        canonical_text=f"{GatewaySlashCommand.REWIND.value} <turn_number>",
+        scope="gateway",
+        req_method="session.rewind",
+        notes="受控通道回退对话到指定轮次；IM 须带正整数轮次编号；CLI 同路径见 builtins/rewind.ts。",
     ),
 )
 

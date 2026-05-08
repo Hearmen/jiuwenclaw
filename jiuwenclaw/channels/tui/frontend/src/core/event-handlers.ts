@@ -96,6 +96,8 @@ export interface AppEventDelegate {
   reportHistoryPageMeta(meta: { pageIdx?: number; totalPages?: number }): void;
   /** 某一页 history.get 流已结束（收到 `status: done` 帧），由 app-state 决定是否继续拉下一页。 */
   notifyHistoryPageDone(pageIdx: number): void;
+  /** cancel 成功后判断是否需要自动回退（与 Claude Code 的 auto-restore 对齐）。 */
+  tryAutoRestoreAfterCancel(): Promise<void>;
   /** 累加 chat.usage_summary 事件的 token/cost 数据（按 model 分桶）。 */
   appendUsageSummary(usage: Record<string, unknown>, model?: string): void;
 }
@@ -784,6 +786,10 @@ export function handleIncomingFrame(delegate: AppEventDelegate, frame: EventFram
             content: message,
             icon: "i",
             at: new Date().toISOString(),
+          });
+          // 仅当目标 turn 之后无实质性 assistant 输出时执行
+          delegate.tryAutoRestoreAfterCancel().catch(() => {
+            // 自动回退失败不影响 cancel 本身，用户可手动 /rewind
           });
         } else {
           appendEntry(delegate, {

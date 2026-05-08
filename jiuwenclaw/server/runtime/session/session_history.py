@@ -153,3 +153,35 @@ def append_history_record(
             )
     except Exception as exc:
         logger.warning("更新会话元数据失败: %s", exc)
+
+
+def truncate_history_records(*, session_id: str, cut_index: int) -> dict[str, Any]:
+    """截断会话历史到指定位置（线程安全）。
+
+    先等待异步写入队列刷盘，再持锁截断 history.json。
+    返回截断结果 dict，包含 remaining / removed 计数。
+    """
+    sid = (session_id or "default").strip() or "default"
+    _WRITE_QUEUE.join()
+
+    fpath = _history_file(sid)
+    with _FILE_LOCK:
+        if not fpath.exists():
+            return {"remaining_records": 0, "removed_records": 0}
+        history = _read_history(fpath)
+        if not isinstance(history, list):
+            return {"remaining_records": 0, "removed_records": 0}
+        total = len(history)
+        if cut_index < 0:
+            cut_index = 0
+        if cut_index > total:
+            cut_index = total
+        truncated = history[:cut_index]
+        fpath.write_text(
+            json.dumps(truncated, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+        return {
+            "remaining_records": len(truncated),
+            "removed_records": total - len(truncated),
+        }

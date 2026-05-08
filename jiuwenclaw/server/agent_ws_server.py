@@ -519,6 +519,10 @@ class AgentWebSocketServer:
             await self._handle_session_create(ws, request, send_lock)
             return
 
+        if request.req_method == ReqMethod.SESSION_FORK:
+            await self._handle_session_fork(ws, request, send_lock)
+            return
+
         if request.req_method == ReqMethod.ACP_TOOL_RESPONSE:
             await self._handle_acp_tool_response(ws, request, send_lock)
             return
@@ -1869,6 +1873,106 @@ class AgentWebSocketServer:
                 payload={"error": str(e)},
             )
             wire = encode_agent_response_for_wire(resp, response_id=request.request_id)
+            async with send_lock:
+                await ws.send(json.dumps(wire, ensure_ascii=False))
+
+    async def _handle_session_fork(
+        self, ws: Any, request: AgentRequest, send_lock: asyncio.Lock
+    ) -> None:
+        """Handle session.fork: filesystem copy + in-memory context copy.
+
+        Args:
+            ws: WebSocket connection.
+            request: AgentRequest with source_session_id, target_session_id, title.
+            send_lock: Send lock.
+        """
+        from jiuwenclaw.agents.harness.common.session_ops_service import (
+            copy_session_context,
+            fork_session,
+        )
+
+        logger.info(
+            "[AgentServer] session.fork: request_id=%s", request.request_id
+        )
+
+        try:
+            params = request.params if isinstance(request.params, dict) else {}
+            source = str(params.get("source_session_id") or "").strip()
+            target = str(params.get("target_session_id") or "").strip()
+            fork_title = str(params.get("title") or "").strip()
+            channel_id = request.channel_id or "default"
+
+            if not source:
+                raise ValueError("source_session_id is required")
+            if not target:
+                raise ValueError("target_session_id is required")
+
+            # 1. Filesystem fork (copies history.json, writes metadata)
+            result = fork_session(
+                source_session_id=source,
+                target_session_id=target,
+                title=fork_title,
+                channel_id=channel_id,
+            )
+
+            # 2. Copy in-memory context (LLM conversation history)
+            agent = self._agent_manager.get_agent_nowait(channel_id)
+            if agent is not None:
+                deep_agent = agent.get_instance()
+                await copy_session_context(deep_agent, source, target)
+            else:
+                logger.warning(
+                    "[AgentServer] session.fork: no agent for channel %s, "
+                    "in-memory context copy skipped",
+                    channel_id,
+                )
+
+            resp = AgentResponse(
+                request_id=request.request_id,
+                channel_id=request.channel_id,
+                ok=True,
+                payload=result,
+            )
+            wire = encode_agent_response_for_wire(
+                resp, response_id=request.request_id
+            )
+            async with send_lock:
+                await ws.send(json.dumps(wire, ensure_ascii=False))
+
+            logger.info(
+                "[AgentServer] session.fork completed: source=%s target=%s title=%s",
+                source, target, result.get("title", ""),
+            )
+
+        except ValueError as e:
+            logger.warning("[AgentServer] session.fork ValueError: %s", e)
+            code = (
+                "NOT_FOUND" if "not found" in str(e)
+                else "ALREADY_EXISTS" if "already exists" in str(e)
+                else "BAD_REQUEST"
+            )
+            resp = AgentResponse(
+                request_id=request.request_id,
+                channel_id=request.channel_id,
+                ok=False,
+                payload={"error": str(e), "code": code},
+            )
+            wire = encode_agent_response_for_wire(
+                resp, response_id=request.request_id
+            )
+            async with send_lock:
+                await ws.send(json.dumps(wire, ensure_ascii=False))
+        except Exception as e:
+            logger.exception("[AgentServer] session.fork failed: %s", e)
+            resp = AgentResponse(
+                request_id=request.request_id,
+                channel_id=request.channel_id,
+                ok=False,
+                payload={"error": str(e)},
+            )
+            wire = encode_agent_response_for_wire(
+                resp, response_id=request.request_id
+            )
             async with send_lock:
                 await ws.send(json.dumps(wire, ensure_ascii=False))
 

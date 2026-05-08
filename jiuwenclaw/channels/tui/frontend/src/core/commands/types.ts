@@ -72,6 +72,7 @@ export interface CommandContext {
   clearTrustedDirs: () => void;
   // Workspace directory (current working directory)
   getWorkspaceDir: () => string | undefined;
+  setInput?: (text: string) => void;
   getUsageSummary: () => SessionUsageSummary;
   enterConfigEditor?: (
     focusKey?: string,

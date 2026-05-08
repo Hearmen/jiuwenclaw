@@ -87,6 +87,7 @@ CLI_FORWARD_REQ_METHODS = frozenset(
         "extensions.import",
         "extensions.delete",
         "extensions.toggle",
+        "session.fork",
     }
 )
 
@@ -135,6 +136,7 @@ CLI_FORWARD_NO_LOCAL_HANDLER_METHODS = frozenset(
         "extensions.import",
         "extensions.delete",
         "extensions.toggle",
+        "session.fork",
     }
 )
 
@@ -765,6 +767,140 @@ def register_cli_handlers(bind: CliHandlersBindParams) -> None:
         shutil.rmtree(session_dir)
         await channel.send_response(ws, req_id, ok=True, payload={"session_id": target})
 
+    async def _session_rewind(ws, req_id, params, session_id):
+        from jiuwenclaw.agents.harness.common.session_ops_service import rewind_session
+
+        if not isinstance(params, dict):
+            await channel.send_response(
+                ws, req_id, ok=False, error="params must be object", code="BAD_REQUEST"
+            )
+            return
+        target_sid = str(params.get("session_id") or session_id or "").strip()
+        turn_index = params.get("turn_index")
+        if not target_sid:
+            await channel.send_response(
+                ws, req_id, ok=False, error="session_id is required", code="BAD_REQUEST"
+            )
+            return
+        if turn_index is None:
+            await channel.send_response(
+                ws, req_id, ok=False, error="turn_index is required", code="BAD_REQUEST"
+            )
+            return
+        try:
+            turn_index = int(turn_index)
+        except (ValueError, TypeError):
+            await channel.send_response(
+                ws, req_id, ok=False, error="turn_index must be an integer", code="BAD_REQUEST"
+            )
+            return
+        try:
+            result = rewind_session(session_id=target_sid, turn_index=turn_index)
+            await channel.send_response(ws, req_id, ok=True, payload=result)
+        except ValueError as e:
+            await channel.send_response(ws, req_id, ok=False, error=str(e), code="BAD_REQUEST")
+        except Exception as e:
+            await channel.send_response(ws, req_id, ok=False, error=str(e), code="INTERNAL_ERROR")
+
+    async def _history_list_turns(ws, req_id, params, session_id):
+        from jiuwenclaw.agents.harness.common.session_ops_service import list_session_turns
+
+        if not isinstance(params, dict):
+            params = {}
+        target_sid = str(params.get("session_id") or session_id or "").strip()
+        if not target_sid:
+            await channel.send_response(
+                ws, req_id, ok=False, error="session_id is required", code="BAD_REQUEST"
+            )
+            return
+        try:
+            result = list_session_turns(session_id=target_sid)
+            await channel.send_response(ws, req_id, ok=True, payload=result)
+        except Exception as e:
+            await channel.send_response(ws, req_id, ok=False, error=str(e), code="INTERNAL_ERROR")
+
+    async def _session_rewind_and_restore(ws, req_id, params, session_id):
+        """session.rewind_and_restore: 截断对话 + 恢复文件."""
+        from jiuwenclaw.agents.harness.common.session_ops_service import (
+            restore_session_files,
+            rewind_session,
+        )
+
+        if not isinstance(params, dict):
+            await channel.send_response(
+                ws, req_id, ok=False, error="params must be object", code="BAD_REQUEST"
+            )
+            return
+        target_sid = str(params.get("session_id") or session_id or "").strip()
+        turn_index = params.get("turn_index")
+        if not target_sid:
+            await channel.send_response(
+                ws, req_id, ok=False, error="session_id is required", code="BAD_REQUEST"
+            )
+            return
+        if turn_index is None:
+            await channel.send_response(
+                ws, req_id, ok=False, error="turn_index is required", code="BAD_REQUEST"
+            )
+            return
+        try:
+            turn_index = int(turn_index)
+        except (ValueError, TypeError):
+            await channel.send_response(
+                ws, req_id, ok=False, error="turn_index must be an integer", code="BAD_REQUEST"
+            )
+            return
+        try:
+            rewind_result = rewind_session(session_id=target_sid, turn_index=turn_index)
+            restore_result = restore_session_files(session_id=target_sid, turn_index=turn_index)
+            combined = {
+                **rewind_result,
+                "restored_files": restore_result.get("restored_files", []),
+                "deleted_files": restore_result.get("deleted_files", []),
+                "restore_errors": restore_result.get("errors", []),
+            }
+            await channel.send_response(ws, req_id, ok=True, payload=combined)
+        except ValueError as e:
+            await channel.send_response(ws, req_id, ok=False, error=str(e), code="BAD_REQUEST")
+        except Exception as e:
+            await channel.send_response(ws, req_id, ok=False, error=str(e), code="INTERNAL_ERROR")
+
+    async def _session_restore_files(ws, req_id, params, session_id):
+        """session.restore_files: 仅恢复文件，不截断对话."""
+        from jiuwenclaw.agents.harness.common.session_ops_service import restore_session_files
+
+        if not isinstance(params, dict):
+            await channel.send_response(
+                ws, req_id, ok=False, error="params must be object", code="BAD_REQUEST"
+            )
+            return
+        target_sid = str(params.get("session_id") or session_id or "").strip()
+        turn_index = params.get("turn_index")
+        if not target_sid:
+            await channel.send_response(
+                ws, req_id, ok=False, error="session_id is required", code="BAD_REQUEST"
+            )
+            return
+        if turn_index is None:
+            await channel.send_response(
+                ws, req_id, ok=False, error="turn_index is required", code="BAD_REQUEST"
+            )
+            return
+        try:
+            turn_index = int(turn_index)
+        except (ValueError, TypeError):
+            await channel.send_response(
+                ws, req_id, ok=False, error="turn_index must be an integer", code="BAD_REQUEST"
+            )
+            return
+        try:
+            result = restore_session_files(session_id=target_sid, turn_index=turn_index)
+            await channel.send_response(ws, req_id, ok=True, payload=result)
+        except ValueError as e:
+            await channel.send_response(ws, req_id, ok=False, error=str(e), code="BAD_REQUEST")
+        except Exception as e:
+            await channel.send_response(ws, req_id, ok=False, error=str(e), code="INTERNAL_ERROR")
+
     async def _session_rename(ws, req_id, params, session_id):
         """优先经 E2A 转发至 AgentWebSocketServer._handle_session_rename；无 agent 或转发失败时本地回退。"""
         from jiuwenclaw.server.runtime.session.session_rename import apply_session_rename
@@ -1338,6 +1474,10 @@ def register_cli_handlers(bind: CliHandlersBindParams) -> None:
     channel.register_local_handler(path, "session.create", _session_create)
     channel.register_local_handler(path, "session.delete", _session_delete)
     channel.register_local_handler(path, "session.rename", _session_rename)
+    channel.register_local_handler(path, "session.rewind", _session_rewind)
+    channel.register_local_handler(path, "session.rewind_and_restore", _session_rewind_and_restore)
+    channel.register_local_handler(path, "session.restore_files", _session_restore_files)
+    channel.register_local_handler(path, "history.list_turns", _history_list_turns)
     channel.register_local_handler(path, "chat.send", _chat_send)
     channel.register_local_handler(path, "chat.resume", _chat_resume)
     channel.register_local_handler(path, "chat.interrupt", _chat_interrupt)

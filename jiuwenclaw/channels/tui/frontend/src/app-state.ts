@@ -105,6 +105,10 @@ export interface AppSnapshot {
 export class CliPiAppState {
   private listeners = new Set<() => void>();
   private entries: HistoryItem[] = [];
+  /** AppScreen 注入的 setInput 回调，用于自动恢复后填充输入框。 */
+  private _setInputRef: ((text: string) => void) | null = null;
+  /** AppScreen 注入的 getInputValue 回调，用于自动恢复判断输入框是否为空。 */
+  private _getInputValueRef: (() => string) | null = null;
   private connectionStatus: ConnectionStatus = "idle";
   private sessionId: string;
   private sessionTitle: string = "";
@@ -244,6 +248,7 @@ export class CliPiAppState {
         resolver();
       }
     },
+    tryAutoRestoreAfterCancel: () => this.tryAutoRestoreAfterCancel(),
     appendUsageSummary: (usage, model) => {
       const key = model || "unknown";
       const existing = this.usageByModel.get(key);
@@ -448,6 +453,7 @@ export class CliPiAppState {
       clearTrustedDirs: clearTrustedDirs,
       getWorkspaceDir: () => getTrustedDirs()[0] || process.cwd(),
       enterConfigEditor: undefined, // AppScreen injects the real handler when executing slash commands.
+      setInput: this._setInputRef ?? undefined,
       enterStatusView: undefined,
       getUsageSummary: () => this.getUsageSummary(),
     };
@@ -461,6 +467,16 @@ export class CliPiAppState {
       total_tokens: entries.reduce((s, e) => s + e.total_tokens, 0),
       byModel: entries,
     };
+  }
+
+  /** AppScreen 在初始化时注入 setInput 回调，使 app-state 可以填充输入框。 */
+  setInputRef(ref: (text: string) => void): void {
+    this._setInputRef = ref;
+  }
+
+  /** AppScreen 在初始化时注入 getInputValue 回调，使 app-state 可以读取输入框内容。 */
+  getInputValueRef(ref: () => string): void {
+    this._getInputValueRef = ref;
   }
 
   readonly sendEventOnly = (method: string, params: Record<string, unknown>): string => {
@@ -899,6 +915,99 @@ readonly request = async <T = Record<string, unknown>>(
       if (requestToken !== this.historyRequestToken) return;
       this.applyHistoryEntriesToTranscript();
     }, 80);
+  };
+
+  /** cancel 成功后自动回退判断（与 Claude Code auto-restore 对齐）。
+
+   条件：
+   1. 输入框为空（用户取消后没有输入新内容）
+   2. 最后一个 selectable user message 之后的消息只有合成/系统类，
+      无实质 assistant 输出
+   满足时自动调用 rewind_and_restore RPC 截断对话+恢复文件，
+   并将被回退的内容填充输入框。
+   */
+  readonly tryAutoRestoreAfterCancel = async (): Promise<void> => {
+    // 条件 1：输入框为空
+    if (this._getInputValueRef && this._getInputValueRef().trim() !== "") return;
+
+    const entries = this.getSnapshot().entries;
+    if (!entries || entries.length === 0) return;
+
+    // 找最后一个实质 user message
+    const nonSyntheticTags = [
+      "<local-command-stdout>",
+      "<bash-stdout>",
+      "<task-notification>",
+    ];
+    let lastUserIdx = -1;
+    for (let i = entries.length - 1; i >= 0; i--) {
+      const e = entries[i];
+      if (e.kind !== "user") continue;
+      const content = typeof e.content === "string" ? e.content : "";
+      if (nonSyntheticTags.some((tag) => content.includes(tag))) continue;
+      lastUserIdx = i;
+      break;
+    }
+    if (lastUserIdx < 0) return;
+
+    // 判断 lastUserIdx 之后是否只有合成/系统类消息
+    const hasSubstantialAfter = entries.slice(lastUserIdx + 1).some((e) => {
+      if (e.kind === "user") {
+        const content = typeof e.content === "string" ? e.content : "";
+        return !nonSyntheticTags.some((tag) => content.includes(tag));
+      }
+      // assistant 含实质内容视为有实质输出
+      if (e.kind === "assistant") return true;
+      // 其他（info/error/system）视为合成消息
+      return false;
+    });
+
+    if (hasSubstantialAfter) return; // 有实质内容，不自动回退
+
+    // 获取 turn 列表以确定 lastUserIdx 对应的 turn_index
+    try {
+      const turnsPayload = await this.request<{
+        turns?: { turn_index: number; content_preview: string; content?: string }[];
+        total?: number;
+      }>("history.list_turns", { session_id: this.sessionId });
+      const turns = turnsPayload.turns ?? [];
+      if (turns.length === 0) return;
+
+      const lastTurn = turns[turns.length - 1];
+      if (!lastTurn) return;
+
+      const rewindPayload = await this.request<{
+        content?: string;
+        content_preview?: string;
+        remaining_records?: number;
+        removed_records?: number;
+        restored_files?: string[];
+        deleted_files?: string[];
+        restore_errors?: { file: string; error: string }[];
+      }>("session.rewind_and_restore", {
+        session_id: this.sessionId,
+        turn_index: lastTurn.turn_index,
+      });
+
+      this.entries = [];
+      this.emitChange();
+      await this.restoreHistory(this.sessionId);
+
+      const restoreText = rewindPayload.content ?? lastTurn.content_preview ?? "";
+      this._setInputRef?.(restoreText);
+
+      this.addItem(
+        addInfo(
+          this.sessionId,
+          "Auto-restored to before the last turn (no substantial output after cancel). " +
+            "The removed turn text has been placed in the input for you to edit.\n" +
+            "Note: Rewinding does not affect files edited manually or via bash commands.",
+          "i",
+        ),
+      );
+    } catch {
+      // 自动回退失败不影响 cancel 本身
+    }
   };
 
   private applyHistoryEntriesToTranscript(): void {

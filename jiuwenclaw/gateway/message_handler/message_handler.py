@@ -700,6 +700,57 @@ class MessageHandler(ABC):
             )
             return True
 
+        if parsed.action is ParsedControlAction.BRANCH_OK:
+            asyncio.create_task(
+                self._branch_slash_notice(
+                    user_infos, ch, msg.session_id, msg,
+                    branch_name=parsed.branch_name or "",
+                )
+            )
+            return True
+
+        if parsed.action is ParsedControlAction.REWIND_OK:
+            # 两步确认：先发送确认提示，不立即执行
+            turn_index = parsed.rewind_turn or 1
+            asyncio.create_task(
+                self._rewind_slash_confirm_prompt(
+                    user_infos, ch, msg.session_id, msg,
+                    turn_index=turn_index,
+                )
+            )
+            return True
+
+        if parsed.action is ParsedControlAction.REWIND_CONFIRM:
+            # 用户确认执行 rewind
+            asyncio.create_task(
+                self._rewind_slash_notice(
+                    user_infos, ch, msg.session_id, msg,
+                    turn_index=parsed.rewind_turn or 1,
+                )
+            )
+            return True
+
+        if parsed.action is ParsedControlAction.REWIND_CANCEL:
+            # 用户取消 rewind
+            asyncio.create_task(
+                self._send_channel_notice(
+                    user_infos, ch, msg.session_id,
+                    "[收到 /rewind cancel] 已取消回退操作。",
+                )
+            )
+            return True
+
+        if parsed.action is ParsedControlAction.REWIND_BAD:
+            asyncio.create_task(
+                self._send_channel_notice(
+                    user_infos,
+                    ch,
+                    msg.session_id,
+                    "非法指令，/rewind 须带正整数轮次编号，如 /rewind 2",
+                )
+            )
+            return True
+
         return False
 
     async def _skills_slash_notice(
@@ -754,6 +805,165 @@ class MessageHandler(ABC):
                 channel_id,
                 reply_session_id,
                 {"error": f"获取技能列表失败：{exc}"},
+            )
+
+    async def _branch_slash_notice(
+        self,
+        user_infos: dict[str, Any],
+        channel_id: str,
+        reply_session_id: str | None,
+        msg: "Message",
+        *,
+        branch_name: str = "",
+    ) -> None:
+        """受控通道 /branch：分叉当前会话，切换到新 session 并通知。
+
+        Sends session.fork to AgentServer so both filesystem copy (history.json,
+        metadata) and in-memory context copy (DeepAgent checkpointer + context
+        engine) are performed atomically.
+        """
+        from jiuwenclaw.e2a.gateway_normalize import e2a_from_agent_fields
+        from jiuwenclaw.schema.message import ReqMethod
+
+        state = self._get_or_create_channel_state(msg)
+        source_sid = state.session_id
+        if not source_sid:
+            await self._send_channel_notice(
+                user_infos, channel_id, reply_session_id,
+                {"error": "当前无活跃会话，无法分叉"},
+            )
+            return
+
+        channel_type = self._resolve_control_channel_type(msg)
+        new_sid = self._generate_channel_session_id(channel_type)
+
+        try:
+            env = e2a_from_agent_fields(
+                request_id=f"branch-{int(time.time() * 1000):x}-{secrets.token_hex(3)}",
+                channel_id=channel_type,
+                session_id=source_sid,
+                req_method=ReqMethod.SESSION_FORK,
+                params={
+                    "source_session_id": source_sid,
+                    "target_session_id": new_sid,
+                    "title": branch_name,
+                },
+                is_stream=False,
+                timestamp=time.time(),
+            )
+            resp = await self._agent_client.send_request(env)
+            if not resp.ok:
+                payload = dict(resp.payload or {}) if isinstance(resp.payload, dict) else {}
+                raise ValueError(str(payload.get("error") or "session.fork failed"))
+
+            result = dict(resp.payload or {}) if isinstance(resp.payload, dict) else {}
+            fork_sid = result.get("session_id", new_sid)
+            fork_title = result.get("title", branch_name or "Branched conversation")
+
+            old_sid = state.session_id
+            state.session_id = fork_sid
+
+            await self._cancel_agent_work_for_session(msg, old_sid)
+
+            await self._send_channel_notice(
+                user_infos, channel_id, reply_session_id,
+                f"[收到 /branch 指令] 已分叉会话「{fork_title}」，当前已切换到新会话。",
+            )
+            logger.info(
+                "[MessageHandler] /branch 完成: source=%s fork=%s title=%s",
+                source_sid, fork_sid, fork_title,
+            )
+        except ValueError as e:
+            await self._send_channel_notice(
+                user_infos, channel_id, reply_session_id,
+                {"error": f"分叉失败：{e}"},
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.exception("[MessageHandler] /branch 失败: %s", exc)
+            await self._send_channel_notice(
+                user_infos, channel_id, reply_session_id,
+                {"error": f"分叉失败：{exc}"},
+            )
+
+    async def _rewind_slash_confirm_prompt(
+        self,
+        user_infos: dict[str, Any],
+        channel_id: str,
+        reply_session_id: str | None,
+        msg: "Message",
+        *,
+        turn_index: int = 1,
+    ) -> None:
+        """受控通道 /rewind N：发送确认提示（两步确认第一步）。
+
+        与 Claude Code 对齐：IM 渠道 /rewind 是不可逆操作，需要确认后才执行。
+        """
+        state = self._get_or_create_channel_state(msg)
+        target_sid = state.session_id
+        if not target_sid:
+            await self._send_channel_notice(
+                user_infos, channel_id, reply_session_id,
+                {"error": "当前无活跃会话，无法回退"},
+            )
+            return
+
+        await self._send_channel_notice(
+            user_infos, channel_id, reply_session_id,
+            f"[收到 /rewind {turn_index} 指令] 确认要回退到第 {turn_index} 轮吗？\n"
+            f"此操作不可逆，将删除第 {turn_index} 轮及之后的所有对话。\n"
+            f"请回复 /rewind confirm {turn_index} 确认，或 /rewind cancel 取消。\n"
+            f"注意：回退不影响手动编辑的文件或通过 bash 执行的命令。",
+        )
+
+    async def _rewind_slash_notice(
+        self,
+        user_infos: dict[str, Any],
+        channel_id: str,
+        reply_session_id: str | None,
+        msg: "Message",
+        *,
+        turn_index: int = 1,
+    ) -> None:
+        """受控通道 /rewind N：回退当前会话到指定轮次并通知。"""
+        from jiuwenclaw.agents.harness.common.session_ops_service import rewind_session
+
+        state = self._get_or_create_channel_state(msg)
+        target_sid = state.session_id
+        if not target_sid:
+            await self._send_channel_notice(
+                user_infos, channel_id, reply_session_id,
+                {"error": "当前无活跃会话，无法回退"},
+            )
+            return
+
+        try:
+            await self._cancel_agent_work_for_session(msg, target_sid)
+
+            result = rewind_session(session_id=target_sid, turn_index=turn_index)
+            preview = result.get("content_preview", "")
+            remaining = result.get("remaining_records", 0)
+            removed = result.get("removed_records", 0)
+
+            await self._send_channel_notice(
+                user_infos, channel_id, reply_session_id,
+                f"[收到 /rewind 指令] 已回退到第 {turn_index} 轮"
+                f'（"{preview[:50]}"）'
+                f"，删除 {removed} 条记录，剩余 {remaining} 条。",
+            )
+            logger.info(
+                "[MessageHandler] /rewind 完成: session=%s turn=%s remaining=%s removed=%s",
+                target_sid, turn_index, remaining, removed,
+            )
+        except ValueError as e:
+            await self._send_channel_notice(
+                user_infos, channel_id, reply_session_id,
+                {"error": f"回退失败：{e}"},
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.exception("[MessageHandler] /rewind 失败: %s", exc)
+            await self._send_channel_notice(
+                user_infos, channel_id, reply_session_id,
+                {"error": f"回退失败：{exc}"},
             )
 
     def _apply_channel_state(self, msg: "Message") -> None:
