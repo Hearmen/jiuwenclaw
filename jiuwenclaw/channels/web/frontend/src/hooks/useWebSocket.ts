@@ -126,11 +126,16 @@ export function useWebSocket(options: UseWebSocketOptions): UseWebSocketReturn {
     onError,
   } = options;
 
+  // 同步更新 ref，避免竞态条件
+  // 必须在渲染阶段同步更新，否则 effect 执行之前收到的事件会被错误过滤
+  const userInputVersionRef = useRef(0);
+  const activeSessionIdRef = useRef(activeSessionId);
+  // 立即同步更新，不等待 effect
+  activeSessionIdRef.current = activeSessionId;
+
   const [isConnected, setIsConnected] = useState(false);
   const [connectionState, setConnectionState] =
     useState<WebConnectionState>('idle');
-  const userInputVersionRef = useRef(0);
-  const activeSessionIdRef = useRef(activeSessionId);
   const onConnectRef = useRef(onConnect);
   const onDisconnectRef = useRef(onDisconnect);
   const onErrorRef = useRef(onError);
@@ -464,9 +469,7 @@ export function useWebSocket(options: UseWebSocketOptions): UseWebSocketReturn {
     [request, setConnectionStats, setPendingQuestion]
   );
 
-  useEffect(() => {
-    activeSessionIdRef.current = activeSessionId;
-  }, [activeSessionId]);
+  // activeSessionIdRef 已在渲染阶段同步更新，无需额外 effect
 
   // 会话切换时不再重置上下文压缩信息，保持本地存储的状态
   // useEffect(() => {

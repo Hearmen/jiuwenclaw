@@ -229,6 +229,7 @@ function AppContent() {
     const stored = getStoredSessionId();
     return stored || 'new';
   });
+
   const [activeNav, setActiveNav] = useState<MainNavKey>('chat');
   const [serverConfig, setServerConfig] = useState<Record<string, unknown> | null>(null);
   const [configError, setConfigError] = useState<string | null>(null);
@@ -787,6 +788,10 @@ function AppContent() {
     clearMessages();
     clearTodos();
     const newSid = generateSessionId();
+    const previousSid = sessionIdRef.current;
+    // 立即同步更新 ref 到新值，防止后续发送消息使用旧 ID
+    sessionIdRef.current = newSid;
+    setSessionId(newSid);
     try {
       const payload = await request<{ session_id?: string }>('session.create', {
         session_id: newSid,
@@ -795,7 +800,11 @@ function AppContent() {
         typeof payload?.session_id === 'string' && payload.session_id
           ? payload.session_id
           : newSid;
-      setSessionId(createdSid);
+      // 如果后端返回的 ID 与生成的不一致，更新 ref
+      if (createdSid !== newSid) {
+        sessionIdRef.current = createdSid;
+        setSessionId(createdSid);
+      }
       setCurrentSession(null);
       storeSessionId(createdSid);
       // 保持当前模式
@@ -809,6 +818,9 @@ function AppContent() {
       await fetchSessions();
     } catch (error) {
       console.error('Failed to create session:', error);
+      // 创建失败时恢复旧的 session ID
+      sessionIdRef.current = previousSid;
+      setSessionId(previousSid);
       return;
     }
     setNewSessionToastVisible(true);
@@ -855,36 +867,42 @@ function AppContent() {
   }, [sessionId, switchMode]);
 
   const handleSendMessage = useCallback((content: string) => {
-    if (!sessionId || sessionId === 'new') return;
-    void sendMessage(content, sessionId);
-  }, [sendMessage, sessionId]);
+    const currentSessionId = sessionIdRef.current;
+    if (!currentSessionId || currentSessionId === 'new') return;
+    void sendMessage(content, currentSessionId);
+  }, [sendMessage]);
 
   const handleInterrupt = useCallback((newInput?: string) => {
-    if (!sessionId || sessionId === 'new') return;
+    const currentSessionId = sessionIdRef.current;
+    if (!currentSessionId || currentSessionId === 'new') return;
     const trimmed = newInput?.trim();
     if (!trimmed) return;
-    void supplement(sessionId, trimmed);
-  }, [sessionId, supplement]);
+    void supplement(currentSessionId, trimmed);
+  }, [supplement]);
 
   const handlePause = useCallback(() => {
-    if (!sessionId || sessionId === 'new') return;
-    void pause(sessionId);
-  }, [pause, sessionId]);
+    const currentSessionId = sessionIdRef.current;
+    if (!currentSessionId || currentSessionId === 'new') return;
+    void pause(currentSessionId);
+  }, [pause]);
 
   const handleCancel = useCallback(() => {
-    if (!sessionId || sessionId === 'new') return;
-    void cancel(sessionId);
-  }, [cancel, sessionId]);
+    const currentSessionId = sessionIdRef.current;
+    if (!currentSessionId || currentSessionId === 'new') return;
+    void cancel(currentSessionId);
+  }, [cancel]);
 
   const handleResume = useCallback(() => {
-    if (!sessionId || sessionId === 'new') return;
-    void resume(sessionId);
-  }, [resume, sessionId]);
+    const currentSessionId = sessionIdRef.current;
+    if (!currentSessionId || currentSessionId === 'new') return;
+    void resume(currentSessionId);
+  }, [resume]);
 
   const handleUserAnswer = useCallback((requestId: string, answers: UserAnswer[], source?: string) => {
-    if (!sessionId || sessionId === 'new') return;
-    void sendUserAnswer(sessionId, requestId, answers, source);
-  }, [sendUserAnswer, sessionId]);
+    const currentSessionId = sessionIdRef.current;
+    if (!currentSessionId || currentSessionId === 'new') return;
+    void sendUserAnswer(currentSessionId, requestId, answers, source);
+  }, [sendUserAnswer]);
 
   const handleLoadMoreHistory = useCallback(async () => {
     if (!sessionId.startsWith('sess_') || !historyPagerMeta) return;
