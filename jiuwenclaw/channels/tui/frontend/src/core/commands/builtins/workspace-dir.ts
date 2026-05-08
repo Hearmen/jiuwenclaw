@@ -119,6 +119,8 @@ export function createWorkspaceCommand(): SlashCommand {
             ctx.addItem(addInfo(ctx.sessionId, `Path already set as trusted dir: ${resolvedPath}`, "c"));
           } else if (result === "not_found") {
             ctx.addItem(addError(ctx.sessionId, `Path does not exist: ${resolvedPath}`));
+          } else if (result === "no_access") {
+            ctx.addItem(addError(ctx.sessionId, `Permission denied: cannot access directory ${resolvedPath}`));
           } else {
             ctx.addItem(addError(ctx.sessionId, `Path is not a directory: ${resolvedPath}`));
           }
@@ -137,14 +139,18 @@ export function createWorkspaceCommand(): SlashCommand {
             return;
           }
 
-          // Check if path exists first
-          const result = ctx.setTrustedDir(directoryPath);
+          // Validate path without modifying state
+          const result = ctx.validateDirPath(directoryPath);
           if (result === "not_found") {
             ctx.addItem(addError(ctx.sessionId, `Path does not exist: ${directoryPath}`));
             return;
           }
           if (result === "invalid") {
             ctx.addItem(addError(ctx.sessionId, `Path is not a directory: ${directoryPath}`));
+            return;
+          }
+          if (result === "no_access") {
+            ctx.addItem(addError(ctx.sessionId, `Permission denied: cannot access directory ${directoryPath}`));
             return;
           }
 

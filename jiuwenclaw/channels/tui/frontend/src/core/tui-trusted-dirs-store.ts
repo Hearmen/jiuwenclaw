@@ -1,4 +1,5 @@
-import { existsSync, statSync } from "node:fs";
+import { existsSync, readdirSync, statSync } from "node:fs";
+import { homedir } from "node:os";
 import { resolve } from "node:path";
 
 import { loadTuiConfig, saveTuiConfig } from "./tui-config-store.js";
@@ -34,7 +35,14 @@ function normalizePath(path: string): string {
   if (!trimmed) {
     return "";
   }
-  const resolved = resolve(trimmed);
+  // Expand ~ to home directory before resolving
+  let expanded = trimmed;
+  if (expanded === "~") {
+    expanded = homedir();
+  } else if (expanded.startsWith("~/")) {
+    expanded = homedir() + expanded.slice(1);
+  }
+  const resolved = resolve(expanded);
   // On Windows, normalize case
   return process.platform === "win32" ? resolved.toLowerCase() : resolved;
 }
@@ -52,9 +60,9 @@ export function getTrustedDirs(): string[] {
 /**
  * Add a trusted directory.
  * @param path - Directory path to add (must be a folder, not a file)
- * @returns "added" if added, "exists" if already trusted, "not_found" if path doesn't exist, "invalid" if invalid path or not a directory
+ * @returns "added" if added, "exists" if already trusted, "not_found" if path doesn't exist, "invalid" if invalid path or not a directory, "no_access" if permission denied
  */
-export function addTrustedDir(path: string): "added" | "exists" | "not_found" | "invalid" {
+export function addTrustedDir(path: string): "added" | "exists" | "not_found" | "invalid" | "no_access" {
   ensureLoaded();
   const normalized = normalizePath(path);
   if (!normalized) {
@@ -70,6 +78,10 @@ export function addTrustedDir(path: string): "added" | "exists" | "not_found" | 
     }
   } catch {
     return "invalid";
+  }
+  const access = checkDirAccess(normalized);
+  if (access !== "valid") {
+    return access;
   }
   if (_trustedDirs!.includes(normalized)) {
     return "exists";
@@ -80,11 +92,55 @@ export function addTrustedDir(path: string): "added" | "exists" | "not_found" | 
 }
 
 /**
+ * Check that a normalized directory path is accessible (readable).
+ * @returns "valid" if accessible, "no_access" if permission denied, "invalid" for other errors
+ */
+function checkDirAccess(normalized: string): "valid" | "no_access" | "invalid" {
+  try {
+    readdirSync(normalized);
+  } catch (err: any) {
+    if (err.code === "EACCES") {
+      return "no_access";
+    }
+    return "invalid";
+  }
+  return "valid";
+}
+
+/**
+ * Validate a directory path without modifying trusted dirs state.
+ * @param path - Directory path to validate
+ * @returns "valid" if accessible directory, "not_found" if path doesn't exist, "invalid" if not a directory, "no_access" if permission denied
+ */
+export function validateDirPath(path: string): "valid" | "not_found" | "invalid" | "no_access" {
+  const normalized = normalizePath(path);
+  if (!normalized) {
+    return "invalid";
+  }
+  if (!existsSync(normalized)) {
+    return "not_found";
+  }
+  try {
+    const stats = statSync(normalized);
+    if (!stats.isDirectory()) {
+      return "invalid";
+    }
+  } catch {
+    return "invalid";
+  }
+  const access = checkDirAccess(normalized);
+  if (access !== "valid") {
+    return access;
+  }
+  return "valid";
+}
+
+/**
  * Reset trusted dirs and set a single path.
  * @param path - Directory path to set as the only trusted dir (must be a folder, not a file)
- * @returns "set" if set successfully, "not_found" if path doesn't exist, "invalid" if invalid path or not a directory
+ * @returns "set" if set successfully, "not_found" if path doesn't exist, "invalid" if invalid path or not a directory, "no_access" if permission denied
  */
-export function setTrustedDir(path: string): "set" | "not_found" | "invalid" {
+export function setTrustedDir(path: string): "set" | "not_found" | "invalid" | "no_access" {
   ensureLoaded();
   const normalized = normalizePath(path);
   if (!normalized) {
@@ -100,6 +156,10 @@ export function setTrustedDir(path: string): "set" | "not_found" | "invalid" {
     }
   } catch {
     return "invalid";
+  }
+  const access = checkDirAccess(normalized);
+  if (access !== "valid") {
+    return access;
   }
   _trustedDirs = [normalized];
   persist();
@@ -153,5 +213,5 @@ export function isTrustedDir(path: string): boolean {
  * Get the default workspace path.
  */
 export function getDefaultWorkspacePath(): string {
-  return resolve("~/.jiuwenclaw/agent/jiuwenclaw_workspace");
+  return resolve(homedir(), ".jiuwenclaw/agent/jiuwenclaw_workspace");
 }

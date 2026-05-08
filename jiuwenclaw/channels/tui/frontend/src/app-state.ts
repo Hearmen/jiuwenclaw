@@ -48,6 +48,7 @@ import { type ConnectionStatus, WsClient } from "./core/ws-client.js";
 import { loadTuiConfig } from "./core/tui-config-store.js";
 import {
   getTrustedDirs,
+  validateDirPath,
   addTrustedDir,
   setTrustedDir,
   removeTrustedDir,
@@ -413,6 +414,7 @@ export class CliPiAppState {
       sessionTitle: snapshot.sessionTitle,
       setSessionTitle: this.setSessionTitle,
       getTrustedDirs: getTrustedDirs,
+      validateDirPath: validateDirPath,
       addTrustedDir: addTrustedDir,
       setTrustedDir: setTrustedDir,
       removeTrustedDir: removeTrustedDir,
