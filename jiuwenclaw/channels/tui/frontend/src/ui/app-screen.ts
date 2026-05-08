@@ -32,6 +32,7 @@ import {
 } from "../core/commands/builtins/model.js";
 import type { SessionListPayload, SessionMeta } from "../core/commands/builtins/resume.js";
 import type { ConfigItemSchema } from "../core/commands/builtins/config.js";
+import type { McpListItem, McpListPayload } from "../core/commands/builtins/mcp.js";
 import { buildModeAutocompleteItems } from "../core/commands/builtins/mode.js";
 import { addTrustedDir, getTrustedDirs, isTrustedDir } from "../core/tui-trusted-dirs-store.js";
 import { handleAppScreenKeyInput } from "./keymap.js";
@@ -74,6 +75,18 @@ type ModelListState = {
 type ThemeListState = {
   list: SelectList;
   current: string;
+};
+
+type McpListState = {
+  list: SelectList;
+  items: McpListItem[];
+};
+
+type McpDetailState = {
+  serverName: string;
+  info: Record<string, unknown>;
+  enabled: boolean;
+  actions: SelectList;
 };
 
 type ConfigEditorPhase = "select_group" | "select_item" | "select_value" | "input_value";
@@ -358,6 +371,8 @@ export class AppScreen implements Component, Focusable {
   private otherInputMode = false;
   private resumeSessionList: ResumeSessionListState | null = null;
   private modelList: ModelListState | null = null;
+  private mcpList: McpListState | null = null;
+  private mcpDetail: McpDetailState | null = null;
   private themeList: ThemeListState | null = null;
   private configEditorState: ConfigEditorState | null = null;
   private statusViewState: StatusViewState | null = null;
@@ -670,6 +685,18 @@ export class AppScreen implements Component, Focusable {
       return;
     }
 
+    if (!snapshot.pendingQuestion && this.mcpList !== null) {
+      this.mcpList.list.handleInput(data);
+      this.tui.requestRender();
+      return;
+    }
+
+    if (!snapshot.pendingQuestion && this.mcpDetail !== null) {
+      this.mcpDetail.actions.handleInput(data);
+      this.tui.requestRender();
+      return;
+    }
+
     if (!snapshot.pendingQuestion && this.themeList !== null) {
       this.themeList.list.handleInput(data);
       this.tui.requestRender();
@@ -756,6 +783,8 @@ export class AppScreen implements Component, Focusable {
       ...(!this.statusViewState ? this.buildConfigEditorLines(width) : []),
       ...this.buildResumeSessionListLines(width),
       ...this.buildModelListLines(width),
+      ...this.buildMcpListLines(width),
+      ...this.buildMcpDetailLines(width),
       ...this.buildThemeListLines(width),
       ...this.buildPendingQuestionLines(snapshot, width),
     ];
@@ -850,6 +879,13 @@ export class AppScreen implements Component, Focusable {
         this.editor.setText("");
         this.state.addItem(addCommandEcho(snapshot.sessionId, text));
         await this.openModelList();
+        return;
+      }
+      if (/^\/mcp(?:\s+list)?\s*$/.test(text)) {
+        this.editor.addToHistory(text);
+        this.editor.setText("");
+        this.state.addItem(addCommandEcho(snapshot.sessionId, text));
+        await this.openMcpList();
         return;
       }
       if (/^\/status(?:\s+\S*)?\s*$/.test(text)) {
@@ -1211,6 +1247,179 @@ export class AppScreen implements Component, Focusable {
       ...this.modelList.list.render(width),
       padToWidth(palette.text.dim("choose model · Enter switch · Esc cancel"), width),
     ];
+  }
+
+  private async openMcpList(): Promise<void> {
+    const snapshot = this.state.getSnapshot();
+    try {
+      const payload = await this.state.request<McpListPayload>("command.mcp", { action: "list" });
+      const items = payload.items ?? [];
+      if (items.length === 0) {
+        this.mcpList = null;
+        this.state.addItem(addInfo(snapshot.sessionId, "No MCP servers configured", "m"));
+        return;
+      }
+
+      const selectItems: SelectItem[] = items.map((x) => ({
+        label: `${x.name} | ${x.transport}${x.enabled ? " · ✔ enabled" : " · ◯ disabled"}`,
+        value: x.name,
+      }));
+      const list = new SelectList(
+        selectItems,
+        Math.min(Math.max(selectItems.length, 1), 8),
+        selectListTheme,
+        { minPrimaryColumnWidth: 24, maxPrimaryColumnWidth: 42 },
+      );
+      list.onSelect = (item) => {
+        void this.handleMcpSelection(item.value);
+      };
+      list.onCancel = () => {
+        this.mcpList = null;
+        this.tui.requestRender();
+      };
+      this.mcpList = { list, items };
+      this.tui.requestRender();
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      this.mcpList = null;
+      this.state.addItem(addError(snapshot.sessionId, `mcp list failed: ${message}`));
+    }
+  }
+
+  private async handleMcpSelection(serverName: string): Promise<void> {
+    this.mcpList = null;
+    const snapshot = this.state.getSnapshot();
+    try {
+      const payload = await this.state.request<{
+        type: string;
+        item?: Record<string, unknown>;
+      }>("command.mcp", { action: "show", name: serverName });
+      if (payload.type === "detail" && payload.item) {
+        const enabled = Boolean(payload.item.enabled !== false);
+        const actionItems: SelectItem[] = [];
+        if (enabled) {
+          actionItems.push({ label: "Disable", value: "disable", description: "Stop and disable this server" });
+        } else {
+          actionItems.push({ label: "Enable", value: "enable", description: "Enable this server" });
+        }
+        actionItems.push({ label: "Remove", value: "remove", description: "Remove this server from config" });
+        const actionsList = new SelectList(actionItems, actionItems.length, selectListTheme, {
+          minPrimaryColumnWidth: 24,
+          maxPrimaryColumnWidth: 42,
+        });
+        actionsList.onSelect = (item) => {
+          void this.handleMcpDetailAction(serverName, item.value);
+        };
+        actionsList.onCancel = () => {
+          this.mcpDetail = null;
+          this.tui.requestRender();
+        };
+        this.mcpDetail = {
+          serverName,
+          info: payload.item,
+          enabled,
+          actions: actionsList,
+        };
+        this.tui.requestRender();
+      } else {
+        this.state.addItem(addError(snapshot.sessionId, `MCP server '${serverName}' not found`));
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      this.state.addItem(addError(snapshot.sessionId, `mcp show failed: ${message}`));
+    }
+  }
+
+  private async handleMcpDetailAction(serverName: string, action: string): Promise<void> {
+    this.mcpDetail = null;
+    const snapshot = this.state.getSnapshot();
+    try {
+      if (action === "enable" || action === "disable" || action === "remove") {
+        await this.state.request("command.mcp", { action, name: serverName });
+        if (action === "remove") {
+          this.state.addItem(addInfo(snapshot.sessionId, `MCP server removed: ${serverName}`, "m"));
+          this.tui.requestRender();
+        } else {
+          // After enable/disable, reopen the MCP list to show updated status
+          await this.openMcpList();
+        }
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      this.state.addItem(addError(snapshot.sessionId, `mcp ${action} failed: ${message}`));
+      this.tui.requestRender();
+    }
+  }
+
+  private buildMcpListLines(width: number): string[] {
+    if (!this.mcpList) return [];
+    return [
+      padToWidth(palette.status.warning(`MCP servers (${this.mcpList.items.length})`), width),
+      ...this.mcpList.list.render(width),
+      padToWidth(palette.text.dim("↑/↓ choose · Enter show detail · Esc cancel"), width),
+    ];
+  }
+
+  private buildMcpDetailLines(width: number): string[] {
+    if (!this.mcpDetail) return [];
+    const { serverName, info, enabled, actions } = this.mcpDetail;
+    const lines: string[] = [];
+
+    const borderFn = palette.border.panel;
+    const borderV = "│";
+    // Layout: " " + "│" + " " + content + " " + "│" = 6 extra chars
+    const contentWidth = Math.max(1, width - 6);
+    const innerWidth = contentWidth + 2;
+
+    // Collect all boxed lines: title, detail fields, separator, actions
+    const boxedLines: string[] = [];
+
+    // Title line
+    boxedLines.push(padToWidth(palette.status.warning(`MCP Server: ${serverName}`), contentWidth));
+
+    // Detail fields
+    boxedLines.push(padToWidth(
+      `  Status: ${enabled ? palette.status.success("✔ enabled") : palette.text.dim("◯ disabled")}`,
+      contentWidth,
+    ));
+    if (info.transport) {
+      boxedLines.push(padToWidth(palette.text.dim(`  Transport: ${String(info.transport)}`), contentWidth));
+    }
+    if (info.command) {
+      boxedLines.push(padToWidth(palette.text.dim(`  Command: ${String(info.command)}`), contentWidth));
+    }
+    if (typeof info.tool_count === "number") {
+      boxedLines.push(padToWidth(palette.text.dim(`  Tools: ${info.tool_count} tool${info.tool_count === 1 ? "" : "s"}`), contentWidth));
+    }
+    if (info.args) {
+      const argsStr = Array.isArray(info.args) ? info.args.join(" ") : String(info.args);
+      boxedLines.push(padToWidth(palette.text.dim(`  Args: ${argsStr}`), contentWidth));
+    }
+    if (info.url) {
+      boxedLines.push(padToWidth(palette.text.dim(`  URL: ${String(info.url)}`), contentWidth));
+    }
+    if (info.timeout_s) {
+      boxedLines.push(padToWidth(palette.text.dim(`  Timeout: ${String(info.timeout_s)}s`), contentWidth));
+    }
+
+    // Blank separator line
+    boxedLines.push(padToWidth("", contentWidth));
+
+    // Actions rendered inside the box
+    const actionLines = actions.render(contentWidth);
+    boxedLines.push(...actionLines);
+
+    // Top border
+    lines.push(" " + borderFn("╭" + "─".repeat(innerWidth) + "╮"));
+    // Boxed content
+    for (const bl of boxedLines) {
+      lines.push(" " + borderFn(borderV) + " " + padToWidth(bl, contentWidth) + " " + borderFn(borderV));
+    }
+    // Bottom border
+    lines.push(" " + borderFn("╰" + "─".repeat(innerWidth) + "╯"));
+
+    lines.push(padToWidth(palette.text.dim("↑/↓ choose · Enter select · Esc back"), width));
+    return lines;
   }
 
   private openThemeList(): void {

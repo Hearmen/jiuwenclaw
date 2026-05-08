@@ -3,14 +3,14 @@ import { CommandKind, type SlashCommand } from "../types.js";
 
 type McpTransport = "stdio" | "sse";
 
-type McpListItem = {
+export type McpListItem = {
   name: string;
   enabled: boolean;
   transport: McpTransport;
   server_id?: string;
 };
 
-type McpListPayload = {
+export type McpListPayload = {
   type: "list";
   items: McpListItem[];
 };
@@ -94,7 +94,7 @@ export function createMcpCommand(): SlashCommand {
               title: "MCP Servers",
               items: items.map((x, idx) => ({
                 label: String(idx + 1),
-                value: `${x.name} | ${x.transport} | ${x.enabled ? "enabled" : "disabled"}`,
+                value: `${x.name} | ${x.transport}${x.enabled ? " · ✔ enabled" : " · ◯ disabled"}`,
               })),
             }),
           );
@@ -108,14 +108,17 @@ export function createMcpCommand(): SlashCommand {
             ...(name ? { name } : {}),
           });
           if (payload.type === "detail" && payload.item) {
+            const hiddenKeys = new Set(["cwd", "env"]);
             ctx.addItem(
               addInfo(ctx.sessionId, `MCP server: ${String(payload.item.name ?? name ?? "unknown")}`, "m", {
                 view: "kv",
                 title: "MCP Server Detail",
-                items: Object.entries(payload.item).map(([k, v]) => ({
-                  label: k,
-                  value: typeof v === "string" ? v : JSON.stringify(v),
-                })),
+                items: Object.entries(payload.item)
+                  .filter(([k]) => !hiddenKeys.has(k))
+                  .map(([k, v]) => ({
+                    label: k,
+                    value: typeof v === "string" ? v : JSON.stringify(v),
+                  })),
               }),
             );
             return;
