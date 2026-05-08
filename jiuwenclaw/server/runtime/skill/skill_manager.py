@@ -1088,7 +1088,9 @@ class SkillManager:
                         shutil.copytree(skill_dir, mirror_dest)
 
                     # 记录安装信息
-                    skill_name = meta.get("name", slug)
+                    parsed_name = meta.get("name", "")
+                    skill_name = parsed_name if (parsed_name and parsed_name != (md.stem if md else "")) else slug
+
                     self._add_local_skill(
                         {
                             "name": skill_name,
@@ -2281,6 +2283,9 @@ class SkillManager:
             meta = self._parse_skill_md(md)
             if meta is None:
                 continue
+
+            if meta.get("name") == md.stem:
+                meta["name"] = child.name
 
             # 判断 source 类型
             installed = self._get_installed_plugins()
