@@ -149,7 +149,12 @@ class JiuwenClawCodeAdapter(JiuWenClawDeepAdapter):
         self._project_dir = self._instance_overrides.get(
             "project_dir", config.get("project_dir")
         )
-        self._workspace_dir = config.get("workspace_dir", str(get_agent_workspace_dir()))
+        # 优先使用 project_dir 作为 workspace（LspTool sandbox 校验需要）
+        self._workspace_dir = (
+            self._project_dir
+            or config.get("workspace_dir")
+            or str(get_agent_workspace_dir())
+        )
 
         model = self._create_model(config_base)
         agent_card = AgentCard(name=self._agent_name, id='jiuwenclaw')
