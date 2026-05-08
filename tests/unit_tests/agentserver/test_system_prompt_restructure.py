@@ -54,11 +54,11 @@ async def test_runtime_time_section_participates_in_priority_order():
         "# 可用工具",
         "# 工作空间",
         "# 当前日期与时间",
-        "# 运行时",
+        "# 运行时状态",
     ]
     positions = [prompt.index(marker) for marker in ordered_markers]
     assert positions == sorted(positions)
-    assert "runtime_state.yaml" in prompt
+    assert "当前模型" in prompt
 
 
 def test_resolve_skill_mode_accepts_all_and_auto_list():

@@ -2656,6 +2656,8 @@ class JiuWenClawDeepAdapter:
             self._runtime_prompt_rail.set_language(resolved_language)
             self._runtime_prompt_rail.set_channel(resolved_channel)
             self._runtime_prompt_rail.set_trusted_dirs(runtime_config.trusted_dirs)
+            self._runtime_prompt_rail.set_model_name(self._resolve_model_name())
+            self._runtime_prompt_rail.set_mode(runtime_config.mode)
         self._write_runtime_state(
             mode=runtime_config.mode, language=resolved_language, channel=resolved_channel
         )
@@ -3767,8 +3769,13 @@ class JiuWenClawDeepAdapter:
         if mode == "team":
             from jiuwenclaw.server.runtime.agent_adapter.team_helpers import process_team_message_stream
 
+            resolved_model = self._resolve_model_for_request(request)
+            self._apply_model_to_react_agent(resolved_model)
             resolved_language = self._resolve_runtime_language()
             resolved_channel = str(cid or self._resolve_prompt_channel(session_id) or "web").strip() or "web"
+            if self._runtime_prompt_rail:
+                self._runtime_prompt_rail.set_model_name(self._resolve_model_name())
+                self._runtime_prompt_rail.set_mode(mode)
             self._write_runtime_state(mode="team", language=resolved_language, channel=resolved_channel)
 
             async for chunk in process_team_message_stream(request, inputs, self._instance):

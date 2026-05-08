@@ -2,13 +2,16 @@
 
 """RuntimePromptRail — Inject dynamic time/runtime info per model call.
 
-Time is injected fresh on every model call. Static runtime properties
-(model, mode, language, platform, etc.) are maintained in runtime_state.yaml
-and the model is instructed to read that file when the user asks about them.
+Time and runtime state (model, mode, language, etc.) are injected fresh on
+every model call by reading runtime_state.yaml in Python, so the LLM always
+sees the current values without needing to call any tool.
 """
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
+from typing import Any
+
+import yaml
 
 from openjiuwen.core.single_agent.rail.base import AgentCallbackContext
 from openjiuwen.harness.prompts import PromptSection
@@ -37,6 +40,8 @@ class RuntimePromptRail(DeepAgentRail):
         self._channel = channel
         self._tz = timezone(timedelta(hours=timezone_offset))
         self._trusted_dirs: list[str] | None = None
+        self._model_name: str = ""
+        self._mode: str = ""
 
     def init(self, agent) -> None:
         """从 agent 获取 system_prompt_builder 引用。"""
@@ -62,6 +67,14 @@ class RuntimePromptRail(DeepAgentRail):
     def set_trusted_dirs(self, trusted_dirs: list[str] | None) -> None:
         """per-request 更新可信目录。"""
         self._trusted_dirs = trusted_dirs
+
+    def set_model_name(self, model_name: str) -> None:
+        """per-request 更新模型名称，作为文件读取失败时的兜底。"""
+        self._model_name = model_name or ""
+
+    def set_mode(self, mode: str) -> None:
+        """per-request 更新运行模式，作为文件读取失败时的兜底。"""
+        self._mode = mode or ""
 
     async def before_model_call(self, ctx: AgentCallbackContext) -> None:
         if not self.system_prompt_builder:
@@ -95,22 +108,40 @@ class RuntimePromptRail(DeepAgentRail):
             priority=92,
         ))
 
-        runtime_state_path = str(get_config_dir() / "runtime_state.yaml")
+        runtime_state: dict[str, Any] = {}
+        try:
+            with open(get_config_dir() / "runtime_state.yaml", encoding="utf-8") as f:
+                runtime_state = yaml.safe_load(f) or {}
+        except FileNotFoundError:
+            pass
+        except Exception as e:
+            logger.warning("Failed to read runtime_state.yaml: %s", e)
+
+        model = (runtime_state.get("model") or self._model_name or "unknown").strip()
+        mode = (runtime_state.get("mode") or self._mode or "unknown").strip()
+        language_val = (runtime_state.get("language") or self._language or "unknown").strip()
+        channel = (runtime_state.get("channel") or self._channel or "unknown").strip()
+
         if self._language == "cn":
             runtime_content = (
-                "# 运行时\n\n"
-                f"- 运行时状态文件：{runtime_state_path}\n"
-                "- 每次用户询问当前模型、模式、语言等运行时属性时，"
-                "必须重新调用 read_file 工具读取该文件获取最新值，"
-                "只用一句话回答用户问的那个字段，不要列出其他内容"
+                "# 运行时状态\n\n"
+                f"- 当前模型：{model}\n"
+                f"- 当前模式：{mode}\n"
+                f"- 当前语言：{language_val}\n"
+                f"- 当前渠道：{channel}\n"
+                "- 当用户询问「你是什么模型」「当前用的是哪个模型」等问题时，"
+                "直接用上方「当前模型」的值回答，只说模型名称，不要介绍身份或列出能力"
             )
         else:
             runtime_content = (
-                "# Runtime\n\n"
-                f"- Runtime state file: {runtime_state_path}\n"
-                "- Every time the user asks about the current model, mode, language, "
-                "or other runtime properties, you MUST re-invoke the read_file tool to get the latest value. "
-                "Only answer the field the user asked about in one sentence, do not list all file contents."
+                "# Runtime State\n\n"
+                f"- Current model: {model}\n"
+                f"- Current mode: {mode}\n"
+                f"- Current language: {language_val}\n"
+                f"- Current channel: {channel}\n"
+                "- When the user asks \"what model are you\" or similar questions, "
+                "answer with only the model name above in one sentence — "
+                "do NOT introduce yourself or list capabilities."
             )
 
         self.system_prompt_builder.add_section(PromptSection(
