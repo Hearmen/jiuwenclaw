@@ -13,6 +13,8 @@ from dataclasses import asdict
 from typing import Any, AsyncIterator
 from urllib.parse import urlsplit
 
+from websockets import exceptions as ws_exceptions
+
 from jiuwenclaw.e2a.constants import E2A_WIRE_SERVER_PUSH_KEY
 from jiuwenclaw.e2a.models import E2AEnvelope
 from jiuwenclaw.e2a.wire_codec import (
@@ -231,11 +233,28 @@ class WebSocketAgentServerClient(AgentServerClient):
                             )
                 except asyncio.CancelledError:
                     break
+                except ws_exceptions.ConnectionClosed as e:
+                    logger.warning(
+                        "[WebSocketAgentServerClient] AgentServer WebSocket 连接已关闭，消息接收任务退出: %s",
+                        e,
+                    )
+                    await self._mark_connection_closed(e)
+                    break
                 except Exception as e:
                     logger.exception("[WebSocketAgentServerClient] 消息接收循环异常: %s", e)
                     await asyncio.sleep(0.1)  # 避免快速循环
         finally:
             logger.info("[WebSocketAgentServerClient] 消息接收任务已停止")
+
+    async def _mark_connection_closed(self, exc: BaseException) -> None:
+        """记录连接关闭状态，并唤醒仍在等待响应的请求."""
+        self._running = False
+        self._server_ready = False
+        self._ws = None
+        pending_error = ConnectionError(f"AgentServer WebSocket 连接已关闭: {exc}")
+        async with self._queue_lock:
+            for queue in self._message_queues.values():
+                queue.put_nowait(pending_error)
 
     async def disconnect(self) -> None:
         # 停止接收任务
@@ -312,6 +331,8 @@ class WebSocketAgentServerClient(AgentServerClient):
                 raise RuntimeError(
                     f"AgentServer 非流式请求超时 (request_id={rid}, timeout={_UNARY_REQUEST_TIMEOUT_SECONDS}s)"
                 ) from e
+            if isinstance(data, BaseException):
+                raise RuntimeError(f"AgentServer WebSocket 连接已关闭 (request_id={rid})") from data
             logger.info("[WebSocketAgentServerClient] 收到响应(非流式) raw: %s", json.dumps(data, ensure_ascii=False))
             resp = parse_agent_server_wire_unary(data)
             logger.info("[WebSocketAgentServerClient] 收到完整响应 AgentResponse: %s", _to_json(asdict(resp)))
@@ -369,6 +390,8 @@ class WebSocketAgentServerClient(AgentServerClient):
                         break
                 else:
                     data = await queue.get()
+                if isinstance(data, BaseException):
+                    raise RuntimeError(f"AgentServer WebSocket 连接已关闭 (request_id={rid})") from data
                 logger.info("[WebSocketAgentServerClient] 收到流式事件 raw: %s", json.dumps(data, ensure_ascii=False))
                 chunk = parse_agent_server_wire_chunk(data)
                 chunk_count += 1

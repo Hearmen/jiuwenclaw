@@ -21,6 +21,7 @@ from openjiuwen.core.foundation.llm import Model, ProviderType
 from openjiuwen.core.foundation.llm.schema.config import ModelClientConfig, ModelRequestConfig
 
 from jiuwenclaw.config import (
+    SECURITY_REVIEW_CONFIG_FLAGS,
     get_config,
     get_config_raw,
     get_default_models,
@@ -32,6 +33,8 @@ from jiuwenclaw.config import (
     update_preferred_language_in_config,
     update_context_engine_enabled_in_config,
     update_kv_cache_affinity_enabled_in_config,
+    update_security_review_config_flag,
+    update_security_review_enabled_in_config,
     update_permissions_enabled_in_config,
     update_memory_forbidden_enabled_in_config,
     update_memory_forbidden_description_in_config,
@@ -221,10 +224,24 @@ CONFIG_KEYS = tuple(_CONFIG_SET_ENV_MAP.keys())
 _CONFIG_YAML_KEYS = frozenset({
     "context_engine_enabled",
     "kv_cache_affinity_enabled",
+    "security_review_enabled",
+    "security_review_runtime_advice",
+    "security_review_async_review",
+    "security_review_evolve_security_skills",
+    "security_review_propose_policy_rules",
+    "security_review_timely_tool_failure_review",
     "permissions_enabled",
     "memory_forbidden_enabled",
     "memory_forbidden_description",
 })
+_SECURITY_REVIEW_PARAM_TO_FIELD = {
+    "security_review_enabled": "enabled",
+    "security_review_runtime_advice": "runtime_advice",
+    "security_review_async_review": "async_review",
+    "security_review_evolve_security_skills": "evolve_security_skills",
+    "security_review_propose_policy_rules": "propose_policy_rules",
+    "security_review_timely_tool_failure_review": "timely_tool_failure_review",
+}
 
 
 async def _clear_agent_config_cache(agent_client=None) -> None:
@@ -354,15 +371,26 @@ def _register_web_handlers(bind: WebHandlersBindParams) -> None:
         try:
             raw = get_config_raw()
             for key, val in payload.items():
-                from jiuwenclaw.extensions.registry import ExtensionRegistry
-                if (("api_key" in key.lower() or "token" in key.lower())
-                        and ExtensionRegistry.get_instance().get_crypto_provider()):
-                    payload[key] = ExtensionRegistry.get_instance().get_crypto_provider().decrypt(val)
+                if "api_key" not in key.lower() and "token" not in key.lower():
+                    continue
+                try:
+                    from jiuwenclaw.extensions.registry import ExtensionRegistry
+                    crypto_provider = ExtensionRegistry.get_instance().get_crypto_provider()
+                    if crypto_provider:
+                        payload[key] = crypto_provider.decrypt(val)
+                except Exception as exc:  # noqa: BLE001
+                    logger.debug("[config.get] decrypt skipped for %s: %s", key, exc)
             ctx_cfg = (raw.get("react") or {}).get("context_engine_config") or {}
             payload["context_engine_enabled"] = "true" if ctx_cfg.get("enabled", False) else "false"
             payload["kv_cache_affinity_enabled"] = (
                 "true" if ctx_cfg.get("enable_kv_cache_release", False) else "false"
             )
+            security_review_cfg = (raw.get("react") or {}).get("security_review") or {}
+            for param_key, field_name in _SECURITY_REVIEW_PARAM_TO_FIELD.items():
+                default = False if field_name == "enabled" else True
+                payload[param_key] = (
+                    "true" if security_review_cfg.get(field_name, default) else "false"
+                )
             perm_cfg = raw.get("permissions") or {}
             payload["permissions_enabled"] = "true" if perm_cfg.get("enabled", False) else "false"
             # skill_create / evolution_auto_scan: env var takes precedence, fallback to config.yaml
@@ -389,6 +417,8 @@ def _register_web_handlers(bind: WebHandlersBindParams) -> None:
         except Exception:  # noqa: BLE001
             payload.setdefault("context_engine_enabled", "false")
             payload.setdefault("kv_cache_affinity_enabled", "false")
+            for param_key, field_name in _SECURITY_REVIEW_PARAM_TO_FIELD.items():
+                payload.setdefault(param_key, "false" if field_name == "enabled" else "true")
             payload.setdefault("permissions_enabled", "false")
             payload.setdefault("skill_create", "false")
             payload.setdefault("evolution_auto_scan", "false")
@@ -435,10 +465,12 @@ def _register_web_handlers(bind: WebHandlersBindParams) -> None:
             await channel.send_response(ws, req_id, ok=False, error="params must be object", code="BAD_REQUEST")
             return
         for key, val in params.items():
+            if "api_key" not in key.lower() and "token" not in key.lower():
+                continue
             from jiuwenclaw.extensions.registry import ExtensionRegistry
-            if (("api_key" in key.lower() or "token" in key.lower())
-                    and ExtensionRegistry.get_instance().get_crypto_provider()):
-                params[key] = ExtensionRegistry.get_instance().get_crypto_provider().encrypt(val)
+            crypto_provider = ExtensionRegistry.get_instance().get_crypto_provider()
+            if crypto_provider:
+                params[key] = crypto_provider.encrypt(val)
         env_updates: dict[str, str] = {}
         yaml_updated: list[str] = []
         available_model_providers = [provider.value for provider in ProviderType]
@@ -496,6 +528,14 @@ def _register_web_handlers(bind: WebHandlersBindParams) -> None:
                     update_context_engine_enabled_in_config(parsed)
                 elif param_key == "kv_cache_affinity_enabled":
                     update_kv_cache_affinity_enabled_in_config(parsed)
+                elif param_key in _SECURITY_REVIEW_PARAM_TO_FIELD:
+                    field_name = _SECURITY_REVIEW_PARAM_TO_FIELD[param_key]
+                    if field_name not in SECURITY_REVIEW_CONFIG_FLAGS:
+                        raise ValueError(f"unsupported security_review field: {field_name}")
+                    if field_name == "enabled":
+                        update_security_review_enabled_in_config(parsed)
+                    else:
+                        update_security_review_config_flag(field_name, parsed)
                 elif param_key == "permissions_enabled":
                     update_permissions_enabled_in_config(parsed)
                 elif param_key == "memory_forbidden_enabled":

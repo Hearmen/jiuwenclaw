@@ -22,6 +22,9 @@ class SecuritySessionState:
         self._events: dict[str, deque[SecurityEvent]] = defaultdict(
             lambda: deque(maxlen=max(1, self.config.ring_buffer_size))
         )
+        self._messages: dict[str, deque[dict[str, str]]] = defaultdict(
+            lambda: deque(maxlen=max(1, self.config.ring_buffer_size))
+        )
         self._failure_counts: Counter[tuple[str, str, FailureClass]] = Counter()
         self._advice: dict[str, SecurityAdvice] = {}
         self._session_order: deque[str] = deque()
@@ -33,6 +36,18 @@ class SecuritySessionState:
 
     def snapshot_events(self, session_id: str) -> list[SecurityEvent]:
         return list(self._events.get(session_id, ()))
+
+    def record_message(self, session_id: str, role: str, content: str) -> None:
+        self._touch_session(session_id)
+        digest = str(content or "")[: self.config.max_event_chars]
+        if not digest.strip():
+            return
+        self._messages[session_id].append(
+            {"role": str(role or "unknown"), "content_digest": digest}
+        )
+
+    def snapshot_messages(self, session_id: str) -> list[dict[str, str]]:
+        return list(self._messages.get(session_id, ()))
 
     def record_signals(self, signals: list[SecuritySignal]) -> list[SecuritySignal]:
         generated: list[SecuritySignal] = []
@@ -49,6 +64,18 @@ class SecuritySessionState:
         if advice is not None:
             advice.consumed = True
         return advice
+
+    def set_runtime_advice(
+        self, session_id: str, content: str, severity: Severity = Severity.HIGH
+    ) -> None:
+        if not content.strip():
+            return
+        self._touch_session(session_id)
+        self._advice[session_id] = SecurityAdvice(
+            session_id=session_id,
+            severity=severity,
+            content=content,
+        )
 
     def counter_snapshot(self, session_id: str) -> dict[str, int]:
         prefix = f"{session_id}:"
@@ -89,6 +116,7 @@ class SecuritySessionState:
     def _evict_session(self, session_id: str) -> None:
         self._active_sessions.discard(session_id)
         self._events.pop(session_id, None)
+        self._messages.pop(session_id, None)
         self._advice.pop(session_id, None)
         for key in list(self._failure_counts):
             if key[0] == session_id:

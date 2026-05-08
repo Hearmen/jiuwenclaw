@@ -55,6 +55,12 @@ class SecurityEvent:
 
 
 @dataclass(slots=True)
+class SecurityReviewMessage:
+    role: str
+    content_digest: str
+
+
+@dataclass(slots=True)
 class SecuritySignal:
     signal_type: str
     severity: Severity
@@ -84,6 +90,8 @@ class ReviewRequest:
     signals: list[SecuritySignal] = field(default_factory=list)
     counters: dict[str, int] = field(default_factory=dict)
     sample_events: list[SecurityEvent] = field(default_factory=list)
+    sample_messages: list[dict[str, str]] = field(default_factory=list)
+    skill_state: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass(slots=True)

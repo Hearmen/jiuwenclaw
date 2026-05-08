@@ -116,6 +116,16 @@ from jiuwenclaw.agentserver.deep_agent.rails import (
     RuntimePromptRail,
     SecurityReviewAndSkillRail,
 )
+from jiuwenclaw.agentserver.deep_agent.security_review.rule_applicator import (
+    SecurityRuleApplicationError,
+    apply_security_rule_candidate,
+)
+from jiuwenclaw.agentserver.deep_agent.security_review.skill_applicator import (
+    SecuritySkillApplicationError,
+    apply_security_evolution_candidate,
+    apply_security_skill_candidate,
+)
+from jiuwenclaw.agentserver.deep_agent.security_review.skill_state import collect_skill_state
 from jiuwenclaw.agentserver.deep_agent.permissions.owner_scopes import (
     TOOL_PERMISSION_CONTEXT,
     setup_permission_context,
@@ -239,6 +249,16 @@ def _get_skill_create_enabled(config: dict[str, Any] | None) -> bool:
     if env_skill_create is not None:
         return env_skill_create.lower() in ("true", "1", "yes")
     return (config or {}).get("evolution", {}).get("skill_create", False)
+
+
+def _security_review_config(config: dict[str, Any] | None) -> dict[str, Any]:
+    """Resolve SecurityReviewAndSkillRail config with env override, like skill evolution."""
+    raw = (config or {}).get("security_review", {})
+    resolved = dict(raw) if isinstance(raw, dict) else {}
+    env_enabled = os.getenv("SECURITY_REVIEW_ENABLED")
+    if env_enabled is not None:
+        resolved["enabled"] = env_enabled.lower() in ("true", "1", "yes")
+    return resolved
 
 
 def _mcc_looks_usable(mcc: dict) -> bool:
@@ -1553,14 +1573,17 @@ class JiuWenClawDeepAdapter:
         self, config: dict[str, Any],
     ) -> SecurityReviewAndSkillRail | None:
         """Build SecurityReviewAndSkillRail when explicitly enabled."""
-        security_review_config = config.get("security_review", {})
-        if not isinstance(security_review_config, dict) or not security_review_config.get(
-            "enabled", False
-        ):
+        security_review_config = _security_review_config(config)
+        if not security_review_config.get("enabled", False):
             return None
 
         try:
             rail = SecurityReviewAndSkillRail(config=security_review_config)
+            rail.update_llm(self._model)
+            rail.set_context_providers(
+                message_provider=self._collect_messages_for_evolve,
+                skill_state_provider=lambda: collect_skill_state(get_agent_skills_dir()),
+            )
             logger.info("[JiuWenClawDeepAdapter] SecurityReviewAndSkillRail create success")
         except Exception as exc:
             logger.warning(
@@ -1568,6 +1591,24 @@ class JiuWenClawDeepAdapter:
             )
             rail = None
         return rail
+
+    def _update_security_review_rail(self, config: dict[str, Any]) -> None:
+        """Update SecurityReviewAndSkillRail in place, or create/drop it by config."""
+        security_review_config = _security_review_config(config)
+        if not security_review_config.get("enabled", False):
+            self._security_review_rail = None
+            return
+
+        if self._security_review_rail is None:
+            self._security_review_rail = self._build_security_review_rail(config)
+            return
+
+        self._security_review_rail.update_config(security_review_config)
+        self._security_review_rail.update_llm(self._model)
+        self._security_review_rail.set_context_providers(
+            message_provider=self._collect_messages_for_evolve,
+            skill_state_provider=lambda: collect_skill_state(get_agent_skills_dir()),
+        )
 
     def _build_memory_rail(self, mode: str) -> MemoryRail | None:
         try:
@@ -1842,6 +1883,8 @@ class JiuWenClawDeepAdapter:
                     "yes",
                 )
 
+        self._update_security_review_rail(config)
+
         self._skill_rail = self._build_skill_rail(
             config,
             include_tools=self._skill_include_tools_for_profile(),
@@ -1855,7 +1898,6 @@ class JiuWenClawDeepAdapter:
         rails_list = []
         if self._skill_rail is not None:
             rails_list.append(self._skill_rail)
-        self._security_review_rail = self._build_security_review_rail(config)
         if self._security_review_rail is not None:
             rails_list.append(self._security_review_rail)
         if self._context_assemble_rail is not None:
@@ -2959,7 +3001,38 @@ class JiuWenClawDeepAdapter:
             isinstance(ans, dict) and "接收" in ans.get("selected_options", []) for ans in answers
         )
         if accepted:
-            self._security_review_approved_candidates.append(candidate)
+            approved = dict(candidate)
+            if candidate.get("type") == "security_rule":
+                try:
+                    approved["application"] = apply_security_rule_candidate(candidate)
+                except SecurityRuleApplicationError as exc:
+                    logger.warning("[JiuWenClaw] security rule candidate apply failed: %s", exc)
+                    approved["application"] = {
+                        "applied": False,
+                        "target": "permissions.rules",
+                        "error": str(exc),
+                    }
+            elif candidate.get("type") == "security_skill":
+                try:
+                    approved["application"] = apply_security_skill_candidate(candidate)
+                except SecuritySkillApplicationError as exc:
+                    logger.warning("[JiuWenClaw] security skill candidate apply failed: %s", exc)
+                    approved["application"] = {
+                        "applied": False,
+                        "target": "skills",
+                        "error": str(exc),
+                    }
+            elif candidate.get("type") == "security_evolution":
+                try:
+                    approved["application"] = apply_security_evolution_candidate(candidate)
+                except SecuritySkillApplicationError as exc:
+                    logger.warning("[JiuWenClaw] security evolution candidate apply failed: %s", exc)
+                    approved["application"] = {
+                        "applied": False,
+                        "target": "skills",
+                        "error": str(exc),
+                    }
+            self._security_review_approved_candidates.append(approved)
         else:
             self._security_review_rejected_candidates.append(candidate)
         return True

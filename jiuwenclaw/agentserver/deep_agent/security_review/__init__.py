@@ -11,6 +11,13 @@ from jiuwenclaw.agentserver.deep_agent.security_review.schema import (
     SecuritySignal,
     Severity,
 )
+from jiuwenclaw.agentserver.deep_agent.security_review.skill_applicator import (
+    SecuritySkillApplicationError,
+    apply_security_evolution_candidate,
+    apply_security_skill_candidate,
+    security_evolution_candidate_to_skill_patch,
+    security_skill_candidate_to_skill_spec,
+)
 
 __all__ = [
     "FailureClass",
@@ -19,6 +26,11 @@ __all__ = [
     "SecurityAdvice",
     "SecurityEvent",
     "SecurityReviewConfig",
+    "SecuritySkillApplicationError",
     "SecuritySignal",
     "Severity",
+    "apply_security_evolution_candidate",
+    "apply_security_skill_candidate",
+    "security_evolution_candidate_to_skill_patch",
+    "security_skill_candidate_to_skill_spec",
 ]

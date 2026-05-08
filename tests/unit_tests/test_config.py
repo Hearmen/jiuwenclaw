@@ -8,7 +8,13 @@ from pathlib import Path
 import pytest
 import yaml
 
-from jiuwenclaw.config import get_config_raw, replace_teams_in_config, resolve_env_vars
+from jiuwenclaw.config import (
+    get_config_raw,
+    replace_teams_in_config,
+    resolve_env_vars,
+    update_security_review_config_flag,
+    update_security_review_enabled_in_config,
+)
 
 
 class TestResolveEnvVars:
@@ -118,6 +124,79 @@ class TestConfigFunctions:
         expected_keys = {"model", "channels", "evolution", "heartbeat"}
         actual_keys = set(config.keys())
         assert len(actual_keys & expected_keys) > 0, "Config should have at least some expected keys"
+
+    @staticmethod
+    def test_update_security_review_enabled_in_config_updates_existing_section(
+        monkeypatch: pytest.MonkeyPatch,
+        temp_config_file: Path,
+    ):
+        temp_config_file.write_text(
+            """
+react:
+  security_review:
+    enabled: false
+    runtime_advice: true
+permissions:
+  enabled: false
+""".lstrip(),
+            encoding="utf-8",
+        )
+        monkeypatch.setattr("jiuwenclaw.config._CONFIG_YAML_PATH", temp_config_file)
+
+        update_security_review_enabled_in_config(True)
+
+        raw = yaml.safe_load(temp_config_file.read_text(encoding="utf-8"))
+        assert raw["react"]["security_review"]["enabled"] is True
+        assert raw["react"]["security_review"]["runtime_advice"] is True
+        assert raw["permissions"]["enabled"] is False
+
+    @staticmethod
+    def test_update_security_review_enabled_in_config_creates_missing_section(
+        monkeypatch: pytest.MonkeyPatch,
+        temp_config_file: Path,
+    ):
+        temp_config_file.write_text("preferred_language: zh\n", encoding="utf-8")
+        monkeypatch.setattr("jiuwenclaw.config._CONFIG_YAML_PATH", temp_config_file)
+
+        update_security_review_enabled_in_config(True)
+
+        raw = yaml.safe_load(temp_config_file.read_text(encoding="utf-8"))
+        assert raw["react"]["security_review"]["enabled"] is True
+
+    @staticmethod
+    def test_update_security_review_config_flag_updates_existing_sub_switch(
+        monkeypatch: pytest.MonkeyPatch,
+        temp_config_file: Path,
+    ):
+        temp_config_file.write_text(
+            """
+react:
+  security_review:
+    enabled: true
+    runtime_advice: true
+    evolve_security_skills: true
+""".lstrip(),
+            encoding="utf-8",
+        )
+        monkeypatch.setattr("jiuwenclaw.config._CONFIG_YAML_PATH", temp_config_file)
+
+        update_security_review_config_flag("runtime_advice", False)
+
+        raw = yaml.safe_load(temp_config_file.read_text(encoding="utf-8"))
+        assert raw["react"]["security_review"]["enabled"] is True
+        assert raw["react"]["security_review"]["runtime_advice"] is False
+        assert raw["react"]["security_review"]["evolve_security_skills"] is True
+
+    @staticmethod
+    def test_update_security_review_config_flag_rejects_unknown_key(
+        monkeypatch: pytest.MonkeyPatch,
+        temp_config_file: Path,
+    ):
+        temp_config_file.write_text("react:\n  security_review: {}\n", encoding="utf-8")
+        monkeypatch.setattr("jiuwenclaw.config._CONFIG_YAML_PATH", temp_config_file)
+
+        with pytest.raises(ValueError):
+            update_security_review_config_flag("unknown_switch", True)
 
 
 class TestTeamModesConfig:

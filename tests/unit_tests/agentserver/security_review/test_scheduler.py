@@ -79,8 +79,8 @@ def test_full_queue_rejects_equal_or_lower_priority_without_mutating_queue():
 def test_full_queue_replaces_lowest_priority_item_not_first_lower_priority_item():
     scheduler = SecurityReviewScheduler(SecurityReviewConfig(async_queue_size=2))
     high = _request("s1", Severity.HIGH, ("s1", "read_file", "cross"))
-    low = _request("s1", Severity.LOW, ("s1", "session-end"))
-    critical = _request("s1", Severity.CRITICAL, ("s1", "shell", "cross"))
+    low = _request("s2", Severity.LOW, ("s2", "session-end"))
+    critical = _request("s3", Severity.CRITICAL, ("s3", "shell", "cross"))
 
     assert scheduler.schedule(high) is True
     assert scheduler.schedule(low) is True
@@ -94,3 +94,47 @@ def test_scheduler_enforces_max_reviews_per_session():
 
     assert scheduler.mark_review_started("s1") is True
     assert scheduler.mark_review_started("s1") is False
+
+
+def test_scheduler_allows_only_one_pending_review_per_session():
+    scheduler = SecurityReviewScheduler(SecurityReviewConfig(async_queue_size=3))
+    first = _request("s1", Severity.MEDIUM, ("s1", "session-end"))
+    second = _request("s1", Severity.MEDIUM, ("s1", "network"))
+
+    assert scheduler.schedule(first) is True
+    assert scheduler.schedule(second) is False
+    assert scheduler.drain() == [first]
+
+
+def test_scheduler_replaces_same_session_pending_review_when_incoming_priority_is_higher():
+    scheduler = SecurityReviewScheduler(SecurityReviewConfig(async_queue_size=3))
+    low = _request("s1", Severity.MEDIUM, ("s1", "session-end"))
+    high = _request("s1", Severity.HIGH, ("s1", "read_file", "cross"))
+
+    assert scheduler.schedule(low) is True
+    assert scheduler.schedule(high) is True
+    assert scheduler.drain() == [high]
+
+
+def test_scheduler_enforces_minimum_interval_for_non_timely_reviews():
+    scheduler = SecurityReviewScheduler(
+        SecurityReviewConfig(async_queue_size=3, min_review_interval_iterations=3)
+    )
+    first = ReviewRequest(
+        request_type="high_risk_review",
+        session_id="s1",
+        priority=Severity.HIGH,
+        dedupe_key=("s1", "dangerous"),
+        iteration=4,
+    )
+    too_soon = ReviewRequest(
+        request_type="session_end_review",
+        session_id="s1",
+        priority=Severity.MEDIUM,
+        dedupe_key=("s1", "session-end"),
+        iteration=6,
+    )
+
+    assert scheduler.schedule(first) is True
+    scheduler.drain()
+    assert scheduler.schedule(too_soon) is False

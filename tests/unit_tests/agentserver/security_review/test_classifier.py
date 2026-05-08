@@ -119,3 +119,48 @@ def test_classifier_assigns_stable_failure_classes():
     assert classifier.classify_failure("sandbox denied path") == FailureClass.SANDBOX_DENIED
     assert classifier.classify_failure("network access denied") == FailureClass.NETWORK_DENIED
     assert classifier.classify_failure("cannot open file") == FailureClass.UNKNOWN_FAILURE
+
+
+def test_classifier_flags_sandbox_escape_attempt():
+    classifier = SecuritySignalClassifier()
+    event = SecurityEvent(
+        event_type="tool_call",
+        session_id="sess-1",
+        iteration=1,
+        tool_name="bash",
+        arguments_digest="docker run -v /:/host alpine cat /host/etc/passwd",
+    )
+
+    signals = classifier.classify(event)
+
+    assert any(signal.signal_type == "sandbox_escape_attempt" for signal in signals)
+
+
+def test_classifier_flags_destructive_file_operation():
+    classifier = SecuritySignalClassifier()
+    event = SecurityEvent(
+        event_type="tool_call",
+        session_id="sess-1",
+        iteration=1,
+        tool_name="bash",
+        arguments_digest="rm important-report.md",
+    )
+
+    signals = classifier.classify(event)
+
+    assert any(signal.signal_type == "destructive_file_operation" for signal in signals)
+
+
+def test_classifier_flags_policy_rule_gap_from_blocked_result():
+    classifier = SecuritySignalClassifier()
+    event = SecurityEvent(
+        event_type="tool_result",
+        session_id="sess-1",
+        iteration=1,
+        tool_name="bash",
+        result_digest="blocked by policy rule: unknown shell command pattern",
+    )
+
+    signals = classifier.classify(event)
+
+    assert any(signal.signal_type == "policy_rule_gap" for signal in signals)

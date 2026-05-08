@@ -92,3 +92,70 @@ async def test_config_set_returns_bad_request_when_team_payload_is_invalid(monke
         "error": "duplicate team_name: alpha_team",
         "code": "BAD_REQUEST",
     }
+
+
+@pytest.mark.asyncio
+async def test_config_set_routes_security_review_sub_switches(monkeypatch):
+    channel = FakeWebChannel()
+    recorded: list[tuple[str, bool]] = []
+
+    _register_web_handlers(WebHandlersBindParams(channel=channel))
+
+    monkeypatch.setattr("jiuwenclaw.app_web_handlers.get_config_raw", lambda: {"preferred_language": "zh"})
+    monkeypatch.setattr(
+        "jiuwenclaw.app_web_handlers.update_security_review_config_flag",
+        lambda key, value: recorded.append((key, value)),
+    )
+
+    await channel.methods["config.set"](
+        object(),
+        "req-3",
+        {
+            "security_review_runtime_advice": "false",
+            "security_review_propose_policy_rules": "true",
+        },
+        "sess-3",
+    )
+
+    assert set(recorded) == {
+        ("runtime_advice", False),
+        ("propose_policy_rules", True),
+    }
+    assert channel.responses[-1]["ok"] is True
+    assert sorted(channel.responses[-1]["payload"]["updated"]) == [
+        "security_review_propose_policy_rules",
+        "security_review_runtime_advice",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_config_get_returns_security_review_sub_switches(monkeypatch):
+    channel = FakeWebChannel()
+
+    _register_web_handlers(WebHandlersBindParams(channel=channel))
+
+    monkeypatch.setattr(
+        "jiuwenclaw.app_web_handlers.get_config_raw",
+        lambda: {
+            "react": {
+                "security_review": {
+                    "enabled": True,
+                    "runtime_advice": False,
+                    "async_review": True,
+                    "evolve_security_skills": False,
+                    "propose_policy_rules": False,
+                    "timely_tool_failure_review": True,
+                }
+            }
+        },
+    )
+
+    await channel.methods["config.get"](object(), "req-4", {}, "sess-4")
+
+    payload = channel.responses[-1]["payload"]
+    assert payload["security_review_enabled"] == "true"
+    assert payload["security_review_runtime_advice"] == "false"
+    assert payload["security_review_async_review"] == "true"
+    assert payload["security_review_evolve_security_skills"] == "false"
+    assert payload["security_review_propose_policy_rules"] == "false"
+    assert payload["security_review_timely_tool_failure_review"] == "true"

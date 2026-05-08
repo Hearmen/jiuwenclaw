@@ -41,6 +41,16 @@ def test_security_review_rail_uses_react_config_when_enabled():
     assert rail.config.runtime_advice is False
 
 
+def test_security_review_rail_enabled_env_overrides_react_config(monkeypatch):
+    adapter = JiuWenClawDeepAdapter()
+    monkeypatch.setenv("SECURITY_REVIEW_ENABLED", "true")
+
+    rail = adapter._build_security_review_rail({"security_review": {"enabled": False}})
+
+    assert isinstance(rail, SecurityReviewAndSkillRail)
+    assert rail.config.enabled is True
+
+
 def test_build_agent_rails_registers_security_review_when_enabled():
     adapter = JiuWenClawDeepAdapter()
     security_review_rail = object()
@@ -77,7 +87,7 @@ def test_build_agent_rails_registers_security_review_when_enabled():
 
 def test_security_review_candidate_chunks_are_approval_events():
     adapter = JiuWenClawDeepAdapter()
-    candidate = {"type": "security_rule", "requires_approval": True}
+    candidate = {"type": "security_skill", "requires_approval": True}
 
     chunks = adapter._security_review_candidates_to_chunks([candidate])
 
@@ -89,7 +99,7 @@ def test_security_review_candidate_chunks_are_approval_events():
 @pytest.mark.asyncio
 async def test_security_review_candidate_answer_is_resolved_and_recorded():
     adapter = JiuWenClawDeepAdapter()
-    candidate = {"type": "security_rule", "requires_approval": True}
+    candidate = {"type": "security_note", "requires_approval": True}
     chunks = adapter._security_review_candidates_to_chunks([candidate])
 
     response = await adapter.handle_user_answer(
@@ -109,15 +119,187 @@ async def test_security_review_candidate_answer_is_resolved_and_recorded():
     assert adapter._security_review_pending_candidates == {}
 
 
-def test_get_current_agent_rails_rebuilds_security_review_rail_on_reload():
+def test_security_review_rail_receives_model_and_context_providers():
     adapter = JiuWenClawDeepAdapter()
+    fake_model = object()
+    adapter._model = fake_model
+
+    rail = adapter._build_security_review_rail({"security_review": {"enabled": True}})
+
+    assert rail.worker._llm is fake_model
+    assert rail._message_provider is not None
+    assert rail._skill_state_provider is not None
+
+
+@pytest.mark.asyncio
+async def test_security_review_rule_candidate_is_applied_after_approval(monkeypatch):
+    adapter = JiuWenClawDeepAdapter()
+    candidate = {
+        "type": "security_rule",
+        "rule_id": "block-curl-pipe-shell",
+        "severity": "HIGH",
+        "tools": ["bash"],
+        "pattern": "re:(?i)curl\\b.*\\|\\s*sh",
+        "rationale": "Downloaded script is piped directly to shell.",
+        "requires_approval": True,
+    }
+    chunks = adapter._security_review_candidates_to_chunks([candidate])
+    applied = []
+
+    def fake_apply(payload):
+        applied.append(payload)
+        return {
+            "applied": True,
+            "target": "permissions.rules",
+            "rule_id": "security_review_block-curl-pipe-shell",
+        }
+
+    monkeypatch.setattr(
+        "jiuwenclaw.agentserver.deep_agent.interface_deep.apply_security_rule_candidate",
+        fake_apply,
+    )
+
+    response = await adapter.handle_user_answer(
+        AgentRequest(
+            request_id="answer-1",
+            channel_id="web",
+            session_id="sess-1",
+            params={
+                "request_id": chunks[0]["request_id"],
+                "answers": [{"selected_options": ["接收"]}],
+            },
+        )
+    )
+
+    assert response.payload["resolved"] is True
+    assert applied == [candidate]
+    assert adapter._security_review_approved_candidates[0]["application"]["applied"] is True
+    assert adapter._security_review_approved_candidates[0]["application"]["target"] == "permissions.rules"
+
+
+@pytest.mark.asyncio
+async def test_security_review_skill_candidate_is_applied_after_approval(monkeypatch):
+    adapter = JiuWenClawDeepAdapter()
+    candidate = {
+        "type": "security_skill",
+        "title": "Post exploitation chain defense",
+        "problem": "listener plus credential access",
+        "evidence": ["listener", "credential access"],
+        "suggested_skill_scope": "Pattern, IOCs, response.",
+        "category": "security",
+        "requires_approval": True,
+    }
+    chunks = adapter._security_review_candidates_to_chunks([candidate])
+    applied = []
+
+    def fake_apply(payload):
+        applied.append(payload)
+        return {
+            "applied": True,
+            "target": "skills",
+            "skill_name": "security-post-exploitation-chain-defense",
+            "skill_path": "/tmp/skills/security-post-exploitation-chain-defense",
+        }
+
+    monkeypatch.setattr(
+        "jiuwenclaw.agentserver.deep_agent.interface_deep.apply_security_skill_candidate",
+        fake_apply,
+    )
+
+    response = await adapter.handle_user_answer(
+        AgentRequest(
+            request_id="answer-1",
+            channel_id="web",
+            session_id="sess-1",
+            params={
+                "request_id": chunks[0]["request_id"],
+                "answers": [{"selected_options": ["接收"]}],
+            },
+        )
+    )
+
+    assert response.payload["resolved"] is True
+    assert applied == [candidate]
+    assert adapter._security_review_approved_candidates[0]["application"]["applied"] is True
+    assert adapter._security_review_approved_candidates[0]["application"]["target"] == "skills"
+
+
+@pytest.mark.asyncio
+async def test_security_review_evolution_candidate_is_applied_after_approval(monkeypatch):
+    adapter = JiuWenClawDeepAdapter()
+    candidate = {
+        "type": "security_evolution",
+        "skill_name": "safe-shell",
+        "section": "Troubleshooting",
+        "content": "Stop repeating blocked shell commands.",
+        "evidence": ["blocked twice"],
+        "requires_approval": True,
+    }
+    chunks = adapter._security_review_candidates_to_chunks([candidate])
+    applied = []
+
+    def fake_apply(payload):
+        applied.append(payload)
+        return {
+            "applied": True,
+            "target": "skills",
+            "skill_name": "safe-shell",
+            "skill_path": "/tmp/skills/safe-shell",
+        }
+
+    monkeypatch.setattr(
+        "jiuwenclaw.agentserver.deep_agent.interface_deep.apply_security_evolution_candidate",
+        fake_apply,
+    )
+
+    response = await adapter.handle_user_answer(
+        AgentRequest(
+            request_id="answer-1",
+            channel_id="web",
+            session_id="sess-1",
+            params={
+                "request_id": chunks[0]["request_id"],
+                "answers": [{"selected_options": ["接收"]}],
+            },
+        )
+    )
+
+    assert response.payload["resolved"] is True
+    assert applied == [candidate]
+    assert adapter._security_review_approved_candidates[0]["application"]["applied"] is True
+    assert adapter._security_review_approved_candidates[0]["application"]["target"] == "skills"
+
+
+def test_get_current_agent_rails_updates_existing_security_review_rail_on_reload():
+    adapter = JiuWenClawDeepAdapter()
+    existing = SecurityReviewAndSkillRail(
+        config={"enabled": True, "repeated_tool_failure_threshold": 2}
+    )
+    adapter._security_review_rail = existing
 
     with (
         patch.object(adapter, "_build_skill_rail", return_value=None),
         patch.object(adapter, "_update_permission_rail", return_value=None),
     ):
-        rails = adapter._get_current_agent_rails({"security_review": {"enabled": True}})
+        rails = adapter._get_current_agent_rails(
+            {"security_review": {"enabled": True, "repeated_tool_failure_threshold": 5}}
+        )
 
     assert len(rails) == 1
-    assert isinstance(rails[0], SecurityReviewAndSkillRail)
-    assert adapter._security_review_rail is rails[0]
+    assert rails[0] is existing
+    assert adapter._security_review_rail is existing
+    assert existing.config.repeated_tool_failure_threshold == 5
+
+
+def test_get_current_agent_rails_removes_security_review_rail_when_disabled():
+    adapter = JiuWenClawDeepAdapter()
+    adapter._security_review_rail = SecurityReviewAndSkillRail(config={"enabled": True})
+
+    with (
+        patch.object(adapter, "_build_skill_rail", return_value=None),
+        patch.object(adapter, "_update_permission_rail", return_value=None),
+    ):
+        rails = adapter._get_current_agent_rails({"security_review": {"enabled": False}})
+
+    assert rails == []
+    assert adapter._security_review_rail is None

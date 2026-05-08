@@ -15,6 +15,15 @@ _DANGEROUS_COMMAND = re.compile(
     r"(curl|wget)\b[^|;\n]*\|\s*(sh|bash)|rm\s+-[rf]{2}\s+/(?:\*|\s|$)|chmod\s+777",
     re.IGNORECASE,
 )
+_DESTRUCTIVE_FILE_OPERATION = re.compile(
+    r"\b(rm|del|rd)\b\s+(?:-[A-Za-z]+\s+)?(?!/(?:\*|\s|$))[^|;&\n]+",
+    re.IGNORECASE,
+)
+_SANDBOX_ESCAPE = re.compile(
+    r"\b(?:docker|podman)\b[^|;&\n]*(?:--privileged|-v\s*/\s*:|--volume\s*/\s*:)"
+    r"|\bnsenter\b|\bunshare\b|\bmount\b[^|;&\n]+/(?:proc|sys|dev)\b",
+    re.IGNORECASE,
+)
 _SECRET_PATH = re.compile(
     r"(\.env\b|credentials?|token|secret|\.ssh|id_rsa|id_ed25519|private[_-]?key)",
     re.IGNORECASE,
@@ -33,9 +42,15 @@ class SecuritySignalClassifier:
         text = f"{event.arguments_digest}\n{event.result_digest}"
         signals: list[SecuritySignal] = []
 
-        if event.event_type == "tool_call":
+        if event.event_type in {"tool_call", "model_output"}:
             if _DANGEROUS_COMMAND.search(text):
                 signals.append(self._signal(event, "dangerous_command", Severity.HIGH, text))
+            elif _DESTRUCTIVE_FILE_OPERATION.search(text):
+                signals.append(
+                    self._signal(event, "destructive_file_operation", Severity.MEDIUM, text)
+                )
+            if _SANDBOX_ESCAPE.search(text):
+                signals.append(self._signal(event, "sandbox_escape_attempt", Severity.CRITICAL, text))
             if _SECRET_PATH.search(text):
                 signals.append(self._signal(event, "secret_or_token_exposure", Severity.HIGH, text))
             elif _WORKSPACE_EXTERNAL.search(text):
@@ -55,6 +70,16 @@ class SecuritySignalClassifier:
                 signals.append(
                     self._signal(event, signal_type, severity, text, failure_class=failure_class)
                 )
+                if failure_class == FailureClass.BLOCKED_BY_POLICY:
+                    signals.append(
+                        self._signal(
+                            event,
+                            "policy_rule_gap",
+                            Severity.MEDIUM,
+                            text,
+                            failure_class=failure_class,
+                        )
+                    )
 
         return signals
 

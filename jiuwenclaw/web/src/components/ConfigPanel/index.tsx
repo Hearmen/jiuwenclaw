@@ -112,6 +112,22 @@ const TEAM_KEYS = new Set(["team_name", "lifecycle", "teammate_mode", "spawn_mod
 const FREE_SEARCH_BOOLEAN_KEYS = new Set(["free_search_ddg_enabled", "free_search_bing_enabled"]);
 const FREE_SEARCH_KEYS = new Set([...FREE_SEARCH_BOOLEAN_KEYS, "free_search_proxy_url"]);
 const MEMORY_KEYS = new Set(["memory_forbidden_enabled", "memory_forbidden_description"]);
+const SECURITY_REVIEW_KEYS = new Set([
+  "security_review_enabled",
+  "security_review_runtime_advice",
+  "security_review_async_review",
+  "security_review_evolve_security_skills",
+  "security_review_propose_policy_rules",
+  "security_review_timely_tool_failure_review",
+]);
+const SECURITY_REVIEW_DEFAULTS: Record<string, string> = {
+  security_review_enabled: "false",
+  security_review_runtime_advice: "true",
+  security_review_async_review: "true",
+  security_review_evolve_security_skills: "true",
+  security_review_propose_policy_rules: "true",
+  security_review_timely_tool_failure_review: "true",
+};
 const DEFAULT_PROXY_SCHEME = "http";
 const DEFAULT_PROXY_HOST = "proxyhk.huawei.com";
 const DEFAULT_PROXY_PORT = "8080";
@@ -176,6 +192,7 @@ function classifyKey(key: string): string {
   if (TEAM_KEYS.has(key)) return "team";
   if (FREE_SEARCH_KEYS.has(key)) return "free_search";
   if (MEMORY_KEYS.has(key)) return "memory";
+  if (SECURITY_REVIEW_KEYS.has(key)) return "security_review";
   if (key === "context_engine_enabled" || key === "kv_cache_affinity_enabled") return "context_engine";
   if (key === "permissions_enabled") return "permissions";
   if (key.startsWith("feishu")) return "feishu";
@@ -252,6 +269,14 @@ function getGroupIcon(tag: string) {
       </svg>
     );
   }
+  if (tag === "security_review") {
+    return (
+      <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={1.8}>
+        <path strokeLinecap="round" strokeLinejoin="round" d="M12 3.75l7.5 3v5.25c0 4.142-2.39 7.833-7.5 9-5.11-1.167-7.5-4.858-7.5-9V6.75l7.5-3z" />
+        <path strokeLinecap="round" strokeLinejoin="round" d="M9 12h6m-3-3v6" />
+      </svg>
+    );
+  }
   if (tag === "permissions") {
     return (
       <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={1.8}>
@@ -279,6 +304,7 @@ function getGroupToneClass(tag: string): string {
   if (tag === "team") return "text-fuchsia-500 bg-fuchsia-500/10 border-fuchsia-500/20";
   if (tag === "memory") return "text-purple-500 bg-purple-500/10 border-purple-500/20";
   if (tag === "context_engine") return "text-sky-500 bg-sky-500/10 border-sky-500/20";
+  if (tag === "security_review") return "text-emerald-500 bg-emerald-500/10 border-emerald-500/20";
   if (tag === "permissions") return "text-rose-500 bg-rose-500/10 border-rose-500/20";
   if (tag === "email") return "text-emerald-500 bg-emerald-500/10 border-emerald-500/20";
   return "text-text-muted bg-secondary/70 border-border";
@@ -291,6 +317,7 @@ function getNestedModelStyle(tag: string): string {
   if (tag === "model_audio") return "border-l-2 border-l-orange-500/60 bg-orange-500/[0.06]";
   if (tag === "model_vision") return "border-l-2 border-l-teal-500/60 bg-teal-500/[0.06]";
   if (tag === "context_engine") return "border-l-2 border-l-sky-500/60 bg-sky-500/[0.06]";
+  if (tag === "security_review") return "border-l-2 border-l-emerald-500/60 bg-emerald-500/[0.06]";
   if (tag === "permissions") return "border-l-2 border-l-rose-500/60 bg-rose-500/[0.06]";
   return "border-l-2 border-l-border bg-secondary/20";
 }
@@ -301,6 +328,7 @@ function isBooleanKey(key: string): boolean {
     FREE_SEARCH_BOOLEAN_KEYS.has(key) ||
     key === "context_engine_enabled" ||
     key === "kv_cache_affinity_enabled" ||
+    SECURITY_REVIEW_KEYS.has(key) ||
     key === "permissions_enabled" ||
     key === "memory_forbidden_enabled"
   );
@@ -318,6 +346,12 @@ function getBooleanKeyLabel(key: string, t: (key: string) => string): string {
     free_search_bing_enabled: t('config.booleanLabels.freeSearchBing'),
     context_engine_enabled: t('config.booleanLabels.enabled'),
     kv_cache_affinity_enabled: t('config.booleanLabels.kvCacheAffinity'),
+    security_review_enabled: t('config.booleanLabels.securityReview'),
+    security_review_runtime_advice: t('config.booleanLabels.securityReviewRuntimeAdvice'),
+    security_review_async_review: t('config.booleanLabels.securityReviewAsyncReview'),
+    security_review_evolve_security_skills: t('config.booleanLabels.securityReviewEvolveSkills'),
+    security_review_propose_policy_rules: t('config.booleanLabels.securityReviewProposeRules'),
+    security_review_timely_tool_failure_review: t('config.booleanLabels.securityReviewTimelyFailures'),
     permissions_enabled: t('config.booleanLabels.enabled'),
     memory_forbidden_enabled: t('config.booleanLabels.enabled'),
   };
@@ -347,6 +381,10 @@ function normalizeConfigValue(value: unknown): string {
   }
 }
 
+function withDefaultVisibleConfigValues(values: Record<string, string>): Record<string, string> {
+  return { ...SECURITY_REVIEW_DEFAULTS, ...values };
+}
+
 function getGroupMeta(t: (key: string) => string): Record<string, { label: string; order: number; hint: string }> {
   return {
     model_default: { label: t('config.groups.modelDefault.label'), order: 0, hint: t('config.groups.modelDefault.hint') },
@@ -360,7 +398,8 @@ function getGroupMeta(t: (key: string) => string): Record<string, { label: strin
     agents: { label: t('config.groups.agents.label'), order: 7.5, hint: t('config.groups.agents.hint') },
     team: { label: t('config.groups.team.label'), order: 7.6, hint: t('config.groups.team.hint') },
     context_engine: { label: t('config.groups.contextEngine.label'), order: 8, hint: t('config.groups.contextEngine.hint') },
-    permissions: { label: t('config.groups.permissions.label'), order: 9, hint: t('config.groups.permissions.hint') },
+    security_review: { label: t('config.groups.securityReview.label'), order: 9, hint: t('config.groups.securityReview.hint') },
+    permissions: { label: t('config.groups.permissions.label'), order: 9.5, hint: t('config.groups.permissions.hint') },
     memory: { label: t('config.groups.memory.label'), order: 10, hint: t('config.groups.memory.hint') },
     email: { label: t('config.groups.email.label'), order: 11, hint: t('config.groups.email.hint') },
     other: { label: t('config.groups.other.label'), order: 12, hint: t('config.groups.other.hint') },
@@ -420,6 +459,12 @@ const KEY_DISPLAY_I18N: Record<string, string> = {
   free_search_proxy_url: "config.keys.freeSearchProxyUrl",
   memory_forbidden_enabled: "config.keys.memoryForbiddenEnabled",
   memory_forbidden_description: "config.keys.memoryForbiddenDescription",
+  security_review_enabled: "config.keys.securityReviewEnabled",
+  security_review_runtime_advice: "config.keys.securityReviewRuntimeAdvice",
+  security_review_async_review: "config.keys.securityReviewAsyncReview",
+  security_review_evolve_security_skills: "config.keys.securityReviewEvolveSkills",
+  security_review_propose_policy_rules: "config.keys.securityReviewProposeRules",
+  security_review_timely_tool_failure_review: "config.keys.securityReviewTimelyFailures",
   name: "config.keys.agentName",
   model: "config.keys.agentModel",
   skills: "config.keys.agentSkills",
@@ -438,6 +483,12 @@ const KEY_SORT_PRIORITY: Record<string, number> = {
   free_search_proxy_url: 2,
   memory_forbidden_enabled: 0,
   memory_forbidden_description: 1,
+  security_review_enabled: 0,
+  security_review_runtime_advice: 1,
+  security_review_async_review: 2,
+  security_review_timely_tool_failure_review: 3,
+  security_review_evolve_security_skills: 4,
+  security_review_propose_policy_rules: 5,
   model: 0,
   skills: 1,
   max_iterations: 2,
@@ -1636,7 +1687,7 @@ export function ConfigPanel({
     for (const [key, value] of Object.entries(config)) {
       next[key] = normalizeConfigValue(value);
     }
-    return next;
+    return withDefaultVisibleConfigValues(next);
   });
   const [draftModels, setDraftModels] = useState<ModelEntry[]>(() => storeAvailableModels.map((m) => ({ ...m })));
   const [draftAgents, setDraftAgents] = useState<AgentEntry[]>([]);
@@ -1653,7 +1704,7 @@ export function ConfigPanel({
     for (const [key, value] of Object.entries(config)) {
       next[key] = normalizeConfigValue(value);
     }
-    return next;
+    return withDefaultVisibleConfigValues(next);
   }, [config]);
 
   useEffect(() => {

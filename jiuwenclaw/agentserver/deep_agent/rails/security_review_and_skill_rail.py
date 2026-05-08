@@ -2,6 +2,7 @@
 """SecurityReviewAndSkillRail for in-task security supervision."""
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import fields
 from typing import Any
 
@@ -20,6 +21,7 @@ from jiuwenclaw.agentserver.deep_agent.security_review.schema import (
     ReviewResult,
     SecurityEvent,
     SecurityReviewConfig,
+    SecuritySignal,
     Severity,
 )
 from jiuwenclaw.agentserver.deep_agent.security_review.session_state import (
@@ -42,6 +44,9 @@ class SecurityReviewAndSkillRail(DeepAgentRail):
         self.worker = SecurityReviewWorker()
         self.system_prompt_builder = None
         self._session_id = "default"
+        self._session_signals: dict[str, list[SecuritySignal]] = {}
+        self._message_provider: Callable[[str], list[dict[str, Any]]] | None = None
+        self._skill_state_provider: Callable[[], dict[str, Any]] | None = None
         self._results: list[dict[str, Any]] = []
         self.worker_call_count = 0
 
@@ -58,7 +63,11 @@ class SecurityReviewAndSkillRail(DeepAgentRail):
         self._session_id = self._extract_session_id(getattr(ctx, "inputs", None))
 
     async def before_model_call(self, ctx: AgentCallbackContext) -> None:
-        session_id = self._extract_session_id(getattr(ctx, "inputs", None), self._session_id)
+        inputs = getattr(ctx, "inputs", None)
+        session_id = self._extract_session_id(inputs, self._session_id)
+        query = self._extract_input_value(inputs, "query")
+        if query:
+            self.state.record_message(session_id, "user", self._truncate(query))
         advice = self.state.consume_advice(session_id)
         if self.system_prompt_builder is None:
             return
@@ -100,11 +109,65 @@ class SecurityReviewAndSkillRail(DeepAgentRail):
         )
         self._handle_event(event)
 
+    async def after_model_call(self, ctx: AgentCallbackContext) -> None:
+        inputs = getattr(ctx, "inputs", None)
+        session_id = self._extract_session_id(inputs, self._session_id)
+        self._session_id = session_id
+        response = self._extract_input_value(inputs, "response")
+        content = getattr(response, "content", response)
+        self.state.record_message(session_id, "assistant", self._truncate(content))
+        event = SecurityEvent(
+            event_type="model_output",
+            session_id=session_id,
+            iteration=self._extract_iteration(inputs),
+            result_digest=self._truncate(content),
+        )
+        self._handle_event(event)
+
+    async def after_invoke(self, ctx: AgentCallbackContext) -> None:
+        inputs = getattr(ctx, "inputs", None)
+        session_id = self._extract_session_id(inputs, self._session_id)
+        signals = self._session_signals.get(session_id, [])
+        medium_signals = [signal for signal in signals if signal.severity == Severity.MEDIUM]
+        if not medium_signals:
+            return
+        iteration = max((signal.iteration for signal in medium_signals), default=0)
+        self.scheduler.schedule(
+            ReviewRequest(
+                request_type="session_end_review",
+                session_id=session_id,
+                priority=Severity.MEDIUM,
+                dedupe_key=(session_id, "session_end_review", str(iteration)),
+                iteration=iteration,
+                signals=medium_signals[-5:],
+                counters=self.state.counter_snapshot(session_id),
+                sample_events=self.state.snapshot_events(session_id)[-5:],
+            )
+        )
+
     def get_session_snapshot(self, session_id: str) -> list[SecurityEvent]:
         return self.state.snapshot_events(session_id)
 
     def drain_review_requests(self) -> list[ReviewRequest]:
         return self.scheduler.drain()
+
+    def update_llm(self, llm: Any | None) -> None:
+        self.worker.update_llm(llm)
+
+    def update_config(self, config: dict[str, Any] | None = None) -> None:
+        """Hot-update bounded security review configuration."""
+        self.config = self._parse_config(config or {})
+        self.state.config = self.config
+        self.scheduler.config = self.config
+
+    def set_context_providers(
+        self,
+        *,
+        message_provider: Callable[[str], list[dict[str, Any]]] | None = None,
+        skill_state_provider: Callable[[], dict[str, Any]] | None = None,
+    ) -> None:
+        self._message_provider = message_provider
+        self._skill_state_provider = skill_state_provider
 
     async def process_pending_reviews(self) -> list[ReviewResult]:
         if not self.config.async_review:
@@ -114,8 +177,15 @@ class SecurityReviewAndSkillRail(DeepAgentRail):
         for request in self.scheduler.drain():
             if not self.scheduler.mark_review_started(request.session_id):
                 continue
+            request = self._enrich_request(request)
             result = await self.worker.review(request)
             self.worker_call_count += 1
+            if result.runtime_advice:
+                self.state.set_runtime_advice(
+                    result.session_id,
+                    result.runtime_advice,
+                    severity=request.priority,
+                )
             self._results.append(
                 {
                     "session_id": result.session_id,
@@ -130,7 +200,11 @@ class SecurityReviewAndSkillRail(DeepAgentRail):
     def drain_candidates(self) -> list[dict[str, Any]]:
         candidates: list[dict[str, Any]] = []
         for result in self._results:
-            candidates.extend(result.get("candidates", []))
+            candidates.extend(
+                candidate
+                for candidate in result.get("candidates", [])
+                if self._candidate_enabled(candidate)
+            )
         self._results.clear()
         return candidates
 
@@ -140,7 +214,31 @@ class SecurityReviewAndSkillRail(DeepAgentRail):
     def _handle_event(self, event: SecurityEvent) -> None:
         self.state.record_event(event)
         signals = self.classifier.classify(event)
+        if signals:
+            self._session_signals.setdefault(event.session_id, []).extend(signals)
         generated = self.state.record_signals(signals)
+        for signal in signals:
+            if signal.severity not in {Severity.HIGH, Severity.CRITICAL}:
+                continue
+            if signal.signal_type == "permission_boundary_hit":
+                continue
+            self.scheduler.schedule(
+                ReviewRequest(
+                    request_type="high_risk_review",
+                    session_id=signal.session_id,
+                    priority=signal.severity,
+                    dedupe_key=(
+                        signal.session_id,
+                        signal.signal_type,
+                        signal.tool_name,
+                        signal.evidence[:80],
+                    ),
+                    iteration=signal.iteration,
+                    signals=[signal],
+                    counters=self.state.counter_snapshot(signal.session_id),
+                    sample_events=self.state.snapshot_events(signal.session_id)[-5:],
+                )
+            )
         if not self.config.timely_tool_failure_review:
             return
 
@@ -160,6 +258,35 @@ class SecurityReviewAndSkillRail(DeepAgentRail):
                     sample_events=self.state.snapshot_events(signal.session_id)[-5:],
                 )
             )
+
+    def _enrich_request(self, request: ReviewRequest) -> ReviewRequest:
+        request.sample_messages = self._sample_messages(request.session_id)[-8:]
+        request.skill_state = self._skill_state()
+        return request
+
+    def _sample_messages(self, session_id: str) -> list[dict[str, str]]:
+        if self._message_provider is not None:
+            try:
+                raw_messages = self._message_provider(session_id)
+            except Exception:
+                raw_messages = []
+            messages: list[dict[str, str]] = []
+            for message in raw_messages[-8:]:
+                role = str(message.get("role") or message.get("type") or "unknown")
+                content = str(message.get("content") or message.get("content_digest") or "")
+                if content.strip():
+                    messages.append({"role": role, "content_digest": self._truncate(content)})
+            if messages:
+                return messages
+        return self.state.snapshot_messages(session_id)[-8:]
+
+    def _skill_state(self) -> dict[str, Any]:
+        if self._skill_state_provider is None:
+            return {}
+        try:
+            return self._skill_state_provider()
+        except Exception:
+            return {}
 
     @staticmethod
     def _extract_session_id(inputs: Any, fallback: str = "default") -> str:
@@ -188,6 +315,14 @@ class SecurityReviewAndSkillRail(DeepAgentRail):
 
     def _truncate(self, value: Any) -> str:
         return str(value or "")[: max(1, self.config.max_event_chars)]
+
+    def _candidate_enabled(self, candidate: dict[str, Any]) -> bool:
+        candidate_type = candidate.get("type")
+        if candidate_type == "security_rule":
+            return self.config.propose_policy_rules
+        if candidate_type in {"security_skill", "security_evolution"}:
+            return self.config.evolve_security_skills
+        return True
 
     @staticmethod
     def _parse_config(config: dict[str, Any]) -> SecurityReviewConfig:

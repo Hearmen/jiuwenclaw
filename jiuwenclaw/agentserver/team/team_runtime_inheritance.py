@@ -17,7 +17,7 @@ from openjiuwen.agent_evolving.trajectory import FileTrajectoryStore, Trajectory
 from openjiuwen.core.foundation.tool import ToolCard
 from openjiuwen.harness.rails.filesystem_rail import FileSystemRail
 from openjiuwen.harness.rails.heartbeat_rail import HeartbeatRail
-from openjiuwen.harness.rails.security_rail import SecurityRail
+from openjiuwen.auto_harness.rails.security_rail import SecurityRail
 from openjiuwen.harness.rails.skill_evolution_rail import SkillEvolutionRail
 from openjiuwen.harness.rails.task_planning_rail import TaskPlanningRail
 from openjiuwen.harness.rails.team_skill_rail import TeamSkillRail
