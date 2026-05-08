@@ -295,7 +295,7 @@ function AppContent() {
 
   useEffect(() => () => disposeInFlightHistoryHandles(), [disposeInFlightHistoryHandles]);
 
-  const { setCurrentSession, setSessions, setAvailableModels, mode, heartbeatMessage, heartbeatUpdatedAt } = useSessionStore();
+  const { setCurrentSession, setSessions, setAvailableModels, setMode, mode, heartbeatMessage, heartbeatUpdatedAt } = useSessionStore();
   const {
     clearMessages,
     clearSubtasks,
@@ -497,7 +497,7 @@ function AppContent() {
       spawn_mode: string;
       leader: { member_name: string; display_name: string; persona: string; agent_key: string };
       teammate: { agent_key: string };
-      predefined_members: Array<{ member_name: string; display_name: string; role_type: string; persona: string; prompt_hint: string; agent_key: string }>;
+      predefined_members: Array<{ member_name: string; display_name: string; persona: string; prompt_hint: string; agent_key: string }>;
     }>;
   }) => {
     const result = await request<{ updated?: string[]; applied_without_restart?: boolean }>(
@@ -979,7 +979,7 @@ function AppContent() {
   ]);
 
   const handleRestoreSession = useCallback(
-    (targetSessionId: string) => {
+    (targetSessionId: string, targetMode?: string) => {
       if (!targetSessionId.startsWith('sess_')) return;
 
       disposeInFlightHistoryHandles();
@@ -995,6 +995,9 @@ function AppContent() {
       setSessionId(targetSessionId);
       setCurrentSession(null);
       storeSessionId(targetSessionId);
+      if (targetMode) {
+        setMode(targetMode as AgentMode);
+      }
       setActiveNav('chat');
       // 历史加载只由下方 useEffect 发起一次。若 sessionId 与当前相同，须 bump key 才会重跑 effect，
       // 否则 historyPagerMeta 会停在 null，无法向上滚动加载更早分页。
@@ -1010,6 +1013,7 @@ function AppContent() {
       setCurrentSession,
       setHistoryLoadingMore,
       setHistoryPagerMeta,
+      setMode,
       setPaused,
       setProcessing,
       setSessionId,

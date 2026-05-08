@@ -33,7 +33,6 @@ interface Leader {
 interface TeamMember {
   member_name: string;
   display_name: string;
-  role_type: string;
   persona: string;
   prompt_hint: string;
   agent_key: string;
@@ -81,7 +80,7 @@ interface ConfigPanelProps {
       spawn_mode: string;
       leader: { member_name: string; display_name: string; persona: string; agent_key: string };
       teammate: { agent_key: string };
-      predefined_members: Array<{ member_name: string; display_name: string; role_type: string; persona: string; prompt_hint: string; agent_key: string }>;
+      predefined_members: Array<{ member_name: string; display_name: string; persona: string; prompt_hint: string; agent_key: string }>;
     }>;
   }) => Promise<void>;
 }
@@ -978,8 +977,8 @@ function MultiAgentSection({
     name: "",
     model: { provider: "", api_base: "", api_key: "", model: "" },
     skills: [],
-    max_iterations: 0,
-    completion_timeout: 0,
+    max_iterations: 200,
+    completion_timeout: 600,
   });
   // 临时保存 skills 输入框的原始值，支持中英文逗号
   const [skillsInputValues, setSkillsInputValues] = useState<Record<number, string>>({});
@@ -1039,7 +1038,7 @@ function MultiAgentSection({
     onAgentsChange([...agents, { ...newAgent, name }]);
     setExpandedIdx(agents.length);
     setAddingNew(false);
-    setNewAgent({ name: "", model: { provider: "", api_base: "", api_key: "", model: "" }, skills: [], max_iterations: 0, completion_timeout: 0 });
+    setNewAgent({ name: "", model: { provider: "", api_base: "", api_key: "", model: "" }, skills: [], max_iterations: 200, completion_timeout: 600 });
   };
 
   const agentFields: (keyof AgentEntry)[] = ["name", "skills", "max_iterations", "completion_timeout"];
@@ -1332,7 +1331,7 @@ function TeamItemSection({
   const teamStringFields: (keyof TeamEntry)[] = ["team_name", "lifecycle", "teammate_mode", "spawn_mode"];
   const teammateFields: (keyof Teammate)[] = ["agent_key"];
   const leaderFields: (keyof Leader)[] = ["member_name", "display_name", "persona", "agent_key"];
-  const memberFields: (keyof TeamMember)[] = ["member_name", "display_name", "role_type", "persona", "prompt_hint", "agent_key"];
+  const memberFields: (keyof TeamMember)[] = ["member_name", "display_name", "persona", "prompt_hint", "agent_key"];
 
   const getTeamFieldLabel = (field: string): string => {
     const labels: Record<string, string> = {
@@ -1358,7 +1357,6 @@ function TeamItemSection({
     const labels: Record<string, string> = {
       member_name: t("config.keys.teamMemberName"),
       display_name: t("config.keys.teamMemberDisplayName"),
-      role_type: t("config.keys.teamMemberRoleType"),
       persona: t("config.keys.teamMemberPersona"),
       prompt_hint: t("config.keys.teamMemberPromptHint"),
       agent_key: t("config.keys.teamMemberAgentKey"),
@@ -1579,7 +1577,7 @@ function TeamItemSection({
               onClick={() => {
                 onTeamChange({
                   ...team,
-                  predefined_members: [...team.predefined_members, { member_name: "", display_name: "", role_type: "", persona: "", prompt_hint: "", agent_key: "" }],
+                  predefined_members: [...team.predefined_members, { member_name: "", display_name: "", persona: "", prompt_hint: "", agent_key: "" }],
                 });
               }}
               className="w-full rounded border border-dashed border-border py-1 text-xs text-text-muted hover:bg-secondary/40"
@@ -1669,13 +1667,15 @@ function TeamsSection({
                 <span className="truncate">{team.team_name || t("config.agentList.untitled")}</span>
               </button>
               <div className="flex items-center gap-1 ml-2">
-                <button
-                  type="button"
-                  onClick={() => removeTeam(idx)}
-                  className="text-[11px] px-2 py-0.5 rounded border border-border hover:bg-danger-subtle hover:text-danger"
-                >
-                  {t("config.agentList.removeAgent")}
-                </button>
+                {teams.length > 1 && (
+                  <button
+                    type="button"
+                    onClick={() => removeTeam(idx)}
+                    className="text-[11px] px-2 py-0.5 rounded border border-border hover:bg-danger-subtle hover:text-danger"
+                  >
+                    {t("config.agentList.removeAgent")}
+                  </button>
+                )}
               </div>
             </div>
             {isExpanded && (
@@ -1708,7 +1708,7 @@ function TeamsSection({
             <button type="button" onClick={handleAddNew} disabled={!newTeam.team_name.trim()} className="btn primary !px-3 !py-1 text-xs">{t("common.confirm")}</button>
           </div>
         </div>
-      ) : (
+      ) : teams.length > 0 ? null : (
         <button
           type="button"
           onClick={() => setAddingNew(true)}
@@ -1893,8 +1893,8 @@ export function ConfigPanel({
           model: matchedModel.model_name || "",
         } : { provider: "", api_base: "", api_key: "", model: modelName },
         skills: (normalizedConfig[`agent_skills_${i}`] || normalizedConfig[`agent_${i}_skills`] || "").split(/[,，]/).map((s: string) => s.trim()).filter(Boolean),
-        max_iterations: Number(normalizedConfig[`agent_max_iterations_${i}`]) || Number(normalizedConfig[`agent_${i}_max_iterations`]) || 0,
-        completion_timeout: Number(normalizedConfig[`agent_completion_timeout_${i}`]) || Number(normalizedConfig[`agent_${i}_completion_timeout`]) || 0,
+        max_iterations: Number(normalizedConfig[`agent_max_iterations_${i}`]) || Number(normalizedConfig[`agent_${i}_max_iterations`]) || 200,
+        completion_timeout: Number(normalizedConfig[`agent_completion_timeout_${i}`]) || Number(normalizedConfig[`agent_${i}_completion_timeout`]) || 600,
       });
     }
     return agents;

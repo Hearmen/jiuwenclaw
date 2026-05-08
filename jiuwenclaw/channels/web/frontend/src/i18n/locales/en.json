@@ -63,6 +63,8 @@
     "placeholder": "Enter to send, Shift+Enter for new line, hold mic to record",
     "placeholderProcessing": "Processing, enter to interrupt...",
     "placeholderProcessingQueue": "Processing, new input will join the queue...",
+    "placeholderTeamMode": "Team mode, new input will run in parallel...",
+    "placeholderTeamModeProcessing": "Team mode processing, new input will run in parallel...",
     "placeholderVoice": "Listening...",
     "welcomeLogoAlt": "JiuwenClaw logo",
     "welcomeHeading": "Hi, I'm JiuwenClaw. Nice to meet you!",

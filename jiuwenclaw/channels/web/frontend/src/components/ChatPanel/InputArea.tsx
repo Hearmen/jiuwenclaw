@@ -316,11 +316,15 @@ export function InputArea({
         placeholder={
           isListening
             ? t('chat.placeholderVoice')
+            : isTeamMode
+              ? isInterruptible
+                ? t('chat.placeholderTeamModeProcessing')
+                : t('chat.placeholderTeamMode')
             : isAgentMode && isInterruptible
-            ? t('chat.placeholderProcessingQueue')
-            : isInterruptible
-            ? t('chat.placeholderProcessing')
-            : t('chat.placeholder')
+              ? t('chat.placeholderProcessingQueue')
+              : isInterruptible
+                ? t('chat.placeholderProcessing')
+                : t('chat.placeholder')
         }
         className="chat-input-textarea"
         rows={1}

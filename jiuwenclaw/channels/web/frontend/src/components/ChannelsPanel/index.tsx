@@ -2626,10 +2626,10 @@ export function ChannelsPanel({ isConnected }: ChannelsPanelProps) {
                           <button
                             type="button"
                             onClick={() => {
-                              if (!isConnected || wechatSaving || wechatUnbinding || wechatLoading) return;
+                              if (!wechatConfig.enabled || wechatSaving || wechatUnbinding || wechatLoading) return;
                               setWechatUnbindConfirmOpen(true);
                             }}
-                            disabled={!isConnected || wechatSaving || wechatUnbinding || wechatLoading}
+                            disabled={!wechatConfig.enabled || wechatSaving || wechatUnbinding || wechatLoading}
                             className="btn !px-3 !py-1.5 border border-[var(--destructive)] text-[var(--destructive)] hover:bg-[var(--destructive)]/10 disabled:opacity-50 disabled:cursor-not-allowed"
                           >
                             {wechatUnbinding ? t('channels.wechatUnbind.unbinding') : t('channels.wechatUnbind.button')}

@@ -63,6 +63,8 @@
     "placeholder": "Enter 发送，Shift+Enter 换行，按住语音键开始录音",
     "placeholderProcessing": "处理中，输入新指令可中断...",
     "placeholderProcessingQueue": "处理中，输入新指令将加入等待队列...",
+    "placeholderTeamMode": "集群模式，输入新指令会并行执行...",
+    "placeholderTeamModeProcessing": "集群模式处理中，输入新指令会并行执行...",
     "placeholderVoice": "正在听取语音...",
     "welcomeLogoAlt": "JiuwenClaw 标志",
     "welcomeHeading": "你好，我是JiuwenClaw，很高兴认识你！",
