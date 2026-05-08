@@ -87,13 +87,15 @@ export function ToolPanel() {
   const heartbeatDetail = heartbeatUpdatedAt
     ? new Date(heartbeatUpdatedAt).toLocaleTimeString(undefined, { hour12: false })
     : '--:--:--';
-  const isHeartbeatOk = heartbeatMessage?.toUpperCase().includes('HEARTBEAT_OK') ?? false;
+  const truncateMessage = (msg: string, maxLen: number = 10) => {
+    const trimmed = msg.trim();
+    if (trimmed.length <= maxLen) return trimmed;
+    return `${trimmed.slice(0, maxLen)}...`;
+  };
   const heartbeatDisplayMessage = !heartbeatMessage
     ? 'HEARTBEAT_UNKNOWN'
-    : isHeartbeatOk
-      ? heartbeatMessage
-      : t('toolPanel.heartbeatClick');
-  const canOpenHeartbeatModal = Boolean(heartbeatMessage) && !isHeartbeatOk;
+    : truncateMessage(heartbeatMessage);
+  const canOpenHeartbeatModal = Boolean(heartbeatMessage);
   const memoryDisplay =
     memoryUsage.rssMb == null
       ? '--'
