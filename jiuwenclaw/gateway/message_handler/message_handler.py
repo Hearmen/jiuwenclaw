@@ -1901,9 +1901,17 @@ class MessageHandler(ABC):
                         agent_msg = await self._prepare_agent_dispatch_message(msg)
                         env_interrupt = self.message_to_e2a(agent_msg)
                         asyncio.create_task(self._send_interrupt_to_agent(env_interrupt))
-                        # 通知前端状态变更
+                        # 检查当前 session 是否有活跃的流式任务
+                        current_sid = msg.session_id
+                        has_active_task = False
+                        for rid, task in list(self._stream_tasks.items()):
+                            if self._stream_sessions.get(rid) == current_sid and not task.done():
+                                has_active_task = True
+                                break
+                        # 通知前端状态变更（事件）
                         await self._send_interrupt_result_notification(
                             msg.id, msg.channel_id, msg.session_id, intent,
+                            has_active_task=has_active_task,
                         )
 
                     continue
@@ -2130,13 +2138,15 @@ class MessageHandler(ABC):
         intent: str,
         message: str | None = None,
         success: bool = True,
+        has_active_task: bool | None = None,
     ) -> None:
         """发送 interrupt_result 事件到前端（pause / resume 等）."""
         from jiuwenclaw.common.schema.message import Message, EventType
 
+        # 根据 has_active_task 调整 pause/resume 的消息
         success_messages_map = {
-            "pause": "任务已暂停",
-            "resume": "任务已恢复",
+            "pause": "任务已暂停" if has_active_task else "任务已完成",
+            "resume": "任务已恢复" if has_active_task else "任务已完成",
             "cancel": "任务已取消",
             "supplement": "任务已切换",
         }
@@ -2146,6 +2156,19 @@ class MessageHandler(ABC):
             "cancel": "任务终止失败",
             "supplement": "任务切换失败",
         }
+        payload_dict: dict = {
+            "event_type": "chat.interrupt_result",
+            "intent": intent,
+            "success": success,
+            "message": message
+            or (
+                success_messages_map.get(intent, "任务已中断")
+                if success
+                else failure_messages_map.get(intent, "任务中断失败")
+            ),
+        }
+        if has_active_task is not None:
+            payload_dict["has_active_task"] = has_active_task
         notify_msg = Message(
             id=request_id,
             type="event",
@@ -2154,17 +2177,7 @@ class MessageHandler(ABC):
             params={},
             timestamp=time.time(),
             ok=True,
-            payload={
-                "event_type": "chat.interrupt_result",
-                "intent": intent,
-                "success": success,
-                "message": message
-                or (
-                    success_messages_map.get(intent, "任务已中断")
-                    if success
-                    else failure_messages_map.get(intent, "任务中断失败")
-                ),
-            },
+            payload=payload_dict,
             event_type=EventType.CHAT_INTERRUPT_RESULT,
             metadata=None,
         )

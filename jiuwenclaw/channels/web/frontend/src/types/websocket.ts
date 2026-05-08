@@ -94,6 +94,7 @@ export interface InterruptResultPayload {
   new_input?: string;
   merged_input?: string;
   paused_task?: string;
+  has_active_task?: boolean;  // 是否有活跃任务，false 表示任务已完成
 }
 
 /**

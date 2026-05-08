@@ -21,7 +21,7 @@ import {
   AgentMode,
   Session,
   ToolResult,
- 	ToolCall,
+  ToolCall,
   UsageSummary,
 } from '../types';
 import { useChatStore, useTodoStore, useSessionStore } from '../stores';
@@ -282,7 +282,7 @@ export function useWebSocket(options: UseWebSocketOptions): UseWebSocketReturn {
 
       setProcessing(true);
       setThinking(true);
-      
+
       // 正常调用接口
       const currentMode = useSessionStore.getState().mode;
       const selectedModel = useSessionStore.getState().selectedModelName;
@@ -414,7 +414,7 @@ export function useWebSocket(options: UseWebSocketOptions): UseWebSocketReturn {
     async (sessionId: string, mode: AgentMode) => {
       // 标记正在切换模式
       useChatStore.getState().setSwitchingMode(true);
-      
+
       // 只有在有任务执行时才调用 interrupt
       if (sessionId && sessionId !== 'new') {
         const state = useChatStore.getState();
@@ -426,7 +426,7 @@ export function useWebSocket(options: UseWebSocketOptions): UseWebSocketReturn {
           }
         }
       }
-      
+
       setMode(mode);
       if (sessionId && sessionId !== 'new') {
         updateSession(sessionId, { mode });
@@ -525,20 +525,20 @@ export function useWebSocket(options: UseWebSocketOptions): UseWebSocketReturn {
       }),
       webClient.on('chat.delta', ({ payload }) => {
         if (!shouldHandleSessionEvent(payload)) return;
-        
+
         const currentMode = useSessionStore.getState().mode;
         const content = typeof payload.content === 'string' ? payload.content : '';
-        
+
         // team 模式下，累积 chat.delta 内容
         if (currentMode === 'team' && content) {
           setThinking(false);
-          
+
           const { messages } = useChatStore.getState();
-          const existingMsg = messages.find(m => 
-            m.id.startsWith('team-leader-') && 
+          const existingMsg = messages.find(m =>
+            m.id.startsWith('team-leader-') &&
             (m as { isStreaming?: boolean }).isStreaming === true
           );
-          
+
           if (existingMsg) {
             const existingContent = existingMsg.content || '';
             const newContent = existingContent + content;
@@ -559,7 +559,7 @@ export function useWebSocket(options: UseWebSocketOptions): UseWebSocketReturn {
           }
           return;
         }
-        
+
         const { currentStreamId } = useChatStore.getState();
         setThinking(false);
         if (!currentStreamId && content) {
@@ -577,20 +577,20 @@ export function useWebSocket(options: UseWebSocketOptions): UseWebSocketReturn {
       }),
       webClient.on('chat.final', ({ payload }) => {
         if (!shouldHandleSessionEvent(payload)) return;
-        
+
         const currentMode = useSessionStore.getState().mode;
         const content = normalizeFinalContent(payload);
-        
+
         // team 模式下，将 chat.final 作为 team_leader 消息处理
         if (currentMode === 'team' && content) {
           setThinking(false);
-          
+
           const { messages } = useChatStore.getState();
-          const existingMsg = messages.find(m => 
-            m.id.startsWith('team-leader-') && 
+          const existingMsg = messages.find(m =>
+            m.id.startsWith('team-leader-') &&
             (m as { isStreaming?: boolean }).isStreaming === true
           );
-          
+
           if (existingMsg) {
             updateMessage(existingMsg.id, { content, isStreaming: false });
           } else {
@@ -604,7 +604,7 @@ export function useWebSocket(options: UseWebSocketOptions): UseWebSocketReturn {
           }
           return;
         }
-        
+
         const { currentStreamId, messages } = useChatStore.getState();
         const payloadSessionId =
           typeof payload.session_id === 'string' ? payload.session_id.trim() : '';
@@ -780,12 +780,17 @@ export function useWebSocket(options: UseWebSocketOptions): UseWebSocketReturn {
         if (shouldDropDuplicatedEvent('chat.processing_status', payload)) return;
         // 切换模式时忽略处理状态更新
         if (useChatStore.getState().switchingMode) return;
+        // 如果 interrupt_result 指示任务已完成，忽略 processing_status=true
+        const { interruptResult } = useChatStore.getState();
+        if (interruptResult && interruptResult.intent === 'resume' && interruptResult.success && interruptResult.has_active_task === false) {
+          return;
+        }
         const isProcessingNow = Boolean(payload.is_processing);
         setProcessing(isProcessingNow);
         if (!isProcessingNow) {
           setThinking(false);
           clearSubtasks();
-          
+
           // 检查是否有等待的任务队列
           const currentMode = useSessionStore.getState().mode;
           const { taskQueue } = useChatStore.getState();
@@ -831,6 +836,9 @@ export function useWebSocket(options: UseWebSocketOptions): UseWebSocketReturn {
         if (useChatStore.getState().switchingMode) return;
         const resultPayload = payload as unknown as InterruptResultPayload;
         setInterruptResult(resultPayload);
+        // has_active_task 为 false 表示没有活跃任务（任务已完成）
+        const hasActiveTask = resultPayload.has_active_task !== false;
+
         if (resultPayload.intent === 'pause') {
           if (resultPayload.success) {
             setPaused(true, resultPayload.paused_task);
@@ -839,7 +847,26 @@ export function useWebSocket(options: UseWebSocketOptions): UseWebSocketReturn {
           setThinking(false);
         } else if (resultPayload.intent === 'resume') {
           if (resultPayload.success) {
-            setPaused(false);
+            // 直接设置所有状态值
+            if (hasActiveTask) {
+              setPaused(false);
+              setProcessing(true);
+              setThinking(true);
+            } else {
+              setPaused(false);
+              setProcessing(false);
+              setThinking(false);
+              // 任务已完成时，检查并触发队列中的下一个任务
+              const currentMode = useSessionStore.getState().mode;
+              const { taskQueue } = useChatStore.getState();
+              if (currentMode === 'agent.fast' && taskQueue.length > 0) {
+                const nextTask = taskQueue[0];
+                if (nextTask && activeSessionIdRef.current && sendMessageRef.current) {
+                  removeFromTaskQueue(nextTask.id);
+                  sendMessageRef.current(nextTask.content, activeSessionIdRef.current);
+                }
+              }
+            }
           }
         } else if (resultPayload.intent === 'cancel') {
           setPaused(false);
