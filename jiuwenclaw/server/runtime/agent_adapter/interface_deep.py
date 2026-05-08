@@ -4203,6 +4203,7 @@ class JiuWenClawDeepAdapter:
                     "event_type": "chat.usage_summary",
                     "session_id": session_id,
                     "usage": summary,
+                    "model": self._resolve_model_name(),
                 },
                 is_complete=False,
             )

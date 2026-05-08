@@ -87,6 +87,18 @@ type ConfigEditorState = {
   list: SelectList;
 };
 
+type StatusViewTab = "status" | "usage" | "config";
+
+type StatusViewPhase = "tab_view" | "config_editor";
+
+type StatusViewState = {
+  phase: StatusViewPhase;
+  tab: StatusViewTab;
+  list: SelectList;
+  statusPayload: import("../core/commands/builtins/status.js").StatusPayload | null;
+  configPayload: (Record<string, unknown> & { schema?: ConfigItemSchema[] }) | null;
+};
+
 const IMAGE_MIME_TYPES: Record<string, string> = {
   ".png": "image/png",
   ".jpg": "image/jpeg",
@@ -348,6 +360,7 @@ export class AppScreen implements Component, Focusable {
   private modelList: ModelListState | null = null;
   private themeList: ThemeListState | null = null;
   private configEditorState: ConfigEditorState | null = null;
+  private statusViewState: StatusViewState | null = null;
   private startupPromptList: SelectList | null = null;
   private showTodos = true;
   private showTeamPanel = false;
@@ -544,6 +557,67 @@ export class AppScreen implements Component, Focusable {
       return;
     }
 
+    if (!snapshot.pendingQuestion && this.statusViewState !== null) {
+      if (this.statusViewState.phase === "config_editor") {
+        if (this.configEditorState?.phase === "input_value") {
+          if (matchesKey(data, "escape")) {
+            if (this.configEditorState.selectedGroup) {
+              const groupSchemas = this.configEditorState.schemaList.filter(
+                (s) => s.group === this.configEditorState!.selectedGroup,
+              );
+              this.showConfigGroupItems(
+                this.configEditorState.selectedGroup,
+                groupSchemas,
+                this.configEditorState.currentValues,
+              );
+            } else {
+              this.configEditorState = null;
+              this.statusViewState = {
+                ...this.statusViewState,
+                phase: "tab_view",
+                tab: "config",
+                list: this.buildStatusViewTabState("config", this.statusViewState.statusPayload, this.statusViewState.configPayload),
+              };
+            }
+            this.tui.requestRender();
+            return;
+          }
+          if (matchesKey(data, "return")) {
+            const text = this.editor.getText().trim();
+            if (text && this.configEditorState.selectedKey) {
+              const key = this.configEditorState.selectedKey;
+              const schema = this.configEditorState.schemaList.find((s) => s.key === key);
+              if (schema) {
+                void this.applyConfigEditorSet(key, text, schema, this.configEditorState.currentValues);
+                this.editor.setText("");
+              }
+            }
+            return;
+          }
+          this.editor.handleInput(data);
+        } else if (this.configEditorState) {
+          this.configEditorState.list.handleInput(data);
+        }
+        this.tui.requestRender();
+        return;
+      }
+      if (matchesKey(data, "escape")) {
+        this.closeStatusView();
+        return;
+      }
+      if (matchesKey(data, "left")) {
+        this.switchStatusViewTab(-1);
+        return;
+      }
+      if (matchesKey(data, "right")) {
+        this.switchStatusViewTab(1);
+        return;
+      }
+      this.statusViewState.list.handleInput(data);
+      this.tui.requestRender();
+      return;
+    }
+
     if (!snapshot.pendingQuestion && this.configEditorState !== null) {
       if (this.configEditorState.phase === "input_value") {
         // Handle Esc to cancel input and go back to group selection
@@ -672,7 +746,8 @@ export class AppScreen implements Component, Focusable {
     const composerPreviewLines: string[] = [];
     const questionLines = [
       ...this.buildStartupPromptLines(width),
-      ...this.buildConfigEditorLines(width),
+      ...this.buildStatusViewLines(width),
+      ...(!this.statusViewState ? this.buildConfigEditorLines(width) : []),
       ...this.buildResumeSessionListLines(width),
       ...this.buildModelListLines(width),
       ...this.buildThemeListLines(width),
@@ -771,6 +846,16 @@ export class AppScreen implements Component, Focusable {
         await this.openModelList();
         return;
       }
+      if (/^\/status(?:\s+\S*)?\s*$/.test(text)) {
+        this.editor.addToHistory(text);
+        this.editor.setText("");
+        this.state.addItem(addCommandEcho(snapshot.sessionId, text));
+        const subMatch = text.match(/^\/status\s+(\S+)/);
+        const tab: StatusViewTab | undefined =
+          subMatch?.[1] === "usage" ? "usage" :
+          subMatch?.[1] === "config" ? "config" :
+          undefined;
+        await this.openStatusView(tab);
       if (/^\/theme\s*$/.test(text)) {
         this.editor.addToHistory(text);
         this.editor.setText("");
@@ -1267,8 +1352,16 @@ export class AppScreen implements Component, Focusable {
       this.showConfigGroupItems(item.value, groups[item.value], currentValues);
     };
     list.onCancel = () => {
-      this.configEditorState = null;
-      this.tui.requestRender();
+      if (this.statusViewState) {
+        this.statusViewState.phase = "tab_view";
+        this.statusViewState.tab = "config";
+        this.rebuildStatusViewTabList();
+        this.configEditorState = null;
+        this.tui.requestRender();
+      } else {
+        this.configEditorState = null;
+        this.tui.requestRender();
+      }
     };
     this.configEditorState = {
       phase: "select_group",
@@ -1315,7 +1408,15 @@ export class AppScreen implements Component, Focusable {
       this.handleConfigItemSelection(schema, currentValues);
     };
     list.onCancel = () => {
-      this.showConfigGroupSelector(this.configEditorState!.schemaList, currentValues);
+      if (this.statusViewState) {
+        this.statusViewState.phase = "tab_view";
+        this.statusViewState.tab = "config";
+        this.rebuildStatusViewTabList();
+        this.configEditorState = null;
+        this.tui.requestRender();
+      } else {
+        this.showConfigGroupSelector(this.configEditorState!.schemaList, currentValues);
+      }
     };
     this.configEditorState = {
       phase: "select_item",
@@ -1378,6 +1479,12 @@ export class AppScreen implements Component, Focusable {
           (s) => s.group === this.configEditorState!.selectedGroup,
         );
         this.showConfigGroupItems(this.configEditorState.selectedGroup, groupSchemas, currentValues);
+      } else if (this.statusViewState) {
+        this.statusViewState.phase = "tab_view";
+        this.statusViewState.tab = "config";
+        this.rebuildStatusViewTabList();
+        this.configEditorState = null;
+        this.tui.requestRender();
       } else {
         this.configEditorState = null;
         this.tui.requestRender();
@@ -1414,15 +1521,271 @@ export class AppScreen implements Component, Focusable {
       const message = error instanceof Error ? error.message : String(error);
       this.state.addItem(addError(this.state.getSnapshot().sessionId, `config.set failed: ${message}`));
     }
-    if (this.configEditorState?.selectedGroup) {
-      const groupSchemas = this.configEditorState.schemaList.filter(
-        (s) => s.group === this.configEditorState!.selectedGroup,
-      );
-      this.showConfigGroupItems(this.configEditorState.selectedGroup, groupSchemas, currentValues);
+    if (this.statusViewState) {
+      // Return to config tab in StatusView instead of closing entirely
+      this.statusViewState.phase = "tab_view";
+      this.statusViewState.tab = "config";
+      this.rebuildStatusViewTabList();
+      this.configEditorState = null;
+      this.tui.requestRender();
     } else {
       this.configEditorState = null;
       this.tui.requestRender();
     }
+  }
+
+  // ──────────────────────────── StatusView ────────────────────────────
+
+  private async openStatusView(tab?: StatusViewTab): Promise<void> {
+    const initialTab: StatusViewTab = tab ?? "status";
+
+    // Fetch status payload
+    let statusPayload: import("../core/commands/builtins/status.js").StatusPayload | null = null;
+    try {
+      statusPayload = await this.state.request<import("../core/commands/builtins/status.js").StatusPayload>(
+        "command.status",
+        {},
+      );
+    } catch {
+      // proceed with null — tab will show placeholder
+    }
+
+    // Fetch config payload (needed for Config tab)
+    let configPayload: (Record<string, unknown> & { schema?: ConfigItemSchema[] }) | null = null;
+    try {
+      configPayload = await this.state.request<Record<string, unknown> & { schema?: ConfigItemSchema[] }>(
+        "config.get",
+        {},
+      );
+    } catch {
+      // proceed with null
+    }
+
+    this.statusViewState = {
+      phase: "tab_view",
+      tab: initialTab,
+      list: this.buildStatusViewTabState(initialTab, statusPayload, configPayload),
+      statusPayload,
+      configPayload,
+    };
+    this.tui.requestRender();
+  }
+
+  private buildStatusViewTabState(
+    tab: StatusViewTab,
+    statusPayload: import("../core/commands/builtins/status.js").StatusPayload | null,
+    configPayload: (Record<string, unknown> & { schema?: ConfigItemSchema[] }) | null,
+  ): SelectList {
+    const items: SelectItem[] =
+      tab === "status"
+        ? this.buildStatusTabItems(statusPayload)
+        : tab === "usage"
+          ? this.buildUsageTabItems()
+          : this.buildConfigTabItems(configPayload);
+
+    const list = new SelectList(items, Math.min(Math.max(items.length, 1), 10), selectListTheme, {
+      minPrimaryColumnWidth: 20,
+      maxPrimaryColumnWidth: 50,
+    });
+    list.onSelect = (item) => {
+      if (tab === "config" && item.value !== "__display__") {
+        this.transitionToConfigEditor(item.value);
+      }
+    };
+    list.onCancel = () => {
+      this.closeStatusView();
+    };
+    return list;
+  }
+
+  private buildStatusTabItems(
+    payload: import("../core/commands/builtins/status.js").StatusPayload | null,
+  ): SelectItem[] {
+    if (!payload) {
+      return [{ value: "__display__", label: "Failed to load status data", description: "" }];
+    }
+    const snapshot = this.state.getSnapshot();
+    const items: SelectItem[] = [
+      { value: "__display__", label: `version: ${payload.version || "unknown"}`, description: "" },
+      { value: "__display__", label: `session: ${payload.session_id || snapshot.sessionId}`, description: "" },
+      { value: "__display__", label: `name: ${snapshot.sessionTitle || "/rename to add a name"}`, description: "" },
+      { value: "__display__", label: `cwd: ${payload.cwd || "unknown"}`, description: "" },
+      { value: "__display__", label: `mode: ${snapshot.mode}`, description: "" },
+      { value: "__display__", label: `model: ${payload.model || "unknown"}`, description: "" },
+      { value: "__display__", label: `provider: ${payload.provider || "unknown"}`, description: "" },
+      { value: "__display__", label: `api_base: ${payload.api_base || "unknown"}`, description: "" },
+      { value: "__display__", label: `connection: ${payload.connection_status || snapshot.connectionStatus}`, description: "" },
+    ];
+
+    const mcpServers = payload.mcp_servers ?? [];
+    for (const srv of mcpServers) {
+      items.push({
+        value: "__display__",
+        label: `mcp: ${srv.name}`,
+        description: `${srv.transport} | ${srv.enabled ? "enabled" : "disabled"}`,
+      });
+    }
+
+    const sources = payload.settings_sources ?? [];
+    for (const s of sources) {
+      items.push({ value: "__display__", label: `config_source: ${s}`, description: "" });
+    }
+    items.push({ value: "__display__", label: `config_path: ${payload.config_path || "unknown"}`, description: "" });
+
+    return items;
+  }
+
+  private buildUsageTabItems(): SelectItem[] {
+    const summary = this.state.getUsageSummary();
+    const fmt = (n: number) => n.toLocaleString("en-US");
+    const items: SelectItem[] = [
+      { value: "__display__", label: `input_tokens: ${fmt(summary.total_input_tokens)}`, description: "" },
+      { value: "__display__", label: `output_tokens: ${fmt(summary.total_output_tokens)}`, description: "" },
+      { value: "__display__", label: `total_tokens: ${fmt(summary.total_tokens)}`, description: "" },
+    ];
+
+    for (const entry of summary.byModel) {
+      items.push(
+        { value: "__display__", label: `model: ${entry.model}`, description: `${fmt(entry.total_tokens)} tokens` },
+        { value: "__display__", label: `  input`, description: fmt(entry.input_tokens) },
+        { value: "__display__", label: `  output`, description: fmt(entry.output_tokens) },
+      );
+    }
+    return items;
+  }
+
+  private buildConfigTabItems(
+    configPayload: (Record<string, unknown> & { schema?: ConfigItemSchema[] }) | null,
+  ): SelectItem[] {
+    if (!configPayload?.schema?.length) {
+      return [{ value: "__display__", label: "No config schema available", description: "" }];
+    }
+    const schemaList = configPayload.schema;
+    const groups: Record<string, ConfigItemSchema[]> = {};
+    for (const schema of schemaList) {
+      const group = schema.group || "Other";
+      if (!groups[group]) groups[group] = [];
+      groups[group].push(schema);
+    }
+
+    const items: SelectItem[] = [];
+    for (const groupName of Object.keys(groups)) {
+      const groupSchemas = groups[groupName];
+      items.push({ value: "__display__", label: groupName, description: `${groupSchemas.length} items` });
+      for (const schema of groupSchemas) {
+        const val = String(configPayload[schema.key] ?? "");
+        const displayVal =
+          schema.type === "toggle"
+            ? val === "true" ? "Enabled" : "Disabled"
+            : schema.sensitive
+              ? val.length > 8 ? `${val.slice(0, 4)}****${val.slice(-4)}` : "***"
+              : val || "(empty)";
+        items.push({
+          value: schema.key,
+          label: `  ${schema.label}: ${displayVal}`,
+          description: schema.description,
+        });
+      }
+    }
+    return items;
+  }
+
+  private renderTabBar(width: number): string[] {
+    const tabs: StatusViewTab[] = ["status", "usage", "config"];
+    const labels = tabs.map((t) => (t === this.statusViewState!.tab ? `[${t}]` : ` ${t} `));
+    const barText = labels.join("  ");
+    const activeIndex = tabs.indexOf(this.statusViewState!.tab);
+    // Highlight active tab
+    const parts: string[] = [];
+    let pos = 0;
+    for (let i = 0; i < labels.length; i++) {
+      const seg = labels[i];
+      if (i === activeIndex) {
+        parts.push(palette.status.warning(seg));
+      } else {
+        parts.push(palette.text.dim(seg));
+      }
+      pos += seg.length;
+      if (i < labels.length - 1) {
+        parts.push(palette.text.dim("  "));
+        pos += 2;
+      }
+    }
+    const combined = parts.join("");
+    return [padToWidth(combined, width)];
+  }
+
+  private getTabHint(tab: StatusViewTab): string {
+    if (tab === "status" || tab === "usage") {
+      return "←/→ switch tab · Esc close";
+    }
+    return "←/→ switch tab · Enter edit item · Esc close";
+  }
+
+  private buildStatusViewLines(width: number): string[] {
+    if (!this.statusViewState) return [];
+    if (this.statusViewState.phase === "config_editor") {
+      return this.buildConfigEditorLines(width);
+    }
+    const lines: string[] = [];
+    lines.push(...this.renderTabBar(width));
+    lines.push(padToWidth(palette.status.warning("Status"), width));
+    lines.push(...this.statusViewState.list.render(width));
+    lines.push(padToWidth(palette.text.dim(this.getTabHint(this.statusViewState.tab)), width));
+    return lines;
+  }
+
+  private switchStatusViewTab(direction: -1 | 1): void {
+    if (!this.statusViewState || this.statusViewState.phase !== "tab_view") return;
+    const tabs: StatusViewTab[] = ["status", "usage", "config"];
+    const current = tabs.indexOf(this.statusViewState.tab);
+    const next = (current + direction + tabs.length) % tabs.length;
+    this.statusViewState.tab = tabs[next];
+    this.rebuildStatusViewTabList();
+    this.tui.requestRender();
+  }
+
+  private rebuildStatusViewTabList(): void {
+    if (!this.statusViewState) return;
+    this.statusViewState.list = this.buildStatusViewTabState(
+      this.statusViewState.tab,
+      this.statusViewState.statusPayload,
+      this.statusViewState.configPayload,
+    );
+    this.tui.requestRender();
+  }
+
+  private transitionToConfigEditor(key: string): void {
+    if (!this.statusViewState?.configPayload?.schema?.length) return;
+    const schemaList = this.statusViewState.configPayload.schema;
+    const schema = schemaList.find((s) => s.key === key);
+    if (!schema) return;
+
+    const currentValues: Record<string, string> = {};
+    for (const s of schemaList) {
+      currentValues[s.key] = String(this.statusViewState.configPayload?.[s.key] ?? "");
+    }
+
+    this.statusViewState.phase = "config_editor";
+    this.configEditorState = {
+      phase: "select_group",
+      schemaList,
+      currentValues,
+      selectedGroup: null,
+      selectedKey: null,
+      list: new SelectList([], 1, selectListTheme),
+    };
+
+    // Navigate directly to the item's group or value
+    const group = schema.group || "Other";
+    const groupSchemas = schemaList.filter((s) => (s.group || "Other") === group);
+    this.showConfigGroupItems(group, groupSchemas, currentValues);
+  }
+
+  private closeStatusView(): void {
+    this.statusViewState = null;
+    this.configEditorState = null;
+    this.tui.requestRender();
   }
 
   private syncComposerAttachmentsFromEditor(): void {

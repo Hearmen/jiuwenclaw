@@ -96,6 +96,8 @@ export interface AppEventDelegate {
   reportHistoryPageMeta(meta: { pageIdx?: number; totalPages?: number }): void;
   /** 某一页 history.get 流已结束（收到 `status: done` 帧），由 app-state 决定是否继续拉下一页。 */
   notifyHistoryPageDone(pageIdx: number): void;
+  /** 累加 chat.usage_summary 事件的 token/cost 数据（按 model 分桶）。 */
+  appendUsageSummary(usage: Record<string, unknown>, model?: string): void;
 }
 
 function _handleSwitchModeToolResult(
@@ -889,6 +891,15 @@ export function handleIncomingFrame(delegate: AppEventDelegate, frame: EventFram
 
     case "team.message":
       return handleTeamMessageEvent(delegate, payload);
+
+    case "chat.usage_summary":
+      delegate.appendUsageSummary(
+        typeof payload.usage === "object" && payload.usage !== null
+          ? (payload.usage as Record<string, unknown>)
+          : {},
+        typeof payload.model === "string" ? payload.model : undefined,
+      );
+      return true;
 
     default:
       return connectionChanged;

@@ -3,8 +3,11 @@ import type { AccentColorName, ThemeName } from "../../ui/theme.js";
 import type { PendingQuestionItem, UserAnswer } from "../event-handlers.js";
 import type { FileAttachment } from "../protocol.js";
 import type { ConfigItemSchema } from "./builtins/config.js";
+import type { SessionUsageSummary } from "../../app-state.js";
 
 export type ConnectionStatus = "idle" | "connecting" | "connected" | "reconnecting" | "auth_failed";
+
+export type StatusViewTab = "status" | "usage" | "config";
 
 export enum CommandKind {
   BUILT_IN = "built-in",
@@ -69,10 +72,12 @@ export interface CommandContext {
   clearTrustedDirs: () => void;
   // Workspace directory (current working directory)
   getWorkspaceDir: () => string | undefined;
+  getUsageSummary: () => SessionUsageSummary;
   enterConfigEditor?: (
     focusKey?: string,
     configPayload?: Record<string, unknown> & { schema?: ConfigItemSchema[] },
   ) => void;
+  enterStatusView?: (tab?: StatusViewTab) => void;
   openInEditor?: (filePath: string) => void;
 }
 

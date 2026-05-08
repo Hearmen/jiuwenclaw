@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import asyncio
+import datetime as _dt
 import json
 import logging
 import math
@@ -28,11 +29,13 @@ from jiuwenclaw.common.e2a.wire_codec import (
     encode_json_parse_error_wire,
 )
 from jiuwenclaw.common.schema.agent import AgentRequest, AgentResponse, AgentResponseChunk
+from jiuwenclaw.common.version import __version__
 from jiuwenclaw.extensions.hook_event import AgentServerHookEvents
 from jiuwenclaw.agents.harness.common.plugins.rail_manager import get_rail_manager
 from jiuwenclaw.agents.harness.common.rails.permissions.permissions_persist import persist_cli_trusted_directory
 from jiuwenclaw.extensions.hooks_context import AgentServerChatHookContext
 from jiuwenclaw.server.runtime.agent_manager import AgentManager, ACP_DEFAULT_CAPABILITIES
+from jiuwenclaw.server.runtime.session.session_metadata import get_all_sessions_metadata
 from jiuwenclaw.agents.harness.common.rails.permissions.permissions_config_rpc import get_permissions_config_req_methods
 from jiuwenclaw.common.config import (
     get_config,
@@ -423,6 +426,9 @@ class AgentWebSocketServer:
                 return
             if request.req_method == ReqMethod.COMMAND_SESSION:
                 await self._handle_command_session(ws, request, send_lock)
+                return
+            if request.req_method == ReqMethod.COMMAND_STATUS:
+                await self._handle_command_status(ws, request, send_lock)
                 return
             if request.req_method == ReqMethod.BROWSER_START:
                 await self._handle_browser_start(ws, request, send_lock)
@@ -1334,6 +1340,118 @@ class AgentWebSocketServer:
             )
         except Exception as e:  # noqa: BLE001
             logger.exception("[AgentWebSocketServer] command.session failed: %s", e)
+            resp = AgentResponse(
+                request_id=request.request_id,
+                channel_id=request.channel_id,
+                ok=False,
+                payload={"error": str(e)},
+            )
+        wire = encode_agent_response_for_wire(resp, response_id=request.request_id)
+        async with send_lock:
+            await ws.send(json.dumps(wire, ensure_ascii=False))
+
+    async def _handle_command_status(self, ws: Any, request: AgentRequest, send_lock: asyncio.Lock) -> None:
+        try:
+            params = request.params or {}
+            action = str(params.get("action", "overview")).strip().lower()
+
+            if action == "usage":
+                sessions, total = get_all_sessions_metadata(limit=500, offset=0)
+                messages_total = sum(s.get("message_count", 0) for s in sessions)
+                model_counts: dict[str, int] = {}
+                for s in sessions:
+                    mode = str(s.get("mode", "unknown"))
+                    model_counts[mode] = model_counts.get(mode, 0) + 1
+                active_days_set: set[str] = set()
+                longest_hours = 0.0
+                for s in sessions:
+                    created = s.get("created_at", 0)
+                    last = s.get("last_message_at", 0)
+                    if created:
+                        try:
+                            day_str = _dt.datetime.fromtimestamp(
+                                created, tz=_dt.timezone.utc
+                            ).strftime("%Y-%m-%d")
+                            active_days_set.add(day_str)
+                        except Exception:  # noqa: BLE001
+                            pass
+                    if created and last:
+                        longest_hours = max(longest_hours, (last - created) / 3600)
+
+                models_used = [{"name": k, "count": v} for k, v in sorted(model_counts.items(), key=lambda x: -x[1])]
+                resp = AgentResponse(
+                    request_id=request.request_id,
+                    channel_id=request.channel_id,
+                    ok=True,
+                    payload={
+                        "sessions_total": total,
+                        "messages_total": messages_total,
+                        "models_used": models_used,
+                        "active_days": len(active_days_set),
+                        "longest_session_hours": round(longest_hours, 1),
+                    },
+                )
+            elif action == "config":
+                config_path = str(get_config_file())
+                settings_sources: list[str] = []
+                config_dir = os.getenv("JIUWENCLAW_CONFIG_DIR")
+                if config_dir:
+                    settings_sources.append(f"env:JIUWENCLAW_CONFIG_DIR={config_dir}")
+                settings_sources.append(config_path)
+                resp = AgentResponse(
+                    request_id=request.request_id,
+                    channel_id=request.channel_id,
+                    ok=True,
+                    payload={
+                        "config_path": config_path,
+                        "settings_sources": settings_sources,
+                    },
+                )
+            else:
+                # overview (default)
+                config = get_config()
+                session_id = request.session_id or ""
+                model_name = os.getenv("MODEL_NAME", config.get("model", ""))
+                provider = os.getenv("MODEL_PROVIDER", str(config.get("model_provider", "")))
+                api_base = os.getenv("API_BASE", str(config.get("api_base", "")))
+
+                mcp_servers = get_mcp_servers()
+                mcp_summary = [
+                    {
+                        "name": str(s.get("name", "unknown")),
+                        "enabled": bool(s.get("enabled", True)),
+                        "transport": str(s.get("transport", "unknown")),
+                    }
+                    for s in mcp_servers
+                    if isinstance(s, dict)
+                ]
+
+                config_path = str(get_config_file())
+                settings_sources: list[str] = []
+                config_dir = os.getenv("JIUWENCLAW_CONFIG_DIR")
+                if config_dir:
+                    settings_sources.append(f"env:JIUWENCLAW_CONFIG_DIR={config_dir}")
+                settings_sources.append(config_path)
+
+                resp = AgentResponse(
+                    request_id=request.request_id,
+                    channel_id=request.channel_id,
+                    ok=True,
+                    payload={
+                        "version": __version__,
+                        "session_id": session_id,
+                        "cwd": os.getcwd(),
+                        "model": model_name,
+                        "provider": provider,
+                        "api_base": api_base,
+                        "connection_status": "connected",
+                        "mcp_servers": mcp_summary,
+                        "config_path": config_path,
+                        "settings_sources": settings_sources,
+                    },
+                )
+        except Exception as e:  # noqa: BLE001
+            logger.exception("[AgentWebSocketServer] command.status failed: %s", e)
             resp = AgentResponse(
                 request_id=request.request_id,
                 channel_id=request.channel_id,

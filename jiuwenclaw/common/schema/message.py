@@ -24,6 +24,7 @@ class ReqMethod(Enum):
     COMMAND_MODEL = "command.model"
     COMMAND_RESUME = "command.resume"
     COMMAND_SESSION = "command.session"
+    COMMAND_STATUS = "command.status"
 
     CONFIG_GET = "config.get"
     CONFIG_SET = "config.set"

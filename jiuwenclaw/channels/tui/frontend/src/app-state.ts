@@ -55,6 +55,20 @@ import {
   clearTrustedDirs,
 } from "./core/tui-trusted-dirs-store.js";
 
+export interface ModelUsageEntry {
+  model: string;
+  input_tokens: number;
+  output_tokens: number;
+  total_tokens: number;
+}
+
+export interface SessionUsageSummary {
+  total_input_tokens: number;
+  total_output_tokens: number;
+  total_tokens: number;
+  byModel: ModelUsageEntry[];
+}
+
 export interface AppSnapshot {
   connectionStatus: ConnectionStatus;
   sessionId: string;
@@ -134,6 +148,7 @@ export class CliPiAppState {
   private historyPageDoneResolvers = new Map<number, () => void>();
   private unlistenStatus: (() => void) | null = null;
   private unlistenFrames: (() => void) | null = null;
+  private usageByModel = new Map<string, ModelUsageEntry>();
   private modelInfo: { provider: string; model: string; version: string } = {
     provider: "",
     model: "",
@@ -228,6 +243,18 @@ export class CliPiAppState {
         this.historyPageDoneResolvers.delete(pageIdx);
         resolver();
       }
+    },
+    appendUsageSummary: (usage, model) => {
+      const key = model || "unknown";
+      const existing = this.usageByModel.get(key);
+      const u = usage as Record<string, unknown>;
+      const entry: ModelUsageEntry = {
+        model: key,
+        input_tokens: (existing?.input_tokens ?? 0) + (typeof u.input_tokens === "number" ? u.input_tokens : 0),
+        output_tokens: (existing?.output_tokens ?? 0) + (typeof u.output_tokens === "number" ? u.output_tokens : 0),
+        total_tokens: (existing?.total_tokens ?? 0) + (typeof u.total_tokens === "number" ? u.total_tokens : 0),
+      };
+      this.usageByModel.set(key, entry);
     },
   };
 
@@ -421,6 +448,18 @@ export class CliPiAppState {
       clearTrustedDirs: clearTrustedDirs,
       getWorkspaceDir: () => getTrustedDirs()[0] || process.cwd(),
       enterConfigEditor: undefined, // AppScreen injects the real handler when executing slash commands.
+      enterStatusView: undefined,
+      getUsageSummary: () => this.getUsageSummary(),
+    };
+  }
+
+  getUsageSummary(): SessionUsageSummary {
+    const entries = Array.from(this.usageByModel.values());
+    return {
+      total_input_tokens: entries.reduce((s, e) => s + e.input_tokens, 0),
+      total_output_tokens: entries.reduce((s, e) => s + e.output_tokens, 0),
+      total_tokens: entries.reduce((s, e) => s + e.total_tokens, 0),
+      byModel: entries,
     };
   }
 
@@ -461,6 +500,7 @@ readonly request = async <T = Record<string, unknown>>(
 
   readonly updateSession = (newId: string): void => {
     this.sessionId = newId;
+    this.usageByModel.clear();
     this.emitChange();
   };
 
