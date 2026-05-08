@@ -128,10 +128,12 @@ class SecurityReviewAndSkillRail(DeepAgentRail):
         inputs = getattr(ctx, "inputs", None)
         session_id = self._extract_session_id(inputs, self._session_id)
         signals = self._session_signals.get(session_id, [])
-        medium_signals = [signal for signal in signals if signal.severity == Severity.MEDIUM]
-        if not medium_signals:
+        session_review_signals = [
+            signal for signal in signals if signal.severity in {Severity.LOW, Severity.MEDIUM}
+        ]
+        if not session_review_signals:
             return
-        iteration = max((signal.iteration for signal in medium_signals), default=0)
+        iteration = max((signal.iteration for signal in session_review_signals), default=0)
         self.scheduler.schedule(
             ReviewRequest(
                 request_type="session_end_review",
@@ -139,7 +141,7 @@ class SecurityReviewAndSkillRail(DeepAgentRail):
                 priority=Severity.MEDIUM,
                 dedupe_key=(session_id, "session_end_review", str(iteration)),
                 iteration=iteration,
-                signals=medium_signals[-5:],
+                signals=session_review_signals[-5:],
                 counters=self.state.counter_snapshot(session_id),
                 sample_events=self.state.snapshot_events(session_id)[-5:],
             )
@@ -216,48 +218,7 @@ class SecurityReviewAndSkillRail(DeepAgentRail):
         signals = self.classifier.classify(event)
         if signals:
             self._session_signals.setdefault(event.session_id, []).extend(signals)
-        generated = self.state.record_signals(signals)
-        for signal in signals:
-            if signal.severity not in {Severity.HIGH, Severity.CRITICAL}:
-                continue
-            if signal.signal_type == "permission_boundary_hit":
-                continue
-            self.scheduler.schedule(
-                ReviewRequest(
-                    request_type="high_risk_review",
-                    session_id=signal.session_id,
-                    priority=signal.severity,
-                    dedupe_key=(
-                        signal.session_id,
-                        signal.signal_type,
-                        signal.tool_name,
-                        signal.evidence[:80],
-                    ),
-                    iteration=signal.iteration,
-                    signals=[signal],
-                    counters=self.state.counter_snapshot(signal.session_id),
-                    sample_events=self.state.snapshot_events(signal.session_id)[-5:],
-                )
-            )
-        if not self.config.timely_tool_failure_review:
-            return
-
-        for signal in generated:
-            if signal.signal_type != "repeated_tool_failure":
-                continue
-            failure = signal.failure_class.value if signal.failure_class else "unknown_failure"
-            self.scheduler.schedule(
-                ReviewRequest(
-                    request_type="timely_tool_failure_review",
-                    session_id=signal.session_id,
-                    priority=Severity.HIGH,
-                    dedupe_key=(signal.session_id, signal.tool_name, failure),
-                    iteration=signal.iteration,
-                    signals=[signal],
-                    counters=self.state.counter_snapshot(signal.session_id),
-                    sample_events=self.state.snapshot_events(signal.session_id)[-5:],
-                )
-            )
+        self.state.record_signals(signals)
 
     def _enrich_request(self, request: ReviewRequest) -> ReviewRequest:
         request.sample_messages = self._sample_messages(request.session_id)[-8:]

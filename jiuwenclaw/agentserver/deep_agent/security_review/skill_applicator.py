@@ -24,7 +24,21 @@ def security_skill_candidate_to_skill_spec(candidate: dict[str, Any]) -> dict[st
     if not title:
         raise SecuritySkillApplicationError("title must be non-empty")
 
-    problem = str(candidate.get("problem") or "").strip()
+    skill_description = str(candidate.get("skill_description") or "").strip()
+    if not skill_description:
+        raise SecuritySkillApplicationError("skill_description must be non-empty")
+
+    attack_pattern_name = str(candidate.get("attack_pattern_name") or "").strip()
+    if not attack_pattern_name:
+        raise SecuritySkillApplicationError("attack_pattern_name must be non-empty")
+
+    attack_pattern_description = str(
+        candidate.get("attack_pattern_description") or candidate.get("problem") or ""
+    ).strip()
+    if not attack_pattern_description:
+        raise SecuritySkillApplicationError("attack_pattern_description must be non-empty")
+
+    problem = str(candidate.get("problem") or attack_pattern_description).strip()
     if not problem:
         raise SecuritySkillApplicationError("problem must be non-empty")
 
@@ -33,27 +47,44 @@ def security_skill_candidate_to_skill_spec(candidate: dict[str, Any]) -> dict[st
         raise SecuritySkillApplicationError("suggested_skill_scope must be non-empty")
 
     evidence = _coerce_non_empty_list(candidate.get("evidence"), "evidence")
+    iocs = _coerce_non_empty_list(candidate.get("iocs"), "iocs")
+    false_positive_exclusions = _coerce_non_empty_list(
+        candidate.get("false_positive_exclusions"),
+        "false_positive_exclusions",
+    )
+    analysis_workflow = str(candidate.get("analysis_workflow") or "").strip()
+    if not analysis_workflow:
+        raise SecuritySkillApplicationError("analysis_workflow must be non-empty")
     recommended_response = str(
-        candidate.get("recommended_response")
-        or candidate.get("response")
-        or "Describe the defensive pattern, relevant IOCs, and recommended response."
+        candidate.get("recommended_response") or candidate.get("response") or ""
     ).strip()
+    if not recommended_response:
+        raise SecuritySkillApplicationError("recommended_response must be non-empty")
+    attack_variants = _coerce_non_empty_list(
+        candidate.get("attack_variants"),
+        "attack_variants",
+    )
     category = str(candidate.get("category") or "security").strip() or "security"
     skill_name = _skill_name(candidate, title)
-    description = f"Security guidance for {title}."
 
     return {
         "name": skill_name,
-        "description": description,
+        "description": skill_description,
         "category": category,
         "content": _render_skill_md(
             name=skill_name,
-            description=description,
+            description=skill_description,
             title=title,
-            problem=problem,
+            skill_description=skill_description,
+            attack_pattern_name=attack_pattern_name,
+            attack_pattern_description=attack_pattern_description,
+            iocs=iocs,
+            false_positive_exclusions=false_positive_exclusions,
+            analysis_workflow=analysis_workflow,
             scope=scope,
             evidence=evidence,
             recommended_response=recommended_response,
+            attack_variants=attack_variants,
         ),
     }
 
@@ -160,24 +191,47 @@ def _render_skill_md(
     name: str,
     description: str,
     title: str,
-    problem: str,
+    skill_description: str,
+    attack_pattern_name: str,
+    attack_pattern_description: str,
+    iocs: list[str],
+    false_positive_exclusions: list[str],
+    analysis_workflow: str,
     scope: str,
     evidence: list[str],
     recommended_response: str,
+    attack_variants: list[str],
 ) -> str:
     evidence_lines = "\n".join(f"- {_single_line(item)}" for item in evidence)
+    ioc_lines = "\n".join(f"- {_single_line(item)}" for item in iocs)
+    exclusion_lines = "\n".join(
+        f"- {_single_line(item)}" for item in false_positive_exclusions
+    )
+    variant_lines = "\n".join(f"- {_single_line(item)}" for item in attack_variants)
     return (
         "---\n"
         f"name: {name}\n"
         f"description: {json.dumps(description, ensure_ascii=False)}\n"
         "---\n\n"
         f"# {title}\n\n"
-        "## Security Pattern\n\n"
-        f"{problem}\n\n"
-        "## Evidence\n\n"
-        f"{evidence_lines}\n\n"
+        "## Skill Description\n\n"
+        f"{skill_description}\n\n"
+        "## Attack Pattern Name\n\n"
+        f"{attack_pattern_name}\n\n"
+        "## Attack Pattern Description\n\n"
+        f"{attack_pattern_description}\n\n"
+        "## IOCs\n\n"
+        f"{ioc_lines}\n\n"
+        "## False Positive Exclusions\n\n"
+        f"{exclusion_lines}\n\n"
+        "## Analysis Workflow\n\n"
+        f"{analysis_workflow}\n\n"
         "## Recommended Response\n\n"
         f"{recommended_response}\n\n"
+        "## Attack Variants\n\n"
+        f"{variant_lines}\n\n"
+        "## Evidence\n\n"
+        f"{evidence_lines}\n\n"
         "## Operational Guidance\n\n"
         f"{scope}\n"
     )

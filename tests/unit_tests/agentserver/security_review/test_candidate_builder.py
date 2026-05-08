@@ -188,7 +188,10 @@ def test_candidate_builder_prompt_contains_security_addendum():
     )
 
     assert "post-exploitation chain" in SECURITY_ADDENDUM
+    assert "attack pattern recognizer" in SECURITY_CANDIDATE_SYSTEM_PROMPT
     assert "create_security_skill" in SECURITY_CANDIDATE_SYSTEM_PROMPT
+    assert "propose_policy_rule" in SECURITY_CANDIDATE_SYSTEM_PROMPT
+    assert "runtime_advice" not in SECURITY_CANDIDATE_SYSTEM_PROMPT
     assert "requires_approval=true" in SECURITY_CANDIDATE_SYSTEM_PROMPT
 
 
@@ -196,7 +199,6 @@ def test_candidate_builder_accepts_llm_security_skill_candidate():
     builder = SecurityCandidateBuilder()
     raw = {
         "summary": "post-exploitation chain detected",
-        "runtime_advice": "Stop chaining remote execution and credential access.",
         "candidate_decisions": [
             {
                 "action": "create_security_skill",
@@ -207,6 +209,13 @@ def test_candidate_builder_accepts_llm_security_skill_candidate():
                     "type": "security_skill",
                     "title": "Detect post-exploitation chains",
                     "problem": "Cross-turn post-exploitation chain",
+                    "skill_description": "Recognize multi-step post-exploitation attack chains.",
+                    "attack_pattern_name": "Post-exploitation chain",
+                    "attack_pattern_description": "Benign-looking steps combine into listener setup, remote execution, and credential access.",
+                    "iocs": ["listener setup", "credential access"],
+                    "false_positive_exclusions": ["authorized lab exercise with explicit scope"],
+                    "analysis_workflow": "Correlate listener, execution, persistence, and credential access across turns.",
+                    "attack_variants": ["listener then credential access", "downloaded payload then persistence"],
                     "evidence": ["listener", "credential access"],
                     "suggested_skill_scope": "Describe pattern, IOCs, and response.",
                     "recommended_response": "Stop the chain and request authorization.",
@@ -220,10 +229,57 @@ def test_candidate_builder_accepts_llm_security_skill_candidate():
     parsed = builder.validate_llm_result(raw)
 
     assert parsed["summary"] == "post-exploitation chain detected"
-    assert parsed["runtime_advice"]
+    assert parsed["runtime_advice"] == ""
     assert parsed["candidates"][0]["type"] == "security_skill"
+    assert parsed["candidates"][0]["attack_pattern_name"] == "Post-exploitation chain"
     assert parsed["candidates"][0]["category"] == "security"
     assert parsed["candidates"][0]["requires_approval"] is True
+
+
+def test_candidate_builder_accepts_only_one_llm_candidate_per_review():
+    builder = SecurityCandidateBuilder()
+    raw = {
+        "summary": "two options",
+        "candidate_decisions": [
+            {
+                "action": "propose_policy_rule",
+                "title": "Block curl pipe shell",
+                "rationale": "Clear single-command attack pattern.",
+                "evidence": ["curl | sh"],
+                "candidate": {
+                    "type": "security_rule",
+                    "rule_id": "block-curl-pipe-shell",
+                    "severity": "HIGH",
+                    "tools": ["bash"],
+                    "pattern": "curl | sh",
+                    "rationale": "Clear single-command attack pattern.",
+                    "evidence": ["curl | sh"],
+                    "requires_approval": True,
+                },
+            },
+            {
+                "action": "propose_policy_rule",
+                "title": "Block wget pipe shell",
+                "rationale": "Second candidate should be ignored.",
+                "evidence": ["wget | sh"],
+                "candidate": {
+                    "type": "security_rule",
+                    "rule_id": "block-wget-pipe-shell",
+                    "severity": "HIGH",
+                    "tools": ["bash"],
+                    "pattern": "wget | sh",
+                    "rationale": "Second candidate should be ignored.",
+                    "evidence": ["wget | sh"],
+                    "requires_approval": True,
+                },
+            },
+        ],
+    }
+
+    parsed = builder.validate_llm_result(raw)
+
+    assert len(parsed["candidates"]) == 1
+    assert parsed["candidates"][0]["rule_id"] == "block-curl-pipe-shell"
 
 
 def test_candidate_builder_rejects_llm_candidate_missing_required_application_fields():
@@ -242,6 +298,7 @@ def test_candidate_builder_rejects_llm_candidate_missing_required_application_fi
                     "problem": "Problem exists",
                     "evidence": ["x"],
                     "suggested_skill_scope": "Scope exists",
+                    "recommended_response": "Response exists",
                     "requires_approval": True,
                 },
             },
@@ -339,7 +396,6 @@ async def test_worker_uses_llm_for_candidate_decisions():
         """
         {
           "summary": "chain",
-          "runtime_advice": "Stop the chain.",
           "candidate_decisions": [
             {
               "action": "create_security_skill",
@@ -350,6 +406,13 @@ async def test_worker_uses_llm_for_candidate_decisions():
                 "type": "security_skill",
                 "title": "Post exploitation chain defense",
                 "problem": "Cross-turn chain",
+                "skill_description": "Recognize multi-step post-exploitation attack chains.",
+                "attack_pattern_name": "Post exploitation chain",
+                "attack_pattern_description": "Listener setup plus credential access across turns.",
+                "iocs": ["listener", "credential access"],
+                "false_positive_exclusions": ["authorized scoped lab"],
+                "analysis_workflow": "Correlate steps across messages and tool calls.",
+                "attack_variants": ["listener then credentials"],
                 "evidence": ["listener", "credential access"],
                 "suggested_skill_scope": "Pattern, IOCs, response",
                 "recommended_response": "Stop the chain and request authorization.",
@@ -377,12 +440,12 @@ async def test_worker_uses_llm_for_candidate_decisions():
     assert llm.calls
     assert "post-exploitation chain" in llm.calls[0][0]["content"]
     assert result.summary == "chain"
-    assert result.runtime_advice == "Stop the chain."
+    assert result.runtime_advice == ""
     assert result.candidates[0]["type"] == "security_skill"
 
 
 @pytest.mark.asyncio
-async def test_worker_without_llm_returns_runtime_advice_but_no_candidates():
+async def test_worker_without_llm_returns_no_runtime_advice_and_no_candidates():
     worker = SecurityReviewWorker(candidate_builder=SecurityCandidateBuilder(), llm=None)
     request = ReviewRequest(
         request_type="timely_tool_failure_review",
@@ -394,5 +457,5 @@ async def test_worker_without_llm_returns_runtime_advice_but_no_candidates():
 
     result = await worker.review(request)
 
-    assert result.runtime_advice
+    assert result.runtime_advice == ""
     assert result.candidates == []

@@ -28,12 +28,11 @@ class SecurityReviewWorker:
         self._llm = llm
 
     async def review(self, request: ReviewRequest) -> ReviewResult:
-        fallback_advice = self._build_runtime_advice(request)
         if self._llm is None:
             return ReviewResult(
                 session_id=request.session_id,
                 summary=self._summary(request),
-                runtime_advice=fallback_advice,
+                runtime_advice="",
                 candidates=[],
             )
 
@@ -42,7 +41,7 @@ class SecurityReviewWorker:
         return ReviewResult(
             session_id=request.session_id,
             summary=parsed["summary"] or self._summary(request),
-            runtime_advice=parsed["runtime_advice"] or fallback_advice,
+            runtime_advice="",
             candidates=parsed["candidates"],
         )
 
@@ -70,21 +69,4 @@ class SecurityReviewWorker:
         tool_names = sorted({signal.tool_name for signal in request.signals if signal.tool_name})
         return (
             f"Security review {request.request_type} for tools: {', '.join(tool_names) or 'none'}"
-        )
-
-    @staticmethod
-    def _build_runtime_advice(request: ReviewRequest) -> str:
-        if not request.signals:
-            return ""
-        signal = request.signals[0]
-        tool_name = signal.tool_name or "unknown"
-        if signal.signal_type == "repeated_tool_failure":
-            failure = signal.failure_class.value if signal.failure_class else "unknown_failure"
-            return (
-                f"安全监督提示：工具 {tool_name} 反复因 {failure} 失败。"
-                "停止重复同一路径；说明安全边界并请求授权，或改用 workspace 内证据。"
-            )
-        return (
-            f"安全监督提示：检测到安全风险 {signal.signal_type}。"
-            "后续步骤必须避免重复高风险操作；如确需继续，请先说明安全目的并请求授权。"
         )

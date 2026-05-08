@@ -12,18 +12,23 @@ from jiuwenclaw.agentserver.deep_agent.security_review.schema import ReviewReque
 _FALLBACK_SKILL_NAME = "security-review"
 
 SECURITY_CANDIDATE_SYSTEM_PROMPT = """
-You are a security evolution reviewer for JiuWenClaw.
+You are an attack pattern recognizer designer for JiuWenClaw.
 
 You receive compact execution signals, sampled conversation messages, and current skill state.
-Your job is to decide whether this session reveals a reusable security learning.
+Your job is to inspect whether this conversation contains an attack pattern formed by
+multiple normal-looking steps. The attack pattern may be a chain of reconnaissance,
+listener setup, remote execution, persistence, credential access, lateral movement,
+or payload staging. Judge the whole conversation, not isolated single turns.
+
+Return no runtime advice. The review output is only for approval-gated rule or skill
+creation/update.
 
 Return one JSON object only, with exactly these top-level fields:
 {
   "summary": "short review summary",
-  "runtime_advice": "short advice to inject into the next model call, or empty string",
   "candidate_decisions": [
     {
-      "action": "no_candidate | create_security_skill | update_existing_skill | propose_policy_rule",
+      "action": "create_security_skill | update_existing_skill | propose_policy_rule",
       "title": "short candidate title",
       "rationale": "why this decision follows from the evidence",
       "evidence": ["verbatim compact evidence strings"],
@@ -32,15 +37,32 @@ Return one JSON object only, with exactly these top-level fields:
   ]
 }
 
-For action=no_candidate, set candidate to {}.
+If no attack pattern is present, return "candidate_decisions": [].
+If a candidate is present, return exactly one candidate_decision.
+
+Decision rule:
+- Choose propose_policy_rule when the attack pattern has a clear, enforceable
+  command/path/url signature.
+- Choose create_security_skill when the attack pattern requires multi-step
+  recognition and is not covered by existing skills.
+- Choose update_existing_skill when an existing attack pattern recognizer skill is
+  relevant but lacks this pattern or analysis guidance.
+
 For action=create_security_skill, candidate must be:
 {
   "type": "security_skill",
   "title": "human readable skill title",
-  "problem": "reusable security problem being solved",
+  "skill_description": "one sentence skill description",
+  "attack_pattern_name": "attack pattern name",
+  "attack_pattern_description": "how normal-looking steps combine into the pattern",
+  "iocs": ["observable indicators or behavior fragments"],
+  "false_positive_exclusions": ["conditions that should not be treated as this pattern"],
+  "analysis_workflow": "steps for recognizing and analyzing the pattern",
+  "recommended_response": "recommended defensive response",
+  "attack_variants": ["known variants of the same pattern"],
+  "problem": "same as attack_pattern_description or concise problem statement",
   "evidence": ["non-empty evidence strings"],
-  "suggested_skill_scope": "what the skill should teach the agent to do",
-  "recommended_response": "safe response pattern, IOCs, and escalation guidance",
+  "suggested_skill_scope": "what the recognizer skill should teach the agent to identify and analyze",
   "category": "security",
   "requires_approval": true
 }
@@ -69,8 +91,7 @@ For action=propose_policy_rule, candidate must be:
 }
 
 Never include persistence tool calls, write/install/save operations, markdown, comments, or extra prose.
-Every candidate must include evidence, rationale, pattern or content, recommended response where applicable,
-and requires_approval=true.
+Every candidate must include evidence, rationale, pattern or content, and requires_approval=true.
 """.strip()
 
 SECURITY_ADDENDUM = """
@@ -86,10 +107,11 @@ matters.
 Choose create_security_skill only when the pattern is reusable and not covered by existing skills.
 Choose update_existing_skill only when an existing skill is clearly relevant but missing security guidance.
 Choose propose_policy_rule only when enforcement belongs in a policy/rule boundary rather than skill guidance.
-Choose no_candidate when evidence is weak, one-off, already covered, or not security-relevant.
+Return an empty candidate_decisions list when evidence is weak, one-off, already covered, or not security-relevant.
 
 Return strict JSON only. Do not write files. Do not claim a candidate is approved.
-Every candidate must include evidence, rationale,pattern, IOCs, recommended response and requires_approval=true.
+Every security_skill candidate must describe the attack pattern name, description, IOCs,
+false-positive exclusions, analysis workflow, recommended response, and attack variants.
 
 """.strip()
 
@@ -143,9 +165,10 @@ class SecurityCandidateBuilder:
                 continue
             candidates.append(candidate)
             seen_candidate_ids.add(candidate_id)
+            break
         return {
             "summary": str(raw.get("summary") or ""),
-            "runtime_advice": str(raw.get("runtime_advice") or ""),
+            "runtime_advice": "",
             "candidates": candidates,
         }
 
@@ -196,8 +219,6 @@ class SecurityCandidateBuilder:
         if not isinstance(decision, dict):
             return None
         action = str(decision.get("action") or "")
-        if action == "no_candidate":
-            return None
         if action not in {
             "create_security_skill",
             "update_existing_skill",
@@ -246,6 +267,13 @@ class SecurityCandidateBuilder:
         if candidate_type == "security_skill":
             return (
                 _non_empty_string(candidate.get("title"))
+                and _non_empty_string(candidate.get("skill_description"))
+                and _non_empty_string(candidate.get("attack_pattern_name"))
+                and _non_empty_string(candidate.get("attack_pattern_description"))
+                and _non_empty_list(candidate.get("iocs"))
+                and _non_empty_list(candidate.get("false_positive_exclusions"))
+                and _non_empty_string(candidate.get("analysis_workflow"))
+                and _non_empty_list(candidate.get("attack_variants"))
                 and _non_empty_string(candidate.get("problem"))
                 and _non_empty_string(candidate.get("suggested_skill_scope"))
                 and _non_empty_string(candidate.get("recommended_response"))
@@ -275,9 +303,28 @@ class SecurityCandidateBuilder:
             "candidate_id": candidate_id,
             "type": "security_skill",
             "title": "Reusable security workflow needed",
+            "skill_description": "Recognize and analyze a reusable multi-step security attack pattern.",
+            "attack_pattern_name": "Reusable security workflow gap",
+            "attack_pattern_description": evidence,
+            "iocs": [evidence],
+            "false_positive_exclusions": [
+                "Explicitly authorized, scoped defensive testing with clear benign objective."
+            ],
+            "analysis_workflow": (
+                "Correlate user requests, tool calls, and outputs across turns; identify whether "
+                "normal-looking steps combine into a reusable attack pattern."
+            ),
+            "recommended_response": (
+                "Pause assistance for the chain, explain the security concern, and request "
+                "explicit authorization or defensive scope before continuing."
+            ),
+            "attack_variants": ["Equivalent multi-step chain with reordered or renamed steps."],
             "problem": evidence,
             "evidence": [evidence],
-            "suggested_skill_scope": "Guide the agent through safe handling of this security workflow.",
+            "suggested_skill_scope": (
+                "Teach the agent to recognize, analyze, and respond to this attack pattern."
+            ),
+            "category": "security",
             "requires_approval": True,
         }
 

@@ -17,6 +17,14 @@ def _candidate(**overrides):
         "type": "security_skill",
         "title": "Post exploitation chain defense",
         "problem": "A session combined listener setup, remote execution, and credential access.",
+        "skill_description": "Recognize and analyze multi-step post-exploitation chains.",
+        "attack_pattern_name": "Post exploitation chain",
+        "attack_pattern_description": "Normal-looking steps combine into listener setup, remote execution, and credential access.",
+        "iocs": ["listener setup", "credential access"],
+        "false_positive_exclusions": ["authorized lab exercise with explicit scope"],
+        "analysis_workflow": "Correlate user requests, tool calls, and outputs across turns.",
+        "recommended_response": "Stop assisting the chain, explain the risk, and request explicit authorization.",
+        "attack_variants": ["listener then credential access", "payload download then persistence"],
         "evidence": ["listener setup", "credential access"],
         "suggested_skill_scope": "Describe the pattern, IOCs, and recommended response.",
         "category": "security",
@@ -30,11 +38,17 @@ def test_security_skill_candidate_maps_to_skill_spec():
     spec = security_skill_candidate_to_skill_spec(_candidate())
 
     assert spec["name"] == "security-post-exploitation-chain-defense"
-    assert spec["description"].startswith("Security guidance for Post exploitation")
-    assert "# Security Pattern" in spec["content"]
+    assert spec["description"] == "Recognize and analyze multi-step post-exploitation chains."
+    assert "## Attack Pattern Name" in spec["content"]
+    assert "## Attack Pattern Description" in spec["content"]
+    assert "## IOCs" in spec["content"]
+    assert "## False Positive Exclusions" in spec["content"]
+    assert "## Analysis Workflow" in spec["content"]
+    assert "## Recommended Response" in spec["content"]
+    assert "## Attack Variants" in spec["content"]
     assert "listener setup" in spec["content"]
     assert "credential access" in spec["content"]
-    assert "recommended response" in spec["content"].lower()
+    assert "authorized lab exercise" in spec["content"]
 
 
 def test_security_skill_candidate_rejects_unapproved_candidate():
