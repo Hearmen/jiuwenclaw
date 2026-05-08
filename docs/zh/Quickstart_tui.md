@@ -4,6 +4,8 @@
 
 JiuwenClaw提供两种安装方式：`pip安装`或`源码安装`。
 
+更完整的终端命令、Slash 指令与 Code 模式说明见 **[TUI 使用指南](TUI使用指南.md)**。
+
 安装前准备：
 - JiuwenClaw代码下载
   ```bash

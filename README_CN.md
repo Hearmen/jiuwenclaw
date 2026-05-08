@@ -147,6 +147,7 @@ jiuwenclaw-tui
 | [📖 安装指南](docs/zh/安装指南.md) | 从零安装（pip、源码、conda、Docker 等） |
 | [📖 快速开始](docs/zh/Quickstart.md) | 5分钟上手JiuwenClaw |
 | [📖 快速开始(TUI)](docs/zh/Quickstart_tui.md) | 5分钟上手JiuwenClaw-tui |
+| [📖 TUI 使用指南](docs/zh/TUI使用指南.md) | TUI 命令行参数、Slash 命令、工具与 Code 模式详解 |
 | [⚙️ 配置与工作空间](docs/zh/配置信息.md) | 环境配置与工作区管理 |
 | [📁 工作区结构](docs/zh/智能体.md) | workspace 目录说明，预置与动态生成内容 |
 | [🔄 模式系统](docs/zh/模式系统.md) | PLAN / AGENT / CODE / TEAM 模式切换与配置 |
