@@ -73,6 +73,7 @@ export interface CommandContext {
     focusKey?: string,
     configPayload?: Record<string, unknown> & { schema?: ConfigItemSchema[] },
   ) => void;
+  openInEditor?: (filePath: string) => void;
 }
 
 export interface SlashCommand {

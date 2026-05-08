@@ -1343,6 +1343,91 @@ def register_cli_handlers(bind: CliHandlersBindParams) -> None:
     channel.register_local_handler(path, "history.get", _history_get)
     channel.register_local_handler(path, "command.model", _command_model)
 
+    # ── Memory RPC handlers ────────────────────────────────────────────
+    from jiuwenclaw.agents.harness.common.memory_rpc import (
+        handle_memory_list,
+        handle_memory_edit,
+        handle_memory_status,
+        handle_memory_toggle,
+        handle_memory_open,
+    )
+    from jiuwenclaw.common.utils import get_agent_workspace_dir
+
+    def _resolve_project_dir(params):
+        trusted_dirs = params.get("trusted_dirs")
+        if isinstance(trusted_dirs, list) and trusted_dirs:
+            return str(trusted_dirs[0])
+        cwd = params.get("cwd")
+        if isinstance(cwd, str) and cwd:
+            return cwd
+        return None
+
+    async def _memory_list(ws, req_id, params, session_id):
+        workspace = str(get_agent_workspace_dir())
+        mode = params.get("mode", "plan")
+        project_dir = _resolve_project_dir(params)
+        if project_dir:
+            params = {**params, "project_dir": project_dir}
+        try:
+            result = await handle_memory_list(workspace, mode, params)
+            await channel.send_response(ws, req_id, ok=True, payload=result)
+        except Exception as exc:
+            logger.warning("[memory.list] %s", exc)
+            await channel.send_response(ws, req_id, ok=False, error=str(exc), code="INTERNAL_ERROR")
+
+    async def _memory_edit(ws, req_id, params, session_id):
+        workspace = str(get_agent_workspace_dir())
+        project_dir = _resolve_project_dir(params)
+        if project_dir:
+            params = {**params, "project_dir": project_dir}
+        try:
+            result = await handle_memory_edit(workspace, params)
+            await channel.send_response(ws, req_id, ok=True, payload=result)
+        except Exception as exc:
+            logger.warning("[memory.edit] %s", exc)
+            await channel.send_response(ws, req_id, ok=False, error=str(exc), code="INTERNAL_ERROR")
+
+    async def _memory_status(ws, req_id, params, session_id):
+        workspace = str(get_agent_workspace_dir())
+        mode = params.get("mode", "plan")
+        project_dir = _resolve_project_dir(params)
+        if project_dir:
+            params = {**params, "project_dir": project_dir}
+        try:
+            result = await handle_memory_status(workspace, mode, params)
+            await channel.send_response(ws, req_id, ok=True, payload=result)
+        except Exception as exc:
+            logger.warning("[memory.status] %s", exc)
+            await channel.send_response(ws, req_id, ok=False, error=str(exc), code="INTERNAL_ERROR")
+
+    async def _memory_toggle(ws, req_id, params, session_id):
+        workspace = str(get_agent_workspace_dir())
+        mode = params.get("mode", "plan")
+        try:
+            result = await handle_memory_toggle(workspace, mode, params)
+            await channel.send_response(ws, req_id, ok=True, payload=result)
+        except Exception as exc:
+            logger.warning("[memory.toggle] %s", exc)
+            await channel.send_response(ws, req_id, ok=False, error=str(exc), code="INTERNAL_ERROR")
+
+    async def _memory_open(ws, req_id, params, session_id):
+        workspace = str(get_agent_workspace_dir())
+        project_dir = _resolve_project_dir(params)
+        if project_dir:
+            params = {**params, "project_dir": project_dir}
+        try:
+            result = await handle_memory_open(workspace, params)
+            await channel.send_response(ws, req_id, ok=True, payload=result)
+        except Exception as exc:
+            logger.warning("[memory.open] %s", exc)
+            await channel.send_response(ws, req_id, ok=False, error=str(exc), code="INTERNAL_ERROR")
+
+    channel.register_local_handler(path, "memory.list", _memory_list)
+    channel.register_local_handler(path, "memory.edit", _memory_edit)
+    channel.register_local_handler(path, "memory.status", _memory_status)
+    channel.register_local_handler(path, "memory.toggle", _memory_toggle)
+    channel.register_local_handler(path, "memory.open", _memory_open)
+
 
 def build_cli_route_binding(bind: CliRouteBindParams) -> GatewayRouteBinding:
     def _install(channel: Any) -> None:

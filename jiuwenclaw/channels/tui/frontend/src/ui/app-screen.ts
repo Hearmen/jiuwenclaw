@@ -10,9 +10,10 @@ import {
   TUI,
   matchesKey,
 } from "@mariozechner/pi-tui";
-import { statSync } from "node:fs";
 import { spawnSync } from "node:child_process";
+import { statSync } from "node:fs";
 import type { CliPiAppState } from "../app-state.js";
+import { openFileInEditor as openInExternalEditor } from "../core/utils/editor.js";
 import {
   extractAttachmentsFromText,
   extractFilePathsFromPaste,
@@ -787,6 +788,9 @@ export class AppScreen implements Component, Focusable {
           exitApp: this.exit,
           enterConfigEditor: (focusKey, configPayload) => {
             this.openConfigEditor(focusKey, configPayload);
+          },
+          openInEditor: (filePath: string) => {
+            openInExternalEditor(this.tui, filePath);
           },
         });
       } finally {
