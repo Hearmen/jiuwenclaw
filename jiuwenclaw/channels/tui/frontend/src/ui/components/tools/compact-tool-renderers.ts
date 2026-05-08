@@ -126,6 +126,14 @@ export function renderCompactToolLines(
   return lines;
 }
 
+export function renderHiddenToolsLine(width: number, hiddenCount: number): string[] {
+  return renderToolBranch(
+    width,
+    `+${hiddenCount} earlier tool${hiddenCount === 1 ? "" : "s"} (${TOOL_EXPAND_HINT})`,
+    palette.text.dim,
+  );
+}
+
 export function renderCollapsedCompactSummaryLines(
   entry: {
     id: string;

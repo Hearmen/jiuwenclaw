@@ -1,6 +1,8 @@
 import { summarize } from "../../rendering/text.js";
 import { isPlainObject, tryParseStructuredText } from "./tool-structured-data.js";
 
+export const MAX_VISIBLE_TOOLS = 3;
+
 export * from "./tool-kind-utils.js";
 export * from "./tool-line-renderers.js";
 export * from "./tool-structured-data.js";
