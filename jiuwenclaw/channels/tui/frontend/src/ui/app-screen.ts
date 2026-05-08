@@ -1565,37 +1565,50 @@ export class AppScreen implements Component, Focusable {
     return this.commands.getAll().map((command) => ({
       name: command.name,
       description: command.description,
-      getArgumentCompletions: command.completion
-        ? async (argumentPrefix: string): Promise<AutocompleteItem[] | null> => {
-            const trimmed = argumentPrefix.trim();
-            // pi-tui 把「第一个空格之后」整段当作 `/config` 的参数前缀去补全。
-            // 对 `/config set model deepseek`，前缀是 `set model deepseek`，补全项却是平铺的
-            // get/set/list/各 config key；若补全菜单仍打开，Enter 会先 applyCompletion 再提交，
-            // 会把整段参数替换成当前选中项（常为列表首项 `get`），看起来像「变成 /config get」且 set 未执行。
-            // 子命令名已匹配且后面还有 token 时关闭参数补全，让 Enter 直接提交当前输入。
-            if (command.subCommands?.length && trimmed.length > 0) {
-              const tokens = trimmed.split(/\s+/).filter(Boolean);
-              if (tokens.length >= 2) {
+      getArgumentCompletions:
+        command.completion || command.subCommands?.some((sub) => sub.completion)
+          ? async (argumentPrefix: string): Promise<AutocompleteItem[] | null> => {
+              const trimmed = argumentPrefix.trim();
+              // pi-tui 把「第一个空格之后」整段当作 `/config` 的参数前缀去补全。
+              // 对 `/config set model deepseek`，前缀是 `set model deepseek`，补全项却是平铺的
+              // get/set/list/各 config key；若补全菜单仍打开，Enter 会先 applyCompletion 再提交，
+              // 会把整段参数替换成当前选中项（常为列表首项 `get`），看起来像「变成 /config get」且 set 未执行。
+              // 子命令名已匹配且后面还有 token 时关闭参数补全，让 Enter 直接提交当前输入。
+              if (command.subCommands?.length && trimmed.length > 0) {
+                const tokens = trimmed.split(/\s+/).filter(Boolean);
                 const head = tokens[0] ?? "";
-                const matchedSub = command.subCommands.some(
+                const matchedSub = command.subCommands.find(
                   (sub) => sub.name === head || sub.altNames?.includes(head),
                 );
                 if (matchedSub) {
-                  return null;
+                  if (matchedSub.completion) {
+                    const subPartial = tokens.slice(1).join(" ");
+                    const items = await matchedSub.completion(
+                      this.state.getCommandContext(),
+                      subPartial,
+                    );
+                    return items.map((name) => ({
+                      value: `${head} ${name}, `,
+                      label: name,
+                    }));
+                  }
+                  if (tokens.length >= 2) {
+                    return null;
+                  }
                 }
               }
+              if (command.name === "mode") {
+                return buildModeAutocompleteItems();
+              }
+              if (!command.completion) return null;
+              const items = await command.completion(this.state.getCommandContext(), argumentPrefix);
+              return items.map((value) => ({
+                value,
+                label: value,
+                description: command.description,
+              }));
             }
-            if (command.name === "mode") {
-              return buildModeAutocompleteItems();
-            }
-            const items = await command.completion!(this.state.getCommandContext(), argumentPrefix);
-            return items.map((value) => ({
-              value,
-              label: value,
-              description: command.description,
-            }));
-          }
-        : undefined,
+          : undefined,
     }));
   }
 

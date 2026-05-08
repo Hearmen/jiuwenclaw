@@ -241,6 +241,28 @@ export function createSkillsCommand(): SlashCommand {
         example: "/skills use my-skill, Code and execute a Hello World program.",
         kind: CommandKind.BUILT_IN,
         takesArgs: true,
+        completion: async (ctx, partial) => {
+          const commaIndex = partial.indexOf(",");
+          if (commaIndex !== -1 && partial.slice(0, commaIndex).trim()) return [];
+          const filterTerm = commaIndex !== -1 ? "" : partial;
+          try {
+            const payload = await ctx.request("skills.list", {});
+            const skills = flattenArrayPayload(payload)
+              .map((item) => {
+                if (item && typeof item === "object") {
+                  const obj = item as Record<string, unknown>;
+                  return typeof obj.name === "string" ? obj.name : null;
+                }
+                return null;
+              })
+              .filter((name): name is string => name !== null);
+            if (!filterTerm) return skills;
+            const lower = filterTerm.toLowerCase();
+            return skills.filter((name) => name.toLowerCase().includes(lower));
+          } catch {
+            return [];
+          }
+        },
         action: async (ctx, args) => {
           const parts = args.trim().split(/\s*,\s*(.*)/);
           const skill_name = parts[0];
