@@ -178,10 +178,16 @@ from jiuwenclaw.agents.harness.common.plugins.rail_manager import get_rail_manag
 from jiuwenclaw.gateway.cron import CronTargetChannel
 from jiuwenclaw.common.schema.agent import AgentRequest, AgentResponse, AgentResponseChunk
 from jiuwenclaw.common.utils import (
+    get_agent_memory_dir,
     get_agent_skills_dir,
     get_agent_workspace_dir,
     get_checkpoint_dir,
     get_config_dir,
+    get_deepagent_agent_md_path,
+    get_deepagent_heartbeat_path,
+    get_deepagent_identity_md_path,
+    get_deepagent_soul_md_path,
+    get_deepagent_user_md_path,
     get_env_file,
     reset_free_search_runtime_flags,
 )
@@ -1453,33 +1459,132 @@ class JiuWenClawDeepAdapter:
         return rail
 
     @staticmethod
+    def _create_sandbox_sys_operation(sandbox_url, sandbox_type) -> SysOperationCard | None:
+        """Create a sandbox sys operation."""
+        import openjiuwen.extensions.sys_operation.sandbox.providers
+        try:
+            file_funcs = [
+                get_deepagent_agent_md_path,
+                get_deepagent_heartbeat_path,
+                get_deepagent_identity_md_path,
+                get_deepagent_soul_md_path,
+                get_deepagent_user_md_path
+            ]
+            sandbox_policy = {
+                "policy": {
+                    'filesystem_policy': {
+                        'files': [],
+                        'directories': []
+                    }
+                },
+                "policy_mode": "append",
+            }
+            for func in file_funcs:
+                path = func()
+                if path is not None:
+                    sandbox_policy["policy"]["filesystem_policy"]["files"].append(
+                        {"path": str(path), "permissions": "0666"}
+                    )
+            sandbox_policy["policy"]["filesystem_policy"]["directories"].append(
+                {"path": str(get_agent_memory_dir() / "daily_memory"), "permissions": "0777"}
+            )
+            gateway_config = SandboxGatewayConfig(
+                isolation=SandboxIsolationConfig(container_scope=ContainerScope.SYSTEM),
+                launcher_config=PreDeployLauncherConfig(
+                    base_url=sandbox_url,
+                    sandbox_type=sandbox_type,
+                    idle_ttl_seconds=600,
+                    extra_params=sandbox_policy,
+                ),
+            )
+            sysop_card = SysOperationCard(
+                mode=OperationMode.SANDBOX,
+                work_config=LocalWorkConfig(shell_allowlist=None),
+                gateway_config=gateway_config,
+            )
+            return sysop_card
+        except Exception as exc:
+            logger.warning("[JiuWenClawDeepAdapter] create sandbox sys operation failed: %s", exc)
+            return None
+
+    @staticmethod
+    def _sys_operation_isolation_key(sysop_card: SysOperationCard) -> str | None:
+        try:
+            sys_operation = SysOperation(sysop_card)
+            return sys_operation.isolation_key_template
+        except Exception as exc:
+            logger.debug(
+                "[JiuWenClawDeepAdapter] failed to resolve sys_operation isolation key: %s",
+                exc,
+            )
+            return None
+
+    @staticmethod
+    def _get_registered_sys_operation_by_isolation_key(
+        isolation_key_template: str | None,
+    ) -> SysOperation | None:
+        if not isolation_key_template:
+            return None
+
+        try:
+            resource_registry = getattr(Runner.resource_mgr, "_resource_registry", None)
+            if resource_registry is None:
+                return None
+            sys_operation_mgr = resource_registry.sys_operation()
+            owner_map = getattr(sys_operation_mgr, "_sandbox_key_owner_map", {})
+            existing_op_id = owner_map.get(isolation_key_template)
+            if not existing_op_id:
+                return None
+            return Runner.resource_mgr.get_sys_operation(existing_op_id)
+        except Exception as exc:
+            logger.debug(
+                "[JiuWenClawDeepAdapter] failed to get registered sys_operation: %s",
+                exc,
+            )
+            return None
+
+    @staticmethod
     def _create_sys_operation() -> SysOperation | None:
         """Create a sys operation."""
         try:
             sandbox_url = _sandbox_config.get("url", None)
             sandbox_type = _sandbox_config.get("type", None)
             if sandbox_url and sandbox_type:
-                gateway_config = SandboxGatewayConfig(
-                    isolation=SandboxIsolationConfig(container_scope=ContainerScope.SYSTEM),
-                    launcher_config=PreDeployLauncherConfig(
-                        base_url=sandbox_url,
-                        sandbox_type=sandbox_type,
-                        idle_ttl_seconds=600,
-                    ),
-                    timeout_seconds=30,
-                )
-                sysop_card = SysOperationCard(
-                    mode=OperationMode.SANDBOX,
-                    work_config=LocalWorkConfig(shell_allowlist=None),
-                    gateway_config=gateway_config,
-                )
+                sysop_card = JiuWenClawDeepAdapter._create_sandbox_sys_operation(sandbox_url, sandbox_type)
             else:
                 sysop_card = SysOperationCard(
                     mode=OperationMode.LOCAL,
                     work_config=LocalWorkConfig(shell_allowlist=None),
                 )
+            if sysop_card is None:
+                logger.warning("[JiuWenClawDeepAdapter] add sys_operation failed: sysop_card is None")
+                return None
+            isolation_key_template = JiuWenClawDeepAdapter._sys_operation_isolation_key(sysop_card)
+            registered_sys_operation = (
+                JiuWenClawDeepAdapter._get_registered_sys_operation_by_isolation_key(
+                    isolation_key_template
+                )
+            )
+            if registered_sys_operation is not None:
+                logger.info(
+                    "[JiuWenClawDeepAdapter] reuse registered sys_operation: %s",
+                    registered_sys_operation.id,
+                )
+                return registered_sys_operation
+
             result = Runner.resource_mgr.add_sys_operation(sysop_card)
             if result.is_err():
+                registered_sys_operation = (
+                    JiuWenClawDeepAdapter._get_registered_sys_operation_by_isolation_key(
+                        isolation_key_template
+                    )
+                )
+                if registered_sys_operation is not None:
+                    logger.info(
+                        "[JiuWenClawDeepAdapter] reuse registered sys_operation after add failure: %s",
+                        registered_sys_operation.id,
+                    )
+                    return registered_sys_operation
                 logger.warning("[JiuWenClawDeepAdapter] add sys_operation failed: %s", result.msg())
                 return None
             return Runner.resource_mgr.get_sys_operation(sysop_card.id)
