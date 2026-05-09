@@ -32,33 +32,60 @@ async function listMarketplaces(ctx: import("../types.js").CommandContext): Prom
 
 async function listSkills(ctx: import("../types.js").CommandContext): Promise<void> {
   const payload = await ctx.request("skills.list", {});
-  const items = flattenArrayPayload(payload).map((item, index) => {
+  const allSkills = flattenArrayPayload(payload);
+
+  const installed: { label: string; value?: string; description: string }[] = [];
+  const available: { label: string; value?: string; description: string }[] = [];
+
+  for (const item of allSkills) {
     if (item && typeof item === "object") {
       const obj = item as Record<string, unknown>;
-      return {
-        label: typeof obj.name === "string" ? obj.name : String(index + 1),
+      const name = typeof obj.name === "string" ? obj.name : "?";
+      const sourceTag = obj.is_builtin_source ? "[builtin]" : (obj.source === "local" ? "[local]" : `[${obj.source || "project"}]`);
+      const desc = typeof obj.description === "string" ? obj.description : "";
+      const entry = {
+        label: name,
         value: typeof obj.path === "string" ? obj.path : undefined,
-        description: typeof obj.description === "string" ? obj.description : undefined,
+        description: `${sourceTag} ${desc}`,
       };
+      if (obj.installed === true) {
+        installed.push(entry);
+      } else {
+        available.push(entry);
+      }
     }
-    return { label: String(index + 1), value: formatValue(item) };
-  });
+  }
+
+  // Group 1: Installed skills
   ctx.addItem(
     makeItem(
       ctx.sessionId,
       "info",
-      items.length > 0 ? "Installed skills" : "No skills returned",
+      installed.length > 0 ? `Installed (${installed.length})` : "No installed skills",
       "*",
-      { view: "list", title: "Skills", items },
+      { view: "list", title: "Installed Skills", items: installed },
     ),
   );
+
+  // Group 2: Available skills (not yet installed)
+  if (available.length > 0) {
+    ctx.addItem(
+      makeItem(
+        ctx.sessionId,
+        "info",
+        `Available to install (${available.length})`,
+        "*",
+        { view: "list", title: "Available Skills", items: available },
+      ),
+    );
+  }
 }
 
 export function createSkillsCommand(): SlashCommand {
   return {
     name: "skills",
-    description: "Manage skills (list, install, uninstall, marketplace, use)",
-    usage: "/skills [list|install|uninstall|marketplace|use]",
+    description: "Manage skills (list, install, import, uninstall, marketplace, use)",
+    usage: "/skills [list|install|import|uninstall|marketplace|use]",
     example: "/skills list",
     kind: CommandKind.BUILT_IN,
     action: async (ctx) => {
@@ -78,27 +105,48 @@ export function createSkillsCommand(): SlashCommand {
       },
       {
         name: "install",
-        description: "Install a skill from marketplace",
-        usage: "/skills install <spec>",
-        example: "/skills install my-skill@marketplace",
+        description: "Install a skill (builtin name or plugin@marketplace)",
+        usage: "/skills install <skill> or <skill@marketplace>",
+        example: "/skills install my-skill",
         kind: CommandKind.BUILT_IN,
         takesArgs: true,
         action: async (ctx, args) => {
           const spec = args.trim();
           if (!spec) {
-            ctx.addItem(makeItem(ctx.sessionId, "error", "Usage: /skills install <plugin@marketplace>"));
+            ctx.addItem(makeItem(ctx.sessionId, "error", "Usage: /skills install <skill> or <skill@marketplace>"));
             return;
+          }
+          let finalSpec = spec;
+          // Bare skill name without @ — auto-detect if it's a builtin
+          if (!spec.includes("@")) {
+            try {
+              const payload = await ctx.request("skills.list", {});
+              const skills = flattenArrayPayload(payload);
+              const builtinMatch = skills.find((item) => {
+                if (item && typeof item === "object") {
+                  const obj = item as Record<string, unknown>;
+                  return obj.name === spec
+                    && (obj.is_builtin_source === true || obj.is_builtin === true);
+                }
+                return false;
+              });
+              if (builtinMatch) {
+                finalSpec = `${spec}@builtin`;
+              }
+            } catch {
+              // If list fails, let backend handle the bare name
+            }
           }
           const payload = await ctx.request<{ success?: boolean; detail?: string }>(
             "skills.install",
-            { spec, force: false },
+            { spec: finalSpec, force: false },
             120_000,
           );
           if (payload.success) {
-            ctx.addItem(makeItem(ctx.sessionId, "info", `Skill installed: ${spec}`));
+            ctx.addItem(makeItem(ctx.sessionId, "info", `Skill installed: ${finalSpec}`));
           } else {
             ctx.addItem(
-              makeItem(ctx.sessionId, "error", payload.detail || `Install failed: ${spec}`),
+              makeItem(ctx.sessionId, "error", payload.detail || `Install failed: ${finalSpec}`),
             );
           }
         },
@@ -126,6 +174,35 @@ export function createSkillsCommand(): SlashCommand {
           } else {
             ctx.addItem(
               makeItem(ctx.sessionId, "error", payload.detail || `Uninstall failed: ${name}`),
+            );
+          }
+        },
+      },
+      {
+        name: "import",
+        description: "Import a skill from local path or remote URL",
+        usage: "/skills import <path>",
+        example: "/skills import /path/to/my-skill",
+        kind: CommandKind.BUILT_IN,
+        takesArgs: true,
+        action: async (ctx, args) => {
+          const path = args.trim();
+          if (!path) {
+            ctx.addItem(makeItem(ctx.sessionId, "error", "Usage: /skills import <path_or_url>"));
+            return;
+          }
+          ctx.addItem(makeItem(ctx.sessionId, "info", `Importing skill from: ${path}`));
+          const payload = await ctx.request<{ success?: boolean; detail?: string; skill?: { name?: string } }>(
+            "skills.import_local",
+            { path, force: false },
+            120_000,
+          );
+          if (payload.success) {
+            const skillName = payload.skill?.name || path;
+            ctx.addItem(makeItem(ctx.sessionId, "info", `Skill imported: ${skillName}`));
+          } else {
+            ctx.addItem(
+              makeItem(ctx.sessionId, "error", payload.detail || `Import failed: ${path}`),
             );
           }
         },

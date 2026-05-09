@@ -578,7 +578,17 @@ class SkillManager:
         force = params.get("force", False)
 
         if "@" not in spec:
-            return {"success": False, "detail": "spec 格式应为 plugin@marketplace"}
+            # Bare skill name — check if it matches a builtin skill
+            try:
+                safe_name = _safe_path_name(spec, "skill")
+            except ValueError as exc:
+                _log_rejected_name("skills.install", "skill", spec, exc)
+                return {"success": False, "detail": str(exc)}
+            builtin_dir = get_builtin_skills_dir()
+            builtin_path = _safe_child_path(builtin_dir, safe_name, "skill")
+            if builtin_path.exists() and builtin_path.is_dir():
+                return await self.handle_skills_install_builtin({"name": safe_name})
+            return {"success": False, "detail": "spec 格式应为 skill@marketplace，内置技能可直接使用名称安装"}
 
         plugin_name, marketplace_name = spec.rsplit("@", 1)
         if not plugin_name or not marketplace_name:
@@ -2312,6 +2322,7 @@ class SkillManager:
                     break
 
             meta["source"] = source
+            meta["installed"] = True
             # 判断是否为内置技能（传入 child 路径，通过实际路径判断）
             meta["is_builtin"] = self._is_builtin_skill(meta.get("name", ""), self._get_installed_plugins(), child)
             builtin_dir = get_builtin_skills_dir()
@@ -2358,7 +2369,8 @@ class SkillManager:
             # 设置内置技能的标记
             meta["source"] = "builtin"
             meta["is_builtin"] = True
-            meta["is_builtin_source"] = True  # 这是内置技能来源
+            meta["is_builtin_source"] = True
+            meta["installed"] = False
             meta["has_evolutions"] = False
             # 不在列表中返回 body
             meta.pop("body", None)
@@ -2472,6 +2484,7 @@ class SkillManager:
                 meta["source"] = marketplace_name
                 meta["marketplace"] = marketplace_name
                 meta["is_builtin"] = False
+                meta["installed"] = False
                 meta["has_evolutions"] = False
                 meta.pop("body", None)
                 results.append(meta)

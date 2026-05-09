@@ -36,7 +36,7 @@ Identified by Gateway and forwarded to AgentServer and other backend capabilitie
 | `/new_session` | Create new session (IM only) |
 | `/mode` | Mode switching (supports first-level entry and direct syntax) |
 | `/switch` | Switch second-level mode within current mode family |
-| `/skills` | Skills management (list, install, uninstall, marketplace) (see below) |
+| `/skills` | Skills management (list, install, import, uninstall, marketplace) (see below) |
 | `/model` | Model view, add, switch (see below) |
 | `/mcp` | MCP server management (see below) |
 | `/diff` | View session changes by turn (see below) |
@@ -176,14 +176,15 @@ Manages directories AI can access for file read, edit, and execute operations.
 
 ### `/skills` (Skills Management)
 
-Manage skills lifecycle: listing, installing, uninstalling, and marketplace source management.
+Manage skills lifecycle: listing, installing, importing, uninstalling, and marketplace source management.
 
 #### Subcommands
 
 | Command | Description |
 |---|---|
-| `/skills` or `/skills list` | List currently installed skills |
-| `/skills install <spec>` | Install a skill from marketplace (e.g., `my-skill@marketplace`) |
+| `/skills` or `/skills list` | List skills (grouped: Installed / Available to install) |
+| `/skills install <skill>` or `/skills install <skill@marketplace>` | Install a skill: builtin skills accept bare name, marketplace skills use `<name>@<marketplace>` format |
+| `/skills import <path>` | Import a custom skill from a local path or remote URL |
 | `/skills uninstall <name>` | Uninstall a skill by name |
 | `/skills marketplace` or `/skills marketplace list` | List marketplace sources (name, URL, enabled status, last updated) |
 | `/skills marketplace add <name> <url>` | Add a new marketplace source |
@@ -193,10 +194,20 @@ Manage skills lifecycle: listing, installing, uninstalling, and marketplace sour
 
 #### Concepts
 
-- **Skill**: An extension capability that can be installed from marketplace sources, providing additional functionality to the agent.
+- **Skill**: An extension capability that can be installed from marketplace sources, builtin directory, or local paths, providing additional functionality to the agent.
+- **Builtin skill**: A preset skill shipped with the software. Install using bare skill name (e.g., `/skills install advanced-daily-report`); no marketplace source needed.
 - **Marketplace source**: A remote repository (typically a Git URL) that hosts available skills. Each source has a name, URL, and enabled/disabled state.
-- **Spec**: The install identifier format `<skill>@<marketplace>` used when installing a skill from a specific marketplace.
-- **Install location**: The directory where a skill is stored after installation.
+- **Spec**: The install identifier format `<skill>@<marketplace>` used when installing from a marketplace; for builtin skills, omit `@` and the system auto-detects as `@builtin`.
+- **Import**: Copy a local directory (must contain `SKILL.md`) or remote archive URL into the workspace as a custom skill.
+- **Install location**: The directory where a skill is stored after installation (`~/.jiuwenclaw/agent/jiuwenclaw_workspace/skills/`).
+- **Source tag**: Each skill in the list is tagged with its source: `[builtin]` = builtin, `[local]` = imported, `[project]` or marketplace name = other.
+
+#### Grouped List Display
+
+`/skills list` returns skills in two groups:
+
+1. **Installed**: Skills already in the user's skills directory, ready to use.
+2. **Available to install**: Builtin skills not yet installed, plus marketplace skills available for installation. Use `/skills install` or `/skills import` first.
 
 #### IM vs TUI Differences
 
@@ -205,22 +216,27 @@ Both ultimately request `skills.list`, but trigger methods and display differ.
 | Side | Trigger Method | Behavior |
 |---|---|---|
 | IM (Feishu etc. controlled channel) | Exact match `/skills list` (whitespace normalized first) | Gateway intercepts control message and requests `skills.list`, results shown as IM notification/card; standalone `/skills` doesn't go through this control path. |
-| TUI (CLI built-in) | Input `/skills` | Locally executes built-in command and calls `skills.list`, displays as list view in session (title `Skills`); shows `No skills returned` when empty. |
+| TUI (CLI built-in) | Input `/skills` | Locally executes built-in command and calls `skills.list`, displays as grouped list view in session (titles `Installed Skills` and `Available Skills`); shows `No installed skills` when empty. |
 
-For other subcommands (`/skills install`, `/skills uninstall`, `/skills marketplace add/remove/toggle`, `/skills use`), Gateway does **not** intercept them — on the IM side they are treated as regular chat messages. These subcommands are only functional on the TUI (CLI built-in) and Web UI paths, where they send RPC requests directly to AgentServer.
+For other subcommands (`/skills install`, `/skills import`, `/skills uninstall`, `/skills marketplace add/remove/toggle`, `/skills use`), Gateway does **not** intercept them — on the IM side they are treated as regular chat messages. These subcommands are only functional on the TUI (CLI built-in) and Web UI paths, where they send RPC requests directly to AgentServer.
 
 #### Notes
 
-- **Timeout**: `install`, `uninstall`, and `marketplace toggle` requests have a 120-second timeout on the TUI side; other subcommands have no explicit timeout.
+- **Timeout**: `install`, `import`, `uninstall`, and `marketplace toggle` requests have a 120-second timeout on the TUI side; other subcommands have no explicit timeout.
+- **Builtin auto-detection**: When installing with `/skills install <skill>` (no `@`), the system checks if it matches a builtin skill and redirects to the builtin install flow; if not, a format hint is returned.
 - **Cache cleanup**: `marketplace remove` sends `{ name, remove_cache: true }` to also clear the local cache for that source.
 - **Auto-refresh**: `marketplace add`, `marketplace remove`, and `marketplace toggle` automatically re-list marketplace sources after a successful operation.
 - **Offline handling**: `/skills use` checks connection status; if offline, shows `offline: waiting for reconnect before sending /skills use request`.
 
 #### Examples
 
-- `/skills` — List installed skills
-- `/skills list` — List installed skills (explicit subcommand)
+- `/skills` — List skills (grouped: Installed / Available)
+- `/skills list` — List skills (explicit subcommand)
+- `/skills install advanced-daily-report` — Install a builtin skill (bare name auto-detect)
+- `/skills install advanced-daily-report@builtin` — Install a builtin skill (explicit format)
 - `/skills install my-skill@marketplace` — Install a skill from marketplace
+- `/skills import /path/to/my-skill` — Import a skill from local directory
+- `/skills import https://example.com/skill.zip` — Import a skill from remote URL
 - `/skills uninstall my-skill` — Uninstall a skill
 - `/skills marketplace list` — List marketplace sources
 - `/skills marketplace add community https://github.com/user/skills-repo` — Add a marketplace source named "community"
