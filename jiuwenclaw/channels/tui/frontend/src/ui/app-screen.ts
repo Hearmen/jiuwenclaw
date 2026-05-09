@@ -601,6 +601,12 @@ export class AppScreen implements Component, Focusable {
       return;
     }
 
+    if (this.startupPromptList !== null && matchesKey(data, "ctrl+c")) {
+      this.startupPromptList.handleInput(data);
+      this.tui.requestRender();
+      return;
+    }
+
     const handled = handleAppScreenKeyInput(data, {
       interruptTask: () => this.interruptTask(),
       exitApp: () => this.exit(),
@@ -1242,7 +1248,7 @@ export class AppScreen implements Component, Focusable {
       padToWidth(palette.text.dim("If unfamiliar, please review the folder contents before proceeding."), width),
       "",
       ...this.startupPromptList.render(width),
-      padToWidth(palette.text.dim("↑/↓ choose · Enter confirm · Esc use default workspace"), width),
+      padToWidth(palette.text.dim("↑/↓ choose · Enter confirm · Esc / Ctrl+C use default workspace"), width),
     ];
   }
 
