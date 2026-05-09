@@ -208,6 +208,7 @@ _FORWARD_REQ_METHODS = frozenset({
     "extensions.import",
     "extensions.delete",
     "extensions.toggle",
+    "team.snapshot",
 })
 
 _FORWARD_NO_LOCAL_HANDLER_METHODS = frozenset({
@@ -215,6 +216,7 @@ _FORWARD_NO_LOCAL_HANDLER_METHODS = frozenset({
     "session.create",
     "acp.tool_response",
     "browser.start",
+    "team.snapshot",
     "skills.marketplace.list",
     "skills.list",
     "skills.installed",

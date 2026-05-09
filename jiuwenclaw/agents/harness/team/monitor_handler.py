@@ -341,3 +341,29 @@ class TeamMonitorHandler:
     def team_id(self) -> str | None:
         """团队 ID."""
         return self._monitor.team_id if self._monitor else None
+
+    async def get_team_snapshot(self) -> dict[str, Any] | None:
+        """获取当前团队状态快照，用于刷新后恢复成员列表。
+
+        Returns:
+            包含 members 列表和 team_id 的字典，如果 monitor 未运行则返回 None。
+        """
+        if self._monitor is None:
+            return None
+        try:
+            members = await self._monitor.get_members()
+            # 过滤掉 leader （team_leader 不属于"团队成员"）
+            leader_name = self._team_agent.member_name if self._team_agent else None
+            if leader_name:
+                members = [m for m in members if m.member_id != leader_name]
+            return {
+                "members": [m.model_dump() for m in members],
+                "team_id": self._monitor.team_id,
+            }
+        except Exception as e:
+            logger.warning(
+                "[TeamMonitorHandler] get_team_snapshot failed: session_id=%s, error=%s",
+                self._session_id,
+                e,
+            )
+            return None

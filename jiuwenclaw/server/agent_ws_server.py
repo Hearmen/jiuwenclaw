@@ -403,6 +403,9 @@ class AgentWebSocketServer:
                 else:
                     await self._handle_history_get(ws, request, send_lock)
                 return
+            if request.req_method == ReqMethod.TEAM_SNAPSHOT:
+                await self._handle_team_snapshot(ws, request, send_lock)
+                return
             if request.req_method == ReqMethod.COMMAND_ADD_DIR:
                 await self._handle_command_add_dir(ws, request, send_lock)
                 return
@@ -751,6 +754,48 @@ class AgentWebSocketServer:
                 ok=True,
                 payload=data,
             )
+        wire = encode_agent_response_for_wire(resp, response_id=request.request_id)
+        async with send_lock:
+            await ws.send(json.dumps(wire, ensure_ascii=False))
+
+    async def _handle_team_snapshot(self, ws: Any, request: AgentRequest, send_lock: asyncio.Lock) -> None:
+        from jiuwenclaw.agents.harness.team import get_team_manager
+
+        session_id = request.session_id or ""
+        channel_id = request.channel_id or "web"
+
+        team_manager = get_team_manager(channel_id)
+        monitor_handler = team_manager.get_monitor_handler(session_id)
+
+        if monitor_handler is None or not monitor_handler.is_running:
+            resp = AgentResponse(
+                request_id=request.request_id,
+                channel_id=channel_id,
+                ok=True,
+                payload={"members": [], "team_id": None},
+            )
+            wire = encode_agent_response_for_wire(resp, response_id=request.request_id)
+            async with send_lock:
+                await ws.send(json.dumps(wire, ensure_ascii=False))
+            return
+
+        try:
+            snapshot = await monitor_handler.get_team_snapshot()
+            resp = AgentResponse(
+                request_id=request.request_id,
+                channel_id=channel_id,
+                ok=True,
+                payload=snapshot or {"members": [], "team_id": None},
+            )
+        except Exception as e:
+            logger.warning("[AgentWebSocketServer] team.snapshot failed: %s", e)
+            resp = AgentResponse(
+                request_id=request.request_id,
+                channel_id=channel_id,
+                ok=True,
+                payload={"members": [], "team_id": None},
+            )
+
         wire = encode_agent_response_for_wire(resp, response_id=request.request_id)
         async with send_lock:
             await ws.send(json.dumps(wire, ensure_ascii=False))

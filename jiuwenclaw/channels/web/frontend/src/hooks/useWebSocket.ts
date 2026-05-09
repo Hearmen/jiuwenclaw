@@ -245,6 +245,40 @@ export function useWebSocket(options: UseWebSocketOptions): UseWebSocketReturn {
     [setAvailableTools, setConnected]
   );
 
+  const restoreTeamMembersOnReconnect = useCallback(
+    async (sessionId: string) => {
+      if (!sessionId || sessionId === 'new') {
+        return;
+      }
+      try {
+        const snapshot = await webClient.request<{
+          members: Array<{
+            member_id: string;
+            name?: string;
+            status: string;
+            execution_status?: string;
+            mode?: string;
+          }>;
+          team_id: string;
+        }>('team.snapshot', { session_id: sessionId });
+
+        if (snapshot?.members) {
+          useSessionStore.getState().setTeamMembers(
+            snapshot.members.map((m, idx) => ({
+              id: `member-${m.member_id || idx}`,
+              member_id: m.member_id || '',
+              status: m.status || '',
+              timestamp: Date.now(),
+            }))
+          );
+        }
+      } catch (error) {
+        console.error('[team.snapshot] restore failed:', error);
+      }
+    },
+    []
+  );
+
   // 断开连接
   const disconnect = useCallback(() => {
     webClient.disconnect();
@@ -519,6 +553,7 @@ export function useWebSocket(options: UseWebSocketOptions): UseWebSocketReturn {
     const unsubs = [
       webClient.on('connection.ack', ({ payload }) => {
         handleConnectionAck(payload);
+        void restoreTeamMembersOnReconnect(activeSessionIdRef.current || '');
       }),
       webClient.on('hello', ({ payload }) => {
         handleConnectionAck(payload);

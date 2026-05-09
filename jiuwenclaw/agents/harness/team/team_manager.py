@@ -960,6 +960,9 @@ class TeamManager:
     def get_team_agent(self, session_id: str) -> TeamAgent | None:
         return self._team_agents.get(session_id)
 
+    def get_monitor_handler(self, session_id: str) -> TeamMonitorHandler | None:
+        return self._team_monitors.get(session_id)
+
     def register_monitor(self, session_id: str, handler: TeamMonitorHandler) -> None:
         self._team_monitors[session_id] = handler
 
