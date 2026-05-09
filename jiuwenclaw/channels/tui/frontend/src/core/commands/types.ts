@@ -21,6 +21,8 @@ export interface CommandSuggestion {
 }
 
 export interface CommandContext {
+  /** 版本信息 */
+  version: string;
   /**
    * options.logAsUser=false 可用于发送内部控制消息（例如 /init 生成的 orchestration prompt），
    * 避免在 CLI/TUI 历史中渲染为普通用户输入。

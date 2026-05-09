@@ -1,8 +1,43 @@
+import { visibleWidth } from "@mariozechner/pi-tui";
 import type { Component } from "@mariozechner/pi-tui";
 import type { HistoryItem } from "../../../core/types.js";
 import { palette } from "../../theme.js";
 import { padToWidth, prefixedLines, renderWrappedText, summarize } from "../../rendering/text.js";
 import { renderClaudeResponseLines, renderMediaItems } from "./shared.js";
+
+function renderGroupedHelpView(
+  width: number,
+  meta: Extract<HistoryItem, { kind: "info" }>["meta"],
+): string[] {
+  const lines: string[] = [];
+  const innerWidth = Math.max(1, width);
+
+  const version = meta?.version || "";
+  const versionText = version ? `jiuwenclaw CLI v${version}` : "jiuwenclaw CLI";
+  lines.push(...renderWrappedText(innerWidth, `· ${versionText} — ${meta?.title ?? "Slash Commands"}`, palette.text.info));
+  lines.push("");
+
+  for (const group of meta?.groups ?? []) {
+    const groupTitle = `── ${group.name} `;
+    const groupPadding = Math.max(0, innerWidth - visibleWidth(groupTitle));
+    const fullGroupTitle = groupTitle + "─".repeat(groupPadding);
+    lines.push(padToWidth(palette.text.secondary(fullGroupTitle), innerWidth));
+
+    for (const item of group.items) {
+      const value = item.value ? ` ${item.value}` : "";
+      const labelLine = `  ${item.label}${value}`;
+      lines.push(padToWidth(palette.text.accent(labelLine), innerWidth));
+      if (item.description) {
+        lines.push(padToWidth(palette.text.dim(`      ${item.description}`), innerWidth));
+      }
+    }
+    lines.push("");
+  }
+
+  lines.push(padToWidth(palette.text.dim("Press Esc to close"), innerWidth));
+
+  return lines;
+}
 
 export class SystemMessageComponent implements Component {
   constructor(private readonly entry: Extract<HistoryItem, { kind: "system" }>) {}
@@ -47,6 +82,11 @@ export class InfoMessageComponent implements Component {
 
   render(width: number): string[] {
     const meta = this.entry.meta;
+
+    if (meta?.view === "help" && meta.groups?.length) {
+      return renderGroupedHelpView(width, meta);
+    }
+
     const lines: string[] = [];
     const innerWidth = Math.max(1, width);
     const title = meta?.title ?? this.entry.content;

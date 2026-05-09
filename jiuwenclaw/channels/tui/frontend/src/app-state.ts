@@ -413,6 +413,7 @@ export class CliPiAppState {
     const snapshot = this.getSnapshot();
     const toolGroupIds = getToolGroupIds(snapshot.entries, snapshot.toolExecutions);
     return {
+      version: snapshot.modelInfo.version || "",
       sendEventOnly: this.sendEventOnly,
       request: this.request,
       askQuestions: this.askQuestions,

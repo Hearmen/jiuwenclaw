@@ -31,6 +31,11 @@ export interface InfoMeta {
   view?: "help" | "list" | "kv";
   title?: string;
   items?: Array<{ label: string; value?: string; description?: string }>;
+  groups?: Array<{
+    name: string;
+    items: Array<{ label: string; value?: string; description?: string }>;
+  }>;
+  version?: string;
 }
 
 export interface ToolCallDisplay {
