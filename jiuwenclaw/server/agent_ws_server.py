@@ -51,6 +51,7 @@ from jiuwenclaw.common.security.ws_origin import (
     extract_handshake_request,
     forbidden_origin_response,
     get_header_value,
+    is_origin_check_enabled,
     is_allowed_browser_origin,
 )
 
@@ -238,11 +239,23 @@ class AgentWebSocketServer:
         """在握手阶段执行 Origin 校验，兼容 legacy/new websockets APIs。"""
         path, request_headers = extract_handshake_request(args)
         origin = get_header_value(request_headers, "Origin")
+        enable_origin_check = is_origin_check_enabled()
+        if not enable_origin_check:
+            logger.info(
+                "[AgentWebSocketServer] 握手检查 path=%s origin=%s enable_origin_check=%s allowed=%s",
+                path,
+                origin,
+                enable_origin_check,
+                True,
+            )
+            return None
+
         allowed = is_allowed_browser_origin(origin)
         logger.info(
-            "[AgentWebSocketServer] 握手检查 path=%s origin=%s allowed=%s",
+            "[AgentWebSocketServer] 握手检查 path=%s origin=%s enable_origin_check=%s allowed=%s",
             path,
             origin,
+            enable_origin_check,
             allowed,
         )
         if allowed:

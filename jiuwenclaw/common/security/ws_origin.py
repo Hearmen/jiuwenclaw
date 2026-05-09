@@ -4,25 +4,41 @@
 
 from __future__ import annotations
 
+import os
 from http import HTTPStatus
 from typing import Any
 from urllib.parse import urlsplit
 
-_ALLOWED_WS_ORIGIN_HOSTS = {"127.0.0.1", "localhost"}
+_ENABLE_ORIGIN_CHECK_ENV = "JIUWENCLAW_ENABLE_ORIGIN_CHECK"
+_ALLOWED_ORIGIN_HOSTS_ENV = "JIUWENCLAW_WS_ALLOWED_ORIGIN_HOSTS"
 _FORBIDDEN_BODY = b"Forbidden: Origin not allowed\n"
 
 
+def is_origin_check_enabled() -> bool:
+    """Return whether WebSocket Origin validation is enabled."""
+    return os.getenv(_ENABLE_ORIGIN_CHECK_ENV, "").strip() == "1"
+
+
+def get_allowed_origin_hosts() -> set[str]:
+    """Return the global WebSocket Origin hostname allowlist from environment."""
+    raw = os.getenv(_ALLOWED_ORIGIN_HOSTS_ENV)
+    if raw is None:
+        return set()
+    return {item.strip().lower() for item in raw.split(",") if item.strip()}
+
+
 def is_allowed_browser_origin(origin: str | None) -> bool:
-    """校验浏览器 Origin 是否来自允许的本机地址。"""
+    """校验浏览器 Origin 是否允许访问 WebSocket 服务。"""
+    allowed_hosts = get_allowed_origin_hosts()
     if origin is None:
-        return False
+        return "none" in allowed_hosts
 
     try:
         parsed = urlsplit(origin)
     except ValueError:
         return False
 
-    return parsed.hostname in _ALLOWED_WS_ORIGIN_HOSTS
+    return (parsed.hostname or "").lower() in allowed_hosts
 
 
 def extract_handshake_request(args: tuple[Any, ...]) -> tuple[str, Any]:
