@@ -10,6 +10,7 @@ import json
 import logging
 import math
 import os
+import shutil
 from pathlib import Path
 from typing import Any, ClassVar
 
@@ -36,6 +37,7 @@ from jiuwenclaw.agents.harness.common.rails.permissions.permissions_persist impo
 from jiuwenclaw.extensions.hooks_context import AgentServerChatHookContext
 from jiuwenclaw.server.runtime.agent_manager import AgentManager, ACP_DEFAULT_CAPABILITIES
 from jiuwenclaw.server.runtime.session.session_metadata import get_all_sessions_metadata
+from jiuwenclaw.server.utils.utils import is_team_params
 from jiuwenclaw.agents.harness.common.rails.permissions.permissions_config_rpc import get_permissions_config_req_methods
 from jiuwenclaw.common.config import (
     get_config,
@@ -394,6 +396,15 @@ class AgentWebSocketServer:
             if request.req_method == ReqMethod.SESSION_RENAME:
                 await self._handle_session_rename(ws, request, send_lock)
                 return
+            if request.req_method == ReqMethod.SESSION_SWITCH:
+                await self._handle_session_switch(ws, request, send_lock)
+                return
+            if request.req_method == ReqMethod.SESSION_DELETE:
+                await self._handle_session_delete(ws, request, send_lock)
+                return
+            if request.req_method == ReqMethod.TEAM_DELETE:
+                await self._handle_team_delete(ws, request, send_lock)
+                return
             if request.req_method in get_permissions_config_req_methods():
                 await self._handle_permissions_config(ws, request, send_lock)
                 return
@@ -721,6 +732,249 @@ class AgentWebSocketServer:
                 payload={"error": err or "session.rename failed", "code": code or ""},
                 metadata=request.metadata,
             )
+        wire = encode_agent_response_for_wire(resp, response_id=request.request_id)
+        async with send_lock:
+            await ws.send(json.dumps(wire, ensure_ascii=False))
+
+    async def _handle_session_switch(self, ws: Any, request: AgentRequest, send_lock: asyncio.Lock) -> None:
+        """Switch the active team runtime without deleting recoverable session state."""
+        from jiuwenclaw.agents.harness.team import get_team_manager
+
+        params = request.params if isinstance(request.params, dict) else {}
+        target = str(params.get("session_id") or request.session_id or "").strip()
+        is_team = is_team_params(params)
+
+        if not target:
+            resp = AgentResponse(
+                request_id=request.request_id,
+                channel_id=request.channel_id,
+                ok=False,
+                payload={"error": "session_id is required", "code": "BAD_REQUEST"},
+                metadata=request.metadata,
+            )
+        elif not is_team:
+            resp = AgentResponse(
+                request_id=request.request_id,
+                channel_id=request.channel_id,
+                ok=False,
+                payload={
+                    "error": "session.switch is only supported for team mode",
+                    "code": "UNSUPPORTED_MODE",
+                },
+                metadata=request.metadata,
+            )
+        else:
+            channel_id = str(request.channel_id or "").strip() or "default"
+            team_manager = get_team_manager(channel_id)
+            await team_manager.prepare_session_switch(
+                target,
+                reason="session.switch: ",
+            )
+            resp = AgentResponse(
+                request_id=request.request_id,
+                channel_id=request.channel_id,
+                ok=True,
+                payload={
+                    "session_id": target,
+                    "mode": "team",
+                    "switched": True,
+                },
+                metadata=request.metadata,
+            )
+
+        wire = encode_agent_response_for_wire(resp, response_id=request.request_id)
+        async with send_lock:
+            await ws.send(json.dumps(wire, ensure_ascii=False))
+
+    async def _find_team_session_ids(self, team_name: str) -> list[str]:
+        from jiuwenclaw.server.runtime.session.session_metadata import get_session_metadata
+
+        sessions_dir = get_agent_sessions_dir()
+        if not sessions_dir.exists():
+            return []
+
+        matched_session_ids: list[str] = []
+        for session_dir in sessions_dir.iterdir():
+            if not session_dir.is_dir():
+                continue
+
+            session_id = session_dir.name
+            metadata = get_session_metadata(session_id)
+            mode = str(metadata.get("mode") or "").strip().lower()
+            if mode != "team":
+                continue
+
+            metadata_team_name = str(metadata.get("team_name") or "").strip()
+            if metadata_team_name == team_name:
+                matched_session_ids.append(session_id)
+
+        return sorted(set(matched_session_ids))
+
+    async def _handle_team_delete(self, ws: Any, request: AgentRequest, send_lock: asyncio.Lock) -> None:
+        """Delete a team and all team sessions that persist that team."""
+        from openjiuwen.core.runner import Runner
+        from jiuwenclaw.agents.harness.team import (
+            get_all_team_managers,
+            stop_team_session_runtime_across_managers,
+        )
+
+        params = request.params if isinstance(request.params, dict) else {}
+        is_team = is_team_params(params)
+        team_name = str(params.get("team_name") or "").strip()
+
+        if not team_name:
+            resp = AgentResponse(
+                request_id=request.request_id,
+                channel_id=request.channel_id,
+                ok=False,
+                payload={"error": "team_name is required", "code": "BAD_REQUEST"},
+                metadata=request.metadata,
+            )
+        elif not is_team:
+            resp = AgentResponse(
+                request_id=request.request_id,
+                channel_id=request.channel_id,
+                ok=False,
+                payload={
+                    "error": "team.delete is only supported for team mode",
+                    "code": "UNSUPPORTED_MODE",
+                },
+                metadata=request.metadata,
+            )
+        else:
+            team_session_ids = await self._find_team_session_ids(team_name)
+            if not team_session_ids:
+                resp = AgentResponse(
+                    request_id=request.request_id,
+                    channel_id=request.channel_id,
+                    ok=False,
+                    payload={"error": "team sessions not found", "code": "NOT_FOUND"},
+                    metadata=request.metadata,
+                )
+            else:
+                for team_session_id in team_session_ids:
+                    await stop_team_session_runtime_across_managers(
+                        team_session_id,
+                        reason="team.delete: ",
+                    )
+
+                await Runner.delete_agent_team(
+                    team_name=team_name,
+                    session_ids=team_session_ids,
+                    force=True,
+                )
+
+                for team_manager in get_all_team_managers():
+                    for team_session_id in team_session_ids:
+                        task = team_manager.pop_stream_task(team_session_id)
+                        if task is not None and not task.done():
+                            task.cancel()
+                        team_manager.clear_active_runtime(team_session_id)
+                        team_manager.clear_pending_runtime(team_session_id)
+
+                for team_session_id in team_session_ids:
+                    session_dir = get_agent_sessions_dir() / team_session_id
+                    if session_dir.exists():
+                        try:
+                            shutil.rmtree(session_dir)
+                        except Exception as exc:
+                            logger.warning(
+                                "[AgentWebSocketServer] failed to delete local team session dir: "
+                                "session_id=%s error=%s",
+                                team_session_id,
+                                exc,
+                            )
+
+                resp = AgentResponse(
+                    request_id=request.request_id,
+                    channel_id=request.channel_id,
+                    ok=True,
+                    payload={
+                        "team_name": team_name,
+                        "session_ids": team_session_ids,
+                        "deleted": True,
+                    },
+                    metadata=request.metadata,
+                )
+
+        wire = encode_agent_response_for_wire(resp, response_id=request.request_id)
+        async with send_lock:
+            await ws.send(json.dumps(wire, ensure_ascii=False))
+
+    async def _handle_session_delete(self, ws: Any, request: AgentRequest, send_lock: asyncio.Lock) -> None:
+        """Delete a single session and its recoverable runtime state."""
+        from openjiuwen.core.runner import Runner
+        from jiuwenclaw.server.runtime.session.session_metadata import get_session_metadata
+        from jiuwenclaw.agents.harness.team import get_team_manager
+
+        params = request.params if isinstance(request.params, dict) else {}
+        target = str(params.get("session_id") or "").strip()
+        if not target:
+            resp = AgentResponse(
+                request_id=request.request_id,
+                channel_id=request.channel_id,
+                ok=False,
+                payload={"error": "session_id is required", "code": "BAD_REQUEST"},
+                metadata=request.metadata,
+            )
+        else:
+            session_dir = get_agent_sessions_dir() / target
+            if not session_dir.exists():
+                resp = AgentResponse(
+                    request_id=request.request_id,
+                    channel_id=request.channel_id,
+                    ok=False,
+                    payload={"error": "session not found", "code": "NOT_FOUND"},
+                    metadata=request.metadata,
+                )
+            elif not session_dir.is_dir():
+                resp = AgentResponse(
+                    request_id=request.request_id,
+                    channel_id=request.channel_id,
+                    ok=False,
+                    payload={"error": "session is not a directory", "code": "BAD_REQUEST"},
+                    metadata=request.metadata,
+                )
+            else:
+                metadata = get_session_metadata(target)
+                mode = str(metadata.get("mode") or "").strip().lower()
+                channel_id = str(metadata.get("channel_id") or request.channel_id or "").strip() or None
+                try:
+                    if mode == "team":
+                        team_manager = get_team_manager(channel_id)
+                        deleted = await team_manager.delete_session_runtime(
+                            target,
+                            reason="session.delete: ",
+                        )
+                    else:
+                        await Runner.release(target)
+                        deleted = True
+                except Exception as exc:
+                    logger.warning(
+                        "[AgentWebSocketServer] session.delete runtime cleanup failed: session_id=%s error=%s",
+                        target,
+                        exc,
+                    )
+                    deleted = False
+
+                if not deleted:
+                    resp = AgentResponse(
+                        request_id=request.request_id,
+                        channel_id=request.channel_id,
+                        ok=False,
+                        payload={"error": "session runtime cleanup failed", "code": "DELETE_FAILED"},
+                        metadata=request.metadata,
+                    )
+                else:
+                    shutil.rmtree(session_dir)
+                    resp = AgentResponse(
+                        request_id=request.request_id,
+                        channel_id=request.channel_id,
+                        ok=True,
+                        payload={"session_id": target},
+                        metadata=request.metadata,
+                    )
+
         wire = encode_agent_response_for_wire(resp, response_id=request.request_id)
         async with send_lock:
             await ws.send(json.dumps(wire, ensure_ascii=False))
@@ -1891,11 +2145,28 @@ class AgentWebSocketServer:
         try:
             channel_id = request.channel_id or "default"
             params = request.params if isinstance(request.params, dict) else {}
+            mode, _, _ = resolve_agent_request_mode(params.get("mode", "agent.plan"))
             explicit_session_id = params.get("session_id")
             session_id = await self._agent_manager.create_session(
                 channel_id=channel_id,
                 session_id=str(explicit_session_id).strip() if isinstance(explicit_session_id, str) else None,
             )
+
+            if mode == "team":
+                from jiuwenclaw.agents.harness.team import get_team_manager
+
+                team_manager = get_team_manager(channel_id)
+                logger.info(
+                    "[AgentServer] session.create preparing team switch: channel_id=%s "
+                    "target_session_id=%s mode=%s",
+                    channel_id,
+                    session_id,
+                    mode,
+                )
+                await team_manager.prepare_session_switch(
+                    session_id,
+                    reason="session.create switch: ",
+                )
 
             resp = AgentResponse(
                 request_id=request.request_id,

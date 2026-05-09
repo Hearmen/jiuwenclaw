@@ -167,7 +167,9 @@ class _DummyBus:
 _FORWARD_REQ_METHODS = frozenset({
     "initialize",
     "session.create",
+    "session.switch",
     "acp.tool_response",
+    "team.delete",
     "chat.send",
     "chat.interrupt",
     "chat.resume",
@@ -214,7 +216,9 @@ _FORWARD_REQ_METHODS = frozenset({
 _FORWARD_NO_LOCAL_HANDLER_METHODS = frozenset({
     "initialize",
     "session.create",
+    "session.switch",
     "acp.tool_response",
+    "team.delete",
     "browser.start",
     "team.snapshot",
     "skills.marketplace.list",
@@ -1096,6 +1100,48 @@ def _register_web_handlers(bind: WebHandlersBindParams) -> None:
             )
             return
         session_id_to_delete = session_id_to_delete.strip()
+
+        from jiuwenclaw.server.runtime.session.session_metadata import get_session_metadata
+        from jiuwenclaw.common.e2a.gateway_normalize import e2a_from_agent_fields
+        from jiuwenclaw.common.schema.message import ReqMethod
+
+        ac = _resolve(agent_client)
+        if ac is not None and getattr(ac, "server_ready", False):
+            try:
+                env = e2a_from_agent_fields(
+                    request_id=str(req_id) if req_id else "",
+                    channel_id="",
+                    session_id=session_id,
+                    req_method=ReqMethod.SESSION_DELETE,
+                    params=params,
+                )
+                resp = await ac.send_request(env)
+                if resp.ok:
+                    pl = resp.payload if isinstance(resp.payload, dict) else {}
+                    await channel.send_response(ws, req_id, ok=True, payload=pl)
+                    return
+                pl = resp.payload if isinstance(resp.payload, dict) else {}
+                await channel.send_response(
+                    ws,
+                    req_id,
+                    ok=False,
+                    error=str(pl.get("error", "session.delete failed")),
+                    code=pl.get("code"),
+                )
+                return
+            except Exception as e:  # noqa: BLE001
+                logger.warning("[session.delete] forward to agent failed, fallback local: %s", e)
+
+        metadata = get_session_metadata(session_id_to_delete)
+        if str(metadata.get("mode") or "").strip().lower() == "team":
+            await channel.send_response(
+                ws,
+                req_id,
+                ok=False,
+                error="team session delete requires agent server",
+                code="AGENT_UNAVAILABLE",
+            )
+            return
 
         workspace_session_dir = get_agent_sessions_dir()
         session_dir = workspace_session_dir / session_id_to_delete

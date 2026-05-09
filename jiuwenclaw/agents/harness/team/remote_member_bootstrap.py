@@ -279,6 +279,7 @@ def parse_remote_teammate_bootstrap_json(content: str) -> dict[str, Any] | None:
 def build_bootstrap_envelope(
     team_agent: Any,
     *,
+    session_id: str,
     member_name: str,
     prompt: str | None,
 ) -> dict[str, Any]:
@@ -301,7 +302,7 @@ def build_bootstrap_envelope(
         "version": 1,
         "bootstrap_id": str(uuid.uuid4()),
         "team_name": team_name,
-        "session_id": _session_id_from_team_name(team_name),
+        "session_id": str(session_id or "").strip(),
         "member_name": member_name,
         "leader_member_name": leader_member_name,
         "leader_agent_id": leader_agent_id,
@@ -314,6 +315,7 @@ def build_bootstrap_envelope(
 def build_team_destroy_envelope(
     team_agent: Any,
     *,
+    session_id: str,
     member_name: str,
     reservation: Any | None = None,
 ) -> dict[str, Any]:
@@ -338,7 +340,7 @@ def build_team_destroy_envelope(
         "version": 1,
         "destroy_id": str(uuid.uuid4()),
         "team_name": team_name,
-        "session_id": _session_id_from_team_name(str(team_name or "")),
+        "session_id": str(session_id or "").strip(),
         "member_name": str(member_name or "").strip(),
         "leader_member_name": leader_member_name,
         "leader_agent_id": leader_agent_id,
@@ -386,7 +388,12 @@ def _apply_leader_route_from_envelope(team_agent: Any, envelope: dict[str, Any])
         return False
 
 
-async def _send_bootstrap_message(team_agent: Any, member_name: str, prompt: str | None) -> bool:
+async def _send_bootstrap_message(
+    team_agent: Any,
+    session_id: str,
+    member_name: str,
+    prompt: str | None,
+) -> bool:
     mm = team_agent.message_manager
     messager = getattr(team_agent, "_messager", None) or getattr(team_agent, "mailbox_transport", None)
     if mm is None:
@@ -395,7 +402,12 @@ async def _send_bootstrap_message(team_agent: Any, member_name: str, prompt: str
             member_name,
         )
         return False
-    envelope = build_bootstrap_envelope(team_agent, member_name=member_name, prompt=prompt)
+    envelope = build_bootstrap_envelope(
+        team_agent,
+        session_id=session_id,
+        member_name=member_name,
+        prompt=prompt,
+    )
     registry_reservation = None
     peer_agent_id = ""
     peer_addr = ""
@@ -460,7 +472,12 @@ async def _send_bootstrap_message(team_agent: Any, member_name: str, prompt: str
                 registry_reservation.service_id,
                 registry_reservation.endpoint,
             )
-            _remember_a2x_reservation(team_agent, member_name, registry_reservation)
+            _remember_a2x_reservation(
+                team_agent,
+                session_id,
+                member_name,
+                registry_reservation,
+            )
         return True
 
     if registry_reservation is not None:
@@ -485,15 +502,25 @@ async def _send_bootstrap_message(team_agent: Any, member_name: str, prompt: str
     return False
 
 
-def _remember_a2x_reservation(team_agent: Any, member_name: str, reservation: Any) -> None:
+def _remember_a2x_reservation(
+    team_agent: Any,
+    session_id: str,
+    member_name: str,
+    reservation: Any,
+) -> None:
     reservations = getattr(team_agent, _A2X_RESERVATIONS_ATTR, None)
     if not isinstance(reservations, list):
         reservations = []
         setattr(team_agent, _A2X_RESERVATIONS_ATTR, reservations)
-    reservations.append((member_name, reservation))
+    reservations.append((str(session_id or "").strip(), member_name, reservation))
 
 
-async def _notify_reserved_teammate_team_destroy(team_agent: Any, member_name: str, reservation: Any) -> None:
+async def _notify_reserved_teammate_team_destroy(
+    team_agent: Any,
+    session_id: str,
+    member_name: str,
+    reservation: Any,
+) -> None:
     messager = getattr(team_agent, "_messager", None) or getattr(team_agent, "mailbox_transport", None)
     peer_agent_id = str(getattr(reservation, "service_id", "") or "").strip()
     peer_addr = _normalize_leader_direct_addr(getattr(reservation, "endpoint", ""))
@@ -511,7 +538,12 @@ async def _notify_reserved_teammate_team_destroy(team_agent: Any, member_name: s
         from openjiuwen.agent_teams.messager.base import MessagerPeerConfig
         from openjiuwen.agent_teams.schema.events import EventMessage
 
-        envelope = build_team_destroy_envelope(team_agent, member_name=member_name, reservation=reservation)
+        envelope = build_team_destroy_envelope(
+            team_agent,
+            session_id=session_id,
+            member_name=member_name,
+            reservation=reservation,
+        )
         register = getattr(messager, "register_peer", None)
         send = getattr(messager, "send", None)
         if not callable(register) or not callable(send):
@@ -548,8 +580,13 @@ async def release_a2x_reservations_for_team(team_agent: Any) -> None:
     if not isinstance(reservations, list) or not reservations:
         return
     setattr(team_agent, _A2X_RESERVATIONS_ATTR, [])
-    for member_name, reservation in reservations:
-        await _notify_reserved_teammate_team_destroy(team_agent, member_name, reservation)
+    for session_id, member_name, reservation in reservations:
+        await _notify_reserved_teammate_team_destroy(
+            team_agent,
+            session_id,
+            member_name,
+            reservation,
+        )
         close = getattr(reservation, "close", None)
         if callable(close):
             await close()
@@ -695,6 +732,9 @@ def attach_spawn_member_remote_bootstrap_wrapper(
                 return result
             key = mname.strip()
             active_team_agent = getattr(self, _WRAPPED_TEAM_AGENT_ATTR, team_agent)
+            active_session_id = str(
+                getattr(self, _WRAPPED_SESSION_ID_ATTR, session_id) or session_id
+            ).strip() or session_id
             active_remote_names = getattr(self, _WRAPPED_REMOTE_NAMES_ATTR, remote_names)
             if not isinstance(active_remote_names, set):
                 active_remote_names = set(active_remote_names or [])
@@ -739,7 +779,12 @@ def attach_spawn_member_remote_bootstrap_wrapper(
                     key,
                     exc,
                 )
-            delivered = await _send_bootstrap_message(active_team_agent, key, (inputs or {}).get("prompt"))
+            delivered = await _send_bootstrap_message(
+                active_team_agent,
+                active_session_id,
+                key,
+                (inputs or {}).get("prompt"),
+            )
             if delivered:
                 try:
                     from openjiuwen.agent_teams.schema.status import MemberStatus
@@ -1192,13 +1237,6 @@ async def _stop_dynamic_member_agents_for_session(session_id: str, member_name: 
     return stopped_count
 
 
-def _session_id_from_team_name(team_name: str) -> str:
-    name = str(team_name or "").strip()
-    if "_sess_" not in name:
-        return ""
-    return "sess_" + name.split("_sess_", 1)[1]
-
-
 async def _ensure_dynamic_member_execution_loop(
     *,
     session_id: str,
@@ -1408,7 +1446,7 @@ async def _apply_bootstrap_envelope_from_control_plane(
     leader_agent_id = str(envelope.get("leader_agent_id", "")).strip()
     leader_direct_addr = str(envelope.get("leader_direct_addr", "")).strip()
 
-    effective_sid = envelope_session_id or _session_id_from_team_name(envelope_team_name)
+    effective_sid = envelope_session_id
     loop_key = (effective_sid, target_member)
 
     logger.info(

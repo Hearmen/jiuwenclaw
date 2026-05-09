@@ -2,7 +2,7 @@
 
 """AgentServer 工具函数."""
 
-from typing import Any
+from typing import Any, Mapping
 
 from jiuwenclaw.common.schema.agent import AgentRequest
 
@@ -31,3 +31,11 @@ def get_chat_id(request: AgentRequest) -> str | None:
             request.metadata.get('xiaoyi_session_id')
         )
     return None
+
+
+def is_team_params(params: Mapping[str, Any] | None) -> bool:
+    """Return whether params indicate team mode."""
+    if not isinstance(params, Mapping):
+        return False
+    mode = str(params.get("mode") or "").strip().lower()
+    return bool(params.get("team")) or mode == "team"

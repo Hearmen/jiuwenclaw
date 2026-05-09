@@ -29,6 +29,7 @@ from jiuwenclaw.agents.harness.common.memory.config import get_memory_mode
 from jiuwenclaw.server.runtime.session.session_history import append_history_record
 from jiuwenclaw.server.runtime.session.session_manager import SessionManager
 from jiuwenclaw.server.runtime.skill.skill_manager import SkillManager
+from jiuwenclaw.server.utils.utils import is_team_params
 from jiuwenclaw.common.config import get_config
 from jiuwenclaw.extensions.registry import ExtensionRegistry
 from jiuwenclaw.common.schema.agent import AgentRequest, AgentResponse, AgentResponseChunk
@@ -484,6 +485,15 @@ class JiuWenClaw:
         """
         intent = request.params.get("intent", "cancel")
         session_id = self._session_manager.get_session_id(request.session_id)
+        is_team_mode = is_team_params(request.params if isinstance(request.params, dict) else None)
+
+        if is_team_mode:
+            return await self._process_team_interrupt(
+                request=request,
+                intent=intent,
+                session_id=session_id,
+            )
+
         adapter = self._ensure_adapter()
 
         if intent == "pause":
@@ -508,6 +518,76 @@ class JiuWenClaw:
             log_prefix=f"interrupt(intent={intent}): ",
         )
         return await adapter.process_interrupt(request)
+
+    @staticmethod
+    def _build_interrupt_result_response(
+        request: AgentRequest,
+        *,
+        intent: str,
+        success: bool,
+        message: str,
+    ) -> AgentResponse:
+        return AgentResponse(
+            request_id=request.request_id,
+            channel_id=request.channel_id,
+            ok=True,
+            payload={
+                "event_type": "chat.interrupt_result",
+                "intent": intent,
+                "success": success,
+                "message": message,
+            },
+            metadata=request.metadata,
+        )
+
+    async def _process_team_interrupt(
+        self,
+        *,
+        request: AgentRequest,
+        intent: str,
+        session_id: str,
+    ) -> AgentResponse:
+        """Handle interrupt requests for Team mode.
+
+        Team runtime is persistent and owned by openjiuwen. For team sessions:
+        - pause/cancel both stop the current foreground stream and park the runtime
+          in a paused state so a later `chat.send` can resume the same session.
+        - resume is not a first-class runtime action. Users should send the next
+          message directly to continue the paused session.
+        """
+        from jiuwenclaw.agents.harness.team import get_team_manager
+
+        team_manager = get_team_manager(request.channel_id)
+        reason = f"interrupt(intent={intent}): "
+
+        if intent == "resume":
+            return self._build_interrupt_result_response(
+                request,
+                intent=intent,
+                success=True,
+                message="团队暂停后，直接发送下一条消息即可继续。",
+            )
+
+        if intent in {"pause", "cancel"}:
+            await self._session_manager.cancel_session_task(session_id, reason)
+            paused = await team_manager.pause_session_runtime(session_id, reason=reason)
+            if intent == "pause":
+                message = "团队已暂停" if paused else "当前没有可暂停的团队任务"
+            else:
+                message = "团队当前执行已结束" if paused else "当前没有可取消的团队任务"
+            return self._build_interrupt_result_response(
+                request,
+                intent=intent,
+                success=paused,
+                message=message,
+            )
+
+        return self._build_interrupt_result_response(
+            request,
+            intent=intent,
+            success=False,
+            message=f"团队模式暂不支持中断意图: {intent}",
+        )
 
     async def _cancel_team_work_for_session(
         self,
@@ -649,9 +729,7 @@ class JiuWenClaw:
         session_id = self._session_manager.get_session_id(request.session_id)
         query = request.params.get("query", "")
 
-        mode = request.params.get("mode", "") if isinstance(request.params, dict) else ""
-        team_flag = request.params.get("team", False) if isinstance(request.params, dict) else False
-        is_team_mode = team_flag or (isinstance(mode, str) and mode.strip().lower() == "team")
+        is_team_mode = is_team_params(request.params if isinstance(request.params, dict) else None)
 
         append_history_record(
             session_id=session_id,
@@ -700,7 +778,11 @@ class JiuWenClaw:
         if is_team_mode:
             from jiuwenclaw.agents.harness.team import get_team_manager
             team_manager = get_team_manager(request.channel_id)
-            is_team_first_request = not team_manager.has_stream_task(session_id)
+            is_team_first_request = (
+                team_manager.active_session_id != session_id
+                and team_manager.pending_session_id != session_id
+                and not team_manager.has_stream_task(session_id)
+            )
             logger.info(
                 "[JiuWenClaw] Team模式: session_id=%s is_first=%s",
                 session_id, is_team_first_request

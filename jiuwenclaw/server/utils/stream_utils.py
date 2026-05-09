@@ -317,12 +317,16 @@ def _parse_event_typed_chunk(chunk: Any) -> dict[str, Any]:
 
 
 def _serialize_value(value: Any) -> Any:
-    """将 datetime 等不可 JSON 序列化的对象转换为 JSON 友好格式."""
-    from datetime import datetime, date
+    """Serialize non-JSON-native values to frontend-safe payloads."""
+    from datetime import date, datetime
+    from enum import Enum
+
     if isinstance(value, datetime):
         return value.isoformat()
     if isinstance(value, date):
         return value.isoformat()
+    if isinstance(value, Enum):
+        return value.value
     return value
 
 

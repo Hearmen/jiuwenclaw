@@ -130,6 +130,7 @@ def init_session_metadata(
     user_id: str = "",
     title: str = "",
     mode: str = "unknown",
+    team_name: str = "",
 ) -> None:
     """初始化会话元数据(同步写,确保创建后立即可读)"""
     metadata = {
@@ -141,6 +142,7 @@ def init_session_metadata(
         "title": title,
         "message_count": 0,
         "mode": mode,
+        "team_name": team_name,
     }
     _write_metadata_sync(session_id, metadata)
 
@@ -157,6 +159,7 @@ def update_session_metadata(
     user_content: str | None = None,
     channel_metadata: dict[str, Any] | None = None,
     mode: str | None = None,
+    team_name: str | None = None,
 ) -> None:
     """更新会话元数据(异步写入,不阻塞调用方)
 
@@ -183,6 +186,7 @@ def update_session_metadata(
             "title": title or auto_title,
             "message_count": 1 if increment_message_count else 0,
             "mode": mode if mode is not None else "unknown",
+            "team_name": team_name or "",
         }
         # 首次创建时写入 channel_metadata
         if channel_metadata:
@@ -195,6 +199,8 @@ def update_session_metadata(
             metadata["user_id"] = user_id
         if mode is not None:
             metadata["mode"] = mode
+        if team_name is not None:
+            metadata["team_name"] = team_name
         # 显式清除优先级高于 title 入参
         if clear_title:
             metadata["title"] = ""

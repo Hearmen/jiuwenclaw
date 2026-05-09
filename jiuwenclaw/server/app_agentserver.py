@@ -60,35 +60,13 @@ reset_free_search_runtime_flags()
 
 
 async def _run(host: str, port: int) -> None:
-    # --- 删除 .agent_teams 目录（在 team 模块导入之前） ---
-    agent_teams_dir = get_user_workspace_dir() / ".agent_teams"
-    if agent_teams_dir.exists():
-        import shutil
-        try:
-            shutil.rmtree(agent_teams_dir)
-            logger.info("[AgentServer] deleted .agent_teams directory: %s", agent_teams_dir)
-        except OSError as exc:
-            logger.warning("[AgentServer] failed to delete .agent_teams: %s", exc)
-
     from openjiuwen.core.runner import Runner
     from jiuwenclaw.server.agent_ws_server import AgentWebSocketServer
-    from jiuwenclaw.agents.harness.team import cleanup_team_runtime_state_once
     from jiuwenclaw.agents.harness.team.remote_member_bootstrap import run_teammate_bootstrap_daemon
     from jiuwenclaw.extensions.manager import ExtensionManager
     from jiuwenclaw.extensions.registry import ExtensionRegistry
 
     logger.info("[AgentServer] starting: ws://%s:%s", host, port)
-
-    from jiuwenclaw.server.runtime.session.session_metadata import remove_team_mode_session_dirs_at_startup
-
-    remove_team_mode_session_dirs_at_startup()
-    deleted_tables, cleared_tables = await cleanup_team_runtime_state_once()
-    if deleted_tables or cleared_tables:
-        logger.info(
-            "[AgentServer] startup team runtime cleanup deleted dynamic tables=%s cleared static tables=%s",
-            deleted_tables,
-            cleared_tables,
-        )
 
     # ---------- 扩展系统初始化 ----------
     callback_framework = Runner.callback_framework

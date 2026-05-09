@@ -281,8 +281,8 @@ async def test_spawn_member_wrapper_rebinds_reused_tool_to_latest_team(monkeypat
 
     bootstrap_calls = []
 
-    async def _fake_send_bootstrap(team_agent, member_name, prompt):
-        bootstrap_calls.append((team_agent, member_name, prompt))
+    async def _fake_send_bootstrap(team_agent, session_id, member_name, prompt):
+        bootstrap_calls.append((team_agent, session_id, member_name, prompt))
         return True
 
     monkeypatch.setattr(_mod, "_send_bootstrap_message", _fake_send_bootstrap)
@@ -310,7 +310,7 @@ async def test_spawn_member_wrapper_rebinds_reused_tool_to_latest_team(monkeypat
 
     await tool.invoke({"member_name": "calculator", "prompt": "run calc"})
 
-    assert bootstrap_calls == [(new_team, "calculator", "run calc")]
+    assert bootstrap_calls == [(new_team, "new-sid", "calculator", "run calc")]
     old_team.team_backend.db.update_member_status.assert_not_awaited()
     new_team.team_backend.db.update_member_status.assert_any_await("calculator", "new-team", "unstarted")
     new_team.team_backend.db.update_member_status.assert_any_await("calculator", "new-team", "ready")
@@ -586,7 +586,11 @@ async def test_release_a2x_reservations_notifies_remote_teammate_and_does_not_re
         runtime_context=None,
         _messager=messager,
     )
-    setattr(ta, "_jiuwen_a2x_blank_agent_reservations", [("math-calc-1", reservation)])
+    setattr(
+        ta,
+        "_jiuwen_a2x_blank_agent_reservations",
+        [("sess_destroy_1", "math-calc-1", reservation)],
+    )
 
     await release_a2x_reservations_for_team(ta)
 

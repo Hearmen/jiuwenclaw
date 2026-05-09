@@ -31,6 +31,7 @@ class TestReqMethod:
         assert ReqMethod.SESSION_LIST.value == "session.list"
         assert ReqMethod.SESSION_CREATE.value == "session.create"
         assert ReqMethod.SESSION_DELETE.value == "session.delete"
+        assert ReqMethod.TEAM_DELETE.value == "team.delete"
 
     @staticmethod
     def test_skills_methods():

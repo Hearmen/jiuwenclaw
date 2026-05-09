@@ -745,6 +745,9 @@ def register_cli_handlers(bind: CliHandlersBindParams) -> None:
 
     async def _session_delete(ws, req_id, params, session_id):
         from jiuwenclaw.common.utils import get_agent_sessions_dir
+        from jiuwenclaw.server.runtime.session.session_metadata import get_session_metadata
+        from jiuwenclaw.common.e2a.gateway_normalize import e2a_from_agent_fields
+        from jiuwenclaw.common.schema.message import ReqMethod
 
         if not isinstance(params, dict):
             await channel.send_response(
@@ -755,6 +758,53 @@ def register_cli_handlers(bind: CliHandlersBindParams) -> None:
         if not target:
             await channel.send_response(
                 ws, req_id, ok=False, error="session_id is required", code="BAD_REQUEST"
+            )
+            return
+        real_client = (
+            agent_client.get("value")
+            if isinstance(agent_client, dict)
+            else agent_client
+        )
+        if real_client is not None:
+            try:
+                env = e2a_from_agent_fields(
+                    request_id=req_id,
+                    channel_id="tui",
+                    session_id=session_id,
+                    req_method=ReqMethod.SESSION_DELETE,
+                    params=params,
+                    is_stream=False,
+                    timestamp=time.time(),
+                )
+                resp = await real_client.send_request(env)
+                if resp.ok:
+                    pl = resp.payload if isinstance(resp.payload, dict) else {}
+                    await channel.send_response(ws, req_id, ok=True, payload=pl)
+                    return
+                pl = resp.payload if isinstance(resp.payload, dict) else {}
+                err = pl.get("error", "session.delete failed")
+                code = pl.get("code") or None
+                if isinstance(code, str) and not code.strip():
+                    code = None
+                await channel.send_response(
+                    ws,
+                    req_id,
+                    ok=False,
+                    error=str(err),
+                    code=code,
+                )
+                return
+            except Exception as e:
+                logger.warning("[cli session.delete] forward to agent failed, fallback local: %s", e)
+
+        metadata = get_session_metadata(target)
+        if str(metadata.get("mode") or "").strip().lower() == "team":
+            await channel.send_response(
+                ws,
+                req_id,
+                ok=False,
+                error="team session delete requires agent server",
+                code="AGENT_UNAVAILABLE",
             )
             return
         session_dir = get_agent_sessions_dir() / target

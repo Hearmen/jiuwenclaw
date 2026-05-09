@@ -9,11 +9,16 @@ from dataclasses import dataclass
 import logging
 from typing import Any, AsyncIterator
 
+from openjiuwen.agent_teams.runtime import RunActionKind
 from openjiuwen.core.runner import Runner
 from openjiuwen.harness import DeepAgent
 
 from jiuwenclaw.agents.harness.team import get_team_manager
-from jiuwenclaw.server.runtime.session.session_metadata import build_server_push_message
+from jiuwenclaw.server.runtime.session.session_metadata import (
+    build_server_push_message,
+    get_session_metadata,
+    update_session_metadata,
+)
 from jiuwenclaw.agents.harness.team.monitor_handler import TeamMonitorHandler
 from jiuwenclaw.server.utils.stream_utils import parse_stream_chunk
 from jiuwenclaw.common.schema.agent import AgentResponseChunk
@@ -24,6 +29,44 @@ _pending_waiters: dict[tuple[str, str], list[tuple[str, asyncio.Queue]]] = {}
 _TEAM_EVOLUTION_IDLE_SLEEP_SEC = 1.0
 _TEAM_EVOLUTION_START_STAGE = "collecting"
 _TEAM_EVOLUTION_START_MESSAGE = "Running team skill evolution analysis..."
+_TEAM_CREATE_KINDS = {
+    RunActionKind.CREATE.value,
+    RunActionKind.NEW_TEAM_IN_SESSION.value,
+}
+
+
+def _sync_team_identity_metadata(
+    *,
+    channel_id: str | None,
+    session_id: str,
+    mode: str,
+    ready_team_name: str,
+    activation_kind: str | None,
+) -> None:
+    """Persist team identity only for newly created team sessions."""
+    metadata = get_session_metadata(session_id)
+    existing_team_name = str(metadata.get("team_name") or "").strip()
+    normalized_kind = str(activation_kind or "").strip()
+    if normalized_kind not in _TEAM_CREATE_KINDS:
+        return
+
+    if existing_team_name and existing_team_name != ready_team_name:
+        logger.warning(
+            "[TeamHelpers] team session identity mismatch, keep existing metadata: "
+            "session_id=%s existing_team_name=%s new_team_name=%s activation_kind=%s",
+            session_id,
+            existing_team_name,
+            ready_team_name,
+            normalized_kind,
+        )
+        return
+
+    update_session_metadata(
+        session_id=session_id,
+        channel_id=_resolve_channel_id(channel_id),
+        mode=mode,
+        team_name=ready_team_name,
+    )
 
 
 @dataclass(frozen=True)
@@ -47,6 +90,49 @@ def _resolve_channel_id(channel_id: str | None) -> str:
 
 def _waiter_key(channel_id: str | None, session_id: str) -> tuple[str, str]:
     return _resolve_channel_id(channel_id), session_id
+
+
+async def _ensure_monitor_for_active_runtime(
+    channel_id: str | None,
+    session_id: str,
+    team_name: str,
+) -> None:
+    """Attach TeamMonitorHandler using the public Runner team monitor accessor."""
+    tm = get_team_manager(channel_id)
+    existing = tm.get_monitor(session_id)
+    if existing is not None and existing.is_running:
+        return
+
+    monitor = await Runner.get_agent_team_monitor(team_name=team_name, session_id=session_id)
+    if monitor is None:
+        logger.warning(
+            "[TeamHelpers] active team monitor unavailable: channel_id=%s session_id=%s team_name=%s",
+            _resolve_channel_id(channel_id),
+            session_id,
+            team_name,
+        )
+        return
+
+    monitor_handler = TeamMonitorHandler(monitor, session_id)
+    try:
+        await monitor_handler.start()
+        tm.register_monitor(session_id, monitor_handler)
+        logger.info(
+            "[TeamHelpers] Monitor started from public runner API: channel_id=%s session_id=%s team_name=%s",
+            _resolve_channel_id(channel_id),
+            session_id,
+            team_name,
+        )
+        if monitor_handler.is_running:
+            asyncio.create_task(
+                _consume_monitor_events(
+                    channel_id,
+                    session_id,
+                    monitor_handler,
+                )
+            )
+    except Exception as exc:
+        logger.warning("[TeamHelpers] Monitor start failed from public runner API: %s", exc)
 
 
 def _broadcast_event(
@@ -434,34 +520,6 @@ async def process_team_message_stream(
     channel_id = request.channel_id
 
     team_manager = get_team_manager(channel_id)
-
-    try:
-        if deep_agent is None:
-            raise RuntimeError("DeepAgent not initialized")
-
-        team_agent = await team_manager.get_or_create_team(
-            session_id=session_id,
-            deep_agent=deep_agent,
-            request_id=rid,
-            channel_id=channel_id,
-            request_metadata=request.metadata,
-        )
-    except Exception as exc:
-        logger.exception("[TeamHelpers] TeamAgent create failed: %s", exc)
-        yield AgentResponseChunk(
-            request_id=rid,
-            channel_id=channel_id,
-            payload={"event_type": "chat.error", "error": str(exc)},
-            is_complete=False,
-        )
-        yield AgentResponseChunk(
-            request_id=rid,
-            channel_id=channel_id,
-            payload=None,
-            is_complete=True,
-        )
-        return
-
     query = inputs.get("query", "")
     is_first_request = not team_manager.has_stream_task(session_id)
     request_queue: asyncio.Queue | None = None
@@ -493,6 +551,34 @@ async def process_team_message_stream(
         )
         return
 
+    try:
+        if deep_agent is None:
+            raise RuntimeError("DeepAgent not initialized")
+        team_spec = await team_manager.get_enriched_team_spec(
+            session_id=session_id,
+            deep_agent=deep_agent,
+            request_id=rid,
+            channel_id=channel_id,
+            request_metadata=request.metadata,
+        )
+    except Exception as exc:
+        logger.exception("[TeamHelpers] TeamAgent create failed: %s", exc)
+        yield AgentResponseChunk(
+            request_id=rid,
+            channel_id=channel_id,
+            payload={"event_type": "chat.error", "error": str(exc)},
+            is_complete=False,
+        )
+        yield AgentResponseChunk(
+            request_id=rid,
+            channel_id=channel_id,
+            payload=None,
+            is_complete=True,
+        )
+        return
+
+    team_name = team_spec.team_name
+
     followup_prompt, rebuild_error = await _resolve_team_rebuild_followup(
         channel_id,
         session_id,
@@ -519,6 +605,8 @@ async def process_team_message_stream(
 
     try:
         if is_first_request:
+            team_manager.ensure_team_shared_skills_initialized(team_spec)
+            await team_manager.prepare_runtime_activation(session_id, team_name)
             request_queue = asyncio.Queue()
             waiter_key = _waiter_key(channel_id, session_id)
             if waiter_key not in _pending_waiters:
@@ -530,38 +618,15 @@ async def process_team_message_stream(
                 session_id,
             )
 
-            monitor_handler = TeamMonitorHandler(team_agent, session_id)
-            try:
-                await monitor_handler.start()
-                team_manager.register_monitor(session_id, monitor_handler)
-                logger.info(
-                    "[TeamHelpers] Monitor started: channel_id=%s session_id=%s",
-                    waiter_key[0],
-                    session_id,
-                )
-            except Exception as exc:
-                logger.warning(
-                    "[TeamHelpers] Monitor start failed, continue without it: %s", exc
-                )
-
             stream_task = asyncio.create_task(
                 _consume_stream_with_query(
                     channel_id,
                     session_id,
-                    team_agent,
+                    team_spec,
                     query,
                 )
             )
             team_manager.register_stream_task(session_id, stream_task)
-
-            if monitor_handler.is_running:
-                asyncio.create_task(
-                    _consume_monitor_events(
-                        channel_id,
-                        session_id,
-                        monitor_handler,
-                    )
-                )
         else:
             logger.info(
                 "[TeamHelpers] follow-up team request: channel_id=%s session_id=%s",
@@ -670,7 +735,7 @@ async def process_team_message_stream(
 async def _consume_stream_with_query(
     channel_id: str | None,
     session_id: str,
-    team_agent: Any,
+    team_spec: Any,
     initial_query: str,
 ) -> None:
     """Consume the team stream in the background and broadcast parsed events."""
@@ -681,12 +746,28 @@ async def _consume_stream_with_query(
             session_id,
         )
         async for chunk in Runner.run_agent_team_streaming(
-            agent_team=team_agent,
+            agent_team=team_spec,
             inputs={"query": initial_query},
             session=session_id,
         ):
             parsed = parse_stream_chunk(chunk)
             if parsed is not None:
+                if parsed.get("event_type") == "team.runtime_ready":
+                    ready_team_name = str(parsed.get("team_name") or team_spec.team_name)
+                    activation_kind = str(parsed.get("activation_kind") or "").strip()
+                    _sync_team_identity_metadata(
+                        channel_id=channel_id,
+                        session_id=session_id,
+                        mode="team",
+                        ready_team_name=ready_team_name,
+                        activation_kind=activation_kind,
+                    )
+                    get_team_manager(channel_id).commit_runtime_ready(session_id, ready_team_name)
+                    await _ensure_monitor_for_active_runtime(
+                        channel_id,
+                        session_id,
+                        ready_team_name,
+                    )
                 _broadcast_event(channel_id, session_id, parsed)
 
         logger.warning(
@@ -718,6 +799,7 @@ async def _consume_stream_with_query(
             },
         )
     finally:
+        get_team_manager(channel_id).clear_pending_runtime(session_id)
         get_team_manager(channel_id).pop_stream_task(session_id)
 
 

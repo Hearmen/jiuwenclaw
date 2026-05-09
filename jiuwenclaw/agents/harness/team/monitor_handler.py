@@ -11,9 +11,8 @@ import asyncio
 import logging
 from typing import Any, AsyncIterator
 
-from openjiuwen.agent_teams.monitor import create_monitor, TeamMonitor
+from openjiuwen.agent_teams.monitor import TeamMonitor
 from openjiuwen.agent_teams.monitor.models import MonitorEvent, MonitorEventType
-from openjiuwen.agent_teams.agent.team_agent import TeamAgent
 
 from jiuwenclaw.agents.harness.team.event_types import (
     get_team_event_type,
@@ -31,7 +30,7 @@ class TeamMonitorHandler:
 
     def __init__(
         self,
-        team_agent: TeamAgent,
+        monitor: TeamMonitor,
         session_id: str,
     ):
         """初始化处理器.
@@ -40,9 +39,8 @@ class TeamMonitorHandler:
             team_agent: TeamAgent 实例
             session_id: 会话 ID
         """
-        self._team_agent = team_agent
         self._session_id = session_id
-        self._monitor: TeamMonitor | None = None
+        self._monitor: TeamMonitor | None = monitor
         self._event_queue: asyncio.Queue[dict[str, Any]] = asyncio.Queue()
         self._event_task: asyncio.Task | None = None
         self._running = False
@@ -53,15 +51,9 @@ class TeamMonitorHandler:
             return
 
         try:
-            from openjiuwen.agent_teams.context import set_session_id, reset_session_id
-            
-            token = set_session_id(self._session_id)
-            try:
-                self._monitor = create_monitor(self._team_agent)
-                await self._monitor.start()
-            finally:
-                reset_session_id(token)
-            
+            if self._monitor is None:
+                raise ValueError("TeamMonitorHandler requires a TeamMonitor instance")
+            await self._monitor.start()
             self._running = True
 
             # 启动事件收集任务
@@ -353,7 +345,8 @@ class TeamMonitorHandler:
         try:
             members = await self._monitor.get_members()
             # 过滤掉 leader （team_leader 不属于"团队成员"）
-            leader_name = self._team_agent.member_name if self._team_agent else None
+            team_info = await self._monitor.get_team_info()
+            leader_name = team_info.leader_id if team_info else None
             if leader_name:
                 members = [m for m in members if m.member_id != leader_name]
             return {

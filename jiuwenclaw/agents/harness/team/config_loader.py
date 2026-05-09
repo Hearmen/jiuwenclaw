@@ -19,6 +19,8 @@ logger = logging.getLogger(__name__)
 _DEFAULT_MAX_ITERATIONS = 200
 _DEFAULT_COMPLETION_TIMEOUT = 600.0
 _DEFAULT_AGENT_WORKSPACE = {"stable_base": True}
+_DEFAULT_TEAM_WORKSPACE = {"enabled": True}
+_DEFAULT_TRANSPORT = {"type": "inprocess"}
 
 
 def _select_first_modes_team(config_base: dict[str, Any]) -> dict[str, Any]:
@@ -187,12 +189,25 @@ def _build_agents_config(team_raw: dict[str, Any], config_base: dict[str, Any]) 
 
 def _build_workspace_spec(team_raw: dict[str, Any]) -> dict[str, Any] | None:
     workspace_raw = team_raw.get("workspace")
-    if not isinstance(workspace_raw, dict) or "enabled" not in workspace_raw:
-        return None
+    if not isinstance(workspace_raw, dict):
+        workspace_spec = deepcopy(_DEFAULT_TEAM_WORKSPACE)
+        workspace_spec.setdefault("version_control", False)
+        return workspace_spec
 
     workspace_spec = deepcopy(workspace_raw)
+    workspace_spec.setdefault("enabled", True)
     workspace_spec.setdefault("version_control", False)
     return workspace_spec
+
+
+def _build_transport_spec(team_raw: dict[str, Any]) -> dict[str, Any]:
+    transport_raw = team_raw.get("transport")
+    if not isinstance(transport_raw, dict):
+        return deepcopy(_DEFAULT_TRANSPORT)
+
+    transport_spec = deepcopy(transport_raw)
+    transport_spec.setdefault("type", "inprocess")
+    return transport_spec
 
 
 def _build_leader_spec(team_raw: dict[str, Any]) -> dict[str, Any]:
@@ -244,7 +259,7 @@ def _build_predefined_members(team_raw: dict[str, Any]) -> list[dict[str, Any]]:
     return predefined_members
 
 
-def load_team_spec_dict(session_id: str, config_base: dict[str, Any] | None = None) -> dict[str, Any]:
+def load_team_spec_dict(config_base: dict[str, Any] | None = None) -> dict[str, Any]:
     """Load team config and build a TeamAgentSpec-compatible dict."""
     if config_base is None:
         config_base = get_config()
@@ -257,7 +272,7 @@ def load_team_spec_dict(session_id: str, config_base: dict[str, Any] | None = No
     agents = _build_agents_config(team_raw, config_base)
     spec_dict = deepcopy(team_raw)
 
-    spec_dict["team_name"] = f"{team_raw.get('team_name', 'team')}_{session_id}"
+    spec_dict["team_name"] = str(team_raw.get("team_name", "team")).strip() or "team"
     spec_dict["lifecycle"] = team_raw.get("lifecycle", "persistent")
     spec_dict["teammate_mode"] = team_raw.get("teammate_mode", "build_mode")
     spec_dict["spawn_mode"] = team_raw.get("spawn_mode", "inprocess")
@@ -268,6 +283,8 @@ def load_team_spec_dict(session_id: str, config_base: dict[str, Any] | None = No
     workspace_spec = _build_workspace_spec(team_raw)
     if workspace_spec is not None:
         spec_dict["workspace"] = workspace_spec
+
+    spec_dict["transport"] = _build_transport_spec(team_raw)
 
     predefined_members = _build_predefined_members(team_raw)
     if predefined_members:
