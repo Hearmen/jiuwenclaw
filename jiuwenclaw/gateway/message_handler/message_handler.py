@@ -2286,16 +2286,21 @@ class MessageHandler(ABC):
                 "[MessageHandler] Stream 任务状态已清理: request_id=%s",
                 rid,
             )
-            # 所有流式任务正常结束后，通知前端全部处理完成
+            # 该 session 流式任务正常结束后，通知前端处理完成
             # 只有当 AgentServer 没有发送过 processing_status=false 时才发送
-            if not cancelled and not self._stream_tasks and not has_processing_status_false:
-                await self._send_processing_status(
-                    rid, session_id, channel_id, is_processing=False,
+            if not cancelled and not has_processing_status_false:
+                # 检查该 session_id 是否还有活跃任务
+                session_has_active_tasks = any(
+                    sid == session_id for sid in self._stream_sessions.values()
                 )
-                logger.info(
-                    "[MessageHandler] 所有流式任务已完成，已发送 is_processing=false: session_id=%s",
-                    session_id,
-                )
+                if not session_has_active_tasks:
+                    await self._send_processing_status(
+                        rid, session_id, channel_id, is_processing=False,
+                    )
+                    logger.info(
+                        "[MessageHandler] 该 session 流式任务已完成，已发送 is_processing=false: session_id=%s",
+                        session_id,
+                    )
 
     async def _send_stream_cancelled_notification(
         self, request_id: str | None, channel_id: str, session_id: str | None
