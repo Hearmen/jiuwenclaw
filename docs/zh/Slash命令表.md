@@ -22,6 +22,9 @@
 | `/config` | 修改配置（当前为本地实现，后续计划统一到 Gateway） |
 | `/workspace` | 管理可信目录（见下文） |
 | `/teamskills` | TeamSkills 管理（`init/validate/pack/info/search/list/install/uninstall/config/publish/delete`） |
+| `/export` | 导出当前会话到文件或剪贴板（见下文） |
+| `/status` | 查看 jiuwenclaw 运行状态概览、用量统计、配置编辑（见下文） |
+| `/permissions` | 管理工具权限（`allow`/`ask`/`deny`） |
 
 > 说明：`/mode` 的受控切换逻辑以 Gateway 侧行为为主，详见下文「`/mode` 与 `/switch`」。
 
@@ -267,6 +270,101 @@
 - `/skills marketplace toggle community off` — 禁用"community"市场源
 - `/skills use my-skill, Code and execute a Hello World program.` — 使用技能执行查询
 
+### `/export`（导出会话）
+
+将当前对话导出到文件或剪贴板。
+
+#### 子命令
+
+| 命令 | 说明 |
+|---|---|
+| `/export` | 将整段对话复制到剪贴板；剪贴板不可用时提示指定文件名 |
+| `/export <filename>` | 将对话写入工作空间目录下的 `filename.txt`；文件名不含 `.txt` 后缀时自动追加 |
+
+#### 输出格式
+
+导出的文本按时间戳与角色前缀逐条渲染：
+
+- `[User] <时间戳>` — 用户输入
+- `[Assistant] <时间戳>` — 助手回复
+- `[Thinking] <时间戳>` — 内部推理过程
+- `[Tools] <时间戳>` — 工具调用，含名称、摘要、截断结果（最多 500 字符）
+- `[System] / [Error] / [Info] <时间戳>` — 系统消息
+- `[Diff] <时间戳>` — 按轮次的文件变更摘要
+
+#### Tab 补全
+
+输入 `/export ` 后按 Tab，自动生成文件名建议：
+
+- `<时间戳>-<净化后的首条提示>.txt` — 取首条用户消息（截断 50 字符，净化特殊字符）
+- `conversation-<时间戳>.txt` — 通用时间戳名
+
+时间戳格式：`YYYY-MM-DD-HHmmss`。
+
+#### 行为细节
+
+- **剪贴板回退**：未指定文件名且剪贴板不可用时，提示用户指定文件名导出到文件。
+- **文件名规范化**：任何扩展名都会被替换为 `.txt`；例如 `/export my-chat.json` 变为 `my-chat.txt`。
+- **写入位置**：文件保存到 `ctx.getWorkspaceDir()`（回退为 `process.cwd()`）。
+
+#### 示例
+
+- `/export` — 复制对话到剪贴板
+- `/export my-chat` — 保存到工作空间下的 `my-chat.txt`
+- `/export 2026-05-09-debug-session.txt` — 使用显式时间戳文件名保存
+
+### `/status`（查看运行状态）
+
+显示 jiuwenclaw 运行状态概览、用量统计或配置编辑界面。
+
+#### 子命令
+
+| 命令 | 说明 |
+|---|---|
+| `/status` | 显示完整状态概览（版本、会话、模型、连接、MCP 服务、配置来源） |
+| `/status overview` | 与 `/status` 相同——显式概览子命令 |
+| `/status usage` | 显示当前会话的 token 用量（输入、输出、总量、按模型拆分） |
+| `/status config` | 进入交互式配置编辑器（与 `/config edit` 相同） |
+
+#### 概览显示分区
+
+运行 `/status` 时展示四个键值面板：
+
+1. **核心信息**：版本号、会话 ID、会话名称（或提示 `/rename` 添加）、当前工作目录、当前模式
+2. **模型与 API**：模型名称、提供商、API 基地址、连接状态
+3. **MCP 服务**：每个服务的名称、传输类型、启用/禁用状态
+4. **配置来源**：配置文件路径与所有设置来源路径
+
+#### 用量显示
+
+`/status usage` 显示当前会话的 token 消耗：
+
+- 总输入 token、输出 token、总 token
+- 按模型拆分：模型名称、token 总量、输入/输出细分
+
+#### 交互模式
+
+若 TUI 提供交互式 StatusView（`ctx.enterStatusView`），`/status` 会打开带标签页的完整状态 UI。子命令参数选择初始标签页：
+
+- `/status` → 打开概览标签页
+- `/status usage` → 打开用量标签页
+- `/status config` → 打开配置标签页
+
+若 StatusView 不可用，回退为内联键值展示。
+
+#### 数据来源
+
+- 概览数据：通过 `command.status` RPC 请求 AgentServer
+- 用量数据：通过 `ctx.getUsageSummary()` 从本地会话追踪获取
+- 配置数据：通过 `config.get` RPC 请求 AgentServer
+
+#### 示例
+
+- `/status` — 显示完整概览
+- `/status overview` — 显示概览（显式）
+- `/status usage` — 显示 token 用量
+- `/status config` — 打开配置编辑器
+
 ---
 
 ## 待开发
@@ -275,8 +373,6 @@
 |----------------|---------|
 | `/btw`         | 提问      |
 | `/context`     | 上下文状态查看 |
-| `/export`      | 导出相关文件  |
 | `/memory`      | 记忆管理    |
-| `/permissions` | 权限管理    |
 
 

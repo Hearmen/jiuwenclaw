@@ -22,6 +22,9 @@ Executed locally in the terminal UI, not through Gateway control pipeline.
 | `/config` | Modify configuration (currently local, planned to unify with Gateway) |
 | `/workspace` | Manage trusted directories (see below) |
 | `/teamskills` | TeamSkills Hub publish/delete (`publish`/`delete`) |
+| `/export` | Export current conversation to file or clipboard (see below) |
+| `/status` | Show jiuwenclaw status overview, usage, config (see below) |
+| `/permissions` | Manage tool permissions (`allow`/`ask`/`deny`) |
 
 > Note: `/mode` controlled switching logic is primarily on Gateway side, see "`/mode` and `/switch`" below.
 
@@ -245,6 +248,112 @@ For other subcommands (`/skills install`, `/skills import`, `/skills uninstall`,
 - `/skills marketplace toggle community off` — Disable the "community" marketplace source
 - `/skills use my-skill, Code and execute a Hello World program.` — Use a skill to execute a query
 
+### `/export` (Export Conversation)
+
+Export the current conversation to a file or clipboard.
+
+#### Usage
+
+- `/export` — Copy conversation to clipboard (no filename argument)
+- `/export <filename>` — Save conversation to a `.txt` file in workspace directory
+
+#### Subcommands
+
+| Command | Description |
+|---|---|
+| `/export` | Copy entire conversation to clipboard; if clipboard unavailable, prompt to specify a filename |
+| `/export <filename>` | Write conversation to `filename.txt` in workspace directory; if filename lacks `.txt` extension, it is automatically appended |
+
+#### Output Format
+
+The exported text renders each conversation entry with a timestamp and role prefix:
+
+- `[User] <timestamp>` — User input
+- `[Assistant] <timestamp>` — Assistant response
+- `[Thinking] <timestamp>` — Internal reasoning trace
+- `[Tools] <timestamp>` — Tool calls with name, summary, and truncated result (max 500 chars)
+- `[System] / [Error] / [Info] <timestamp>` — System messages
+- `[Diff] <timestamp>` — Per-turn file change summary
+
+#### Tab Completion
+
+When typing `/export ` and pressing Tab, auto-generated filename suggestions appear:
+
+- `<timestamp>-<sanitized-first-prompt>.txt` — Based on the first user message (truncated to 50 chars, sanitized)
+- `conversation-<timestamp>.txt` — Generic timestamped name
+
+Timestamp format: `YYYY-MM-DD-HHmmss`.
+
+#### Behavior Details
+
+- **Clipboard fallback**: If no filename is given and clipboard is unavailable, an error message prompts the user to specify a filename instead.
+- **Filename normalization**: Any extension is replaced with `.txt`; e.g., `/export my-chat.json` becomes `my-chat.txt`.
+- **Write location**: Files are saved to `ctx.getWorkspaceDir()` (or `process.cwd()` as fallback).
+
+#### Examples
+
+- `/export` — Copy conversation to clipboard
+- `/export my-chat` — Save to `my-chat.txt` in workspace
+- `/export 2026-05-09-debug-session.txt` — Save with explicit timestamp name
+
+### `/status` (Show Status)
+
+Display jiuwenclaw runtime status: overview, usage statistics, or config editor.
+
+#### Usage
+
+- `/status` or `/status overview` — Show core identity, model/API info, MCP servers, and config sources
+- `/status usage` — Show session token usage statistics
+- `/status config` — Enter interactive config editor
+
+#### Subcommands
+
+| Command | Description |
+|---|---|
+| `/status` | Show full status overview (version, session, model, connection, MCP servers, config) |
+| `/status overview` | Same as `/status` — explicit overview subcommand |
+| `/status usage` | Show session token usage (input, output, total, per-model breakdown) |
+| `/status config` | Enter interactive config editor (same as `/config edit`) |
+
+#### Overview Display Sections
+
+When `/status` is run, four key-value panels are displayed:
+
+1. **Core identity**: version, session ID, session name (or prompt to `/rename`), cwd, current mode
+2. **Model & API**: model name, provider, API base URL, connection status
+3. **MCP servers**: each server's name, transport type, and enabled/disabled state
+4. **Config sources**: config file path and all settings source paths
+
+#### Usage Display
+
+`/status usage` shows token consumption for the current session:
+
+- Total input tokens, output tokens, and total tokens
+- Per-model breakdown: model name, token count, input/output split
+
+#### Interactive Mode
+
+If the TUI provides an interactive StatusView (`ctx.enterStatusView`), `/status` opens the full status UI with tabs. The subcommand argument selects the initial tab:
+
+- `/status` → opens on overview tab
+- `/status usage` → opens on usage tab
+- `/status config` → opens on config tab
+
+If StatusView is unavailable, the command falls back to inline key-value display.
+
+#### Data Sources
+
+- Overview data: `command.status` RPC request to AgentServer
+- Usage data: `ctx.getUsageSummary()` from local session tracking
+- Config data: `config.get` RPC request to AgentServer
+
+#### Examples
+
+- `/status` — Show full overview
+- `/status overview` — Show overview (explicit)
+- `/status usage` — Show token usage
+- `/status config` — Open config editor
+
 ---
 
 ## Planned Features
@@ -253,6 +362,4 @@ For other subcommands (`/skills install`, `/skills import`, `/skills uninstall`,
 |---|---|
 | `/btw` | Ask question |
 | `/context` | Context status view |
-| `/export` | Export related files |
 | `/memory` | Memory management |
-| `/permissions` | Permission management |

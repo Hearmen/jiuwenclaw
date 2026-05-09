@@ -81,6 +81,8 @@
 | `/teamskills` | - | TeamSkills Hub（初始化、校验、打包、搜索、安装等） | `/teamskills list` | 全部 |
 | `/model` | - | 查看/新增/切换模型 | `/model`、`/model add name k=v` | 全部 |
 | `/workspace` | `/workspace_dir`, `/workspace-dir` | 管理文件操作可信目录 | `/workspace add .` | 全部 |
+| `/export` | - | 导出当前会话到文件或剪贴板 | `/export`、`/export my-chat` | 全部 |
+| `/status` | - | 查看运行状态概览、用量、配置 | `/status`、`/status usage` | 全部 |
 
 #### `/resume` 与 `/continue` 在 TUI 中的特殊行为
 
@@ -152,8 +154,24 @@
 
 #### `/permissions`
 
-- 用法：`/permissions <allow|ask|deny> <tool_name>`  
+- 用法：`/permissions <allow|ask|deny> <tool_name>`
 - 调用 `permissions.tools.update`，写入配置中的 per-tool 策略。
+
+#### `/export`
+
+- 无参数：复制当前对话到剪贴板；剪贴板不可用时提示指定文件名。
+- `/export <filename>`：将对话写入工作空间目录下的 `.txt` 文件（自动追加 `.txt` 后缀）。
+- 输出格式为纯文本，每条消息按 `[User]`、`[Assistant]`、`[Thinking]`、`[Tools]` 等角色前缀与时间戳逐条渲染。
+- 支持 Tab 补全：自动生成 `<时间戳>-<首条提示>.txt` 和 `conversation-<时间戳>.txt` 建议。
+- 详见 [Slash命令表.md](Slash命令表.md) 的 `/export` 小节。
+
+#### `/status`
+
+- `/status`：显示完整状态概览（版本、会话、模型、连接、MCP 服务、配置来源）。
+- `/status usage`：显示当前会话 token 用量统计（含按模型拆分）。
+- `/status config`：进入交互式配置编辑器。
+- 若 TUI 提供 StatusView，会打开带标签页的交互界面；否则回退为内联键值展示。
+- 详见 [Slash命令表.md](Slash命令表.md) 的 `/status` 小节。
 
 #### `/clear` 与忙状态
 
