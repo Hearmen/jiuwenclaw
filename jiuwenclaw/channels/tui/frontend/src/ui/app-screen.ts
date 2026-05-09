@@ -51,6 +51,25 @@ const PERMISSION_TOOL_RE = /工具\s+`([^`]+)`\s+需要授权/;
 const PERMISSION_RISK_RE = /安全风险评估：\**\s*([^\s*]+)?\s*\**([^*\n]+?风险)\**/m;
 const PERMISSION_QUOTE_RE = /^>\s*(.+)$/gm;
 const PERMISSION_JSON_BLOCK_RE = /```json\s*([\s\S]*?)\s*```/i;
+
+function wrapText(text: string, maxWidth: number): string[] {
+  if (maxWidth < 1) return [text];
+  const words = text.split(/\s+/);
+  const lines: string[] = [];
+  let current = "";
+  for (const word of words) {
+    if (!word) continue;
+    const test = current ? `${current} ${word}` : word;
+    if (test.length > maxWidth && current) {
+      lines.push(current);
+      current = word;
+    } else {
+      current = test;
+    }
+  }
+  if (current) lines.push(current);
+  return lines.length > 0 ? lines : [""];
+}
 const RUNNING_TIMER_RESET_GRACE_MS = 15_000;
 
 type PermissionSummary = {
@@ -88,6 +107,25 @@ type McpDetailState = {
   info: Record<string, unknown>;
   enabled: boolean;
   actions: SelectList;
+};
+
+type McpToolItem = {
+  id: string;
+  name: string;
+  description: string;
+  parameters: Record<string, unknown>;
+  server_name: string;
+};
+
+type McpToolsState = {
+  serverName: string;
+  tools: McpToolItem[];
+  list: SelectList;
+};
+
+type McpToolDetailState = {
+  serverName: string;
+  tool: McpToolItem;
 };
 
 type ConfigEditorPhase = "select_group" | "select_item" | "select_value" | "input_value";
@@ -414,6 +452,8 @@ export class AppScreen implements Component, Focusable {
   private modelList: ModelListState | null = null;
   private mcpList: McpListState | null = null;
   private mcpDetail: McpDetailState | null = null;
+  private mcpTools: McpToolsState | null = null;
+  private mcpToolDetail: McpToolDetailState | null = null;
   private themeList: ThemeListState | null = null;
   private configEditorState: ConfigEditorState | null = null;
   private statusViewState: StatusViewState | null = null;
@@ -546,7 +586,16 @@ export class AppScreen implements Component, Focusable {
       ? isPermissionRequest(pendingQuestion?.source, activeQuestion.question)
       : false;
 
-    if (!pendingQuestion && snapshot.cancellableWork && matchesKey(data, "escape")) {
+    const hasOverlay =
+      this.mcpDetail !== null ||
+      this.mcpToolDetail !== null ||
+      this.mcpList !== null ||
+      this.mcpTools !== null ||
+      this.modelList !== null ||
+      this.themeList !== null ||
+      this.configEditorState !== null;
+
+    if (!pendingQuestion && snapshot.cancellableWork && matchesKey(data, "escape") && !hasOverlay) {
       this.state.cancel();
       return;
     }
@@ -734,8 +783,37 @@ export class AppScreen implements Component, Focusable {
       return;
     }
 
-    if (!snapshot.pendingQuestion && this.mcpDetail !== null) {
-      this.mcpDetail.actions.handleInput(data);
+    if (this.mcpDetail !== null) {
+      if (matchesKey(data, "escape")) {
+        this.mcpDetail = null;
+        this.openMcpList();
+        return;
+      }
+      if (!snapshot.pendingQuestion) {
+        this.mcpDetail.actions.handleInput(data);
+      }
+      this.tui.requestRender();
+      return;
+    }
+
+    if (this.mcpToolDetail !== null) {
+      if (matchesKey(data, "escape")) {
+        const serverName = this.mcpToolDetail.serverName;
+        this.mcpToolDetail = null;
+        void this.openMcpToolsList(serverName);
+        return;
+      }
+      return;
+    }
+
+    if (this.mcpTools !== null) {
+      if (matchesKey(data, "escape")) {
+        const serverName = this.mcpTools.serverName;
+        this.mcpTools = null;
+        void this.handleMcpSelection(serverName);
+        return;
+      }
+      this.mcpTools.list.handleInput(data);
       this.tui.requestRender();
       return;
     }
@@ -828,6 +906,8 @@ export class AppScreen implements Component, Focusable {
       ...this.buildModelListLines(width),
       ...this.buildMcpListLines(width),
       ...this.buildMcpDetailLines(width),
+      ...this.buildMcpToolsLines(width),
+      ...this.buildMcpToolDetailLines(width),
       ...this.buildThemeListLines(width),
       ...this.buildPendingQuestionLines(snapshot, width),
     ];
@@ -1330,7 +1410,6 @@ export class AppScreen implements Component, Focusable {
   }
 
   private async handleMcpSelection(serverName: string): Promise<void> {
-    this.mcpList = null;
     const snapshot = this.state.getSnapshot();
     try {
       const payload = await this.state.request<{
@@ -1340,6 +1419,7 @@ export class AppScreen implements Component, Focusable {
       if (payload.type === "detail" && payload.item) {
         const enabled = Boolean(payload.item.enabled !== false);
         const actionItems: SelectItem[] = [];
+        actionItems.push({ label: "View tools", value: "view_tools", description: "Browse tools from this server" });
         if (enabled) {
           actionItems.push({ label: "Disable", value: "disable", description: "Stop and disable this server" });
         } else {
@@ -1355,8 +1435,9 @@ export class AppScreen implements Component, Focusable {
         };
         actionsList.onCancel = () => {
           this.mcpDetail = null;
-          this.tui.requestRender();
+          this.openMcpList();
         };
+        this.mcpList = null;
         this.mcpDetail = {
           serverName,
           info: payload.item,
@@ -1365,20 +1446,28 @@ export class AppScreen implements Component, Focusable {
         };
         this.tui.requestRender();
       } else {
+        this.mcpList = null;
         this.state.addItem(addError(snapshot.sessionId, `MCP server '${serverName}' not found`));
+        this.tui.requestRender();
       }
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
+      this.mcpList = null;
       this.state.addItem(addError(snapshot.sessionId, `mcp show failed: ${message}`));
+      this.tui.requestRender();
     }
   }
 
   private async handleMcpDetailAction(serverName: string, action: string): Promise<void> {
-    this.mcpDetail = null;
     const snapshot = this.state.getSnapshot();
     try {
+      if (action === "view_tools") {
+        await this.openMcpToolsList(serverName);
+        return;
+      }
       if (action === "enable" || action === "disable" || action === "remove") {
         await this.state.request("command.mcp", { action, name: serverName });
+        this.mcpDetail = null;
         if (action === "remove") {
           this.state.addItem(addInfo(snapshot.sessionId, `MCP server removed: ${serverName}`, "m"));
           this.tui.requestRender();
@@ -1389,6 +1478,7 @@ export class AppScreen implements Component, Focusable {
       }
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
+      this.mcpDetail = null;
       this.state.addItem(addError(snapshot.sessionId, `mcp ${action} failed: ${message}`));
       this.tui.requestRender();
     }
@@ -1462,6 +1552,140 @@ export class AppScreen implements Component, Focusable {
     lines.push(" " + borderFn("╰" + "─".repeat(innerWidth) + "╯"));
 
     lines.push(padToWidth(palette.text.dim("↑/↓ choose · Enter select · Esc back"), width));
+    return lines;
+  }
+
+  private async openMcpToolsList(serverName: string): Promise<void> {
+    const snapshot = this.state.getSnapshot();
+    try {
+      const payload = await this.state.request<{
+        type: string;
+        tools: McpToolItem[];
+        server_name: string;
+      }>("command.mcp", { action: "list_tools", name: serverName });
+      const tools = payload.tools ?? [];
+      const toolItems: SelectItem[] = tools.map((t) => ({
+        label: t.name,
+        value: t.id,
+        description: t.description ? (t.description.length > 60 ? t.description.slice(0, 57) + "..." : t.description) : "",
+      }));
+      const list = new SelectList(toolItems, Math.min(Math.max(toolItems.length, 1), 10), selectListTheme, {
+        minPrimaryColumnWidth: 24,
+        maxPrimaryColumnWidth: 50,
+      });
+      list.onSelect = (item) => {
+        const tool = tools.find((t) => t.id === item.value);
+        if (tool) {
+          this.mcpToolDetail = { serverName, tool };
+          this.tui.requestRender();
+        }
+      };
+      list.onCancel = () => {
+        this.mcpTools = null;
+        void this.handleMcpSelection(serverName);
+      };
+      this.mcpDetail = null;
+      this.mcpTools = { serverName, tools, list };
+      this.tui.requestRender();
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      this.mcpDetail = null;
+      this.state.addItem(addError(snapshot.sessionId, `mcp list_tools failed: ${message}`));
+      this.tui.requestRender();
+    }
+  }
+
+  private buildMcpToolsLines(width: number): string[] {
+    if (!this.mcpTools || this.mcpToolDetail) return [];
+    const { serverName, tools, list } = this.mcpTools;
+    const lines: string[] = [];
+
+    const borderFn = palette.border.panel;
+    const borderV = "│";
+    const contentWidth = Math.max(1, width - 6);
+    const innerWidth = contentWidth + 2;
+
+    const boxedLines: string[] = [];
+    boxedLines.push(padToWidth(palette.status.warning(`Tools for ${serverName} (${tools.length} tool${tools.length === 1 ? "" : "s"})`), contentWidth));
+
+    if (tools.length === 0) {
+      boxedLines.push(padToWidth(palette.text.dim("  No tools available. Enable the server first."), contentWidth));
+    } else {
+      const listLines = list.render(contentWidth);
+      boxedLines.push(...listLines);
+    }
+
+    // Top border
+    lines.push(" " + borderFn("╭" + "─".repeat(innerWidth) + "╮"));
+    for (const bl of boxedLines) {
+      lines.push(" " + borderFn(borderV) + " " + padToWidth(bl, contentWidth) + " " + borderFn(borderV));
+    }
+    lines.push(" " + borderFn("╰" + "─".repeat(innerWidth) + "╯"));
+
+    lines.push(padToWidth(palette.text.dim("↑/↓ choose · Enter view detail · Esc back"), width));
+    return lines;
+  }
+
+  private buildMcpToolDetailLines(width: number): string[] {
+    if (!this.mcpToolDetail) return [];
+    const { serverName, tool } = this.mcpToolDetail;
+    const lines: string[] = [];
+
+    const borderFn = palette.border.panel;
+    const borderV = "│";
+    const contentWidth = Math.max(1, width - 6);
+    const innerWidth = contentWidth + 2;
+
+    const boxedLines: string[] = [];
+
+    // Title: toolname (serverName)
+    boxedLines.push(padToWidth(palette.status.warning(`${tool.name} (${serverName})`), contentWidth));
+
+    // Tool name / Full name
+    boxedLines.push(padToWidth("", contentWidth));
+    boxedLines.push(padToWidth(`Tool name: ${tool.name}`, contentWidth));
+    boxedLines.push(padToWidth(`Full name: mcp__${serverName}__${tool.name}`, contentWidth));
+
+    // Description
+    if (tool.description) {
+      boxedLines.push(padToWidth("", contentWidth));
+      boxedLines.push(padToWidth("Description:", contentWidth));
+      const descLines = wrapText(tool.description, contentWidth - 2);
+      for (const dl of descLines) {
+        boxedLines.push(padToWidth(`  ${dl}`, contentWidth));
+      }
+    }
+
+    // Parameters
+    if (tool.parameters && typeof tool.parameters === "object") {
+      const params = tool.parameters as Record<string, unknown>;
+      const properties = params.properties as Record<string, unknown> | undefined;
+      if (properties && Object.keys(properties).length > 0) {
+        boxedLines.push(padToWidth("", contentWidth));
+        boxedLines.push(padToWidth("Parameters:", contentWidth));
+        for (const [paramName, paramDef] of Object.entries(properties)) {
+          const def = paramDef as Record<string, unknown>;
+          const typeStr = def.type ? String(def.type) : "any";
+          const required = Array.isArray(params.required) && params.required.includes(paramName);
+          const reqMark = required ? " (required)" : "";
+          const descText = def.description ? ` - ${String(def.description)}` : "";
+          const paramLine = `  • ${paramName}${reqMark}: ${typeStr}${descText}`;
+          const paramLines = wrapText(paramLine, contentWidth - 2);
+          for (const pl of paramLines) {
+            boxedLines.push(padToWidth(pl, contentWidth));
+          }
+        }
+      }
+    }
+
+    // Top border
+    lines.push(" " + borderFn("╭" + "─".repeat(innerWidth) + "╮"));
+    for (const bl of boxedLines) {
+      lines.push(" " + borderFn(borderV) + " " + padToWidth(bl, contentWidth) + " " + borderFn(borderV));
+    }
+    lines.push(" " + borderFn("╰" + "─".repeat(innerWidth) + "╯"));
+
+    lines.push(padToWidth(palette.text.dim("Esc to go back"), width));
     return lines;
   }
 

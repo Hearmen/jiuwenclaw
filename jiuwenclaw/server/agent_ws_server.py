@@ -1375,6 +1375,72 @@ class AgentWebSocketServer:
         return payload
 
     @staticmethod
+    async def _fetch_mcp_tools_from_config(entry: dict[str, Any]) -> list[dict[str, Any]]:
+        """Create a temporary MCP connection from config entry and list tools."""
+        from openjiuwen.core.foundation.tool import McpServerConfig
+        from openjiuwen.core.runner.resources_manager.tool_manager import ToolMgr
+
+        name = str(entry.get("name", "")).strip()
+        transport = str(entry.get("transport", "")).strip().lower()
+        if not name or transport not in {"stdio", "sse"}:
+            logger.warning("[command.mcp] _fetch skipped: name=%r transport=%r", name, transport)
+            return []
+
+        # Build McpServerConfig same as interface_deep._build_mcp_server_config
+        payload: dict[str, Any] = {"server_name": name, "client_type": transport}
+        if transport == "stdio":
+            command = str(entry.get("command", "")).strip()
+            if not command:
+                logger.warning("[command.mcp] _fetch skipped: no command for stdio")
+                return []
+            params: dict[str, Any] = {"command": command}
+            if isinstance(entry.get("args"), list):
+                params["args"] = [str(x) for x in entry["args"]]
+            if isinstance(entry.get("cwd"), str) and entry["cwd"].strip():
+                params["cwd"] = entry["cwd"].strip()
+            if isinstance(entry.get("env"), dict):
+                params["env"] = {str(k): str(v) for k, v in entry["env"].items()}
+            payload["server_path"] = f"stdio://{name}"
+            payload["params"] = params
+        else:
+            url = str(entry.get("url", "")).strip()
+            if not url:
+                logger.warning("[command.mcp] _fetch skipped: no url for sse")
+                return []
+            payload["server_path"] = url
+            params = {}
+            if isinstance(entry.get("headers"), dict):
+                params["headers"] = {str(k): str(v) for k, v in entry["headers"].items()}
+            if params:
+                payload["params"] = params
+
+        cfg = McpServerConfig(**payload)
+        client = ToolMgr._create_client(cfg)
+        try:
+            connected = await client.connect()
+            if not connected:
+                return []
+            cards = await client.list_tools()
+            tools_info = []
+            for card in (cards or []):
+                params_schema = card.input_params if hasattr(card, "input_params") else {}
+                if hasattr(params_schema, "model_dump"):
+                    params_schema = params_schema.model_dump()
+                tools_info.append({
+                    "id": card.id,
+                    "name": card.name,
+                    "description": card.description or "",
+                    "parameters": params_schema,
+                    "server_name": name,
+                })
+            return tools_info
+        finally:
+            try:
+                await client.disconnect()
+            except Exception as exc:
+                logger.warning("[command.mcp] _fetch disconnect failed: %s", exc)
+
+    @staticmethod
     def _normalize_mcp_payload(
             params: dict[str, Any], current: dict[str, Any] | None = None
     ) -> dict[str, Any]:
@@ -1450,11 +1516,43 @@ class AgentWebSocketServer:
                     item = get_mcp_server_config(name)
                     if item is None:
                         raise KeyError(f"MCP server '{name}' not found")
+                    masked = self._mask_sensitive_fields(item)
+                    # Enrich with tool count
+                    tool_count = 0
+                    try:
+                        from openjiuwen.core.runner import Runner
+                        resource_registry = getattr(Runner.resource_mgr, "_resource_registry", None)
+                        if resource_registry is not None:
+                            tool_mgr = resource_registry.tool()
+                            server_ids = tool_mgr.get_mcp_server_ids(name)
+                            if not server_ids:
+                                for sid, res in getattr(tool_mgr, "_mcp_server_resources", {}).items():
+                                    if getattr(res.config, "server_name", "") == name:
+                                        server_ids.append(sid)
+                            _seen: set[str] = set()
+                            for sid in server_ids:
+                                for _tid in tool_mgr.get_mcp_tool_ids(sid):
+                                    _t = getattr(tool_mgr, "_tools", {}).get(_tid)
+                                    if _t is not None and hasattr(_t, "card"):
+                                        _n = _t.card.name
+                                        if _n not in _seen:
+                                            _seen.add(_n)
+                                            tool_count += 1
+                    except Exception as exc:
+                        logger.debug("[command.mcp] show tool_count from ToolMgr failed: %s", exc)
+                    # If ToolMgr has no data, try temporary connection
+                    if tool_count == 0 and bool(item.get("enabled", True)):
+                        try:
+                            tools = await self._fetch_mcp_tools_from_config(item)
+                            tool_count = len(tools)
+                        except Exception as exc:
+                            logger.warning("[command.mcp] show tool_count from temp connection failed: %s", exc)
+                    masked["tool_count"] = tool_count
                     resp = AgentResponse(
                         request_id=request.request_id,
                         channel_id=request.channel_id,
                         ok=True,
-                        payload={"type": "detail", "item": self._mask_sensitive_fields(item)},
+                        payload={"type": "detail", "item": masked},
                     )
                 else:
                     enabled_items = [
@@ -1572,8 +1670,61 @@ class AgentWebSocketServer:
                     ok=True,
                     payload=payload,
                 )
+            elif action == "list_tools":
+                name = str(params.get("name", "")).strip()
+                if not name:
+                    raise ValueError("MCP server name is required")
+                tools_info: list[dict[str, Any]] = []
+                # 1) Try from ToolMgr (already registered)
+                try:
+                    from openjiuwen.core.runner import Runner
+                    resource_registry = getattr(Runner.resource_mgr, "_resource_registry", None)
+                    if resource_registry is not None:
+                        tool_mgr = resource_registry.tool()
+                        server_ids = list(tool_mgr.get_mcp_server_ids(name))
+                        if not server_ids:
+                            for sid, res in getattr(tool_mgr, "_mcp_server_resources", {}).items():
+                                if getattr(res.config, "server_name", "") == name:
+                                    server_ids.append(sid)
+                        seen_tool_names: set[str] = set()
+                        for sid in server_ids:
+                            tool_ids = tool_mgr.get_mcp_tool_ids(sid)
+                            for tid in tool_ids:
+                                tool = getattr(tool_mgr, "_tools", {}).get(tid)
+                                if tool is not None and hasattr(tool, "card"):
+                                    card = tool.card
+                                    if card.name in seen_tool_names:
+                                        continue
+                                    seen_tool_names.add(card.name)
+                                    params_schema = card.input_params if hasattr(card, "input_params") else {}
+                                    if hasattr(params_schema, "model_dump"):
+                                        params_schema = params_schema.model_dump()
+                                    tools_info.append({
+                                        "id": card.id,
+                                        "name": card.name,
+                                        "description": card.description or "",
+                                        "parameters": params_schema,
+                                        "server_name": name,
+                                    })
+                except Exception as exc:
+                    logger.debug("[command.mcp] list_tools from ToolMgr failed: %s", exc)
+                # 2) If no tools found, try temporary MCP connection from config
+                if not tools_info:
+                    try:
+                        config_entry = get_mcp_server_config(name)
+                        if config_entry and bool(config_entry.get("enabled", True)):
+                            tools_info = await self._fetch_mcp_tools_from_config(config_entry)
+                    except Exception as exc:
+                        logger.warning("[command.mcp] list_tools from temp connection failed: %s", exc)
+                resp = AgentResponse(
+                    request_id=request.request_id,
+                    channel_id=request.channel_id,
+                    ok=True,
+                    payload={"type": "tools", "tools": tools_info, "server_name": name},
+                )
             else:
-                raise ValueError("Unsupported action, must be one of list|show|add|update|enable|disable|remove")
+                raise ValueError("Unsupported action, must be one of " \
+                "list|show|add|update|enable|disable|remove|list_tools")
         except KeyError as exc:
             resp = AgentResponse(
                 request_id=request.request_id,
