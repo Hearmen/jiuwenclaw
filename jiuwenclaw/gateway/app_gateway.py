@@ -27,6 +27,7 @@ from typing import Any, Awaitable, Callable
 from urllib.parse import urlparse
 
 from dotenv import load_dotenv
+from websockets.exceptions import ConnectionClosedError
 from openjiuwen.core.common.logging import LogManager
 
 # --- Early --dotenv parsing (before jiuwenclaw imports) ---
@@ -69,7 +70,7 @@ else:
 load_dotenv(dotenv_path=get_env_file(), override=True)
 reset_free_search_runtime_flags()
 
-logger = logging.getLogger(__name__)
+logger = logging.getLogger("jiuwenclaw.gateway")
 
 # Keep gateway idle-finalize fallback aligned with ACP channel default.
 _PROMPT_IDLE_FINALIZE_SECONDS = 3.0
@@ -483,6 +484,8 @@ class GatewayServer:
         try:
             async for raw in ws:
                 await self._handle_raw_message(ws, raw, matched_path, route)
+        except ConnectionClosedError:
+            logger.info("[App] WebSocket connection closed: channel=%s", route.channel_id)
         finally:
             self._clients.discard(ws)
             stale_request_ids = [request_id for request_id, client in self._request_to_client.items() if client is ws]
