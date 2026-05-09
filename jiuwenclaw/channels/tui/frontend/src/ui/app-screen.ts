@@ -4,6 +4,7 @@ import {
   SelectList,
   type SelectItem,
   type AutocompleteItem,
+  type AutocompleteProvider,
   type Component,
   type Focusable,
   type SlashCommand as TuiSlashCommand,
@@ -111,6 +112,46 @@ type StatusViewState = {
   statusPayload: import("../core/commands/builtins/status.js").StatusPayload | null;
   configPayload: (Record<string, unknown> & { schema?: ConfigItemSchema[] }) | null;
 };
+
+class ComposerAutocompleteProvider implements AutocompleteProvider {
+  constructor(private readonly inner: AutocompleteProvider) {}
+
+  getSuggestions(
+    lines: string[],
+    cursorLine: number,
+    cursorCol: number,
+    options: { signal: AbortSignal; force?: boolean },
+  ) {
+    const currentLine = lines[cursorLine] ?? "";
+    const textBeforeCursor = currentLine.slice(0, cursorCol);
+    const isCommandNameCompletion =
+      textBeforeCursor.startsWith("/") && !textBeforeCursor.includes(" ");
+
+    if (isCommandNameCompletion && cursorCol !== currentLine.length) {
+      return Promise.resolve(null);
+    }
+
+    return this.inner.getSuggestions(lines, cursorLine, cursorCol, options);
+  }
+
+  applyCompletion(
+    lines: string[],
+    cursorLine: number,
+    cursorCol: number,
+    item: AutocompleteItem,
+    prefix: string,
+  ) {
+    const currentLine = lines[cursorLine] ?? "";
+    const textBeforeCursor = currentLine.slice(0, cursorCol);
+    const isCommandNameCompletion = prefix.startsWith("/") && !prefix.slice(1).includes("/");
+
+    if (isCommandNameCompletion && textBeforeCursor !== prefix) {
+      return { lines, cursorLine, cursorCol };
+    }
+
+    return this.inner.applyCompletion(lines, cursorLine, cursorCol, item, prefix);
+  }
+}
 
 const IMAGE_MIME_TYPES: Record<string, string> = {
   ".png": "image/png",
@@ -360,7 +401,7 @@ function buildResumeSessionItems(sessions: SessionMeta[]): SelectItem[] {
 export class AppScreen implements Component, Focusable {
   private readonly editor: Editor;
   private readonly unsubscribe: () => void;
-  private readonly composerAutocompleteProvider: CombinedAutocompleteProvider;
+  private readonly composerAutocompleteProvider: AutocompleteProvider;
   private _focused = false;
   private activeQuestionId: string | null = null;
   private activeQuestionIndex = 0;
@@ -400,10 +441,12 @@ export class AppScreen implements Component, Focusable {
     private readonly exit: () => void,
   ) {
     this.editor = new Editor(tui, editorTheme, { paddingX: 1, autocompleteMaxVisible: 6 });
-    this.composerAutocompleteProvider = new CombinedAutocompleteProvider(
-      this.buildSlashCommands(),
-      getTrustedDirs()[0] || process.cwd(),
-      resolveFdBinary(),
+    this.composerAutocompleteProvider = new ComposerAutocompleteProvider(
+      new CombinedAutocompleteProvider(
+        this.buildSlashCommands(),
+        getTrustedDirs()[0] || process.cwd(),
+        resolveFdBinary(),
+      ),
     );
     this.editor.setAutocompleteProvider(this.composerAutocompleteProvider);
     this.editor.onChange = () => {
