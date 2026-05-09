@@ -574,6 +574,7 @@ export class AppScreen implements Component, Focusable {
    */
   interruptTask(): void {
     this.state.cancel();
+    this.editor.setText("");
     this.tui.requestRender();
   }
 
