@@ -15,6 +15,7 @@ from ..memory import (
     MemorySettings,
     create_memory_settings,
     is_memory_enabled,
+    DEFAULT_WORKSPACE_DIR,
 )
 
 logger = logging.getLogger(__name__)
@@ -150,7 +151,8 @@ async def _ensure_global_manager() -> bool:
         return True
     
     try:
-        _global_settings = _global_settings or MemorySettings()
+        workspace_dir = _global_workspace_dir or DEFAULT_WORKSPACE_DIR
+        _global_settings = _global_settings or create_memory_settings(workspace_dir=workspace_dir)
         _global_manager = await MemoryIndexManager.get(
             agent_id=_global_agent_id,
             workspace_dir=_global_workspace_dir,

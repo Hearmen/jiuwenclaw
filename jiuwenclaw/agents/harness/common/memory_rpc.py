@@ -31,10 +31,15 @@ def _is_forbidden_enabled(config: dict[str, Any] | None) -> bool:
     return bool(forbidden.get("enabled", False))
 
 
+def _get_coding_memory_dir(workspace: str, project_dir: str | None = None) -> str:
+    _project_name = os.path.basename(project_dir) if project_dir else "default"
+    return os.path.join(workspace, "coding_memory", _project_name)
+
+
 def _get_allowed_dirs(workspace: str, project_dir: str | None = None) -> list[str]:
     allowed_dirs = [
         os.path.join(workspace, "memory"),
-        os.path.join(workspace, "coding_memory"),
+        _get_coding_memory_dir(workspace, project_dir),
         os.path.join(workspace, ".jiuwen"),
         os.path.expanduser("~/.jiuwen"),
     ]
@@ -191,7 +196,7 @@ async def handle_memory_list(
             files.append(item)
             seen_paths.add(item["path"])
 
-    coding_dir = os.path.join(workspace, "coding_memory")
+    coding_dir = _get_coding_memory_dir(workspace, project_dir)
     for item in _scan_md_files(coding_dir, "coding", workspace, project_dir):
         if item["path"] not in seen_paths:
             files.append(item)
@@ -296,7 +301,7 @@ async def handle_memory_status(
         if project_dir:
             result["project_memory"]["project_dir"] = project_dir
 
-        coding_dir = os.path.join(workspace, "coding_memory")
+        coding_dir = _get_coding_memory_dir(workspace, project_dir)
         coding_files = _scan_md_files(coding_dir, "coding", workspace)
         coding_total_chars = 0
         for cf in coding_files:
@@ -415,7 +420,7 @@ async def handle_memory_open(
     }
     if project_dir:
         result["project_dir"] = project_dir
-    coding_dir = os.path.join(workspace, "coding_memory")
+    coding_dir = _get_coding_memory_dir(workspace, project_dir)
     if os.path.isdir(coding_dir):
         result["coding_memory_dir"] = coding_dir
     return result

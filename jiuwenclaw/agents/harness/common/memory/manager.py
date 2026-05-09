@@ -20,7 +20,7 @@ from .internal import (
     hash_text, build_fts_query, bm25_rank_to_score, is_memory_path
 )
 from .embeddings import EmbeddingProvider, create_embedding_provider
-from .config import MemorySettings
+from .config import MemorySettings, create_memory_settings
 
 logger = logging.getLogger(__name__)
 
@@ -1220,5 +1220,5 @@ async def get_memory_manager(
         settings: Optional[MemorySettings] = None
 ) -> Optional[MemoryIndexManager]:
     """Get or create memory manager."""
-    settings = settings or MemorySettings()
+    settings = settings or create_memory_settings(workspace_dir=workspace_dir)
     return await MemoryIndexManager.get(agent_id, workspace_dir, settings)

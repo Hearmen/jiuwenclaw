@@ -155,6 +155,8 @@ class JiuwenClawCodeAdapter(JiuWenClawDeepAdapter):
             or config.get("workspace_dir")
             or str(get_agent_workspace_dir())
         )
+        # Coding memory 使用固定的 agent workspace 目录，不受 project_dir 影响
+        self._agent_workspace_dir = str(get_agent_workspace_dir())
 
         model = self._create_model(config_base)
         agent_card = AgentCard(name=self._agent_name, id='jiuwenclaw')
@@ -200,6 +202,24 @@ class JiuwenClawCodeAdapter(JiuWenClawDeepAdapter):
             enable_task_planning=True,
             auto_create_workspace=False
         )
+
+        _project_name = os.path.basename(self._project_dir) if self._project_dir else "default"
+        coding_memory_abs_path = os.path.join(self._agent_workspace_dir, "coding_memory", _project_name)
+        self._instance.deep_config.workspace.set_directory({
+            "name": "coding_memory",
+            "description": "Coding Agent 记忆模块",
+            "path": coding_memory_abs_path,
+            "children": [
+                {
+                    "name": "MEMORY.md",
+                    "description": "Coding 记忆索引",
+                    "path": "MEMORY.md",
+                    "children": [],
+                    "is_file": True,
+                    "default_content": "",
+                },
+            ],
+        })
 
         # code 模式不传: vision_model_config, audio_model_config,
         # context_engine_config, completion_timeout
@@ -397,7 +417,8 @@ class JiuwenClawCodeAdapter(JiuWenClawDeepAdapter):
                 return None
 
             language = config.get("preferred_language", "zh")
-            coding_memory_dir = os.path.join(self._workspace_dir, "coding_memory")
+            _project_name = os.path.basename(self._project_dir) if self._project_dir else "default"
+            coding_memory_dir = os.path.join(self._agent_workspace_dir, "coding_memory", _project_name)
             os.makedirs(coding_memory_dir, exist_ok=True)
 
             coding_memory_rail = CodingMemoryRail(
