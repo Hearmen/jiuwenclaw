@@ -45,6 +45,9 @@ Identified by Gateway and forwarded to AgentServer and other backend capabilitie
 | `/diff` | View session changes by turn (see below) |
 | `/compact` | Compress current context (see below) |
 | `/init` | Project initialization (see below) |
+| `/branch` | Create a branch session from current conversation point (see below) |
+| `/rewind` | Rewind conversation to before a specific turn (see below) |
+| `/memory` | Memory management (see below) |
 
 ---
 
@@ -176,6 +179,79 @@ Manages directories AI can access for file read, edit, and execute operations.
 - Config and effect:
   - Changes are written to `config.yaml` under `mcp.servers`;
   - After write, Agent config reload is triggered, and runtime MCP server bindings are synced accordingly.
+
+### `/branch` (Branch Session)
+
+- Usage: `/branch [name]`.
+- Alias: `/fork`.
+- Function: Create a branch session from the current conversation state, copying the current conversation history.
+- Constraints:
+  - Rejected when the session is busy (`session is busy`);
+  - Rejected when the current session has no conversation records.
+- Behavior:
+  1. Generate a new `session_id` and send `session.fork` RPC to the backend (carrying `source_session_id`, `target_session_id`, and optional title).
+  2. TUI automatically switches to the new branch session, clears the current transcript, and restores the branch history.
+  3. Prompts the user that they are now in the new branch, and informs them they can use `/resume <original_session_id>` to return to the original session.
+- Examples:
+  - `/branch` — Create an untitled branch
+  - `/branch fix-login-bug` — Create a branch named `fix-login-bug`
+
+### `/rewind` (Rewind Conversation)
+
+- Usage: `/rewind [turn_number]`.
+- Alias: `/checkpoint`.
+- Function: Rewind the current session to before a specified turn, supporting conversation-only, code-only, or both.
+- Constraints:
+  - Rejected when the session is busy (`session is busy`);
+  - Rejected when there are no conversation turns.
+- Interactive flow:
+  1. Without parameters, displays a list of all conversation turns (with timestamps and file change statistics) for the user to select the target turn.
+  2. After selecting, displays restore options:
+     - **Restore conversation and code** — Truncate conversation and restore files to their prior state;
+     - **Restore conversation only** — Only truncate conversation, files remain unchanged;
+     - **Restore code only** — Only restore files, conversation remains unchanged (shown only when the target turn has file changes);
+     - **Cancel** — Abort the operation.
+  3. Calls the corresponding backend RPC based on selection:
+     - `both` → `session.rewind_and_restore`
+     - `conversation` → `session.rewind`
+     - `code` → `session.restore_files`
+- After rewind: TUI clears the transcript and reloads history; if the rewinded content contains user input, it is automatically filled into the input box.
+- Limitation: Rewinding does not affect files edited manually or via bash commands.
+- Examples:
+  - `/rewind` — Interactive turn selection and restore mode confirmation
+  - `/rewind 2` — Directly rewind to before turn 2
+
+### `/memory` (Memory Management)
+
+- Alias: `/mem`.
+- Function: View and manage memory system status, memory files, toggle settings, and directory paths.
+- Subcommands:
+
+| Command | Description |
+|---|---|
+| `/memory` or `/memory edit` | Interactively select and edit a memory file (lists available files when no path is given) |
+| `/memory list` | List all memory files (with size, line count, modification time) |
+| `/memory edit <path>` | Open the specified memory file for editing (via `$EDITOR`) |
+| `/memory status` | Show detailed memory system status |
+| `/memory toggle [key]` | Toggle memory system switches (lists togglable items when no key is given) |
+| `/memory open` | Show memory system directory paths |
+
+- `status` display contents:
+  - Current mode, storage engine, enabled status, proactive status, forbidden filter status;
+  - Index status (FTS5, Vector, Cache), file count, chunk count;
+  - Statistics for Project Memory, Coding Memory, Auto Memory, and External Memory.
+- `toggle` available keys:
+  - `memory_enabled` — Master memory switch;
+  - `memory_proactive` — Proactive memory switch;
+  - `memory_forbidden_enabled` — Forbidden filter switch.
+  - After toggling, a prompt is shown if a session restart is required for the change to take effect.
+- Examples:
+  - `/memory` — Interactively edit a memory file
+  - `/memory list` — List memory files
+  - `/memory edit memory/MEMORY.md` — Edit a specific memory file
+  - `/memory status` — View detailed status
+  - `/memory toggle memory_enabled` — Toggle the master memory switch
+  - `/memory open` — View memory directory paths
 
 ### `/skills` (Skills Management)
 
@@ -363,3 +439,5 @@ If StatusView is unavailable, the command falls back to inline key-value display
 | `/btw` | Ask question |
 | `/context` | Context status view |
 | `/memory` | Memory management |
+| `/export` | Export related files |
+| `/permissions` | Permission management |

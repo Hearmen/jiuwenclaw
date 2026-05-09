@@ -83,6 +83,9 @@
 | `/workspace` | `/workspace_dir`, `/workspace-dir` | 管理文件操作可信目录 | `/workspace add .` | 全部 |
 | `/export` | - | 导出当前会话到文件或剪贴板 | `/export`、`/export my-chat` | 全部 |
 | `/status` | - | 查看运行状态概览、用量、配置 | `/status`、`/status usage` | 全部 |
+| `/branch` | `/fork` | 从当前对话点创建分支会话 | `/branch fix-login-bug` | 全部 |
+| `/rewind` | `/checkpoint` | 回退对话到指定轮次之前 | `/rewind 2` | 全部 |
+| `/memory` | `/mem` | 记忆管理（状态、文件、开关、目录） | `/memory status` | 全部 |
 
 #### `/resume` 与 `/continue` 在 TUI 中的特殊行为
 
@@ -172,6 +175,40 @@
 - `/status config`：进入交互式配置编辑器。
 - 若 TUI 提供 StatusView，会打开带标签页的交互界面；否则回退为内联键值展示。
 - 详见 [Slash命令表.md](Slash命令表.md) 的 `/status` 小节。
+
+#### `/branch`（分支会话）
+
+- 别名：`/fork`。
+- 约束：当前会话忙时或无对话记录时拒绝执行。
+- 行为：生成新 `session_id` 并调用 `session.fork`；TUI 自动切换到新分支会话，清空 transcript 并恢复分支历史。提示用户可用 `/resume <原会话ID>` 返回原会话。
+- 示例：`/branch`、`/branch fix-login-bug`。
+
+#### `/rewind`（回退对话）
+
+- 别名：`/checkpoint`。
+- 约束：当前会话忙时或无对话轮次时拒绝执行。
+- 交互流程：
+  1. 无参数时先展示轮次列表（含时间、文件变更统计），供用户选择目标轮次。
+  2. 选择后展示恢复选项：
+     - **Restore conversation and code** — 截断对话并恢复文件；
+     - **Restore conversation only** — 仅截断对话；
+     - **Restore code only** — 仅恢复文件（仅当目标轮次有文件变更时显示）；
+     - **Cancel** — 取消。
+  3. 对应调用 `session.rewind_and_restore`、`session.rewind` 或 `session.restore_files`。
+- 回退后：TUI 清空 transcript 并重新加载历史；若回退内容包含用户输入，会自动填入输入框。
+- 局限：回退不影响通过 bash 命令或手动编辑的文件。
+- 示例：`/rewind`（交互式）、`/rewind 2`（直接回退到第 2 轮前）。
+
+#### `/memory`（记忆管理）
+
+- 别名：`/mem`。
+- 子命令：
+  - `list` — 列出所有记忆文件（大小、行数、修改时间）。
+  - `edit [path]` — 编辑记忆文件；无参数时交互式选择。
+  - `status` — 显示记忆系统详细状态（引擎、索引、Project/Coding/Auto/External Memory 统计）。
+  - `toggle [key]` — 切换记忆开关；无参数时列出可切换项（`memory_enabled`、`memory_proactive`、`memory_forbidden_enabled`）。
+  - `open` — 显示记忆系统各目录路径。
+- 示例：`/memory status`、`/memory toggle memory_enabled`、`/memory edit memory/MEMORY.md`。
 
 #### `/clear` 与忙状态
 

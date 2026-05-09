@@ -45,6 +45,9 @@
 | `/diff` | 查看当前会话按轮次改动（见下文） |
 | `/compact` | 压缩当前上下文（见下文） |
 | `/init` | 项目初始化（见下文） |
+| `/branch` | 从当前对话点创建分支会话（见下文） |
+| `/rewind` | 回退对话到指定轮次之前（见下文） |
+| `/memory` | 记忆管理（见下文） |
 
 ---
 
@@ -198,6 +201,79 @@
   - `publish` 走 TeamSkills Hub 原生发布接口 `POST /api/v1/plugins`；
   - `delete` 走 TeamSkills Hub 原生删除接口 `DELETE /api/v1/plugins/{skill_id}/versions/{version}`；
   - `--token` 与 `--system-token` 互斥，且必须二选一。
+
+### `/branch`（分支会话）
+
+- 用法：`/branch [name]`。
+- 别名：`/fork`。
+- 功能：以当前会话的当前状态为起点，创建一个分支会话，复制当前对话历史。
+- 约束：
+  - 当前会话正在处理中（`session is busy`）时拒绝执行；
+  - 当前会话无对话记录时拒绝执行。
+- 行为：
+  1. 生成新 `session_id`，向后端发送 `session.fork` RPC（携带 `source_session_id`、`target_session_id` 与可选标题）。
+  2. TUI 自动切换到新分支会话，清空当前 transcript 并恢复分支的历史记录。
+  3. 提示用户已在新分支，并告知可用 `/resume <原会话ID>` 返回原会话。
+- 示例：
+  - `/branch` — 创建无标题分支
+  - `/branch fix-login-bug` — 创建名为 `fix-login-bug` 的分支
+
+### `/rewind`（回退对话）
+
+- 用法：`/rewind [turn_number]`。
+- 别名：`/checkpoint`。
+- 功能：将当前会话回退到指定轮次之前，支持仅回退对话、仅恢复文件、或两者同时恢复。
+- 约束：
+  - 当前会话正在处理中（`session is busy`）时拒绝执行；
+  - 无对话轮次时拒绝执行。
+- 交互流程：
+  1. 无参数时，先展示当前会话所有轮次列表（含时间、文件变更统计），供用户选择目标轮次。
+  2. 选择轮次后，展示恢复选项：
+     - **Restore conversation and code** — 截断对话并恢复文件到该轮次之前的状态；
+     - **Restore conversation only** — 仅截断对话，文件保持不变；
+     - **Restore code only** — 仅恢复文件，对话保持不变（仅当目标轮次有文件变更时显示）；
+     - **Cancel** — 取消操作。
+  3. 根据选择调用对应后端 RPC：
+     - `both` → `session.rewind_and_restore`
+     - `conversation` → `session.rewind`
+     - `code` → `session.restore_files`
+- 回退后：TUI 清空 transcript 并重新加载历史；若回退内容包含用户输入，会自动填入输入框。
+- 局限：回退不影响通过 bash 命令或手动编辑的文件。
+- 示例：
+  - `/rewind` — 交互式选择轮次并确认恢复方式
+  - `/rewind 2` — 直接回退到第 2 轮之前
+
+### `/memory`（记忆管理）
+
+- 别名：`/mem`。
+- 功能：查看与管理记忆系统状态、记忆文件、开关配置及目录路径。
+- 子命令：
+
+| 命令 | 说明 |
+|---|---|
+| `/memory` 或 `/memory edit` | 交互式选择并编辑记忆文件（无参数时列出可选文件） |
+| `/memory list` | 列出所有记忆文件（含大小、行数、修改时间） |
+| `/memory edit <path>` | 打开指定记忆文件进行编辑（通过 `$EDITOR`） |
+| `/memory status` | 显示记忆系统详细状态 |
+| `/memory toggle [key]` | 切换记忆系统开关（无参数时列出可切换项） |
+| `/memory open` | 显示记忆系统各目录路径 |
+
+- `status` 展示内容：
+  - 当前模式、存储引擎、启用状态、Proactive 状态、Forbidden Filter 状态；
+  - 索引状态（FTS5、Vector、Cache）、文件数、分块数；
+  - Project Memory、Coding Memory、Auto Memory、External Memory 的统计。
+- `toggle` 可切换项：
+  - `memory_enabled` — 记忆总开关；
+  - `memory_proactive` — 主动记忆开关；
+  - `memory_forbidden_enabled` — Forbidden Filter 开关。
+  - 切换后若需要重启会话生效，会给出提示。
+- 示例：
+  - `/memory` — 交互式编辑记忆文件
+  - `/memory list` — 列出记忆文件
+  - `/memory edit memory/MEMORY.md` — 编辑指定记忆文件
+  - `/memory status` — 查看详细状态
+  - `/memory toggle memory_enabled` — 切换记忆总开关
+  - `/memory open` — 查看记忆目录路径
 
 ### `/skills`（技能管理）
 
@@ -373,6 +449,7 @@
 |----------------|---------|
 | `/btw`         | 提问      |
 | `/context`     | 上下文状态查看 |
-| `/memory`      | 记忆管理    |
+| `/export`      | 导出相关文件  |
+| `/permissions` | 权限管理    |
 
 
