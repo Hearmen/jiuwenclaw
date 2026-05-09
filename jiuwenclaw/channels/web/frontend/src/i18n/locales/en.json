@@ -399,7 +399,20 @@
   },
   "config": {
     "title": "Configuration",
-    "subtitle": "Update backend service settings. The backend will automatically restart after saving to load the latest configuration.",
+    "subtitle": "Edit by category using the tabs above. The backend will restart after saving to load changes.",
+    "tabsAriaLabel": "Configuration categories",
+    "tabs": {
+      "model": "Model",
+      "agent": "Agent",
+      "security": "Security",
+      "other": "Other"
+    },
+    "tabEmpty": {
+      "model": "No model-related YAML groups right now; you can still manage the model list above.",
+      "agent": "No Agent/Team YAML keys yet; you can still edit the lists below (saved to config).",
+      "security": "No tool permissions or memory filter keys in the loaded config.",
+      "other": "No other configuration groups at the moment."
+    },
     "groupFallback": "Parameter group",
     "itemsCount": "{{count}} items",
     "groupsCount": "{{count}} configuration groups",

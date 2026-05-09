@@ -398,7 +398,20 @@
   },
   "config": {
     "title": "配置信息",
-    "subtitle": "修改后端服务配置，保存后后端将自动重启以加载最新配置。",
+    "subtitle": "按顶部标签分类编辑；保存后后端将自动重启以加载最新配置。",
+    "tabsAriaLabel": "配置分类",
+    "tabs": {
+      "model": "模型配置",
+      "agent": "Agent 配置",
+      "security": "安全配置",
+      "other": "其他配置"
+    },
+    "tabEmpty": {
+      "model": "当前没有可编辑的模型相关 YAML 分组；多模型列表仍可在上方管理。",
+      "agent": "当前没有多 Agent 或 Team 的 YAML 键；仍可在下方编辑列表（保存时写入）。",
+      "security": "当前没有工具权限或记忆过滤相关配置项。",
+      "other": "当前没有其他分组的配置项。"
+    },
     "groupFallback": "参数分组",
     "itemsCount": "{{count}} 项",
     "groupsCount": "共 {{count}} 个配置组",

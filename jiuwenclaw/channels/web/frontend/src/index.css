@@ -597,6 +597,40 @@ select {
     box-shadow: var(--shadow-md), inset 0 1px 0 var(--card-highlight);
   }
 
+  /* Horizontal sub-tabs (e.g. config page categories) */
+  .app-subtabs {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: stretch;
+    gap: 0;
+    margin-bottom: 1rem;
+    border-bottom: 1px solid var(--border);
+  }
+
+  .app-subtabs__tab {
+    appearance: none;
+    margin: 0;
+    padding: 0.65rem 1rem;
+    font-size: var(--font-size-sm);
+    font-weight: 500;
+    letter-spacing: -0.01em;
+    color: var(--muted);
+    background: transparent;
+    border: none;
+    border-bottom: 2px solid transparent;
+    cursor: pointer;
+    transition: color var(--duration-fast) var(--ease-out), border-color var(--duration-fast) var(--ease-out);
+  }
+
+  .app-subtabs__tab:hover {
+    color: var(--text);
+  }
+
+  .app-subtabs__tab--active {
+    color: var(--accent);
+    border-bottom-color: var(--accent);
+  }
+
   /* Pills */
   .pill {
     display: inline-flex;

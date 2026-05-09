@@ -135,6 +135,16 @@ function classifyKey(key: string): string {
 }
 
 const MODEL_GROUP_TAGS = new Set(["model_default", "model_video", "model_audio", "model_vision"]);
+const SECURITY_GROUP_TAGS = new Set(["permissions", "memory"]);
+
+type ConfigMainTab = "model" | "agent" | "security" | "other";
+
+function configTabForGroupTag(tag: string): ConfigMainTab {
+  if (MODEL_GROUP_TAGS.has(tag) || tag === "embed") return "model";
+  if (tag === "agents" || tag === "team") return "agent";
+  if (SECURITY_GROUP_TAGS.has(tag)) return "security";
+  return "other";
+}
 
 function getGroupIcon(tag: string) {
   if (MODEL_GROUP_TAGS.has(tag)) {
@@ -382,6 +392,7 @@ function GroupSection({
   t,
   nested = false,
   afterTable,
+  alwaysExpanded = false,
 }: {
   group: ConfigGroup;
   draftValues: Record<string, string>;
@@ -391,55 +402,72 @@ function GroupSection({
   nested?: boolean;
   /** Rendered below the key/value table when the section is expanded (e.g. default model test action). */
   afterTable?: ReactNode;
+  /** Static header, content always visible (no collapse). */
+  alwaysExpanded?: boolean;
 }) {
-  const [open, setOpen] = useState(defaultOpen);
+  const [open, setOpen] = useState(alwaysExpanded || defaultOpen);
   const [visibleFields, setVisibleFields] = useState<Record<string, boolean>>({});
   const toneClass = getGroupToneClass(group.tag);
   const groupMeta = getGroupMeta(t);
   const hint = groupMeta[group.tag]?.hint ?? t('config.groupFallback');
+  const isOpen = alwaysExpanded || open;
+  const showNestedChrome = nested && !alwaysExpanded;
 
   const toggleFieldVisible = (key: string) => {
     setVisibleFields((prev) => ({ ...prev, [key]: !prev[key] }));
   };
 
   const nestedStyle = nested ? getNestedModelStyle(group.tag) : "";
-  return (
-    <div
-      id={nested ? undefined : `config-group-${group.tag}`}
-      className={
-      nested
-        ? "rounded-r-md overflow-hidden border border-border/50"
-        : "rounded-xl border border-border bg-card/70 backdrop-blur-sm overflow-hidden shadow-sm"
-    }
-    >
-      <button
-        onClick={() => setOpen(!open)}
-        className={`w-full flex items-center justify-between transition-colors text-sm ${
-          nested ? `py-2 pr-3 pl-4 ${nestedStyle} hover:opacity-90` : "px-4 py-3 bg-secondary/30 hover:bg-secondary/60"
-        }`}
-      >
-        <span className="flex items-center gap-3 min-w-0">
-          <span className={`inline-flex items-center justify-center rounded-md border ${toneClass} ${nested ? "w-6 h-6" : "w-7 h-7"}`}>
-            {getGroupIcon(group.tag)}
-          </span>
-          <span className="min-w-0 text-left">
-            <span className="block font-medium text-text">{group.label}</span>
-            <span className="block text-xs text-text-muted truncate">{hint}</span>
-          </span>
+  const headerClass = `w-full flex items-center justify-between transition-colors text-sm ${
+    showNestedChrome ? `py-2 pr-3 pl-4 ${nestedStyle} hover:opacity-90` : "px-4 py-3 bg-secondary/30"
+  } ${alwaysExpanded ? "" : showNestedChrome ? "" : "hover:bg-secondary/60"}`;
+
+  const headerInner = (
+    <>
+      <span className="flex items-center gap-3 min-w-0">
+        <span className={`inline-flex items-center justify-center rounded-md border ${toneClass} ${showNestedChrome ? "w-6 h-6" : "w-7 h-7"}`}>
+          {getGroupIcon(group.tag)}
         </span>
-        <span className={`flex items-center gap-2 text-text-muted ${nested ? "ml-2" : "ml-3"}`}>
-          <span className="text-[11px] px-2 py-0.5 rounded-full border border-border bg-secondary/60">
-            {t('config.itemsCount', { count: group.keys.length })}
-          </span>
+        <span className="min-w-0 text-left">
+          <span className="block font-medium text-text-strong">{group.label}</span>
+          <span className="block text-xs text-text-muted truncate">{hint}</span>
+        </span>
+      </span>
+      <span className={`flex items-center gap-2 text-text-muted ${showNestedChrome ? "ml-2" : "ml-3"}`}>
+        <span className="text-[11px] px-2 py-0.5 rounded-full border border-border bg-secondary/60">
+          {t('config.itemsCount', { count: group.keys.length })}
+        </span>
+        {!alwaysExpanded ? (
           <svg
-            className={`w-4 h-4 transition-transform ${open ? "rotate-180" : ""}`}
+            className={`w-4 h-4 transition-transform ${isOpen ? "rotate-180" : ""}`}
             fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2}
           >
             <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
           </svg>
-        </span>
-      </button>
-      {open && (
+        ) : null}
+      </span>
+    </>
+  );
+
+  return (
+    <div
+      id={`config-group-${group.tag}`}
+      className={
+      showNestedChrome
+        ? "rounded-r-md overflow-hidden border border-border/50"
+        : "rounded-xl border border-border bg-card/70 backdrop-blur-sm overflow-hidden shadow-sm"
+    }
+    >
+      {alwaysExpanded ? (
+        <div className={headerClass} role="presentation">
+          {headerInner}
+        </div>
+      ) : (
+        <button type="button" onClick={() => setOpen(!open)} className={headerClass}>
+          {headerInner}
+        </button>
+      )}
+      {isOpen && (
         <>
         <table className="w-full text-sm border-t border-border">
           <tbody>
@@ -1721,89 +1749,6 @@ function TeamsSection({
   );
 }
 
-/** 模型配置父级：把默认/视频/音频/视觉四个子分组收拢在「模型配置」下 */
-function ModelConfigSection({
-  modelGroups,
-  draftValues,
-  onChange,
-  t,
-  draftModels,
-  onDraftModelsChange,
-  onModelValidate,
-  isConnected,
-}: {
-  modelGroups: ConfigGroup[];
-  draftValues: Record<string, string>;
-  onChange: (key: string, value: string) => void;
-  t: (key: string, options?: Record<string, unknown>) => string;
-  draftModels: ModelEntry[];
-  onDraftModelsChange: (models: ModelEntry[]) => void;
-  onModelValidate?: (fields: { api_base: string; api_key: string; model: string; model_provider: string }) => Promise<void>;
-  isConnected: boolean;
-}) {
-  const [open, setOpen] = useState(true);
-  const totalItems = modelGroups.reduce((s, g) => s + g.keys.length, 0);
-
-  return (
-    <div className="rounded-xl border border-blue-500/30 border-border bg-card/70 backdrop-blur-sm overflow-hidden shadow-sm">
-      <button
-        onClick={() => setOpen(!open)}
-        className="w-full flex items-center justify-between px-4 py-3 bg-secondary/30 hover:bg-secondary/60 transition-colors text-sm"
-      >
-        <span className="flex items-center gap-3 min-w-0">
-          <span className="inline-flex items-center justify-center w-7 h-7 rounded-md border text-blue-500 bg-blue-500/10 border-blue-500/20">
-            <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={1.8}>
-              <path strokeLinecap="round" strokeLinejoin="round" d="M9.75 3v4.5m4.5-4.5V6M3 10.5h18M4.5 6.75h15A1.5 1.5 0 0121 8.25v9A3.75 3.75 0 0117.25 21h-10.5A3.75 3.75 0 013 17.25v-9a1.5 1.5 0 011.5-1.5z" />
-            </svg>
-          </span>
-          <span className="min-w-0 text-left">
-            <span className="block font-medium text-text">{t('config.groups.model.label')}</span>
-            <span className="block text-xs text-text-muted truncate">{t('config.groups.model.hint')}</span>
-          </span>
-        </span>
-        <span className="flex items-center gap-2 text-text-muted ml-3">
-          <span className="text-[11px] px-2 py-0.5 rounded-full border border-border bg-secondary/60">
-            {t('config.itemsCount', { count: totalItems })}
-          </span>
-          <svg
-            className={`w-4 h-4 transition-transform ${open ? "rotate-180" : ""}`}
-            fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2}
-          >
-            <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
-          </svg>
-        </span>
-      </button>
-      {open && (
-        <div className="border-t border-border px-2 pb-2 pt-1 space-y-2">
-          {/* 多默认模型管理（替代原 model_default 单组） */}
-          <div className="rounded-lg border border-border bg-secondary/10 px-3 py-2">
-            <div className="text-xs font-medium text-text mb-2">{t("config.groups.modelDefault.label")}</div>
-            <MultiModelSection
-              models={draftModels}
-              onModelsChange={onDraftModelsChange}
-              onModelValidate={onModelValidate}
-              isConnected={isConnected}
-              t={t}
-            />
-          </div>
-          {/* 视频/音频/视觉模型保持原有 GroupSection */}
-          {modelGroups.filter((g) => g.tag !== "model_default").map((group) => (
-            <GroupSection
-              key={group.tag}
-              group={group}
-              draftValues={draftValues}
-              onChange={onChange}
-              defaultOpen={false}
-              t={t}
-              nested
-            />
-          ))}
-        </div>
-      )}
-    </div>
-  );
-}
-
 export function ConfigPanel({
   config,
   isConnected,
@@ -1852,10 +1797,9 @@ export function ConfigPanel({
 
   const cached = loadCachedAgentsTeams();
   const [draftAgents, setDraftAgents] = useState<AgentEntry[]>(cached?.agents || []);
-  const [openAgents, setOpenAgents] = useState(false);
   const [draftTeams, setDraftTeams] = useState<TeamEntry[]>(cached?.teams || []);
-  const [openTeams, setOpenTeams] = useState(false);
   const [agentsTeamsEdited, setAgentsTeamsEdited] = useState(false);
+  const [configTab, setConfigTab] = useState<ConfigMainTab>("model");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -2005,16 +1949,39 @@ export function ConfigPanel({
     return { modelGroups: model, otherGroups: other };
   }, [groups]);
 
+  const { embedGroups, securityGroups, otherTabGroups, yamlModelGroups } = useMemo(() => {
+    const embed: ConfigGroup[] = [];
+    const security: ConfigGroup[] = [];
+    const otherTab: ConfigGroup[] = [];
+    for (const g of otherGroups) {
+      if (g.tag === "embed") embed.push(g);
+      else if (SECURITY_GROUP_TAGS.has(g.tag)) security.push(g);
+      else if (g.tag === "agents" || g.tag === "team") continue;
+      else otherTab.push(g);
+    }
+    const yamlModel = modelGroups.filter((g) => g.tag !== "model_default");
+    return {
+      embedGroups: embed,
+      securityGroups: security,
+      otherTabGroups: otherTab,
+      yamlModelGroups: yamlModel,
+    };
+  }, [otherGroups, modelGroups]);
+
   useLayoutEffect(() => {
     if (!initialExpandGroupTag) return;
-    const hasGroup = groups.some((g) => g.tag === initialExpandGroupTag);
-    if (!hasGroup) return;
-    const el = document.getElementById(`config-group-${initialExpandGroupTag}`);
-    el?.scrollIntoView({ behavior: "smooth", block: "nearest" });
+    const tag = initialExpandGroupTag;
+    setConfigTab(configTabForGroupTag(tag));
+    const scrollId =
+      tag === "agents" ? "config-group-agents" : tag === "team" ? "config-group-team" : `config-group-${tag}`;
+    const raf = requestAnimationFrame(() => {
+      document.getElementById(scrollId)?.scrollIntoView({ behavior: "smooth", block: "nearest" });
+    });
+    return () => cancelAnimationFrame(raf);
   }, [groups, initialExpandGroupTag]);
 
   const totalItems = useMemo(() => groups.reduce((sum, group) => sum + group.keys.length, 0), [groups]);
-  const topLevelGroupCount = (modelGroups.length > 0 ? 1 : 0) + otherGroups.length;
+  const topLevelGroupCount = groups.length;
   const hasConfigChanges = useMemo(() => {
     const keys = Object.keys(normalizedConfig);
     return keys.some((key) => (draftValues[key] ?? "") !== normalizedConfig[key]);
@@ -2185,122 +2152,170 @@ export function ConfigPanel({
             {t('config.empty')}
           </div>
         ) : (
-          <div className="space-y-3 flex-1 min-h-0 overflow-auto pr-1">
-            <div className="flex items-center justify-between text-xs text-text-muted px-1">
+          <div className="flex flex-col flex-1 min-h-0 overflow-hidden">
+            <div className="flex items-center justify-between text-xs text-text-muted px-1 shrink-0 mb-1">
               <span>{t('config.groupsCount', { count: topLevelGroupCount })}</span>
               <span className="mono">{t('config.paramsCount', { count: totalItems })}</span>
             </div>
-            {modelGroups.length > 0 && (
-              <ModelConfigSection
-                modelGroups={modelGroups}
-                draftValues={draftValues}
-                onChange={handleFieldChange}
-                t={t}
-                draftModels={draftModels}
-                onDraftModelsChange={setDraftModels}
-                onModelValidate={onModelValidate}
-                isConnected={isConnected}
-              />
-            )}
-            {otherGroups.filter((g) => g.tag !== "agents" && g.tag !== "team").map((group) => (
-              <GroupSection
-                key={group.tag}
-                group={group}
-                draftValues={draftValues}
-                onChange={handleFieldChange}
-                defaultOpen={
-                  initialExpandGroupTag != null && group.tag === initialExpandGroupTag
-                }
-                t={t}
-                afterTable={
-                  group.tag === "permissions" ? (
-                    <PermissionsToolsEditor isConnected={isConnected} />
-                  ) : null
-                }
-              />
-            ))}
-            {otherGroups.some((g) => g.tag === "agents") && (
-              <div id="config-group-agents" className="rounded-xl border border-border bg-card/70 backdrop-blur-sm overflow-hidden shadow-sm">
+            <div className="app-subtabs shrink-0" role="tablist" aria-label={t('config.tabsAriaLabel')}>
+              {(["model", "agent", "security", "other"] as const).map((tab) => (
                 <button
-                  onClick={() => setOpenAgents(!openAgents)}
-                  className="w-full flex items-center justify-between transition-colors text-sm px-4 py-3 bg-secondary/30 hover:bg-secondary/60"
+                  key={tab}
+                  type="button"
+                  role="tab"
+                  id={`config-tab-${tab}`}
+                  aria-selected={configTab === tab}
+                  tabIndex={configTab === tab ? 0 : -1}
+                  className={`app-subtabs__tab${configTab === tab ? " app-subtabs__tab--active" : ""}`}
+                  onClick={() => setConfigTab(tab)}
                 >
-                  <span className="flex items-center gap-3 min-w-0">
-                    <span className="inline-flex items-center justify-center rounded-md border w-7 h-7 text-pink-500 bg-pink-500/10 border-pink-500/20">
-                      <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={1.8}>
-                        <path strokeLinecap="round" strokeLinejoin="round" d="M15.042 21.672L13.684 16.6m0 0l-2.51 2.225.569-9.47 2.51 2.225a4.5 4.5 0 00-6.286-3.774l-.53.938a4.5 4.5 0 002.024 2.024l4.286-.572zm-7.97-3.043l-2.51-2.225.569 9.47-2.51-2.225a4.5 4.5 0 016.286 3.774l.53-.938a4.5 4.5 0 00-2.024-2.024z" />
-                      </svg>
-                    </span>
-                    <span className="min-w-0 text-left">
-                      <span className="block font-medium text-text">{t('config.groups.agents.label')}</span>
-                      <span className="block text-xs text-text-muted truncate">{t('config.groups.agents.hint')}</span>
-                    </span>
-                  </span>
-                  <span className="flex items-center gap-2 text-text-muted ml-3">
-                    <span className="text-[11px] px-2 py-0.5 rounded-full border border-border bg-secondary/60">
-                      {t('config.itemsCount', { count: draftAgents.length })}
-                    </span>
-                    <svg
-                      className={`w-4 h-4 transition-transform ${openAgents ? "rotate-180" : ""}`}
-                      fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2}
-                    >
-                      <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
-                    </svg>
-                  </span>
+                  {t(`config.tabs.${tab}`)}
                 </button>
-                {openAgents && (
-                  <div className="border-t border-border p-4">
-                    <MultiAgentSection
-                      agents={draftAgents}
-                      onAgentsChange={(agents) => { setDraftAgents(agents); setAgentsTeamsEdited(true); }}
-                      availableModels={draftModels}
+              ))}
+            </div>
+            <div className="flex-1 min-h-0 overflow-auto pr-1 space-y-3 pt-1">
+              {configTab === "model" ? (
+                <div role="tabpanel" aria-labelledby="config-tab-model" className="space-y-3 pb-2">
+                  <div
+                    id="config-group-model_default"
+                    className="rounded-xl border border-border bg-card/70 backdrop-blur-sm overflow-hidden shadow-sm"
+                  >
+                    <div className="px-4 py-3 bg-secondary/30 border-b border-border">
+                      <span className="block text-sm font-medium text-text-strong">{t("config.groups.modelDefault.label")}</span>
+                      <span className="block text-xs text-text-muted mt-0.5">{t("config.groups.modelDefault.hint")}</span>
+                    </div>
+                    <div className="p-3">
+                      <MultiModelSection
+                        models={draftModels}
+                        onModelsChange={setDraftModels}
+                        onModelValidate={onModelValidate}
+                        isConnected={isConnected}
+                        t={t}
+                      />
+                    </div>
+                  </div>
+                  {yamlModelGroups.map((group) => (
+                    <GroupSection
+                      key={group.tag}
+                      group={group}
+                      draftValues={draftValues}
+                      onChange={handleFieldChange}
+                      defaultOpen
+                      alwaysExpanded
                       t={t}
                     />
-                  </div>
-                )}
-              </div>
-            )}
-            {otherGroups.some((g) => g.tag === "team") && (
-              <div id="config-group-team" className="rounded-xl border border-border bg-card/70 backdrop-blur-sm overflow-hidden shadow-sm">
-                <button
-                  onClick={() => setOpenTeams(!openTeams)}
-                  className="w-full flex items-center justify-between transition-colors text-sm px-4 py-3 bg-secondary/30 hover:bg-secondary/60"
-                >
-                  <span className="flex items-center gap-3 min-w-0">
-                    <span className="inline-flex items-center justify-center rounded-md border w-7 h-7 text-fuchsia-500 bg-fuchsia-500/10 border-fuchsia-500/20">
-                      <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={1.8}>
-                        <path strokeLinecap="round" strokeLinejoin="round" d="M18 18.72a9.094 9.094 0 003.741-.479 3 3 0 00-4.682-2.72m.94 3.198l.001.031c0 .225-.012.447-.037.666A11.944 11.944 0 0112 21c-2.17 0-4.207-.576-5.963-1.584A6.062 6.062 0 016 18.719m12 0a5.971 5.971 0 00-.941-3.197m0 0A5.995 5.995 0 0012 12.75a5.995 5.995 0 00-5.058 2.772m0 0a3 3 0 00-4.681 2.72 8.986 8.986 0 003.74.477m.94-3.197a5.971 5.971 0 00-.94 3.197M15 6.75a3 3 0 11-6 0 3 3 0 016 0zm6 3a2.25 2.25 0 11-4.5 0 2.25 2.25 0 014.5 0zm-13.5 0a2.25 2.25 0 11-4.5 0 2.25 2.25 0 014.5 0z" />
-                      </svg>
-                    </span>
-                    <span className="min-w-0 text-left">
-                      <span className="block font-medium text-text">{t('config.groups.team.label')}</span>
-                      <span className="block text-xs text-text-muted truncate">{t('config.groups.team.hint')}</span>
-                    </span>
-                  </span>
-                  <span className="flex items-center gap-2 text-text-muted ml-3">
-                    <span className="text-[11px] px-2 py-0.5 rounded-full border border-border bg-secondary/60">
-                      {t('config.itemsCount', { count: draftTeams.length })}
-                    </span>
-                    <svg
-                      className={`w-4 h-4 transition-transform ${openTeams ? "rotate-180" : ""}`}
-                      fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2}
-                    >
-                      <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
-                    </svg>
-                  </span>
-                </button>
-                {openTeams && (
-                  <div className="border-t border-border p-4">
-                    <TeamsSection
-                      teams={draftTeams}
-                      onTeamsChange={(teams) => { setDraftTeams(teams); setAgentsTeamsEdited(true); }}
-                      agents={draftAgents}
+                  ))}
+                  {embedGroups.map((group) => (
+                    <GroupSection
+                      key={group.tag}
+                      group={group}
+                      draftValues={draftValues}
+                      onChange={handleFieldChange}
+                      defaultOpen
+                      alwaysExpanded
                       t={t}
                     />
+                  ))}
+                </div>
+              ) : null}
+
+              {configTab === "agent" ? (
+                <div role="tabpanel" aria-labelledby="config-tab-agent" className="space-y-3 pb-2">
+                  <div id="config-group-agents" className="rounded-xl border border-border bg-card/70 backdrop-blur-sm overflow-hidden shadow-sm">
+                    <div className="w-full flex items-center justify-between px-4 py-3 bg-secondary/30">
+                      <span className="flex items-center gap-3 min-w-0">
+                        <span className="inline-flex items-center justify-center rounded-md border w-7 h-7 text-pink-500 bg-pink-500/10 border-pink-500/20">
+                          {getGroupIcon("agents")}
+                        </span>
+                        <span className="min-w-0 text-left">
+                          <span className="block text-sm font-medium text-text-strong">{t("config.groups.agents.label")}</span>
+                          <span className="block text-xs text-text-muted truncate">{t("config.groups.agents.hint")}</span>
+                        </span>
+                      </span>
+                      <span className="text-[11px] px-2 py-0.5 rounded-full border border-border bg-secondary/60 text-text-muted shrink-0">
+                        {t("config.itemsCount", { count: draftAgents.length })}
+                      </span>
+                    </div>
+                    <div className="border-t border-border p-4">
+                      <MultiAgentSection
+                        agents={draftAgents}
+                        onAgentsChange={(agents) => { setDraftAgents(agents); setAgentsTeamsEdited(true); }}
+                        availableModels={draftModels}
+                        t={t}
+                      />
+                    </div>
                   </div>
-                )}
-              </div>
-            )}
+                  <div id="config-group-team" className="rounded-xl border border-border bg-card/70 backdrop-blur-sm overflow-hidden shadow-sm">
+                    <div className="w-full flex items-center justify-between px-4 py-3 bg-secondary/30">
+                      <span className="flex items-center gap-3 min-w-0">
+                        <span className="inline-flex items-center justify-center rounded-md border w-7 h-7 text-fuchsia-500 bg-fuchsia-500/10 border-fuchsia-500/20">
+                          {getGroupIcon("team")}
+                        </span>
+                        <span className="min-w-0 text-left">
+                          <span className="block text-sm font-medium text-text-strong">{t("config.groups.team.label")}</span>
+                          <span className="block text-xs text-text-muted truncate">{t("config.groups.team.hint")}</span>
+                        </span>
+                      </span>
+                      <span className="text-[11px] px-2 py-0.5 rounded-full border border-border bg-secondary/60 text-text-muted shrink-0">
+                        {t("config.itemsCount", { count: draftTeams.length })}
+                      </span>
+                    </div>
+                    <div className="border-t border-border p-4">
+                      <TeamsSection
+                        teams={draftTeams}
+                        onTeamsChange={(teams) => { setDraftTeams(teams); setAgentsTeamsEdited(true); }}
+                        agents={draftAgents}
+                        t={t}
+                      />
+                    </div>
+                  </div>
+                </div>
+              ) : null}
+
+              {configTab === "security" ? (
+                <div role="tabpanel" aria-labelledby="config-tab-security" className="space-y-3 pb-2">
+                  {securityGroups.length === 0 ? (
+                    <p className="text-sm text-text-muted px-1">{t("config.tabEmpty.security")}</p>
+                  ) : (
+                    securityGroups.map((group) => (
+                      <GroupSection
+                        key={group.tag}
+                        group={group}
+                        draftValues={draftValues}
+                        onChange={handleFieldChange}
+                        defaultOpen={initialExpandGroupTag != null && group.tag === initialExpandGroupTag}
+                        alwaysExpanded
+                        t={t}
+                        afterTable={
+                          group.tag === "permissions" ? (
+                            <PermissionsToolsEditor isConnected={isConnected} />
+                          ) : null
+                        }
+                      />
+                    ))
+                  )}
+                </div>
+              ) : null}
+
+              {configTab === "other" ? (
+                <div role="tabpanel" aria-labelledby="config-tab-other" className="space-y-3 pb-2">
+                  {otherTabGroups.length === 0 ? (
+                    <p className="text-sm text-text-muted px-1">{t("config.tabEmpty.other")}</p>
+                  ) : (
+                    otherTabGroups.map((group) => (
+                      <GroupSection
+                        key={group.tag}
+                        group={group}
+                        draftValues={draftValues}
+                        onChange={handleFieldChange}
+                        defaultOpen={initialExpandGroupTag != null && group.tag === initialExpandGroupTag}
+                        t={t}
+                      />
+                    ))
+                  )}
+                </div>
+              ) : null}
+            </div>
           </div>
         )}
       </div>
