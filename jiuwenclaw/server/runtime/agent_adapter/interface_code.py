@@ -172,7 +172,8 @@ class JiuwenClawCodeAdapter(JiuWenClawDeepAdapter):
             raise RuntimeError("sys_operation is not available, maybe task is not running")
         self._sys_operation = sys_operation
 
-        configured_subagents = self._build_configured_subagents(model, config, config_base) or []
+        configured_subagents, _should_add_general = self._build_configured_subagents(model, config, config_base)
+        configured_subagents = configured_subagents or []
 
         self._instance = create_deep_agent(
             model=model,
@@ -510,7 +511,7 @@ class JiuwenClawCodeAdapter(JiuWenClawDeepAdapter):
             model: Model,
             config: dict[str, Any],
             config_base: dict[str, Any] | None = None,
-    ) -> list[Any] | None:
+    ) -> tuple[list[Any] | None, bool]:
         """Build subagents for code mode: explore_agent + plan_agent + code_agent + browser_agent.
 
         explore_agent / plan_agent 固定挂载（Code 模式核心子代理）。
@@ -607,7 +608,7 @@ class JiuwenClawCodeAdapter(JiuWenClawDeepAdapter):
                     )
                 )
 
-        return subagents or None
+        return subagents or None, False
 
     # ─── Rail 生命周期(mode切换) ───────────────────
 
