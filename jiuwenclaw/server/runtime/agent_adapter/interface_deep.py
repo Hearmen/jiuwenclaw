@@ -4030,9 +4030,10 @@ class JiuWenClawDeepAdapter:
                     yield AgentResponseChunk(
                         request_id=rid,
                         channel_id=cid,
-                        payload={"event_type": "chat.delta", "content": content},
+                        payload={"event_type": "chat.reasoning", "content": content},
                         is_complete=False,
                     )
+                    continue
 
                 if chunk_type == "llm_output":
                     has_streamed_content = True
