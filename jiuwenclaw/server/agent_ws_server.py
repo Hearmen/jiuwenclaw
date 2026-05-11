@@ -108,6 +108,8 @@ def resolve_agent_request_mode(raw_mode: Any) -> tuple[str, str | None, str]:
         "code": "normal",
     }
     sub_mode = parts[1] if len(parts) > 1 and parts[1] else default_sub_modes.get(mode)
+    if mode == "code" and sub_mode not in {"plan", "normal", "team"}:
+        sub_mode = default_sub_modes.get(mode, "normal")
     canonical_mode = f"{mode}.{sub_mode}" if sub_mode else mode
     return mode, sub_mode, canonical_mode
 
@@ -595,7 +597,7 @@ class AgentWebSocketServer:
             raise ValueError("Failed to get agent")
 
         # code 模式：在真实 session 上执行 switch_mode，确保 state 持久化
-        if mode == "code":
+        if mode == "code" and sub_mode != "team":
             from openjiuwen.core.single_agent import create_agent_session
             session = create_agent_session(session_id=request.session_id, card=agent.get_instance().card)
             await session.pre_run(inputs=None)  # 从 checkpointer 加载历史 state
@@ -630,7 +632,7 @@ class AgentWebSocketServer:
             raise ValueError("Failed to get agent")
 
         # code 模式：在真实 session 上执行 switch_mode，确保 state 持久化
-        if mode == "code":
+        if mode == "code" and sub_mode != "team":
             from openjiuwen.core.single_agent import create_agent_session
             session = create_agent_session(session_id=request.session_id, card=agent.get_instance().card)
             await session.pre_run(inputs=None)  # 从 checkpointer 加载历史 state
@@ -1766,7 +1768,7 @@ class AgentWebSocketServer:
                 )
             else:
                 raise ValueError("Unsupported action, must be one of " \
-                "list|show|add|update|enable|disable|remove|list_tools")
+                                 "list|show|add|update|enable|disable|remove|list_tools")
         except KeyError as exc:
             resp = AgentResponse(
                 request_id=request.request_id,
@@ -2400,7 +2402,7 @@ class AgentWebSocketServer:
                 await ws.send(json.dumps(wire, ensure_ascii=False))
 
     async def _handle_session_fork(
-        self, ws: Any, request: AgentRequest, send_lock: asyncio.Lock
+            self, ws: Any, request: AgentRequest, send_lock: asyncio.Lock
     ) -> None:
         """Handle session.fork: filesystem copy + in-memory context copy.
 

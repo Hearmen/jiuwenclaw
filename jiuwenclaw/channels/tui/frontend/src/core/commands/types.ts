@@ -37,7 +37,7 @@ export interface CommandContext {
   sendMessage: (
     content: string,
     attachments?: FileAttachment[],
-    mode?: "agent.plan" | "agent.fast" | "code.plan" | "code.normal" | "team",
+    mode?: "agent.plan" | "agent.fast" | "code.plan" | "code.normal" | "code.team" | "team",
     options?: { logAsUser?: boolean },
   ) => string | null;
   sessionId: string;
@@ -51,8 +51,8 @@ export interface CommandContext {
   exitApp: () => void;
   isProcessing: boolean;
   connectionStatus: ConnectionStatus;
-  mode: "agent.plan" | "agent.fast" | "code.plan" | "code.normal" | "team";
-  setMode: (mode: "agent.plan" | "agent.fast" | "code.plan" | "code.normal" | "team") => void;
+  mode: "agent.plan" | "agent.fast" | "code.plan" | "code.normal" | "code.team" | "team";
+  setMode: (mode: "agent.plan" | "agent.fast" | "code.plan" | "code.normal" | "code.team" | "team") => void;
   setModel: (name: string) => void;
   setThemeName: (theme: ThemeName) => void;
   setAccentColor: (color: AccentColorName) => void;

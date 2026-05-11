@@ -1,11 +1,11 @@
 import { makeItem } from "../helpers.js";
 import { CommandKind, type SlashCommand } from "../types.js";
 
-type ClientMode = "agent.plan" | "agent.fast" | "code.plan" | "code.normal" | "team";
-type SwitchArg = "plan" | "fast" | "normal";
+type ClientMode = "agent.plan" | "agent.fast" | "code.plan" | "code.normal" | "code.team" | "team";
+type SwitchArg = "plan" | "fast" | "normal" | "team";
 
 const AGENT_MODES = new Set<ClientMode>(["agent.plan", "agent.fast"]);
-const CODE_MODES = new Set<ClientMode>(["code.plan", "code.normal"]);
+const CODE_MODES = new Set<ClientMode>(["code.plan", "code.normal", "code.team"]);
 
 function resolveRequestedMode(currentMode: ClientMode, switchArg: SwitchArg): string | null {
   if (switchArg === "plan") {
@@ -19,6 +19,9 @@ function resolveRequestedMode(currentMode: ClientMode, switchArg: SwitchArg): st
   if (switchArg === "normal") {
     return CODE_MODES.has(currentMode) ? "code.normal" : null;
   }
+  if (switchArg === "team") {
+    return CODE_MODES.has(currentMode) ? "code.team" : null;
+  }
   return null;
 }
 
@@ -26,15 +29,15 @@ export function createSwitchCommand(): SlashCommand {
   return {
     name: "switch",
     description: "Switch sub-mode in current mode family",
-    usage: "/switch <plan|fast|normal>",
+    usage: "/switch <plan|fast|normal|team>",
     example: "/switch fast",
     kind: CommandKind.BUILT_IN,
     takesArgs: true,
-    completion: async () => ["plan", "fast", "normal"],
+    completion: async () => ["plan", "fast", "normal", "team"],
     action: async (ctx, args) => {
       const switchArg = args.trim() as SwitchArg;
-      if (switchArg !== "plan" && switchArg !== "fast" && switchArg !== "normal") {
-        ctx.addItem(makeItem(ctx.sessionId, "error", "usage: /switch <plan|fast|normal>"));
+      if (switchArg !== "plan" && switchArg !== "fast" && switchArg !== "normal" && switchArg !== "team") {
+        ctx.addItem(makeItem(ctx.sessionId, "error", "usage: /switch <plan|fast|normal|team>"));
         return;
       }
 

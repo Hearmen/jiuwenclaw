@@ -11,6 +11,7 @@ export function buildModeAutocompleteItems(): AutocompleteItem[] {
     { value: "code", label: "code" },
     { value: "code.normal", label: "    normal" },
     { value: "code.plan", label: "    plan" },
+    { value: "code.team", label: "    team" },
     { value: "team", label: "team" },
   ];
 }
@@ -23,12 +24,13 @@ export function createModeCommand(): SlashCommand {
     "agent.fast",
     "code.plan",
     "code.normal",
+    "code.team",
     "team",
   ] as const;
   /** 用户输入的简写 → 实际会话模式（/mode agent → agent.plan，/mode code → code.normal）。 */
   const modeAlias: Record<
     string,
-    "agent.plan" | "agent.fast" | "code.plan" | "code.normal" | "team"
+    "agent.plan" | "agent.fast" | "code.plan" | "code.normal" | "code.team" | "team"
   > = {
     plan: "agent.plan",
     agent: "agent.plan",
@@ -37,6 +39,7 @@ export function createModeCommand(): SlashCommand {
     "agent.fast": "agent.fast",
     "code.plan": "code.plan",
     "code.normal": "code.normal",
+    "code.team": "code.team",
     team: "team",
   };
 

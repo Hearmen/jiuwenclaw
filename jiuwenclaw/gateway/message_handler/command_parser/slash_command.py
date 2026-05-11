@@ -12,6 +12,7 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import Any, Literal
 
+
 # ---------------------------------------------------------------------------
 # 合法控制消息全集（用于 IM 入站管线跳过 LLM 改写等，须与 Gateway 拦截语义一致）
 # ---------------------------------------------------------------------------
@@ -39,6 +40,7 @@ class ModeSubcommand(str, Enum):
     AGENT_FAST = "agent.fast"
     CODE_PLAN = "code.plan"
     CODE_NORMAL = "code.normal"
+    CODE_TEAM = "code.team"
 
 
 _VALID_MODE_LINES: frozenset[str] = frozenset(
@@ -52,6 +54,7 @@ class SwitchSubcommand(str, Enum):
     PLAN = "plan"
     FAST = "fast"
     NORMAL = "normal"
+    TEAM = "team"
 
 
 _VALID_SWITCH_LINES: frozenset[str] = frozenset(
@@ -232,14 +235,16 @@ FIRST_BATCH_REGISTRY: tuple[SlashCommandEntry, ...] = (
     ),
     SlashCommandEntry(
         id="mode",
-        canonical_text=f"{GatewaySlashCommand.MODE.value} agent|code|team|agent.plan|agent.fast|code.plan|code.normal",
+        canonical_text=f"{GatewaySlashCommand.MODE.value} agent|code|team|agent.plan|agent.fast|code.plan|"
+                       f"code.normal|code.team",
         scope="gateway",
         req_method=None,
-        notes="受控通道切换模式：一级模式 agent/code/team（映射到默认子模式）或直达 agent.plan/agent.fast/code.plan/code.normal；写入 params.mode。",
+        notes="受控通道切换模式：一级模式 agent/code/team（映射到默认子模式）或直达 agent.plan/agent.fast/code.plan/code.normal；"
+              "写入 params.mode。",
     ),
     SlashCommandEntry(
         id="switch",
-        canonical_text=f"{GatewaySlashCommand.SWITCH.value} plan|fast|normal",
+        canonical_text=f"{GatewaySlashCommand.SWITCH.value} plan|fast|normal|team",
         scope="gateway",
         req_method=None,
         notes="受控通道切换二级模式：agent 下 plan/fast，code 下 plan/normal。",

@@ -168,6 +168,7 @@ class Mode(Enum):
     AGENT_FAST = "agent.fast"
     CODE_PLAN = "code.plan"
     CODE_NORMAL = "code.normal"
+    CODE_TEAM = "code.team"
     TEAM = "team"
 
     @classmethod

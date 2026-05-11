@@ -239,6 +239,16 @@ class JiuWenClaw:
             logger.info("[JiuWenClaw] Initialized adapter: sdk=%s, mode=%s", self._sdk_name, mode)
         return self._adapter
 
+    @staticmethod
+    def _adapter_mode_for_request(request: AgentRequest) -> str:
+        params = request.params if isinstance(request.params, dict) else {}
+        raw_mode = params.get("mode", "")
+        if isinstance(raw_mode, str):
+            mode = raw_mode.strip().lower()
+            if mode == "code" or mode.startswith("code."):
+                return "code"
+        return "agent"
+
     async def create_instance(self, config: dict[str, Any] | None = None, *,
                               mode: str = "agent", sub_mode: str = None) -> None:
         """初始化 Agent 实例.
@@ -263,7 +273,7 @@ class JiuWenClaw:
             config_base: 可选的完整配置快照；传入时优先使用它而不是读取本地 config.yaml。
             env_overrides: 可选的环境变量增量；仅覆盖请求中出现的 key。
         """
-        adapter = self._ensure_adapter()
+        adapter = self._ensure_adapter(mode=self._adapter_mode_for_request(request))
         await adapter.reload_agent_config(config_base, env_overrides)
         logger.info("[JiuWenClaw] Agent config reloaded: sdk=%s", self._sdk_name)
 
@@ -494,7 +504,7 @@ class JiuWenClaw:
                 session_id=session_id,
             )
 
-        adapter = self._ensure_adapter()
+        adapter = self._ensure_adapter(mode=self._adapter_mode_for_request(request))
 
         if intent == "pause":
             # 暂停：不取消任务，只暂停 ReAct 循环
@@ -613,10 +623,10 @@ class JiuWenClaw:
 
         支持多 session 并发执行，同 session 内任务按先进后出顺序执行.
         """
-        adapter = self._ensure_adapter()
-
         if request.req_method == ReqMethod.CHAT_CANCEL:
             return await self._process_interrupt(request)
+
+        adapter = self._ensure_adapter(mode=self._adapter_mode_for_request(request))
 
         if request.req_method == ReqMethod.CHAT_ANSWER:
             return await adapter.handle_user_answer(request)
@@ -729,7 +739,11 @@ class JiuWenClaw:
         session_id = self._session_manager.get_session_id(request.session_id)
         query = request.params.get("query", "")
 
-        is_team_mode = is_team_params(request.params if isinstance(request.params, dict) else None)
+        mode = request.params.get("mode", "") if isinstance(request.params, dict) else ""
+        team_flag = request.params.get("team", False) if isinstance(request.params, dict) else False
+        is_team_mode = team_flag or (
+            isinstance(mode, str) and mode.strip().lower() in {"team", "code.team"}
+        )
 
         append_history_record(
             session_id=session_id,

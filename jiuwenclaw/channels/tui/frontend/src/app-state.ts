@@ -72,7 +72,7 @@ export interface SessionUsageSummary {
 export interface AppSnapshot {
   connectionStatus: ConnectionStatus;
   sessionId: string;
-  mode: "agent.plan" | "agent.fast" | "code.plan" | "code.normal" | "team";
+  mode: "agent.plan" | "agent.fast" | "code.plan" | "code.normal" | "code.team" | "team";
   themeName: ThemeName;
   accentColor: AccentColorName;
   transcriptMode: "compact" | "detailed";
@@ -112,7 +112,7 @@ export class CliPiAppState {
   private connectionStatus: ConnectionStatus = "idle";
   private sessionId: string;
   private sessionTitle: string = "";
-  private mode: "agent.plan" | "agent.fast" | "code.plan" | "code.normal" | "team" =
+  private mode: "agent.plan" | "agent.fast" | "code.plan" | "code.normal" | "code.team" | "team" =
     "code.normal";
   private themeName: ThemeName = getCurrentThemeName();
   private accentColor: AccentColorName = getCurrentAccentColor();

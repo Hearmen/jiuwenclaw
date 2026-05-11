@@ -52,6 +52,7 @@ class ChannelMode(str, Enum):
     AGENT_FAST = "agent.fast"
     CODE_PLAN = "code.plan"
     CODE_NORMAL = "code.normal"
+    CODE_TEAM = "code.team"
     TEAM = "team"
 
 
@@ -216,6 +217,7 @@ class MessageHandler(ABC):
             "agent.fast": ChannelMode.AGENT_FAST,
             "code.plan": ChannelMode.CODE_PLAN,
             "code.normal": ChannelMode.CODE_NORMAL,
+            "code.team": ChannelMode.CODE_TEAM,
             "team": ChannelMode.TEAM,
         }
         mode = mode_map.get(mode_raw, ChannelMode.AGENT_PLAN)
@@ -588,6 +590,7 @@ class MessageHandler(ABC):
                 "agent.fast",
                 "code.plan",
                 "code.normal",
+                "code.team",
             ):
                 asyncio.create_task(
                     self._send_channel_notice(
@@ -614,6 +617,8 @@ class MessageHandler(ABC):
                 state.mode = ChannelMode.CODE_PLAN
             elif mode_str == "code.normal":
                 state.mode = ChannelMode.CODE_NORMAL
+            elif mode_str == "code.team":
+                state.mode = ChannelMode.CODE_TEAM
             new_label = state.mode.value
             if old_mode != state.mode:
                 asyncio.create_task(
@@ -644,14 +649,29 @@ class MessageHandler(ABC):
             if switch_str == "plan":
                 if state.mode in (ChannelMode.AGENT_PLAN, ChannelMode.AGENT_FAST):
                     target_mode = ChannelMode.AGENT_PLAN
-                elif state.mode in (ChannelMode.CODE_PLAN, ChannelMode.CODE_NORMAL):
+                elif state.mode in (
+                    ChannelMode.CODE_PLAN,
+                    ChannelMode.CODE_NORMAL,
+                    ChannelMode.CODE_TEAM,
+                ):
                     target_mode = ChannelMode.CODE_PLAN
             elif switch_str == "fast":
                 if state.mode in (ChannelMode.AGENT_PLAN, ChannelMode.AGENT_FAST):
                     target_mode = ChannelMode.AGENT_FAST
             elif switch_str == "normal":
-                if state.mode in (ChannelMode.CODE_PLAN, ChannelMode.CODE_NORMAL):
+                if state.mode in (
+                    ChannelMode.CODE_PLAN,
+                    ChannelMode.CODE_NORMAL,
+                    ChannelMode.CODE_TEAM,
+                ):
                     target_mode = ChannelMode.CODE_NORMAL
+            elif switch_str == "team":
+                if state.mode in (
+                    ChannelMode.CODE_PLAN,
+                    ChannelMode.CODE_NORMAL,
+                    ChannelMode.CODE_TEAM,
+                ):
+                    target_mode = ChannelMode.CODE_TEAM
             if target_mode is None:
                 asyncio.create_task(
                     self._send_channel_notice(

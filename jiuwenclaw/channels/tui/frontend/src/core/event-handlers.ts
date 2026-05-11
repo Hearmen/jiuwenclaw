@@ -49,8 +49,8 @@ export interface AppEventDelegate {
   getConnectionStatus(): ConnectionStatus;
   getSessionId(): string;
   setSessionId(sessionId: string): void;
-  setMode(mode: "agent.plan" | "agent.fast" | "code.plan" | "code.normal" | "team"): void;
-  getMode(): "agent.plan" | "agent.fast" | "code.plan" | "code.normal" | "team";
+  setMode(mode: "agent.plan" | "agent.fast" | "code.plan" | "code.normal" | "code.team" | "team"): void;
+  getMode(): "agent.plan" | "agent.fast" | "code.plan" | "code.normal" | "code.team" | "team";
   getEntries(): HistoryItem[];
   setEntries(entries: HistoryItem[]): void;
   setStreamingState(state: StreamingState): void;
@@ -142,13 +142,18 @@ function _handleSwitchModeToolResult(
   const existingMode = delegate.getMode();
   let newMode: string | null = null;
   if (existingMode.startsWith("code.")) {
-    newMode = subMode === "plan" ? "code.plan" : "code.normal";
+    newMode =
+      subMode === "plan"
+        ? "code.plan"
+        : subMode === "team"
+          ? "code.team"
+          : "code.normal";
   } else if (existingMode.startsWith("agent.")) {
     newMode = subMode === "plan" ? "agent.plan" : "agent.fast";
   }
 
   if (newMode && newMode !== existingMode) {
-    delegate.setMode(newMode as "agent.plan" | "agent.fast" | "code.plan" | "code.normal" | "team");
+    delegate.setMode(newMode as "agent.plan" | "agent.fast" | "code.plan" | "code.normal" | "code.team" | "team");
   }
 }
 

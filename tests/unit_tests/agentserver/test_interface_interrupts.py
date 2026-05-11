@@ -30,17 +30,24 @@ class _FakeTeamManager:
         return self.pause_result
 
 
-def _build_team_interrupt_request(intent: str) -> AgentRequest:
+def _build_team_interrupt_request(
+    intent: str,
+    *,
+    mode: str = "team",
+    team: bool = True,
+) -> AgentRequest:
+    params = {
+        "intent": intent,
+        "mode": mode,
+    }
+    if team:
+        params["team"] = True
     return AgentRequest(
         request_id=f"req-{intent}",
         channel_id="web",
         session_id="team-session-1",
         req_method=ReqMethod.CHAT_CANCEL,
-        params={
-            "intent": intent,
-            "mode": "team",
-            "team": True,
-        },
+        params=params,
     )
 
 
@@ -115,3 +122,38 @@ async def test_team_interrupt_resume_is_ack_only(monkeypatch: pytest.MonkeyPatch
     }
     assert cancelled == []
     assert fake_manager.calls == []
+
+
+@pytest.mark.asyncio
+async def test_code_team_interrupt_uses_team_manager_without_team_flag(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    claw = _InterruptHarness()
+    fake_manager = _FakeTeamManager(pause_result=True)
+    cancelled: list[tuple[str, str]] = []
+
+    def _unexpected_adapter():
+        raise AssertionError("code.team interrupt should not use deep adapter interrupt path")
+
+    async def _fake_cancel_session_task(session_id: str, reason: str = "") -> None:
+        cancelled.append((session_id, reason))
+
+    monkeypatch.setattr(claw, "_ensure_adapter", _unexpected_adapter)
+    monkeypatch.setattr(
+        "jiuwenclaw.agents.harness.team.get_team_manager",
+        lambda channel_id=None: fake_manager,
+    )
+    monkeypatch.setattr(claw.session_manager_for_test, "cancel_session_task", _fake_cancel_session_task)
+
+    response = await claw.process_interrupt_for_test(
+        _build_team_interrupt_request("pause", mode="code.team", team=False)
+    )
+
+    assert response.payload == {
+        "event_type": "chat.interrupt_result",
+        "intent": "pause",
+        "success": True,
+        "message": "团队已暂停",
+    }
+    assert cancelled == [("team-session-1", "interrupt(intent=pause): ")]
+    assert fake_manager.calls == [("team-session-1", "interrupt(intent=pause): ")]

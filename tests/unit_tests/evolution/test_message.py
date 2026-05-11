@@ -69,6 +69,7 @@ class TestMode:
         assert Mode.AGENT_FAST.value == "agent.fast"
         assert Mode.CODE_PLAN.value == "code.plan"
         assert Mode.CODE_NORMAL.value == "code.normal"
+        assert Mode.CODE_TEAM.value == "code.team"
         assert Mode.TEAM.value == "team"
 
     @staticmethod
@@ -78,6 +79,7 @@ class TestMode:
         assert Mode.from_raw("agent.fast") == Mode.AGENT_FAST
         assert Mode.from_raw("code.plan") == Mode.CODE_PLAN
         assert Mode.from_raw("code.normal") == Mode.CODE_NORMAL
+        assert Mode.from_raw("code.team") == Mode.CODE_TEAM
         assert Mode.from_raw("team") == Mode.TEAM
         assert Mode.from_raw("invalid") == Mode.AGENT_PLAN
 
@@ -88,6 +90,7 @@ class TestMode:
         assert Mode.AGENT_FAST.to_runtime_mode() == "agent.fast"
         assert Mode.CODE_PLAN.to_runtime_mode() == "code.plan"
         assert Mode.CODE_NORMAL.to_runtime_mode() == "code.normal"
+        assert Mode.CODE_TEAM.to_runtime_mode() == "code.team"
         assert Mode.TEAM.to_runtime_mode() == "team"
 
 

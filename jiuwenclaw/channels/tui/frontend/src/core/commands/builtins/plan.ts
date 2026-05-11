@@ -2,7 +2,9 @@ import { addInfo } from "../helpers.js";
 import { CommandKind, type CommandContext, type SlashCommand } from "../types.js";
 
 function planSubMode(ctx: CommandContext): "agent.plan" | "code.plan" {
-  if (ctx.mode === "code.plan" || ctx.mode === "code.normal") return "code.plan";
+  if (ctx.mode === "code.plan" || ctx.mode === "code.normal" || ctx.mode === "code.team") {
+    return "code.plan";
+  }
   return "agent.plan";
 }
 

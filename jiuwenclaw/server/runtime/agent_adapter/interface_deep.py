@@ -3878,7 +3878,7 @@ class JiuWenClawDeepAdapter:
         mode = request.params.get("mode", "agent.plan")
 
         # Team 模式处理
-        if mode == "team":
+        if mode in ("team", "code.team"):
             from jiuwenclaw.server.runtime.agent_adapter.team_helpers import process_team_message_stream
 
             resolved_model = self._resolve_model_for_request(request)
@@ -3888,7 +3888,7 @@ class JiuWenClawDeepAdapter:
             if self._runtime_prompt_rail:
                 self._runtime_prompt_rail.set_model_name(self._resolve_model_name())
                 self._runtime_prompt_rail.set_mode(mode)
-            self._write_runtime_state(mode="team", language=resolved_language, channel=resolved_channel)
+            self._write_runtime_state(mode=mode, language=resolved_language, channel=resolved_channel)
 
             async for chunk in process_team_message_stream(request, inputs, self._instance):
                 yield chunk
