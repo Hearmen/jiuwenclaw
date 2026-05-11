@@ -67,7 +67,8 @@ def test_resolve_skill_mode_accepts_all_and_auto_list():
     assert JiuWenClawDeepAdapter._resolve_skill_mode({"skill_mode": "invalid"}) == "all"
 
 
-def test_resolve_enable_task_loop_can_be_called_on_class():
+def test_resolve_enable_task_loop_can_be_called_on_class(monkeypatch):
+    monkeypatch.delenv("SKILL_CREATE", raising=False)
     assert (
         JiuWenClawDeepAdapter._resolve_enable_task_loop(
             {"enable_task_loop": False},
