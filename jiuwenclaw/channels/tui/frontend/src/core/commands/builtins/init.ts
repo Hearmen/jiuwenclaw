@@ -91,8 +91,8 @@ export function createInitCommand(): SlashCommand {
         return;
       }
 
-      // ---- Guard 2: code.plan blocks Write/Edit; auto-switch to code.normal ----
-      if (ctx.mode === "code.plan") {
+      // ---- Guard 2: /init runs in code.normal; keep UI mode and request mode aligned ----
+      if (ctx.mode !== "code.normal") {
         ctx.setMode("code.normal");
         ctx.addItem(
           addInfo(

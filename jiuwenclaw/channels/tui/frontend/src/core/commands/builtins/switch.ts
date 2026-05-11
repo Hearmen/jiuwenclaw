@@ -1,13 +1,13 @@
+import type { ClientMode } from "../../modes.js";
 import { makeItem } from "../helpers.js";
 import { CommandKind, type SlashCommand } from "../types.js";
 
-type ClientMode = "agent.plan" | "agent.fast" | "code.plan" | "code.normal" | "code.team" | "team";
 type SwitchArg = "plan" | "fast" | "normal" | "team";
 
 const AGENT_MODES = new Set<ClientMode>(["agent.plan", "agent.fast"]);
 const CODE_MODES = new Set<ClientMode>(["code.plan", "code.normal", "code.team"]);
 
-function resolveRequestedMode(currentMode: ClientMode, switchArg: SwitchArg): string | null {
+function resolveRequestedMode(currentMode: ClientMode, switchArg: SwitchArg): ClientMode | null {
   if (switchArg === "plan") {
     if (AGENT_MODES.has(currentMode)) return "agent.plan";
     if (CODE_MODES.has(currentMode)) return "code.plan";
@@ -53,7 +53,7 @@ export function createSwitchCommand(): SlashCommand {
         // Some backends still accept mode only on chat.send.
       }
 
-      ctx.setMode(requestedMode as ClientMode);
+      ctx.setMode(requestedMode);
       ctx.addItem(makeItem(ctx.sessionId, "info", `Mode switched to ${requestedMode}`, "s"));
     },
   };

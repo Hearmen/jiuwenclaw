@@ -640,6 +640,9 @@ class TeamManager:
                 logger.debug("[TeamManager] member workspace.root_path=%s", agent_ws.root_path)
             else:
                 logger.warning("[TeamManager] agent deep_config.workspace is None")
+            parent_adapter_mode = str(
+                getattr(deep_agent, "_jiuwenclaw_adapter_mode", "") or ""
+            ).lower()
 
             inheritable_cards = filter_inheritable_ability_cards(deep_agent)
             existing_ability_ids = {card.id for card in agent.ability_manager.list() or []}
@@ -659,6 +662,7 @@ class TeamManager:
 
             member_workspace = agent.deep_config.workspace if agent.deep_config else None
             member_skills_dir_resolved: Path | None = None
+            member_skill_manager: Any | None = None
             if member_workspace and member_workspace.root_path:
                 member_skills_dir = Path(member_workspace.root_path) / "skills"
                 member_skills_dir_resolved = member_skills_dir
@@ -676,6 +680,11 @@ class TeamManager:
                 except Exception as exc:
                     logger.warning("[TeamManager] skill copy failed: %s", exc)
 
+                try:
+                    member_skill_manager = SkillManager(workspace_dir=str(member_workspace.root_path))
+                except Exception as exc:
+                    logger.warning("[TeamManager] member SkillManager setup failed: %s", exc)
+
                 # Create independent SkillManager and SkillToolkit for member
                 try:
                     agent.add_rail(
@@ -689,6 +698,37 @@ class TeamManager:
                     )
                 except Exception as exc:
                     logger.warning("[TeamManager] MemberSkillToolkitRail setup failed: %s", exc)
+
+            if parent_adapter_mode == "code":
+                try:
+                    from jiuwenclaw.server.runtime.agent_adapter.interface_code import (
+                        configure_code_team_member_agent,
+                    )
+
+                    parent_workspace = (
+                        deep_agent.deep_config.workspace if deep_agent.deep_config else None
+                    )
+                    configure_code_team_member_agent(
+                        agent,
+                        parent_agent=deep_agent,
+                        skill_manager=member_skill_manager,
+                        member_name=member_name,
+                        role=role,
+                        session_id=session_id,
+                        channel_id=resolved_channel,
+                        project_dir=(
+                            str(parent_workspace.root_path)
+                            if parent_workspace and parent_workspace.root_path
+                            else None
+                        ),
+                    )
+                except Exception as exc:
+                    logger.warning(
+                        "[TeamManager] code team member adapter setup failed: member=%s role=%s error=%s",
+                        member_name,
+                        role,
+                        exc,
+                    )
 
             # Build all member rails (common + skill rails via role).
             try:

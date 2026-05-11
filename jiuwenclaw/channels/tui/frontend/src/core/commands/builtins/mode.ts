@@ -1,4 +1,5 @@
 import type { AutocompleteItem } from "@mariozechner/pi-tui";
+import type { ClientMode } from "../../modes.js";
 import { makeItem } from "../helpers.js";
 import { CommandKind, type SlashCommand } from "../types.js";
 
@@ -28,10 +29,7 @@ export function createModeCommand(): SlashCommand {
     "team",
   ] as const;
   /** 用户输入的简写 → 实际会话模式（/mode agent → agent.plan，/mode code → code.normal）。 */
-  const modeAlias: Record<
-    string,
-    "agent.plan" | "agent.fast" | "code.plan" | "code.normal" | "code.team" | "team"
-  > = {
+  const modeAlias: Record<string, ClientMode> = {
     plan: "agent.plan",
     agent: "agent.plan",
     code: "code.normal",
@@ -46,8 +44,8 @@ export function createModeCommand(): SlashCommand {
   return {
     name: "mode",
     description: "Switch chat mode",
-    usage: "/mode <agent|code|team>",
-    example: "/mode agent",
+    usage: "/mode <agent|code|code.team|team>",
+    example: "/mode code.team",
     kind: CommandKind.BUILT_IN,
     takesArgs: true,
     completion: async () => [...directModes],
@@ -72,7 +70,7 @@ export function createModeCommand(): SlashCommand {
           makeItem(
             ctx.sessionId,
             "error",
-            "usage: /mode <agent|code|team>",
+            "usage: /mode <agent|code|code.team|team>",
           ),
         );
         return;

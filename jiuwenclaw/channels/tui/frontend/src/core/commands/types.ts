@@ -3,6 +3,7 @@ import type { AccentColorName, ThemeName } from "../../ui/theme.js";
 import type { PendingQuestionItem, UserAnswer } from "../event-handlers.js";
 import type { FileAttachment } from "../protocol.js";
 import type { ConfigItemSchema } from "./builtins/config.js";
+import type { ClientMode } from "../modes.js";
 import type { SessionUsageSummary } from "../../app-state.js";
 
 export type ConnectionStatus = "idle" | "connecting" | "connected" | "reconnecting" | "auth_failed";
@@ -37,7 +38,7 @@ export interface CommandContext {
   sendMessage: (
     content: string,
     attachments?: FileAttachment[],
-    mode?: "agent.plan" | "agent.fast" | "code.plan" | "code.normal" | "code.team" | "team",
+    mode?: ClientMode,
     options?: { logAsUser?: boolean },
   ) => string | null;
   sessionId: string;
@@ -51,8 +52,8 @@ export interface CommandContext {
   exitApp: () => void;
   isProcessing: boolean;
   connectionStatus: ConnectionStatus;
-  mode: "agent.plan" | "agent.fast" | "code.plan" | "code.normal" | "code.team" | "team";
-  setMode: (mode: "agent.plan" | "agent.fast" | "code.plan" | "code.normal" | "code.team" | "team") => void;
+  mode: ClientMode;
+  setMode: (mode: ClientMode) => void;
   setModel: (name: string) => void;
   setThemeName: (theme: ThemeName) => void;
   setAccentColor: (color: AccentColorName) => void;

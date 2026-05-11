@@ -202,13 +202,19 @@ class JiuwenClawCodeAdapter(JiuWenClawDeepAdapter):
             enable_task_planning=True,
             auto_create_workspace=False
         )
+        setattr(self._instance, "_jiuwenclaw_adapter_mode", "code")
+        setattr(
+            self._instance,
+            "_jiuwenclaw_code_project_dir",
+            self._project_dir or self._workspace_dir,
+        )
 
         _project_name = os.path.basename(self._project_dir) if self._project_dir else "default"
-        coding_memory_abs_path = os.path.join(self._agent_workspace_dir, "coding_memory", _project_name)
+        coding_memory_workspace_path = os.path.join("coding_memory", _project_name)
         self._instance.deep_config.workspace.set_directory({
             "name": "coding_memory",
             "description": "Coding Agent 记忆模块",
-            "path": coding_memory_abs_path,
+            "path": coding_memory_workspace_path,
             "children": [
                 {
                     "name": "MEMORY.md",
@@ -734,6 +740,9 @@ class JiuwenClawCodeAdapter(JiuWenClawDeepAdapter):
     # ─── Tools 构建 ──────────────────────────
 
     async def _get_tool_cards(self, agent_id: str) -> list[Any]:
+        return self.build_code_tool_cards(agent_id)
+
+    def build_code_tool_cards(self, agent_id: str) -> list[Any]:
         """Get tool cards for code mode — from config.yaml::modes.code.tools."""
 
         tool_cards = []
@@ -835,3 +844,271 @@ class JiuwenClawCodeAdapter(JiuWenClawDeepAdapter):
         except Exception as exc:
             logger.warning("[JiuwenClawCodeAdapter] skill_toolkit build failed: %s", exc)
             return None
+
+    def merge_member_mcp_configs(self, agent: Any, config_base: dict[str, Any]) -> int:
+        """Merge enabled code-mode MCP configs into a team member agent."""
+        deep_config = getattr(agent, "deep_config", None)
+        if deep_config is None:
+            return 0
+
+        configured_mcps = list(getattr(deep_config, "mcps", None) or [])
+        configured_ids = {
+            str(getattr(cfg, "server_id", "") or getattr(cfg, "server_name", "") or "")
+            for cfg in configured_mcps
+        }
+        added = 0
+        for entry in self._extract_enabled_mcp_server_entries(config_base):
+            cfg = self._build_mcp_server_config(entry)
+            if cfg is None:
+                logger.warning(
+                    "[JiuwenClawCodeAdapter] skip invalid member mcp server entry: %s",
+                    entry.get("name", "<unknown>"),
+                )
+                continue
+            server_id = str(getattr(cfg, "server_id", "") or getattr(cfg, "server_name", "") or "")
+            if not server_id or server_id in configured_ids:
+                continue
+            configured_mcps.append(cfg)
+            configured_ids.add(server_id)
+            added += 1
+        deep_config.mcps = configured_mcps
+        return added
+
+    def configure_team_member_agent(
+        self,
+        agent: Any,
+        *,
+        parent_agent: Any | None = None,
+        skill_manager: Any | None = None,
+        member_name: str | None = None,
+        role: str | None = None,
+        session_id: str | None = None,
+        channel_id: str | None = None,
+        project_dir: str | None = None,
+    ) -> None:
+        """Apply the code runtime profile to a team member DeepAgent."""
+        if skill_manager is not None and hasattr(self, "set_skill_manager"):
+            self.set_skill_manager(skill_manager)
+
+        config_base = get_config()
+        self._refresh_multimodal_configs(config_base)
+        react_config = (config_base.get("react") or {}).copy()
+        self._config_cache = react_config.copy()
+        self._instance = agent
+
+        card = getattr(agent, "card", None)
+        agent_id = str(getattr(card, "id", "") or member_name or "team_member")
+        self._agent_name = str(getattr(card, "name", "") or member_name or role or "team_member")
+
+        parent_project_dir = (
+            project_dir
+            or str(getattr(parent_agent, "_jiuwenclaw_code_project_dir", "") or "")
+            or _resolve_member_workspace_root(parent_agent)
+        )
+        member_workspace_root = _resolve_member_workspace_root(agent)
+        self._project_dir = parent_project_dir or member_workspace_root or react_config.get("project_dir")
+        self._workspace_dir = (
+            self._project_dir
+            or member_workspace_root
+            or react_config.get("workspace_dir")
+            or str(get_agent_workspace_dir())
+        )
+        self._agent_workspace_dir = member_workspace_root or str(get_agent_workspace_dir())
+        self._instance_overrides = {
+            "agent_name": self._agent_name,
+            "project_dir": self._project_dir,
+            "channel_id": channel_id,
+        }
+
+        model = self._create_model(config_base)
+        deep_config = getattr(agent, "deep_config", None)
+        if deep_config is not None and getattr(deep_config, "model", None) is None:
+            deep_config.model = model
+        if deep_config is not None and getattr(deep_config, "sys_operation", None) is None:
+            deep_config.sys_operation = self._create_sys_operation()
+
+        tool_cards = self.build_code_tool_cards(agent_id)
+        added_tools = _merge_tool_cards(agent, tool_cards)
+
+        rails = self._build_agent_rails(react_config, config_base, mode="code")
+        added_rails = sum(1 for rail in rails if _queue_rail_if_missing(agent, rail))
+
+        subagents, _should_add_general = self._build_configured_subagents(model, react_config, config_base)
+        added_subagents = _merge_subagents(agent, subagents)
+        added_mcps = self.merge_member_mcp_configs(agent, config_base)
+        if getattr(deep_config, "subagents", None):
+            subagent_rail = self._build_subagent_rail()
+            if _queue_rail_if_missing(agent, subagent_rail):
+                added_rails += 1
+
+        _set_coding_memory_directory(agent, self._project_dir)
+        setattr(agent, "_jiuwenclaw_adapter_mode", "code")
+        setattr(agent, "_jiuwenclaw_code_project_dir", self._project_dir or self._workspace_dir)
+        setattr(agent, "_jiuwenclaw_code_team_member", True)
+
+        logger.info(
+            "[JiuwenClawCodeAdapter] configured team member as code profile: "
+            "member=%s role=%s session=%s channel=%s tools=%d rails=%d subagents=%d mcps=%d project_dir=%s",
+            member_name,
+            role,
+            session_id,
+            channel_id,
+            added_tools,
+            added_rails,
+            added_subagents,
+            added_mcps,
+            self._project_dir,
+        )
+
+
+def _tool_card_identity(card: Any) -> tuple[str, str]:
+    return (
+        str(getattr(card, "id", "") or ""),
+        str(getattr(card, "name", "") or ""),
+    )
+
+
+def _subagent_name(spec: Any) -> str:
+    if isinstance(spec, SubAgentConfig):
+        return str(getattr(spec.agent_card, "name", "") or "")
+    card = getattr(spec, "card", None)
+    return str(getattr(card, "name", "") or "")
+
+
+def _iter_agent_rails(agent: Any) -> list[Any]:
+    rails: list[Any] = []
+    for attr_name in ("_pending_rails", "_registered_rails"):
+        value = getattr(agent, attr_name, None)
+        if isinstance(value, list):
+            rails.extend(value)
+    return rails
+
+
+def _agent_has_rail_type(agent: Any, rail: Any) -> bool:
+    return any(isinstance(existing, type(rail)) for existing in _iter_agent_rails(agent))
+
+
+def _queue_rail_if_missing(agent: Any, rail: Any) -> bool:
+    add_rail = getattr(agent, "add_rail", None)
+    if rail is None or not callable(add_rail) or _agent_has_rail_type(agent, rail):
+        return False
+    add_rail(rail)
+    return True
+
+
+def _merge_tool_cards(agent: Any, tool_cards: list[Any]) -> int:
+    ability_manager = getattr(agent, "ability_manager", None)
+    add_ability = getattr(ability_manager, "add", None)
+    list_abilities = getattr(ability_manager, "list", None)
+
+    existing_keys: set[tuple[str, str]] = set()
+    if callable(list_abilities):
+        existing_keys = {
+            _tool_card_identity(card)
+            for card in (list_abilities() or [])
+        }
+
+    added = 0
+    for card in tool_cards:
+        key = _tool_card_identity(card)
+        if key in existing_keys:
+            continue
+        if callable(add_ability):
+            add_ability(card)
+        existing_keys.add(key)
+        added += 1
+
+    deep_config = getattr(agent, "deep_config", None)
+    if deep_config is not None:
+        configured_tools = list(getattr(deep_config, "tools", None) or [])
+        configured_keys = {_tool_card_identity(card) for card in configured_tools}
+        for card in tool_cards:
+            key = _tool_card_identity(card)
+            if key not in configured_keys:
+                configured_tools.append(card)
+                configured_keys.add(key)
+        deep_config.tools = configured_tools
+    return added
+
+
+def _merge_subagents(agent: Any, subagents: list[Any] | None) -> int:
+    if not subagents:
+        return 0
+
+    deep_config = getattr(agent, "deep_config", None)
+    if deep_config is None:
+        return 0
+
+    configured_subagents = list(getattr(deep_config, "subagents", None) or [])
+    configured_names = {_subagent_name(spec) for spec in configured_subagents}
+    added = 0
+    for spec in subagents:
+        name = _subagent_name(spec)
+        if not name or name in configured_names:
+            continue
+        configured_subagents.append(spec)
+        configured_names.add(name)
+        added += 1
+    deep_config.subagents = configured_subagents
+    return added
+
+
+def _resolve_member_workspace_root(agent: Any) -> str | None:
+    deep_config = getattr(agent, "deep_config", None)
+    workspace = getattr(deep_config, "workspace", None)
+    root_path = getattr(workspace, "root_path", None)
+    if root_path:
+        return str(root_path)
+    return None
+
+
+def _set_coding_memory_directory(agent: Any, project_dir: str | None) -> None:
+    deep_config = getattr(agent, "deep_config", None)
+    workspace = getattr(deep_config, "workspace", None)
+    set_directory = getattr(workspace, "set_directory", None)
+    if not callable(set_directory):
+        return
+
+    project_name = os.path.basename(project_dir) if project_dir else "default"
+    coding_memory_workspace_path = os.path.join("coding_memory", project_name)
+    set_directory({
+        "name": "coding_memory",
+        "description": "Coding Agent memory",
+        "path": coding_memory_workspace_path,
+        "children": [
+            {
+                "name": "MEMORY.md",
+                "description": "Coding memory",
+                "path": "MEMORY.md",
+                "children": [],
+                "is_file": True,
+                "default_content": "",
+            },
+        ],
+    })
+
+
+def configure_code_team_member_agent(
+    agent: Any,
+    *,
+    parent_agent: Any | None = None,
+    skill_manager: Any | None = None,
+    member_name: str | None = None,
+    role: str | None = None,
+    session_id: str | None = None,
+    channel_id: str | None = None,
+    project_dir: str | None = None,
+) -> None:
+    """Apply JiuwenClawCodeAdapter's runtime profile to a team member DeepAgent."""
+
+    adapter = JiuwenClawCodeAdapter()
+    adapter.configure_team_member_agent(
+        agent,
+        parent_agent=parent_agent,
+        skill_manager=skill_manager,
+        member_name=member_name,
+        role=role,
+        session_id=session_id,
+        channel_id=channel_id,
+        project_dir=project_dir,
+    )

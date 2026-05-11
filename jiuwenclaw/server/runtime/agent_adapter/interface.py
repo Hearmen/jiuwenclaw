@@ -273,7 +273,7 @@ class JiuWenClaw:
             config_base: 可选的完整配置快照；传入时优先使用它而不是读取本地 config.yaml。
             env_overrides: 可选的环境变量增量；仅覆盖请求中出现的 key。
         """
-        adapter = self._ensure_adapter(mode=self._adapter_mode_for_request(request))
+        adapter = self._ensure_adapter()
         await adapter.reload_agent_config(config_base, env_overrides)
         logger.info("[JiuWenClaw] Agent config reloaded: sdk=%s", self._sdk_name)
 
@@ -734,7 +734,7 @@ class JiuWenClaw:
                 )
             return
 
-        adapter = self._ensure_adapter()
+        adapter = self._ensure_adapter(mode=self._adapter_mode_for_request(request))
 
         session_id = self._session_manager.get_session_id(request.session_id)
         query = request.params.get("query", "")

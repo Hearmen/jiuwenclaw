@@ -22,6 +22,7 @@ import {
   type PendingQuestionItem,
   type UserAnswer,
 } from "./core/event-handlers.js";
+import { isTeamMode, type ClientMode } from "./core/modes.js";
 import { isEventFrame, type EventFrame, type FileAttachment } from "./core/protocol.js";
 import {
   StreamingState,
@@ -72,7 +73,7 @@ export interface SessionUsageSummary {
 export interface AppSnapshot {
   connectionStatus: ConnectionStatus;
   sessionId: string;
-  mode: "agent.plan" | "agent.fast" | "code.plan" | "code.normal" | "code.team" | "team";
+  mode: ClientMode;
   themeName: ThemeName;
   accentColor: AccentColorName;
   transcriptMode: "compact" | "detailed";
@@ -112,8 +113,7 @@ export class CliPiAppState {
   private connectionStatus: ConnectionStatus = "idle";
   private sessionId: string;
   private sessionTitle: string = "";
-  private mode: "agent.plan" | "agent.fast" | "code.plan" | "code.normal" | "code.team" | "team" =
-    "code.normal";
+  private mode: ClientMode = "code.normal";
   private themeName: ThemeName = getCurrentThemeName();
   private accentColor: AccentColorName = getCurrentAccentColor();
   private transcriptMode: "compact" | "detailed" = "compact";
@@ -368,7 +368,8 @@ export class CliPiAppState {
       hasRunningTools ||
       hasActiveSubtasks ||
       this.evolutionStatus === "running" ||
-      (this.mode === "team" && isTeamWorking(this.teamMemberEvents, this.teamMessageEvents));
+      (isTeamMode(this.mode) &&
+        isTeamWorking(this.teamMemberEvents, this.teamMessageEvents));
     return {
       connectionStatus: this.connectionStatus,
       sessionId: this.sessionId,
@@ -574,9 +575,7 @@ readonly request = async <T = Record<string, unknown>>(
     this.emitChange();
   };
 
-  readonly setMode = (
-    mode: "agent.plan" | "agent.fast" | "code.plan" | "code.normal" | "team",
-  ): void => {
+  readonly setMode = (mode: ClientMode): void => {
     if (this.mode !== mode) {
       this.mode = mode;
       this.emitChange();
@@ -662,7 +661,7 @@ readonly request = async <T = Record<string, unknown>>(
   readonly sendMessage = (
     content: string,
     attachments?: FileAttachment[],
-    modeOverride?: "agent.plan" | "agent.fast" | "code.plan" | "code.normal" | "team",
+    modeOverride?: ClientMode,
     options?: { logAsUser?: boolean },
   ): string | null => {
     if (this.connectionStatus !== "connected") return null;

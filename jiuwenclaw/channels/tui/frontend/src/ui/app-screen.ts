@@ -35,6 +35,7 @@ import type { SessionListPayload, SessionMeta } from "../core/commands/builtins/
 import type { ConfigItemSchema } from "../core/commands/builtins/config.js";
 import type { McpListItem, McpListPayload } from "../core/commands/builtins/mcp.js";
 import { buildModeAutocompleteItems } from "../core/commands/builtins/mode.js";
+import { isTeamMode } from "../core/modes.js";
 import { addTrustedDir, getTrustedDirs, isTrustedDir } from "../core/tui-trusted-dirs-store.js";
 import { handleAppScreenKeyInput } from "./keymap.js";
 import { buildAppScreenLines } from "./screen-layout.js";
@@ -893,7 +894,7 @@ export class AppScreen implements Component, Focusable {
   render(width: number): string[] {
     const snapshot = this.state.getSnapshot();
     const teamWorking =
-      snapshot.mode === "team" &&
+      isTeamMode(snapshot.mode) &&
       isTeamWorking(snapshot.teamMemberEvents, snapshot.teamMessageEvents);
     this.editor.borderColor = snapshot.pendingQuestion
       ? palette.border.question
@@ -2387,7 +2388,7 @@ export class AppScreen implements Component, Focusable {
       (execution) => execution.tool.status === "running",
     );
     const teamWorking =
-      snapshot.mode === "team" &&
+      isTeamMode(snapshot.mode) &&
       isTeamWorking(snapshot.teamMemberEvents, snapshot.teamMessageEvents);
     const teamStartedAt = teamWorkingStartedAtMs(
       snapshot.teamMemberEvents,

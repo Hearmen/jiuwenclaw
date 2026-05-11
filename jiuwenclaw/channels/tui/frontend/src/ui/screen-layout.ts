@@ -1,4 +1,5 @@
 import type { AppSnapshot } from "../app-state.js";
+import { isTeamMode } from "../core/modes.js";
 import { renderMiniTeamTree, renderTeamPanel } from "./components/team-panel.js";
 import { isTeamWorking } from "./components/team-shared.js";
 import { renderTeamStatusPill } from "./components/team-status-pill.js";
@@ -110,7 +111,7 @@ function buildStatusLines(
   if (snapshot.mode !== "agent.plan") left.push(`mode:${snapshot.mode}`);
   if (snapshot.transcriptFoldMode !== "none") left.push(`fold:${snapshot.transcriptFoldMode}`);
   const teamWorking =
-    snapshot.mode === "team" &&
+    isTeamMode(snapshot.mode) &&
     isTeamWorking(snapshot.teamMemberEvents, snapshot.teamMessageEvents);
 
   const right = snapshot.lastError
@@ -180,11 +181,13 @@ export function buildAppScreenLines(snapshot: AppSnapshot, options: ScreenLayout
     options.pendingInputBaseline,
   );
   const todoLines = options.showTodos ? renderTodoList(snapshot.todos, options.width) : [];
-  const teamStatusLines =
-    snapshot.mode === "team" ||
+  const hasTeamActivity =
+    isTeamMode(snapshot.mode) ||
     snapshot.teamMemberEvents.length > 0 ||
     snapshot.teamTaskEvents.length > 0 ||
-    snapshot.teamMessageEvents.length > 0
+    snapshot.teamMessageEvents.length > 0;
+  const teamStatusLines =
+    hasTeamActivity
       ? renderTeamStatusPill(
           snapshot.teamMemberEvents,
           snapshot.teamTaskEvents,
@@ -193,11 +196,7 @@ export function buildAppScreenLines(snapshot: AppSnapshot, options: ScreenLayout
         )
       : [];
   const teamPanelLines =
-    options.showTeamPanel &&
-    (snapshot.mode === "team" ||
-      snapshot.teamMemberEvents.length > 0 ||
-      snapshot.teamTaskEvents.length > 0 ||
-      snapshot.teamMessageEvents.length > 0)
+    options.showTeamPanel && hasTeamActivity
       ? renderTeamPanel(
           snapshot.teamMemberEvents,
           snapshot.teamTaskEvents,
@@ -208,11 +207,7 @@ export function buildAppScreenLines(snapshot: AppSnapshot, options: ScreenLayout
         )
       : [];
   const miniTeamTreeLines =
-    !options.showTeamPanel &&
-    (snapshot.mode === "team" ||
-      snapshot.teamMemberEvents.length > 0 ||
-      snapshot.teamTaskEvents.length > 0 ||
-      snapshot.teamMessageEvents.length > 0)
+    !options.showTeamPanel && hasTeamActivity
       ? renderMiniTeamTree(
           snapshot.teamMemberEvents,
           snapshot.teamTaskEvents,

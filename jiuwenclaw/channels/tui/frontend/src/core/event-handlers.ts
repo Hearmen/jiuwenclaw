@@ -21,6 +21,7 @@ import {
 } from "./types.js";
 import type { ConnectionStatus } from "./ws-client.js";
 import { createId, findLastIndex, isIgnorableHistoryRestoreError } from "./app-state-helpers.js";
+import { isClientMode, type ClientMode } from "./modes.js";
 
 export interface PendingQuestion {
   requestId: string;
@@ -49,8 +50,8 @@ export interface AppEventDelegate {
   getConnectionStatus(): ConnectionStatus;
   getSessionId(): string;
   setSessionId(sessionId: string): void;
-  setMode(mode: "agent.plan" | "agent.fast" | "code.plan" | "code.normal" | "code.team" | "team"): void;
-  getMode(): "agent.plan" | "agent.fast" | "code.plan" | "code.normal" | "code.team" | "team";
+  setMode(mode: ClientMode): void;
+  getMode(): ClientMode;
   getEntries(): HistoryItem[];
   setEntries(entries: HistoryItem[]): void;
   setStreamingState(state: StreamingState): void;
@@ -140,7 +141,7 @@ function _handleSwitchModeToolResult(
   if (!subMode) return;
 
   const existingMode = delegate.getMode();
-  let newMode: string | null = null;
+  let newMode: ClientMode | null = null;
   if (existingMode.startsWith("code.")) {
     newMode =
       subMode === "plan"
@@ -153,7 +154,7 @@ function _handleSwitchModeToolResult(
   }
 
   if (newMode && newMode !== existingMode) {
-    delegate.setMode(newMode as "agent.plan" | "agent.fast" | "code.plan" | "code.normal" | "code.team" | "team");
+    delegate.setMode(newMode);
   }
 }
 
@@ -879,14 +880,8 @@ export function handleIncomingFrame(delegate: AppEventDelegate, frame: EventFram
 
     case "session.updated": {
       const mode = typeof payload.mode === "string" ? payload.mode : "";
-      if (
-        mode === "agent.plan" ||
-        mode === "agent.fast" ||
-        mode === "code.plan" ||
-        mode === "code.normal" ||
-        mode === "team"
-      ) {
-        delegate.setMode(mode as "agent.plan" | "agent.fast" | "code.plan" | "code.normal" | "team");
+      if (isClientMode(mode)) {
+        delegate.setMode(mode);
       }
       if (typeof payload.title === "string") {
         delegate.setSessionTitle(payload.title);
