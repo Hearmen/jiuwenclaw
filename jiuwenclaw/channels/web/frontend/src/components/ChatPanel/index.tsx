@@ -123,9 +123,11 @@ export function ChatPanel({
     
     // 只有当用户在底部时才自动滚动
     if (!userScrolledUpRef.current) {
-      messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+      messagesEndRef.current?.scrollIntoView({
+        behavior: historyPager?.loadedPages === 1 ? 'auto' : 'smooth',
+      });
     }
-  }, [messages, isThinking]);
+  }, [messages, isThinking, historyPager]);
 
   useLayoutEffect(() => {
     if (!historyPager) {
