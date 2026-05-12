@@ -20,7 +20,7 @@ export interface ScreenLayoutOptions {
   showFullThinking: boolean;
   showToolDetails: boolean;
   showShortcutHelp: boolean;
-  showTodos: boolean;
+  todosCollapsed: boolean;
   showTeamPanel: boolean;
   selectedTeamMemberId: string | null;
   viewedTeamMemberId: string | null;
@@ -181,7 +181,7 @@ export function buildAppScreenLines(snapshot: AppSnapshot, options: ScreenLayout
     options.pendingInput,
     options.pendingInputBaseline,
   );
-  const todoLines = options.showTodos ? renderTodoList(snapshot.todos, options.width) : [];
+  const todoLines = renderTodoList(snapshot.todos, options.width, options.todosCollapsed, options.animationPhase);
   const hasTeamActivity =
     isTeamMode(snapshot.mode) ||
     snapshot.teamMemberEvents.length > 0 ||

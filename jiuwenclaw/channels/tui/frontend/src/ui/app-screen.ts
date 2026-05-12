@@ -459,7 +459,7 @@ export class AppScreen implements Component, Focusable {
   private configEditorState: ConfigEditorState | null = null;
   private statusViewState: StatusViewState | null = null;
   private startupPromptList: SelectList | null = null;
-  private showTodos = true;
+  private todosCollapsed = false;
   private showTeamPanel = false;
   private selectedTeamMemberId: string | null = null;
   private viewedTeamMemberId: string | null = null;
@@ -616,7 +616,7 @@ export class AppScreen implements Component, Focusable {
       interruptTask: () => this.interruptTask(),
       exitApp: () => this.exit(),
       toggleTodos: () => {
-        this.showTodos = !this.showTodos;
+        this.todosCollapsed = !this.todosCollapsed;
         this.tui.requestRender();
       },
       toggleTeamPanel: () => {
@@ -945,7 +945,7 @@ export class AppScreen implements Component, Focusable {
       showFullThinking: snapshot.transcriptMode === "detailed",
       showToolDetails: snapshot.transcriptMode === "detailed",
       showShortcutHelp: false,
-      showTodos: this.showTodos,
+      todosCollapsed: this.todosCollapsed,
       showTeamPanel: this.showTeamPanel,
       selectedTeamMemberId: this.selectedTeamMemberId,
       viewedTeamMemberId: this.viewedTeamMemberId,
