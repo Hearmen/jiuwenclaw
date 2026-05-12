@@ -15,8 +15,8 @@ SIDE_CAR_DIST = SIDECAR_ROOT / "dist"
 TUI_ROOT = ROOT / "jiuwenclaw" / "channels" / "tui" / "frontend"
 
 TUI_TARGETS = {
-    #"linux-x64": "linux_x86_64",
-    #"linux-arm64": "linux_aarch64",
+    "linux-x64": "linux_x86_64",
+    "linux-arm64": "linux_aarch64",
     #"macos-x64": "macosx_10_15_x86_64",
     "macos-arm64": "macosx_11_0_arm64",
     "windows-x64": "win_amd64",

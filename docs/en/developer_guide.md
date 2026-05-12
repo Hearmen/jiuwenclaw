@@ -219,3 +219,73 @@ After installation, verify the version:
 node --version
 # Expected output: v18.x.x or higher
 ```
+
+## 6. Building Packages
+
+The project supports two distribution formats: **Python wheel packages** (`.whl`) and **desktop executables** (`.exe` / `.dmg`).
+
+### 6.1 Building Wheel Packages
+
+The project contains two independent wheel packages:
+
+| Package | Description | Config File |
+|---------|-------------|-------------|
+| `jiuwenclaw` | Backend service main package (includes Web frontend build artifacts) | `pyproject.toml` |
+| `jiuwenclaw-tui` | TUI terminal interface sidecar package (includes Bun-compiled native binaries) | `packages/jiuwenclaw-tui/pyproject.toml` |
+
+#### 6.1.1 Build All (Recommended)
+
+Run from the project root directory:
+
+```bash
+# macOS / Linux
+bash scripts/build.sh
+```
+
+The script will execute the following steps in order:
+1. Build the Web frontend (runs `npm run build` in `jiuwenclaw/channels/web/frontend`)
+2. Build the main package `jiuwenclaw.whl`
+3. If `bun` is detected, continue to build the TUI native binary and `jiuwenclaw-tui.whl`
+
+Artifacts are output to two directories:
+- `./dist/jiuwenclaw-<version>-py3-none-any.whl` (main package)
+- `./packages/jiuwenclaw-tui/dist/jiuwenclaw_tui-<version>-<platform>.whl` (TUI sidecar package)
+
+### 6.2 Desktop EXE / DMG Packaging
+
+The desktop version uses [PyInstaller](https://pyinstaller.org/) to package the Python application into a standalone executable.
+
+#### 6.2.1 Prerequisites
+
+- `uv` and `Node.js` installed
+- Install development dependencies via `uv sync --extra dev` (includes PyInstaller)
+
+#### 6.2.2 Windows Packaging (EXE)
+
+**Using batch script (recommended):**
+
+```cmd
+scripts\build-exe.bat
+```
+
+**Using PowerShell script:**
+
+```powershell
+.\scripts\build-exe.ps1
+```
+
+Output: `dist\jiuwenclaw\jiuwenclaw.exe`
+
+#### 6.2.3 macOS Packaging (DMG)
+
+```bash
+bash scripts/build-macos.sh
+```
+
+The script will execute the following steps in order:
+1. Install Python dependencies (`uv sync --extra dev`)
+2. Build the Web frontend (`npm run build`)
+3. Package with PyInstaller to generate `JiuwenClaw.app`
+4. Create a DMG installer image using `hdiutil`
+
+Output: `dist/JiuwenClaw-<version>.dmg`

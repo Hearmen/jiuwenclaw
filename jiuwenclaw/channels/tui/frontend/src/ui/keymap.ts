@@ -40,6 +40,20 @@ export const APP_SCREEN_KEY_BINDINGS: readonly KeyBinding[] = [
     },
   },
   {
+    key: "ctrl+d",
+    label: "ctrl+d",
+    description: "中断任务；连按两次退出",
+    run: (delegate) => {
+      const now = Date.now();
+      if (now - lastInterruptTime < 1000) {
+        delegate.exitApp();
+        return;
+      }
+      lastInterruptTime = now;
+      delegate.interruptTask();
+    },
+  },
+  {
     key: "ctrl+l",
     label: "ctrl+l",
     description: "redraw screen",

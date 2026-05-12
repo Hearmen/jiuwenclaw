@@ -219,3 +219,73 @@ Windows 用户可使用 [nvm-windows](https://github.com/coreybutler/nvm-windows
 node --version
 # 预期输出：v18.x.x 或更高
 ```
+
+## 6. 编译包
+
+项目支持两种分发形式：**Python wheel 包**（`.whl`）和**桌面可执行文件**（`.exe` / `.app`）。
+
+### 6.1 wheel 包构建
+
+项目包含两个独立的 wheel 包：
+
+| 包名 | 说明 | 配置文件 |
+|------|------|----------|
+| `jiuwenclaw` | 后端服务主包（含 Web 前端构建产物） | `pyproject.toml` |
+| `jiuwenclaw-tui` | TUI 终端界面 sidecar 包（含 Bun 编译的原生二进制） | `packages/jiuwenclaw-tui/pyproject.toml` |
+
+#### 6.1.1 一键构建全部（推荐）
+
+在项目根目录执行：
+
+```bash
+# macOS / Linux
+bash scripts/build.sh
+```
+
+该脚本会依次执行：
+1. 编译 Web 前端（`jiuwenclaw/channels/web/frontend` 目录下执行 `npm run build`）
+2. 构建主包 `jiuwenclaw.whl`
+3. 如果检测到 `bun` 命令，继续构建 TUI 原生二进制和 `jiuwenclaw-tui.whl`
+
+产物输出到两个目录：
+- `./dist/jiuwenclaw-<version>-py3-none-any.whl`（主包）
+- `./packages/jiuwenclaw-tui/dist/jiuwenclaw_tui-<version>-<platform>.whl`（TUI sidecar 包）
+
+### 6.2 桌面版 EXE / DMG 打包
+
+桌面版通过 [PyInstaller](https://pyinstaller.org/) 将 Python 应用打包为独立可执行文件。
+
+#### 6.2.1 前置条件
+
+- 已安装 `uv`、`Node.js`
+- 通过 `uv sync --extra dev` 安装开发依赖（包含 PyInstaller）
+
+#### 6.2.2 Windows 平台打包（EXE）
+
+**使用批处理脚本（推荐）：**
+
+```cmd
+scripts\build-exe.bat
+```
+
+**使用 PowerShell 脚本：**
+
+```powershell
+.\scripts\build-exe.ps1
+```
+
+产物目录：`dist\jiuwenclaw\jiuwenclaw.exe`
+
+#### 6.2.3 macOS 平台打包（DMG）
+
+```bash
+bash scripts/build-macos.sh
+```
+
+该脚本会依次执行：
+1. 安装 Python 依赖（`uv sync --extra dev`）
+2. 编译 Web 前端（`npm run build`）
+3. PyInstaller 打包生成 `JiuwenClaw.app`
+4. 使用 `hdiutil` 创建 DMG 安装镜像
+
+产物：`dist/JiuwenClaw-<version>.dmg`
