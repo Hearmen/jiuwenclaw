@@ -388,6 +388,81 @@ def _apply_leader_route_from_envelope(team_agent: Any, envelope: dict[str, Any])
         return False
 
 
+async def _send_bootstrap_via_raw_zmq(
+    *,
+    peer_addr: str,
+    envelope: dict[str, Any],
+    member_name: str,
+    peer_agent_id: str,
+    timeout_s: float = 20.0,
+) -> bool:
+    """Send bootstrap directly to a teammate bootstrap ROUTER endpoint."""
+    try:
+        import zmq
+        import zmq.asyncio
+    except Exception as exc:
+        logger.warning("[RemoteMemberBootstrap] raw ZMQ bootstrap unavailable: %s", exc)
+        return False
+
+    addr = _normalize_leader_direct_addr(peer_addr)
+    if not addr:
+        return False
+
+    ctx = zmq.asyncio.Context.instance()
+    sock = ctx.socket(zmq.DEALER)
+    sock.setsockopt(zmq.LINGER, 0)
+    try:
+        sock.connect(addr)
+        payload = {
+            "event_type": REMOTE_BOOTSTRAP_DIRECT_EVENT_TYPE,
+            "payload": {"envelope": envelope},
+            "sender_id": str(envelope.get("leader_member_name") or ""),
+        }
+        await sock.send_multipart([json.dumps(payload).encode("utf-8")])
+        frames = await asyncio.wait_for(sock.recv_multipart(), timeout=max(0.2, timeout_s))
+        if not any(frame == b"ok" for frame in frames):
+            logger.warning(
+                "[RemoteMemberBootstrap] raw ZMQ bootstrap unexpected ACK member=%s "
+                "peer_agent_id=%s peer_addr=%s frames=%s",
+                member_name,
+                peer_agent_id,
+                addr,
+                frames,
+            )
+            return False
+        logger.info(
+            "[RemoteMemberBootstrap] pushed bootstrap via raw ZMQ member=%s "
+            "peer_agent_id=%s peer_addr=%s bootstrap_id=%s",
+            member_name,
+            peer_agent_id,
+            addr,
+            envelope.get("bootstrap_id"),
+        )
+        return True
+    except asyncio.TimeoutError:
+        logger.warning(
+            "[RemoteMemberBootstrap] raw ZMQ bootstrap timed out member=%s "
+            "peer_agent_id=%s peer_addr=%s timeout=%.1fs",
+            member_name,
+            peer_agent_id,
+            addr,
+            timeout_s,
+        )
+        return False
+    except Exception as exc:
+        logger.warning(
+            "[RemoteMemberBootstrap] raw ZMQ bootstrap failed member=%s peer_agent_id=%s "
+            "peer_addr=%s: %s",
+            member_name,
+            peer_agent_id,
+            addr,
+            exc,
+        )
+        return False
+    finally:
+        sock.close(linger=0)
+
+
 async def _send_bootstrap_message(
     team_agent: Any,
     session_id: str,
@@ -431,6 +506,7 @@ async def _send_bootstrap_message(
         peer_agent_id, peer_addr = _resolve_bootstrap_peer_for_member(member_name)
 
     direct_sent = False
+    direct_send_error = None
     if messager is not None and peer_agent_id and peer_addr:
         try:
             from openjiuwen.agent_teams.messager.base import MessagerPeerConfig
@@ -456,8 +532,26 @@ async def _send_bootstrap_message(
                     envelope.get("bootstrap_id"),
                 )
         except Exception as exc:
+            direct_send_error = exc
             logger.warning(
                 "[RemoteMemberBootstrap] direct bootstrap send failed member=%s peer_agent_id=%s peer_addr=%s: %s",
+                member_name,
+                peer_agent_id,
+                peer_addr,
+                exc,
+            )
+    if (not direct_sent) and peer_agent_id and peer_addr:
+        try:
+            direct_sent = await _send_bootstrap_via_raw_zmq(
+                peer_addr=peer_addr,
+                envelope=envelope,
+                member_name=member_name,
+                peer_agent_id=peer_agent_id,
+            )
+        except Exception as exc:
+            logger.warning(
+                "[RemoteMemberBootstrap] raw ZMQ bootstrap send failed member=%s "
+                "peer_agent_id=%s peer_addr=%s: %s",
                 member_name,
                 peer_agent_id,
                 peer_addr,
@@ -493,11 +587,12 @@ async def _send_bootstrap_message(
 
     logger.warning(
         "[RemoteMemberBootstrap] direct bootstrap not delivered; DB fallback disabled "
-        "member=%s peer_agent_id=%s peer_addr=%s has_messager=%s",
+        "member=%s peer_agent_id=%s peer_addr=%s has_messager=%s send_error=%s",
         member_name,
         peer_agent_id,
         peer_addr,
         bool(messager is not None),
+        direct_send_error,
     )
     return False
 
@@ -1281,18 +1376,30 @@ async def _ensure_dynamic_member_execution_loop(
             deep_agent,
             channel_id=channel_id,
         )
-        # Build a real TEAMMATE runtime context for the adopted member, instead
-        # of using TeamManager.interact() (which drives the leader context).
-        build_ctx = getattr(leader_team_agent, "_build_context_from_db", None)
-        if not callable(build_ctx):
-            logger.warning(
-                "[RemoteMemberBootstrap] teammate loop start skipped: _build_context_from_db unavailable "
-                "session_id=%s member=%s",
-                sid,
-                member,
-            )
-            return False, False
-        teammate_ctx = await build_ctx(member)
+        helper_token = set_session_id(sid)
+        try:
+            helper_backend = getattr(leader_team_agent, "team_backend", None)
+            helper_db = getattr(helper_backend, "db", None)
+            initialize_db = getattr(helper_db, "initialize", None)
+            if callable(initialize_db):
+                await initialize_db()
+            # Build a real TEAMMATE runtime context for the adopted member, instead
+            # of using TeamManager.interact() (which drives the leader context).
+            spawn_manager = getattr(leader_team_agent, "spawn_manager", None)
+            build_ctx = getattr(spawn_manager, "build_context_from_db", None)
+            if not callable(build_ctx):
+                build_ctx = getattr(leader_team_agent, "_build_context_from_db", None)
+            if not callable(build_ctx):
+                logger.warning(
+                    "[RemoteMemberBootstrap] teammate loop start skipped: build_context_from_db unavailable "
+                    "session_id=%s member=%s",
+                    sid,
+                    member,
+                )
+                return False, False
+            teammate_ctx = await build_ctx(member)
+        finally:
+            reset_session_id(helper_token)
         if teammate_ctx is None:
             logger.warning(
                 "[RemoteMemberBootstrap] teammate loop start skipped: teammate context missing "
@@ -1349,6 +1456,7 @@ async def _ensure_dynamic_member_execution_loop(
             sid,
             member,
             exc,
+            exc_info=True,
         )
         return False, False
 

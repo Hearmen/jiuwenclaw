@@ -764,7 +764,13 @@ async def _consume_stream_with_query(
                         ready_team_name=ready_team_name,
                         activation_kind=activation_kind,
                     )
-                    get_team_manager(channel_id).commit_runtime_ready(session_id, ready_team_name)
+                    tm = get_team_manager(channel_id)
+                    tm.commit_runtime_ready(session_id, ready_team_name)
+                    await tm.attach_distributed_hooks_for_runner_runtime(
+                        team_name=ready_team_name,
+                        session_id=session_id,
+                        channel_id=channel_id,
+                    )
                     await _ensure_monitor_for_active_runtime(
                         channel_id,
                         session_id,

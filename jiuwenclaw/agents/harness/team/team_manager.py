@@ -124,6 +124,18 @@ async def _stop_team_messager(team_agent: Any, *, session_id: str) -> None:
         logger.warning("[TeamManager] team messager stop failed: session_id=%s error=%s", session_id, exc)
 
 
+def _runner_team_runtime_manager(runner: Any) -> Any:
+    """Return Runner's team runtime manager without calling its protected method."""
+    attr_name = "_team_runtime_manager"
+    manager = vars(runner).get(attr_name)
+    if manager is None:
+        from openjiuwen.agent_teams.runtime import TeamRuntimeManager
+
+        manager = TeamRuntimeManager()
+        setattr(runner, attr_name, manager)
+    return manager
+
+
 class TeamManager:
     """Manage team instances across sessions."""
 
@@ -1306,6 +1318,106 @@ class TeamManager:
     def _has_local_team_runtime(self, session_id: str) -> bool:
         """Return whether the session should use the legacy in-memory TeamAgent path."""
         return self._is_distributed_mode(get_config()) and session_id in self._team_agents
+
+    async def attach_distributed_hooks_for_runner_runtime(
+        self,
+        team_name: str,
+        session_id: str,
+        channel_id: str | None = None,
+    ) -> bool:
+        """Attach distributed bootstrap hooks to Runner-owned TeamAgent.
+
+        When team streaming uses Runner.run_agent_team_streaming(), the actual
+        TeamAgent is created and cached by openjiuwen TeamRuntimeManager pool,
+        not by TeamManager.create_team(). This method retrieves the Runner-owned
+        TeamAgent from GLOBAL_RUNNER's pool and attaches distributed hooks.
+
+        Args:
+            team_name: Team name to look up in Runner pool.
+            session_id: Session identifier for hook context.
+            channel_id: Channel identifier for hook context.
+
+        Returns:
+            True if hooks attached successfully, False otherwise.
+        """
+        config_base = get_config()
+        if not self._is_distributed_mode(config_base):
+            logger.debug(
+                "[TeamManager] non-distributed mode; skip Runner runtime hooks "
+                "team_name=%s session_id=%s",
+                team_name,
+                session_id,
+            )
+            return False
+
+        from openjiuwen.core.runner.runner import GLOBAL_RUNNER
+
+        runtime_mgr = _runner_team_runtime_manager(GLOBAL_RUNNER)
+        active_team = await runtime_mgr.pool.get(team_name)
+        if active_team is None:
+            logger.warning(
+                "[TeamManager] Runner pool has no active team for distributed hooks "
+                "team_name=%s session_id=%s",
+                team_name,
+                session_id,
+            )
+            return False
+
+        team_agent = active_team.agent
+        if team_agent is None:
+            logger.warning(
+                "[TeamManager] ActiveTeam has no agent instance for distributed hooks "
+                "team_name=%s session_id=%s",
+                team_name,
+                session_id,
+            )
+            return False
+
+        try:
+            from jiuwenclaw.agents.harness.team.remote_member_bootstrap import (
+                attach_distributed_local_spawn_guard,
+                attach_remote_bootstrap_ack_listener,
+                attach_remote_teammate_bootstrap_listener,
+                attach_spawn_member_remote_bootstrap_wrapper,
+            )
+
+            attach_distributed_local_spawn_guard(
+                team_agent,
+                session_id=session_id,
+                channel_id=channel_id,
+            )
+            attach_spawn_member_remote_bootstrap_wrapper(
+                team_agent,
+                session_id=session_id,
+                channel_id=channel_id,
+            )
+            attach_remote_bootstrap_ack_listener(
+                team_agent,
+                session_id=session_id,
+                channel_id=channel_id,
+            )
+            attach_remote_teammate_bootstrap_listener(
+                team_agent,
+                session_id=session_id,
+                channel_id=channel_id,
+            )
+            logger.info(
+                "[TeamManager] distributed hooks attached to Runner-owned TeamAgent "
+                "team_name=%s session_id=%s channel_id=%s",
+                team_name,
+                session_id,
+                channel_id,
+            )
+            return True
+        except Exception as exc:
+            logger.warning(
+                "[TeamManager] distributed hooks attach failed for Runner-owned TeamAgent "
+                "team_name=%s session_id=%s error=%s",
+                team_name,
+                session_id,
+                exc,
+            )
+            return False
 
     async def _stop_local_team_runtime(self, session_id: str, team_agent: TeamAgent) -> bool:
         stopped = False
