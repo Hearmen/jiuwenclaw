@@ -1,8 +1,34 @@
-import { Chalk } from "chalk";
+import chalk from "chalk";
 import type { EditorTheme, MarkdownTheme, SelectListTheme } from "@mariozechner/pi-tui";
 import { loadTuiConfig, saveTuiConfig } from "../core/tui-config-store.js";
 
-export const chalk = new Chalk({ level: 3 });
+chalk.level = 3;
+
+export { chalk };
+
+function highlightLine(line: string): string {
+  let result = line;
+
+  result = result.replace(/(\/\/.*$)/gm, (match) => chalk.gray(match));
+
+  result = result.replace(/(["'`])(?:(?!\1)[^\\]|\\.)*\1/g, (match) => chalk.green(match));
+
+  result = result.replace(/\b(\d+\.?\d*)\b/g, (match) => chalk.yellow(match));
+
+  const keywords = /\b(const|let|var|function|class|return|if|else|for|while|import|export|from|async|await|try|catch|throw|new|this|extends|implements|interface|type|enum|static|public|private|protected|default|abstract|readonly|switch|case|break|continue|typeof|instanceof|in|of|delete|void|null|undefined|true|false|package|interface|export|import|as)\b/g;
+  result = result.replace(keywords, (match) => chalk.magenta(match));
+
+  result = result.replace(/\b([A-Z][a-zA-Z0-9_]*)\b/g, (match) => chalk.cyan(match));
+
+  result = result.replace(/\b([a-zA-Z_]\w*)\s*\(/g, (match) => chalk.blueBright(match.replace(/\s*\($/, "(")));
+
+  return result;
+}
+
+function highlightCodeBlock(code: string): string[] {
+  const lines = code.split("\n");
+  return lines.map((line) => highlightLine(line));
+}
 
 export type ThemeName = "system" | "dark" | "light";
 export type AccentColorName = "default" | "blue" | "green" | "pink" | "purple" | "red" | "yellow";
@@ -296,11 +322,7 @@ export const markdownTheme: MarkdownTheme = {
   strikethrough: (value: string) => chalk.strikethrough(value),
   underline: (value: string) => chalk.underline(value),
   highlightCode: (code: string, lang?: string): string[] => {
-    const lines = code.split("\n");
-    const def = getThemeDefinition();
-    return lines.map((line) => {
-      return chalk.hex(def.markdownCodeBlock)(line);
-    });
+    return highlightCodeBlock(code);
   },
   codeBlockIndent: "  ",
 };
