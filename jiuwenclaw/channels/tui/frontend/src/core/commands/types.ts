@@ -51,6 +51,10 @@ export interface CommandContext {
   restoreHistory: (sessionId: string) => Promise<void>;
   exitApp: () => void;
   isProcessing: boolean;
+  /** Check if interrupt was requested locally (immediate detection for long-running commands) */
+  isInterruptRequested: () => boolean;
+  /** Clear local interrupt flag (for long-running commands to reset after handling interrupt) */
+  clearInterruptRequested: () => void;
   connectionStatus: ConnectionStatus;
   mode: ClientMode;
   setMode: (mode: ClientMode) => void;

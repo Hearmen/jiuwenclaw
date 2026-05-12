@@ -90,6 +90,8 @@ export interface AppEventDelegate {
   /** 退出前 cancel({showNotice:false}) 置 true，抑制 interrupt_result UI 通知。 */
   getSuppressInterruptResult(): boolean;
   clearSuppressInterruptResult(): void;
+  /** 清除本地中断请求标志（streaming 结束后调用） */
+  clearInterruptRequested(): void;
   pushHistoryEntry(entry: HistoryItem): void;
   scheduleHistoryFlush(): void;
   safeRestoreHistory(sessionId: string): void;
@@ -762,6 +764,7 @@ export function handleIncomingFrame(delegate: AppEventDelegate, frame: EventFram
       if (payload.is_processing !== true) {
         delegate.getActiveSubtasks().clear();
         delegate.setEvolutionStatus("idle");
+        delegate.clearInterruptRequested();
       }
       return true;
 
@@ -785,6 +788,7 @@ export function handleIncomingFrame(delegate: AppEventDelegate, frame: EventFram
           delegate.getActiveSubtasks().clear();
           delegate.setEvolutionStatus("idle");
           delegate.markRunningToolsInterrupted();
+          delegate.clearInterruptRequested();
           appendEntry(delegate, {
             kind: "info",
             id: createId("info"),

@@ -842,8 +842,8 @@ class MessageHandler(ABC):
         metadata) and in-memory context copy (DeepAgent checkpointer + context
         engine) are performed atomically.
         """
-        from jiuwenclaw.e2a.gateway_normalize import e2a_from_agent_fields
-        from jiuwenclaw.schema.message import ReqMethod
+        from jiuwenclaw.common.e2a.gateway_normalize import e2a_from_agent_fields
+        from jiuwenclaw.common.schema.message import ReqMethod
 
         state = self._get_or_create_channel_state(msg)
         source_sid = state.session_id

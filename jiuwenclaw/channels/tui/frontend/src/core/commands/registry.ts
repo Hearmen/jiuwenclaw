@@ -33,6 +33,7 @@ import { createSessionCommand } from "./builtins/session.js";
 import { createStatusCommand } from "./builtins/status.js";
 import { createSkillsCommand } from "./builtins/skills.js";
 import { createTeamSkillsCommand } from "./builtins/teamskills.js";
+import { createAutoHarnessCommand } from "./builtins/auto-harness.js";
 import { createThemeCommand } from "./builtins/theme.js";
 import { createWorkspaceCommand } from "./builtins/workspace-dir.js";
 
@@ -67,6 +68,7 @@ export function createBuiltinCommands(): SlashCommand[] {
     createSkillsCommand(),
     createStatusCommand(),
     createTeamSkillsCommand(),
+    createAutoHarnessCommand(),
     createThemeCommand(),
     createWorkspaceCommand(),
     createHotkeyCommand(),

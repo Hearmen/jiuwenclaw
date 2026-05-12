@@ -160,6 +160,8 @@ export class CliPiAppState {
   };
   /** 当 closeUi 中 cancelBeforeExit 调 cancel({showNotice:false}) 时置 true，抑制 chat.interrupt_result 的 UI 通知。 */
   private suppressInterruptResult = false;
+  /** 本地中断请求标志，cancel() 调用时立即置 true，用于 long-running 命令的中断检测。 */
+  private interruptRequested = false;
   private readonly eventDelegate: AppEventDelegate = {
     getConnectionStatus: () => this.connectionStatus,
     getSessionId: () => this.sessionId,
@@ -236,6 +238,7 @@ export class CliPiAppState {
     clearSuppressInterruptResult: () => {
       this.suppressInterruptResult = false;
     },
+    clearInterruptRequested: () => this.clearInterruptRequested(),
     reportHistoryPageMeta: ({ totalPages }) => {
       if (typeof totalPages === "number" && Number.isFinite(totalPages) && totalPages > 0) {
         this.historyTotalPages = totalPages;
@@ -410,6 +413,28 @@ export class CliPiAppState {
     };
   }
 
+  /** Check if interrupt was requested locally (for long-running command detection) */
+  isInterruptRequested(): boolean {
+    return this.interruptRequested;
+  }
+
+  /** Set local interrupt flag (for long-running local commands like log streaming) */
+  requestLocalInterrupt(): void {
+    this.interruptRequested = true;
+  }
+
+  /** Clear local interrupt flag (called after handling interrupt) */
+  clearInterruptRequested(): void {
+    this.interruptRequested = false;
+  }
+
+  /** Check if there's a server task running (for deciding whether to send chat.interrupt) */
+  hasServerTask(): boolean {
+    const snapshot = this.getSnapshot();
+    // Include pendingQuestion: user may want to cancel while waiting for answer
+    return snapshot.isProcessing || snapshot.cancellableWork || Boolean(snapshot.pendingQuestion);
+  }
+
   getCommandContext(): CommandContext {
     const snapshot = this.getSnapshot();
     const toolGroupIds = getToolGroupIds(snapshot.entries, snapshot.toolExecutions);
@@ -431,6 +456,10 @@ export class CliPiAppState {
         // AppScreen injects the real exit handler when executing slash commands.
       },
       isProcessing: snapshot.isProcessing,
+      /** Check if interrupt was requested locally (for long-running command detection) */
+      isInterruptRequested: () => this.interruptRequested,
+      /** Clear local interrupt flag (for long-running commands to reset after handling interrupt) */
+      clearInterruptRequested: () => this.clearInterruptRequested(),
       connectionStatus: snapshot.connectionStatus,
       mode: snapshot.mode,
       setMode: this.setMode,
@@ -729,6 +758,8 @@ readonly request = async <T = Record<string, unknown>>(
     if (options?.showNotice === false) {
       this.suppressInterruptResult = true;
     }
+    // Set local interrupt flag immediately for long-running command detection
+    this.interruptRequested = true;
     const hadLocalWork = this.getSnapshot().cancellableWork;
     this.sendEventOnly("chat.interrupt", { intent: "cancel" });
     if (options?.showNotice !== false && hadLocalWork) {
@@ -1312,7 +1343,9 @@ readonly request = async <T = Record<string, unknown>>(
   }
 
   private handleFrame(frame: unknown): void {
-    if (!isEventFrame(frame as EventFrame | any)) return;
+    if (!isEventFrame(frame as EventFrame | any)) {
+      return;
+    }
     const typedFrame = frame as EventFrame;
     if (handleIncomingFrame(this.eventDelegate, typedFrame)) {
       this.emitChange();

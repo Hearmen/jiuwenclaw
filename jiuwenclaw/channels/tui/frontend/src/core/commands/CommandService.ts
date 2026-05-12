@@ -174,15 +174,57 @@ export class CommandService {
     const parts = parseArgs(normalized);
 
     if (parts.length > 1) {
-      const command = this.resolve(parts[0] ?? "");
-      if (command?.completion && ctx) {
-        const values = await command.completion(ctx, parts.slice(1).join(" "));
+      // Traverse command chain to find the deepest matching command with completion
+      let currentCommands = this.getAll();
+      let matchedCommand: SlashCommand | undefined;
+      let matchedPath: string[] = [];
+      let remainingParts = parts;
+
+      for (const part of parts) {
+        const found = currentCommands.find((cmd) =>
+          cmd.name === part || (cmd.altNames && cmd.altNames.includes(part))
+        );
+        if (!found) break;
+
+        matchedCommand = found;
+        matchedPath.push(found.name);
+        remainingParts = remainingParts.slice(1);
+
+        if (found.subCommands) {
+          currentCommands = found.subCommands;
+        } else {
+          break;
+        }
+      }
+
+      // If we found a command with completion and have remaining args
+      if (matchedCommand?.completion && ctx && remainingParts.length >= 0) {
+        const completionInput = remainingParts.join(" ");
+        const values = await matchedCommand.completion(ctx, completionInput);
+        const prefix = matchedPath.join(" ");
         return values.map((value) => ({
-          value: `/${command.name} ${value}`,
-          description: command.description,
-          usage: command.usage,
-          example: command.example,
+          value: `/${prefix} ${value}`,
+          description: matchedCommand!.description,
+          usage: matchedCommand!.usage,
+          example: matchedCommand!.example,
         }));
+      }
+
+      // If we're at a subcommand level but haven't matched the final command,
+      // suggest available subcommands
+      if (matchedCommand?.subCommands && remainingParts.length > 0) {
+        const lastPart = remainingParts[remainingParts.length - 1] || "";
+        const subCommandSuggestions = matchedCommand.subCommands
+          .filter((sub) => sub.name.startsWith(lastPart) || !lastPart)
+          .map((sub) => ({
+            value: `/${matchedPath.join(" ")} ${sub.name}`,
+            description: sub.description,
+            usage: sub.usage,
+            example: sub.example,
+          }));
+        if (subCommandSuggestions.length > 0) {
+          return subCommandSuggestions;
+        }
       }
     }
 

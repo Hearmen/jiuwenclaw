@@ -164,9 +164,9 @@ export class WsClient {
         clearTimeout(pending.timer);
         this.pending.delete(frame.id);
         if (frame.ok) {
-          pending.resolve(frame);
+          setTimeout(() => pending.resolve(frame), 0);
         } else {
-          pending.reject(new Error(frame.error ?? `request failed: ${frame.code ?? "unknown"}`));
+          setTimeout(() => pending.reject(new Error(frame.error ?? `request failed: ${frame.code ?? "unknown"}`)), 0);
         }
         return;
       }

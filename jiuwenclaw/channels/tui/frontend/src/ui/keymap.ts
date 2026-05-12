@@ -2,19 +2,28 @@ import { matchesKey } from "@mariozechner/pi-tui";
 
 /**
  * 快捷键约定（Ctrl+C）：
- * 第一次按下尝试向服务端发送 `chat.interrupt`，中断当前任务；
+ * 第一次按下：设置本地中断标志（用于中断长运行命令如日志流）；
+ * 如果有服务端任务运行，同时发送 chat.interrupt；
+ * 如果处于空闲状态且无本地中断发生，则清空输入框；
  * 1 秒内再次按下则退出 CLI/TUI。
  */
 
 let lastInterruptTime = 0;
 
 export interface AppScreenKeymapDelegate {
+  /** Interrupt server-side task (send chat.interrupt) */
   interruptTask(): void;
+  /** Set local interrupt flag only (for long-running local commands like log streaming) */
+  requestLocalInterrupt(): void;
   exitApp(): void;
   toggleTodos(): void;
   toggleTeamPanel(): void;
   toggleTranscript(): void;
   redraw(): void;
+  clearInput(): void;
+  isIdle(): boolean;
+  /** Check if there's a server task running (for deciding whether to send chat.interrupt) */
+  hasServerTask(): boolean;
 }
 
 interface KeyBinding {
@@ -35,8 +44,21 @@ export const APP_SCREEN_KEY_BINDINGS: readonly KeyBinding[] = [
         delegate.exitApp();
         return;
       }
+
+      // Always set local interrupt flag (for long-running local commands)
+      delegate.requestLocalInterrupt();
+
+      // Only send chat.interrupt if there's a server task running
+      if (delegate.hasServerTask()) {
+        delegate.interruptTask();
+      }
+
+      // If idle (no server task and no local command running), clear input
+      if (delegate.isIdle()) {
+        delegate.clearInput();
+      }
+
       lastInterruptTime = now;
-      delegate.interruptTask();
     },
   },
   {

@@ -135,6 +135,24 @@ class ReqMethod(Enum):
 
     TEAM_SNAPSHOT = "team.snapshot"
 
+    # Harness package management
+    HARNESS_PACKAGES_GET = "harness.packages.get"
+    HARNESS_PACKAGES_SCAN = "harness.packages.scan"
+    HARNESS_PACKAGES_ACTIVATE = "harness.packages.activate"
+    HARNESS_PACKAGES_DELETE = "harness.packages.delete"
+    HARNESS_PACKAGES_IMPORT = "harness.packages.import"
+    HARNESS_PACKAGES_EXPORT = "harness.packages.export"
+
+    # Schedule task management
+    SCHEDULE_CHECK_CONFIG = "schedule.check_config"
+    SCHEDULE_UPDATE_CONFIG = "schedule.update_config"
+    SCHEDULE_CREATE = "schedule.create"
+    SCHEDULE_RUN = "schedule.run"
+    SCHEDULE_LIST = "schedule.list"
+    SCHEDULE_STATUS = "schedule.status"
+    SCHEDULE_LOGS = "schedule.logs"
+    SCHEDULE_CANCEL = "schedule.cancel"
+    SCHEDULE_DELETE = "schedule.delete"
 
 class EventType(Enum):
     CONNECTION_ACK = "connection.ack"

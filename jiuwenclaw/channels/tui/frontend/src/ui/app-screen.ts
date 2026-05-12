@@ -646,6 +646,17 @@ export class AppScreen implements Component, Focusable {
         }, 1200);
         this.tui.requestRender();
       },
+      clearInput: () => {
+        this.editor.setText("");
+        this.tui.requestRender();
+      },
+      isIdle: () => {
+        return !snapshot.isProcessing && !snapshot.pendingQuestion && !snapshot.cancellableWork;
+      },
+      hasServerTask: () => this.state.hasServerTask(),
+      requestLocalInterrupt: () => {
+        this.state.requestLocalInterrupt();
+      },
     });
     if (handled) {
       return;
@@ -2527,50 +2538,59 @@ export class AppScreen implements Component, Focusable {
     return this.commands.getAll().map((command) => ({
       name: command.name,
       description: command.description,
-      getArgumentCompletions:
-        command.completion || command.subCommands?.some((sub) => sub.completion)
-          ? async (argumentPrefix: string): Promise<AutocompleteItem[] | null> => {
-              const trimmed = argumentPrefix.trim();
-              // pi-tui 把「第一个空格之后」整段当作 `/config` 的参数前缀去补全。
-              // 对 `/config set model deepseek`，前缀是 `set model deepseek`，补全项却是平铺的
-              // get/set/list/各 config key；若补全菜单仍打开，Enter 会先 applyCompletion 再提交，
-              // 会把整段参数替换成当前选中项（常为列表首项 `get`），看起来像「变成 /config get」且 set 未执行。
-              // 子命令名已匹配且后面还有 token 时关闭参数补全，让 Enter 直接提交当前输入。
-              if (command.subCommands?.length && trimmed.length > 0) {
-                const tokens = trimmed.split(/\s+/).filter(Boolean);
-                const head = tokens[0] ?? "";
-                const matchedSub = command.subCommands.find(
-                  (sub) => sub.name === head || sub.altNames?.includes(head),
+      getArgumentCompletions: command.completion
+        ? async (argumentPrefix: string): Promise<AutocompleteItem[] | null> => {
+            const trimmed = argumentPrefix.trim();
+            // Traverse subcommand chain to find the deepest command with completion
+            let currentCommand: typeof command = command;
+            let matchedPath: string[] = [];
+            let remainingTokens: string[] = [];
+
+            if (currentCommand.subCommands?.length && trimmed.length > 0) {
+              const tokens = trimmed.split(/\s+/).filter(Boolean);
+              let matchIndex = 0;
+
+              for (let i = 0; i < tokens.length; i++) {
+                const token = tokens[i];
+                const matchedSub = currentCommand.subCommands?.find(
+                  (sub) => sub.name === token || sub.altNames?.includes(token)
                 );
-                if (matchedSub) {
-                  if (matchedSub.completion) {
-                    const subPartial = tokens.slice(1).join(" ");
-                    const items = await matchedSub.completion(
-                      this.state.getCommandContext(),
-                      subPartial,
-                    );
-                    return items.map((name) => ({
-                      value: `${head} ${name}, `,
-                      label: name,
-                    }));
-                  }
-                  if (tokens.length >= 2) {
-                    return null;
-                  }
+                if (!matchedSub) {
+                  // No more subcommand matches, remaining tokens are args
+                  remainingTokens = tokens.slice(i);
+                  break;
                 }
+
+                matchedPath.push(matchedSub.name);
+                currentCommand = matchedSub;
+                matchIndex = i + 1;
               }
-              if (command.name === "mode") {
+
+              // If all tokens matched subcommands, remainingTokens is empty
+              if (matchIndex >= tokens.length) {
+                remainingTokens = [];
+              }
+            }
+
+            // Use the deepest matched command's completion if available
+            if (currentCommand.completion) {
+              if (currentCommand.name === "mode") {
                 return buildModeAutocompleteItems();
               }
-              if (!command.completion) return null;
-              const items = await command.completion(this.state.getCommandContext(), argumentPrefix);
+              const remainingArgs = remainingTokens.join(" ");
+              const items = await currentCommand.completion(this.state.getCommandContext(), remainingArgs);
+              // Prefix completions with matched path if traversed
+              const prefix = matchedPath.length > 0 ? matchedPath.join(" ") + " " : "";
               return items.map((value) => ({
-                value,
-                label: value,
-                description: command.description,
+                value: prefix + value,
+                label: prefix + value,
+                description: currentCommand.description,
               }));
             }
-          : undefined,
+
+            return null;
+          }
+        : undefined,
     }));
   }
 

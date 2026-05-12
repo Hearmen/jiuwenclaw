@@ -19,7 +19,7 @@ import { ChannelsPanel } from './components/ChannelsPanel';
 import { BrowserPanel } from './components/BrowserPanel';
 import { UpdatePanel } from './components/UpdatePanel';
 import { StatusBar } from './components/StatusBar';
-import { ExtensionsPanel } from './components/ExtensionsPanel';
+import { ExtensionsHubPanel } from './components/ExtensionsHubPanel';
 import { FEATURE_APP_UPDATER_UI } from './featureFlags';
 import { HeartbeatMessageModal } from './features/HeartbeatMessageModal';
 import {
@@ -27,6 +27,7 @@ import {
   fetchHistoryPage,
   HISTORY_GET_METHOD,
   type HistoryRestoreHandle,
+  type HistoryHarnessReplayItem,
 } from './features/historyRestore';
 import {
   normalizeToolCallPayload,
@@ -35,7 +36,7 @@ import {
 import { useWebSocket } from './hooks';
 import { webRequest } from './services/webClient';
 import { AgentMode, UserAnswer, ModelEntry } from './types';
-import { useSessionStore, useChatStore, useTodoStore } from './stores';
+import { useSessionStore, useChatStore, useTodoStore, useHarnessStore } from './stores';
 import { useTranslation } from 'react-i18next';
 import i18n from './i18n';
 import './App.css';
@@ -310,6 +311,7 @@ function AppContent() {
     setPaused,
   } = useChatStore();
   const { clearTodos } = useTodoStore();
+  const { reset: resetHarnessStore } = useHarnessStore();
 
   // WebSocket 连接 - provider 由后端配置决定 - provider 由后端配置决定，前端默认不在 URL query 传递
   const {
@@ -716,6 +718,49 @@ function AppContent() {
           }
         }
       },
+      onHarnessReplay: (items: HistoryHarnessReplayItem[]) => {
+        if (sessionIdRef.current !== sessionId) {
+          return;
+        }
+        const harnessStore = useHarnessStore.getState();
+        for (const item of items) {
+          if (item.kind === 'harness_message') {
+            const content = typeof item.payload.content === 'string' ? item.payload.content : '';
+            const stage = typeof item.payload.stage === 'string' ? item.payload.stage : undefined;
+            if (content) {
+              harnessStore.addHarnessMessage(content, stage);
+              // Update stage result with running status and label from message
+              if (stage && content) {
+                const existingStage = harnessStore.stageResults.find((s) => s.stage === stage);
+                if (existingStage?.status !== 'running') {
+                  harnessStore.updateStageResult({
+                    stage,
+                    stageLabel: content,
+                    status: 'running',
+                    messages: [],
+                    metrics: {},
+                  });
+                }
+              }
+            }
+          } else if (item.kind === 'harness_stage_result') {
+            const stage = typeof item.payload.stage === 'string' ? item.payload.stage : '';
+            const status = typeof item.payload.status === 'string' ? item.payload.status : 'success';
+            const error = typeof item.payload.error === 'string' ? item.payload.error : undefined;
+            const messages = Array.isArray(item.payload.messages) ? item.payload.messages : [];
+            const metrics = item.payload.metrics || {};
+            if (stage) {
+              harnessStore.updateStageResult({
+                stage,
+                status: status as 'success' | 'failed' | 'timeout',
+                error,
+                messages,
+                metrics,
+              });
+            }
+          }
+        }
+      },
       onError: (message) => {
         console.warn('[history.restore]', message);
       },
@@ -787,6 +832,7 @@ function AppContent() {
     setPaused(false);
     clearMessages();
     clearTodos();
+    resetHarnessStore();
     const newSid = generateSessionId();
     const previousSid = sessionIdRef.current;
     // 立即同步更新 ref 到新值，防止后续发送消息使用旧 ID
@@ -842,6 +888,7 @@ function AppContent() {
     fetchSessions,
     mode,
     request,
+    resetHarnessStore,
     sessionId,
     setCurrentSession,
     setPaused,
@@ -915,7 +962,7 @@ function AppContent() {
     setHistoryLoadingMore(true);
     const pageHandle = fetchHistoryPage({
       sessionId: sid,
-      onReady: ({ messages, toolReplay, totalPages }) => {
+      onReady: ({ messages, toolReplay, harnessReplay, totalPages }) => {
         if (sessionIdRef.current !== sid) {
           setHistoryLoadingMore(false);
           historyPageHandleRef.current = null;
@@ -947,6 +994,44 @@ function AppContent() {
               },
               { updatedAt: item.at }
             );
+          }
+        }
+        const harnessStore = useHarnessStore.getState();
+        for (const item of harnessReplay) {
+          if (item.kind === 'harness_message') {
+            const content = typeof item.payload.content === 'string' ? item.payload.content : '';
+            const stage = typeof item.payload.stage === 'string' ? item.payload.stage : undefined;
+            if (content) {
+              harnessStore.addHarnessMessage(content, stage);
+              // Update stage result with running status and label from message
+              if (stage && content) {
+                const existingStage = harnessStore.stageResults.find((s) => s.stage === stage);
+                if (existingStage?.status !== 'running') {
+                  harnessStore.updateStageResult({
+                    stage,
+                    stageLabel: content,
+                    status: 'running',
+                    messages: [],
+                    metrics: {},
+                  });
+                }
+              }
+            }
+          } else if (item.kind === 'harness_stage_result') {
+            const stage = typeof item.payload.stage === 'string' ? item.payload.stage : '';
+            const status = typeof item.payload.status === 'string' ? item.payload.status : 'success';
+            const error = typeof item.payload.error === 'string' ? item.payload.error : undefined;
+            const messages = Array.isArray(item.payload.messages) ? item.payload.messages : [];
+            const metrics = item.payload.metrics || {};
+            if (stage) {
+              harnessStore.updateStageResult({
+                stage,
+                status: status as 'success' | 'failed' | 'timeout',
+                error,
+                messages,
+                metrics,
+              });
+            }
           }
         }
         setHistoryPagerMeta({
@@ -1009,6 +1094,7 @@ function AppContent() {
       clearMessages();
       clearTodos();
       clearSubtasks();
+      resetHarnessStore();
       historyRestoreFromPanelHintRef.current = true;
       setSessionId(targetSessionId);
       setCurrentSession(null);
@@ -1027,6 +1113,7 @@ function AppContent() {
       clearSubtasks,
       clearTodos,
       disposeInFlightHistoryHandles,
+      resetHarnessStore,
       setActiveNav,
       setCurrentSession,
       setHistoryLoadingMore,
@@ -1218,7 +1305,7 @@ function AppContent() {
         )}
         {activeNav === 'extensions' && (
           <div className="app-section">
-            <ExtensionsPanel isConnected={isConnected} />
+            <ExtensionsHubPanel sessionId={sessionId} isConnected={isConnected} />
           </div>
         )}
       </main>

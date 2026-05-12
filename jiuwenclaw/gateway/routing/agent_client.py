@@ -312,9 +312,7 @@ class WebSocketAgentServerClient(AgentServerClient):
                 raise RuntimeError(
                     f"AgentServer 非流式请求超时 (request_id={rid}, timeout={_UNARY_REQUEST_TIMEOUT_SECONDS}s)"
                 ) from e
-            logger.info("[WebSocketAgentServerClient] 收到响应(非流式) raw: %s", json.dumps(data, ensure_ascii=False))
             resp = parse_agent_server_wire_unary(data)
-            logger.info("[WebSocketAgentServerClient] 收到完整响应 AgentResponse: %s", _to_json(asdict(resp)))
             return resp
         finally:
             # 清理队列
@@ -369,13 +367,8 @@ class WebSocketAgentServerClient(AgentServerClient):
                         break
                 else:
                     data = await queue.get()
-                logger.info("[WebSocketAgentServerClient] 收到流式事件 raw: %s", json.dumps(data, ensure_ascii=False))
                 chunk = parse_agent_server_wire_chunk(data)
                 chunk_count += 1
-                logger.info(
-                    "[WebSocketAgentServerClient] 收到流式 chunk #%s AgentResponseChunk: %s",
-                    chunk_count, _to_json(asdict(chunk)),
-                )
                 yield chunk
                 if chunk.is_complete:
                     saw_complete = True

@@ -10,6 +10,8 @@ import time
 from dataclasses import dataclass
 from typing import Any
 
+import yaml
+
 from openjiuwen.core.foundation.llm import Model, ProviderType
 from openjiuwen.core.foundation.llm.schema.config import (
     ModelClientConfig,
@@ -32,8 +34,87 @@ from jiuwenclaw.common.config import (
 )
 from jiuwenclaw.gateway.routing.route_binding import GatewayRouteBinding
 from jiuwenclaw.common.version import __version__
+from jiuwenclaw.common.utils import get_user_workspace_dir
 
 logger = logging.getLogger(__name__)
+
+# Auto-Harness config file path
+_AUTO_HARNESS_CONFIG_DIR = get_user_workspace_dir() / "auto-harness"
+_AUTO_HARNESS_CONFIG_FILE = _AUTO_HARNESS_CONFIG_DIR / "config.yaml"
+
+
+def _get_auto_harness_config() -> dict[str, Any]:
+    """Load auto-harness config.yaml."""
+    if not _AUTO_HARNESS_CONFIG_FILE.exists():
+        return {}
+    try:
+        return yaml.safe_load(_AUTO_HARNESS_CONFIG_FILE.read_text(encoding="utf-8")) or {}
+    except Exception as e:
+        logger.warning("[auto-harness config] Failed to load: %s", e)
+        return {}
+
+
+def _save_auto_harness_config(config: dict[str, Any]) -> None:
+    """Save auto-harness config.yaml."""
+    _AUTO_HARNESS_CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+    _AUTO_HARNESS_CONFIG_FILE.write_text(
+        yaml.dump(config, allow_unicode=True, sort_keys=False, default_flow_style=False),
+        encoding="utf-8"
+    )
+
+
+def _update_auto_harness_git_user_name(value: str) -> None:
+    """Update git.user_name in auto-harness config."""
+    config = _get_auto_harness_config()
+    if "git" not in config:
+        config["git"] = {}
+    config["git"]["user_name"] = value
+    _save_auto_harness_config(config)
+
+
+def _update_auto_harness_git_user_email(value: str) -> None:
+    """Update git.user_email in auto-harness config."""
+    config = _get_auto_harness_config()
+    if "git" not in config:
+        config["git"] = {}
+    config["git"]["user_email"] = value
+    _save_auto_harness_config(config)
+
+
+def _update_auto_harness_git_fork_owner(value: str) -> None:
+    """Update git.fork_owner in auto-harness config."""
+    config = _get_auto_harness_config()
+    if "git" not in config:
+        config["git"] = {}
+    config["git"]["fork_owner"] = value
+    _save_auto_harness_config(config)
+
+
+def _update_auto_harness_git_remote(value: str) -> None:
+    """Update git.remote in auto-harness config."""
+    config = _get_auto_harness_config()
+    if "git" not in config:
+        config["git"] = {}
+    config["git"]["remote"] = value
+    _save_auto_harness_config(config)
+
+
+def _update_auto_harness_gitcode_access_token(value: str) -> None:
+    """Update gitcode.access_token in auto-harness config."""
+    config = _get_auto_harness_config()
+    if "gitcode" not in config:
+        config["gitcode"] = {}
+    config["gitcode"]["access_token"] = value
+    _save_auto_harness_config(config)
+
+
+def _update_auto_harness_gitcode_username(value: str) -> None:
+    """Update gitcode.username in auto-harness config."""
+    config = _get_auto_harness_config()
+    if "gitcode" not in config:
+        config["gitcode"] = {}
+    config["gitcode"]["username"] = value
+    _save_auto_harness_config(config)
 
 # ── 需要转发到 Agent 的方法集合 ──────────────────────────────
 
@@ -94,6 +175,16 @@ CLI_FORWARD_REQ_METHODS = frozenset(
         "extensions.delete",
         "extensions.toggle",
         "session.fork",
+        # Schedule task management
+        "schedule.check_config",
+        "schedule.update_config",
+        "schedule.create",
+        "schedule.run",
+        "schedule.list",
+        "schedule.status",
+        "schedule.logs",
+        "schedule.cancel",
+        "schedule.delete",
     }
 )
 
@@ -149,6 +240,16 @@ CLI_FORWARD_NO_LOCAL_HANDLER_METHODS = frozenset(
         "extensions.delete",
         "extensions.toggle",
         "session.fork",
+        # Schedule task management
+        "schedule.check_config",
+        "schedule.update_config",
+        "schedule.create",
+        "schedule.run",
+        "schedule.list",
+        "schedule.status",
+        "schedule.logs",
+        "schedule.cancel",
+        "schedule.delete",
     }
 )
 
@@ -209,6 +310,13 @@ _CLI_CONFIG_YAML_SETTERS: dict[str, Any] = {
     "permissions_enabled": update_permissions_enabled_in_config,
     "memory_forbidden_enabled": update_memory_forbidden_enabled_in_config,
     "preferred_language": update_preferred_language_in_config,
+    # Auto-Harness config items (stored in ~/.jiuwenclaw/auto-harness/config.yaml)
+    "auto_harness_git_user_name": _update_auto_harness_git_user_name,
+    "auto_harness_git_user_email": _update_auto_harness_git_user_email,
+    "auto_harness_git_fork_owner": _update_auto_harness_git_fork_owner,
+    "auto_harness_git_remote": _update_auto_harness_git_remote,
+    "auto_harness_gitcode_access_token": _update_auto_harness_gitcode_access_token,
+    "auto_harness_gitcode_username": _update_auto_harness_gitcode_username,
 }
 
 _CLI_CONFIG_YAML_KEYS = frozenset(_CLI_CONFIG_YAML_SETTERS.keys())
@@ -309,6 +417,25 @@ def _build_config_schema() -> list[dict]:
          "options": ["zh", "en"], "source": "yaml", "default": "zh"},
         {"key": "evolution_auto_scan", "label": "自动扫描技能", "group": "Features",
          "type": "toggle", "source": "env", "default": "false"},
+        # Auto-Harness (定时任务配置)
+        {"key": "auto_harness_git_user_name", "label": "Git 用户名", "group": "Auto-Harness",
+         "type": "string", "source": "yaml", "default": empty,
+         "description": "用于定时任务执行时的 git commit"},
+        {"key": "auto_harness_git_user_email", "label": "Git 邮箱", "group": "Auto-Harness",
+         "type": "string", "source": "yaml", "default": empty,
+         "description": "用于定时任务执行时的 git commit"},
+        {"key": "auto_harness_git_fork_owner", "label": "Fork 仓库所有者", "group": "Auto-Harness",
+         "type": "string", "source": "yaml", "default": empty,
+         "description": "如 'auto-harness'，用于创建 PR"},
+        {"key": "auto_harness_git_remote", "label": "Git Remote 名称", "group": "Auto-Harness",
+         "type": "string", "source": "yaml", "default": "autoharness",
+         "description": "fork remote 名称，默认 'autoharness'"},
+        {"key": "auto_harness_gitcode_access_token", "label": "GitCode Access Token", "group": "Auto-Harness",
+         "type": "password", "sensitive": True, "source": "yaml", "default": empty,
+         "description": "也可通过环境变量 GITCODE_ACCESS_TOKEN 配置"},
+        {"key": "auto_harness_gitcode_username", "label": "GitCode 用户名", "group": "Auto-Harness",
+         "type": "string", "source": "yaml", "default": empty,
+         "description": "GitCode 登录用户名；为空时回退到 git.fork_owner"},
     ]
 
 
@@ -439,6 +566,28 @@ def register_cli_handlers(bind: CliHandlersBindParams) -> None:
             payload.setdefault("permissions_enabled", "false")
             payload.setdefault("memory_forbidden_enabled", "false")
             payload.setdefault("preferred_language", "zh")
+
+        # Auto-Harness config values (from ~/.jiuwenclaw/auto-harness/config.yaml)
+        try:
+            ah_config = _get_auto_harness_config()
+            git_cfg = ah_config.get("git") or {}
+            gitcode_cfg = ah_config.get("gitcode") or {}
+            payload["auto_harness_git_user_name"] = git_cfg.get("user_name") or ""
+            payload["auto_harness_git_user_email"] = git_cfg.get("user_email") or ""
+            payload["auto_harness_git_fork_owner"] = git_cfg.get("fork_owner") or ""
+            payload["auto_harness_git_remote"] = git_cfg.get("remote") or "autoharness"
+            # Check env var first for access_token
+            ah_token = os.getenv("GITCODE_ACCESS_TOKEN") or gitcode_cfg.get("access_token") or ""
+            payload["auto_harness_gitcode_access_token"] = ah_token
+            payload["auto_harness_gitcode_username"] = gitcode_cfg.get("username") or ""
+        except Exception:
+            payload.setdefault("auto_harness_git_user_name", "")
+            payload.setdefault("auto_harness_git_user_email", "")
+            payload.setdefault("auto_harness_git_fork_owner", "")
+            payload.setdefault("auto_harness_git_remote", "autoharness")
+            payload.setdefault("auto_harness_gitcode_access_token", "")
+            payload.setdefault("auto_harness_gitcode_username", "")
+
         payload["schema"] = _build_config_schema()
         await channel.send_response(ws, req_id, ok=True, payload=payload)
 
@@ -501,6 +650,9 @@ def register_cli_handlers(bind: CliHandlersBindParams) -> None:
                     return
             try:
                 if param_key == "preferred_language":
+                    setter(raw_value)
+                elif param_key.startswith("auto_harness_"):
+                    # Auto-harness config items are strings, not toggles
                     setter(raw_value)
                 else:
                     parsed = raw_value.lower() in ("true", "1", "yes")
