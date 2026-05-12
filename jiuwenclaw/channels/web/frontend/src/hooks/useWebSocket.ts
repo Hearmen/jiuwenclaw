@@ -23,6 +23,7 @@ import {
   ToolResult,
   ToolCall,
   UsageSummary,
+  FileDownloadItem,
 } from '../types';
 import { useChatStore, useTodoStore, useSessionStore } from '../stores';
 import { webClient } from '../services/webClient';
@@ -163,6 +164,7 @@ export function useWebSocket(options: UseWebSocketOptions): UseWebSocketReturn {
     clearMessages,
     setPendingQuestion,
     removeFromTaskQueue,
+    addFileItems,
   } = useChatStore();
   const { setTodos, clearTodos } = useTodoStore();
   const {
@@ -747,6 +749,12 @@ export function useWebSocket(options: UseWebSocketOptions): UseWebSocketReturn {
         if (mediaPayload.content) {
           handleTtsPlayback(targetId, mediaPayload.content);
         }
+      }),
+      webClient.on('chat.file', ({ payload }) => {
+        if (!shouldHandleSessionEvent(payload)) return;
+        const files = (payload.files ?? []) as FileDownloadItem[];
+        if (!files.length) return;
+        addFileItems(files);
       }),
       webClient.on('chat.tool_call', ({ payload }) => {
         if (!shouldHandleSessionEvent(payload)) return;

@@ -107,13 +107,39 @@ class SendFileToolkit:
             from jiuwenclaw.server.agent_ws_server import AgentWebSocketServer
 
             server = AgentWebSocketServer.get_instance()
-            files_payload = [
-                {
-                    "path": file_path,
-                    "name": os.path.basename(file_path),
-                }
-                for file_path in valid_files
-            ]
+
+            files_payload = []
+            try:
+                from jiuwenclaw.agents.harness.common.tools.web_file_download import (
+                    build_file_download_info,
+                )
+
+                for file_path in valid_files:
+                    base_name = os.path.basename(file_path)
+                    download_info = build_file_download_info(
+                        file_path, base_name, self.session_id
+                    )
+                    files_payload.append({
+                        "path": file_path,
+                        "name": base_name,
+                        "size": download_info["size"],
+                        "mime_type": download_info["mime_type"],
+                        "download_url": download_info["download_url"],
+                        "download_token": download_info["download_token"],
+                    })
+            except Exception as download_err:
+                logger.warning(
+                    "[SendFileToolkit] 生成下载信息失败，回退到基础模式: %s",
+                    download_err,
+                )
+                files_payload = [
+                    {
+                        "path": file_path,
+                        "name": os.path.basename(file_path),
+                    }
+                    for file_path in valid_files
+                ]
+
             msg = {
                 "request_id": self.request_id,
                 "channel_id": self.channel_id,
@@ -175,12 +201,11 @@ class SendFileToolkit:
                     "type": "object",
                     "properties": {
                         "abs_file_path_list": {
-                            "type": ["array", "string"],
-                            "items": {"type": "string"},
+                            "type": "string",
                             "description": (
                                 "要发送的文件绝对路径。"
                                 "可以是单个路径字符串如 '/path/to/file.pdf'，"
-                                "或路径数组如 ['/path/file1.csv', '/path/file2.xlsx']。"
+                                "或 JSON 数组字符串如 '[\"/path/file1.csv\", \"/path/file2.xlsx\"]'。"
                                 "支持任意文件类型（pdf、xlsx、docx、png、zip等）。"
                             ),
                         }
