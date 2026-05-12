@@ -1,5 +1,5 @@
 import type { CommandContext, CommandSuggestion, SlashCommand } from "./types.js";
-import { makeItem, parseArgs } from "./helpers.js";
+import { flattenArrayPayload, makeItem, parseArgs } from "./helpers.js";
 
 export function parseSlashCommand(raw: string, commands: readonly SlashCommand[]) {
   const trimmed = raw.trim();
@@ -46,10 +46,23 @@ export function parseSlashCommand(raw: string, commands: readonly SlashCommand[]
   };
 }
 
+export interface InstalledSkillEntry {
+  name: string;
+  description: string;
+}
+
 export class CommandService {
   private commands = new Map<string, SlashCommand>();
   private aliases = new Map<string, string>();
   private topLevelCommands: SlashCommand[] = [];
+  private installedSkills: InstalledSkillEntry[] = [];
+
+  /**
+   * Optional callback invoked whenever the installed-skills cache is successfully
+   * refreshed.  The UI layer registers this to rebuild its autocomplete provider
+   * so that `/<skillName>` shorthands appear in the command-name dropdown.
+   */
+  onInstalledSkillsChange?: (skills: readonly InstalledSkillEntry[]) => void;
 
   register(commands: readonly SlashCommand[]): void {
     this.topLevelCommands = [...commands];
@@ -80,10 +93,70 @@ export class CommandService {
       .sort((a, b) => a.name.localeCompare(b.name));
   }
 
+  /**
+   * Fetches the current installed-skill list from the backend via `ctx` and
+   * stores it in `this.installedSkills`. Called on every `execute()` so that
+   * the cache stays fresh without any extra wiring. This function is also
+   * called by the first WebSocket connection. (From app-screen.ts)
+   */
+  async refreshSkills(
+    ctx: CommandContext,
+  ): Promise<void> {
+    try {
+      const payload = await ctx.request("skills.list", {});
+      const skills = flattenArrayPayload(payload);
+      this.installedSkills = skills.flatMap((item) => {
+        if (item && typeof item === "object") {
+          const obj = item as Record<string, unknown>;
+          if (obj.installed === true && typeof obj.name === "string") {
+            return [{
+              name: obj.name as string,
+              description: typeof obj.description === "string" ? obj.description : "",
+            }];
+          }
+        }
+        return [];
+      });
+      // Notify the UI so it can rebuild the autocomplete provider with the
+      // fresh `/<skillName>` shorthands.
+      this.onInstalledSkillsChange?.(this.installedSkills);
+    } catch {
+      // Keep the previous cache if the RPC fails.
+    }
+  }
+
+  getInstalledSkills(): readonly InstalledSkillEntry[] {
+    return this.installedSkills;
+  }
+
   async execute(raw: string, ctx: CommandContext): Promise<void> {
+    // Refresh the installed-skills cache on every execution for /<skill-name> autocompletion
+    await this.refreshSkills(ctx);
+
     const parsed = parseSlashCommand(raw.trim(), this.getAll());
     const command = parsed.command;
     if (!command) {
+      // /<skill> <query> shorthand: check if the unknown name matches an installed skill.
+      const skillName = parsed.name;
+      if (skillName && this.installedSkills.some((s) => s.name.toLowerCase() === skillName.toLowerCase())) {
+        const skillsCommand = this.resolve("skills");
+        const useSubCommand = skillsCommand?.subCommands?.find((s) => s.name === "use");
+        if (useSubCommand) {
+          // parsed.args contains the full remainder starting with the skill name token
+          // (e.g. for `/pdf foo bar`, parsed.args = "pdf foo bar").  Strip the leading
+          // skill-name word so the "use" action receives only the user's query.
+          const query = parsed.args
+            .replace(new RegExp(`^${skillName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\s*`, "i"), "")
+            .trim();
+          try {
+            await useSubCommand.action(ctx, `${skillName}, ${query}`);
+          } catch (error) {
+            const message = error instanceof Error ? error.message : String(error);
+            ctx.addItem(makeItem(ctx.sessionId, "error", message));
+          }
+          return;
+        }
+      }
       ctx.addItem(makeItem(ctx.sessionId, "error", `Unknown command: /${parsed.name || ""}`));
       return;
     }
@@ -95,6 +168,7 @@ export class CommandService {
     }
   }
 
+  // Note: Command suggestions use the pi-tui library from app-screen.ts. This function is currently unused.
   async getSuggestions(partial: string, ctx?: CommandContext): Promise<CommandSuggestion[]> {
     const normalized = partial.replace(/^\//, "").toLowerCase();
     const parts = parseArgs(normalized);

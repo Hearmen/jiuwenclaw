@@ -24,7 +24,7 @@ import {
   isSupportedAttachment,
   syncComposerImageTokens,
 } from "../core/attachments.js";
-import { CommandService, parseSlashCommand } from "../core/commands/CommandService.js";
+import { CommandService, parseSlashCommand, type InstalledSkillEntry } from "../core/commands/CommandService.js";
 import { addCommandEcho, addError, addInfo } from "../core/commands/helpers.js";
 import type { FileAttachment } from "../core/protocol.js";
 import {
@@ -440,7 +440,7 @@ function buildResumeSessionItems(sessions: SessionMeta[]): SelectItem[] {
 export class AppScreen implements Component, Focusable {
   private readonly editor: Editor;
   private readonly unsubscribe: () => void;
-  private readonly composerAutocompleteProvider: AutocompleteProvider;
+  private composerAutocompleteProvider: AutocompleteProvider;
   private _focused = false;
   private activeQuestionId: string | null = null;
   private activeQuestionIndex = 0;
@@ -469,6 +469,8 @@ export class AppScreen implements Component, Focusable {
   private animationPhase = 0;
   private runningStartedAtMs: number | null = null;
   private runningStoppedAtMs: number | null = null;
+  /** Whether the eager skill-cache fetch on first WebSocket connection has already been fired. */
+  private didEagerFetchSkills = false;
   private pendingSubmittedInput: string | null = null;
   private pendingSubmittedBaseline = 0;
   private pendingSubmittedSessionId: string | null = null;
@@ -482,14 +484,16 @@ export class AppScreen implements Component, Focusable {
     private readonly exit: () => void,
   ) {
     this.editor = new Editor(tui, editorTheme, { paddingX: 1, autocompleteMaxVisible: 6 });
-    this.composerAutocompleteProvider = new ComposerAutocompleteProvider(
-      new CombinedAutocompleteProvider(
-        this.buildSlashCommands(),
-        getTrustedDirs()[0] || process.cwd(),
-        resolveFdBinary(),
-      ),
-    );
+    this.composerAutocompleteProvider = this.rebuildAutocompleteProvider();
     this.editor.setAutocompleteProvider(this.composerAutocompleteProvider);
+    // Whenever CommandService refreshes its installed-skills cache (on first
+    // WebSocket connection and after every execute() call), rebuild the
+    // CombinedAutocompleteProvider so that the /<skillName> shorthands appear
+    // in the command-name dropdown.
+    this.commands.onInstalledSkillsChange = (skills: readonly InstalledSkillEntry[]) => {
+      this.composerAutocompleteProvider = this.rebuildAutocompleteProvider(skills);
+      this.editor.setAutocompleteProvider(this.composerAutocompleteProvider);
+    };
     this.editor.onChange = () => {
       this.tui.requestRender();
     };
@@ -1102,6 +1106,11 @@ export class AppScreen implements Component, Focusable {
 
   private handleStateChange(): void {
     const snapshot = this.state.getSnapshot();
+    // Populate the skill cache as soon as the WebSocket connection is established
+    if (!this.didEagerFetchSkills && snapshot.connectionStatus === "connected") {
+      this.didEagerFetchSkills = true;
+      void this.commands.refreshSkills(this.state.getCommandContext());
+    }
     if (
       this.pendingSubmittedInput &&
       (snapshot.sessionId !== this.pendingSubmittedSessionId ||
@@ -2481,6 +2490,37 @@ export class AppScreen implements Component, Focusable {
 
     const suffix = usage.replace(/^\/[^\s]+/, "").trim();
     return suffix || null;
+  }
+
+  /**
+   * Builds a fresh {@link ComposerAutocompleteProvider} wrapping a new
+   * {@link CombinedAutocompleteProvider}.  Skill shorthands are prepended to
+   * the regular slash-command list so they appear first in the dropdown.
+   *
+   * @param skills - snapshot of the installed-skills cache; defaults to the
+   *   current cache exposed by {@link CommandService.getInstalledSkills}.
+   */
+  private rebuildAutocompleteProvider(
+    skills: readonly InstalledSkillEntry[] = this.commands.getInstalledSkills(),
+  ): ComposerAutocompleteProvider {
+    // Convert each installed skill to a TuiSlashCommand so CombinedAutocompleteProvider
+    // treats /<skillName> exactly like any other slash command for name completion.
+    const registeredNames = new Set(this.commands.getAll().map((c) => c.name));
+    const skillCommands: TuiSlashCommand[] = skills
+      .filter((skill) => !registeredNames.has(skill.name))
+      .map((skill) => ({
+        name: skill.name,
+        description: skill.description || `Use the "${skill.name}" skill`,
+      }));
+
+    return new ComposerAutocompleteProvider(
+      new CombinedAutocompleteProvider(
+        // Skill shorthands come last so they appear at the bottom of the dropdown.
+        [...this.buildSlashCommands(), ...skillCommands],
+        getTrustedDirs()[0] || process.cwd(),
+        resolveFdBinary(),
+      ),
+    );
   }
 
   private buildSlashCommands(): TuiSlashCommand[] {
