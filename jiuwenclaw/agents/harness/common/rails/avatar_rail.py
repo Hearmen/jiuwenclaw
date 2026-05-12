@@ -54,11 +54,25 @@ class AvatarPromptRail(DeepAgentRail):
             builder.remove_section(name)
         self._injected_sections.clear()
 
+        language = getattr(builder, "language", "cn") or "cn"
+
+        try:
+            from jiuwenclaw.agents.harness.common.memory.forbidden import get_forbidden_memory_prompt
+            forbidden = get_forbidden_memory_prompt(language)
+            if forbidden:
+                section = PromptSection(
+                    name="forbidden_memory",
+                    content={language: forbidden},
+                    priority=_AVATAR_PROMPT_PRIORITY + 3,
+                )
+                builder.add_section(section)
+                self._injected_sections.add("forbidden_memory")
+        except Exception as e:
+            logger.debug("[AvatarRail] 加载 forbidden_memory 失败: %s", e)
+
         perm_ctx = TOOL_PERMISSION_CONTEXT.get()
         if perm_ctx is None:
             return
-
-        language = getattr(builder, "language", "cn") or "cn"
 
         # 数字分身身份提示词（仅群聊数字分身模式）
         if perm_ctx.group_digital_avatar and perm_ctx.avatar_mode:
@@ -100,7 +114,6 @@ class AvatarPromptRail(DeepAgentRail):
             and perm_ctx.avatar_mode
         )
         if should_disable_memory:
-            # 使用完全禁用提示词（禁止读取和写入）
             disabled_content = _build_memory_fully_disabled_prompt(language)
             section = PromptSection(
                 name="memory_fully_disabled",
@@ -109,20 +122,6 @@ class AvatarPromptRail(DeepAgentRail):
             )
             builder.add_section(section)
             self._injected_sections.add("memory_fully_disabled")
-
-        try:
-            from jiuwenclaw.agents.harness.common.memory.forbidden import get_forbidden_memory_prompt
-            forbidden = get_forbidden_memory_prompt(language)
-            if forbidden:
-                section = PromptSection(
-                    name="forbidden_memory",
-                    content={language: forbidden},
-                    priority=_AVATAR_PROMPT_PRIORITY + 3,
-                )
-                builder.add_section(section)
-                self._injected_sections.add("forbidden_memory")
-        except Exception as e:
-            logger.debug("[AvatarRail] 加载 forbidden_memory 失败: %s", e)
 
         if is_group_digital_avatar:
             interaction_content = _build_interaction_prompt(language)
