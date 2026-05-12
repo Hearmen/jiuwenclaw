@@ -998,8 +998,7 @@ class JiuWenClaw:
 
     async def get_context_usage(self, session_id: str) -> dict[str, Any]:
         """获取当前上下文窗口占用统计。
-
-        参考 Claude Code 的 /context 命令，展示：
+        
         - 上下文窗口总量与当前占用量
         - 系统提示词、对话消息、工具定义各自的 token 消耗
         - 上下文窗口占用百分比

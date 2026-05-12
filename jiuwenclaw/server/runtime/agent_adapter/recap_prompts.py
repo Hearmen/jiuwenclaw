@@ -1,12 +1,12 @@
 # Copyright (c) Huawei Technologies Co., Ltd. 2025. All rights reserved.
 
-"""/recap 命令的 prompt 模板与常量（对齐 Claude Code awaySummary.ts 源码）。"""
+"""/recap 命令的 prompt 模板与常量"""
 
 RECENT_MESSAGE_WINDOW = 30
 
 
 def build_recap_prompt(memory: str | None) -> str:
-    """构建 /recap prompt，对齐 Claude Code 源码 buildAwaySummaryPrompt。
+    """构建 /recap prompt。
 
     Args:
         memory: Session memory 内容（broader context），可为 None。

@@ -4907,7 +4907,7 @@ class JiuWenClawDeepAdapter:
             else:
                 recap_messages.append(UserMessage(content=content))
 
-        # Prompt 作为最后一条 user message 追加（对齐 Claude Code）
+        # Prompt 作为最后一条 user message 追加
         recap_messages.append(UserMessage(content=prompt))
 
         try:
