@@ -152,13 +152,15 @@ class JiuwenClawCodeAdapter(JiuWenClawDeepAdapter):
         self._project_dir = self._instance_overrides.get(
             "project_dir", config.get("project_dir")
         )
-        # 优先使用 project_dir 作为 workspace（LspTool sandbox 校验需要）
+        # _workspace_dir: 项目上下文路径，用于 Workspace(root_path)、LspTool 等需要项目目录的组件。
+        # 优先使用 project_dir（LspTool sandbox 校验需要）。
         self._workspace_dir = (
             self._project_dir
             or config.get("workspace_dir")
             or str(get_agent_workspace_dir())
         )
-        # Coding memory 使用固定的 agent workspace 目录，不受 project_dir 影响
+        # _agent_workspace_dir: agent 数据存储路径，始终指向系统 workspace，
+        # 用于 coding_memory、todo文件等不应写入用户项目目录的数据。
         self._agent_workspace_dir = str(get_agent_workspace_dir())
 
         model = self._create_model(config_base)
@@ -584,32 +586,32 @@ class JiuwenClawCodeAdapter(JiuWenClawDeepAdapter):
         # ── 固定挂载：explore_agent（Code 模式核心子代理，始终启用）──
         if not self._subagent_list_has_name(subagents, "explore_agent"):
             explore_agent_cfg = subagents_cfg.get("explore_agent") if isinstance(subagents_cfg, dict) else None
-            subagents.append(
-                build_explore_agent_config(
-                    model=model,
-                    workspace=workspace,
-                    language=resolved_language,
-                    max_iterations=parse_int(
-                        explore_agent_cfg.get("max_iterations") if isinstance(explore_agent_cfg, dict) else None,
-                        react_cfg.get("max_iterations", 15),
-                    ),
-                )
+            explore_spec = build_explore_agent_config(
+                model=model,
+                workspace=workspace,
+                language=resolved_language,
+                max_iterations=parse_int(
+                    explore_agent_cfg.get("max_iterations") if isinstance(explore_agent_cfg, dict) else None,
+                    react_cfg.get("max_iterations", 15),
+                ),
             )
+            explore_spec.factory_kwargs = {"auto_create_workspace": False}
+            subagents.append(explore_spec)
 
         # ── 固定挂载：plan_agent（Code 模式核心子代理，始终启用）──
         if not self._subagent_list_has_name(subagents, "plan_agent"):
             plan_agent_cfg = subagents_cfg.get("plan_agent") if isinstance(subagents_cfg, dict) else None
-            subagents.append(
-                build_plan_agent_config(
-                    model=model,
-                    workspace=workspace,
-                    language=resolved_language,
-                    max_iterations=parse_int(
-                        plan_agent_cfg.get("max_iterations") if isinstance(plan_agent_cfg, dict) else None,
-                        react_cfg.get("max_iterations", 15),
-                    ),
-                )
+            plan_spec = build_plan_agent_config(
+                model=model,
+                workspace=workspace,
+                language=resolved_language,
+                max_iterations=parse_int(
+                    plan_agent_cfg.get("max_iterations") if isinstance(plan_agent_cfg, dict) else None,
+                    react_cfg.get("max_iterations", 15),
+                ),
             )
+            plan_spec.factory_kwargs = {"auto_create_workspace": False}
+            subagents.append(plan_spec)
 
         if isinstance(subagents_cfg, dict):
             # code_agent subagent — 按配置启用
@@ -622,18 +624,18 @@ class JiuwenClawCodeAdapter(JiuWenClawDeepAdapter):
                     # SysOperationRail is default rail for code_agent;
                     # passing rails overrides defaults, must include it explicitly
                     code_agent_rails = [SysOperationRail(), coding_memory_rail]
-                subagents.append(
-                    build_code_agent_config(
-                        model,
-                        workspace=workspace,
-                        language=resolved_language,
-                        rails=code_agent_rails,
-                        max_iterations=parse_int(
-                            code_agent_cfg.get("max_iterations"),
-                            react_cfg.get("max_iterations", 15),
-                        ),
-                    )
+                code_spec = build_code_agent_config(
+                    model,
+                    workspace=workspace,
+                    language=resolved_language,
+                    rails=code_agent_rails,
+                    max_iterations=parse_int(
+                        code_agent_cfg.get("max_iterations"),
+                        react_cfg.get("max_iterations", 15),
+                    ),
                 )
+                code_spec.factory_kwargs = {"auto_create_workspace": False}
+                subagents.append(code_spec)
 
             # browser_agent
             browser_agent_cfg = subagents_cfg.get("browser_agent")
@@ -653,17 +655,17 @@ class JiuwenClawCodeAdapter(JiuWenClawDeepAdapter):
                             "[JiuwenClawCodeAdapter] using browser.chrome_path for managed browser: %s",
                             chrome_path,
                         )
-                subagents.append(
-                    build_browser_agent_config(
-                        model,
-                        workspace=workspace,
-                        language=resolved_language,
-                        max_iterations=parse_int(
-                            browser_agent_cfg.get("max_iterations") if isinstance(browser_agent_cfg, dict) else None,
-                            react_cfg.get("max_iterations", 15),
-                        )
+                browser_spec = build_browser_agent_config(
+                    model,
+                    workspace=workspace,
+                    language=resolved_language,
+                    max_iterations=parse_int(
+                        browser_agent_cfg.get("max_iterations") if isinstance(browser_agent_cfg, dict) else None,
+                        react_cfg.get("max_iterations", 15),
                     )
                 )
+                browser_spec.factory_kwargs = {"auto_create_workspace": False}
+                subagents.append(browser_spec)
 
         return subagents or None, False
 
@@ -854,7 +856,7 @@ class JiuwenClawCodeAdapter(JiuWenClawDeepAdapter):
                 set_global_workspace_dir as _set_user_todo_workspace,
                 set_global_channel_id as _set_user_todo_channel_id,
             )
-            _set_user_todo_workspace(self._workspace_dir)
+            _set_user_todo_workspace(self._agent_workspace_dir)
             _set_user_todo_channel_id(self._runtime_cron_tool_context.channel_id)
             tools = _get_user_todo_tools()
             return tools

@@ -917,7 +917,7 @@ readonly request = async <T = Record<string, unknown>>(
     }, 80);
   };
 
-  /** cancel 成功后自动回退判断（与 Claude Code auto-restore 对齐）。
+  /** cancel 成功后自动回退判断。
 
    条件：
    1. 输入框为空（用户取消后没有输入新内容）

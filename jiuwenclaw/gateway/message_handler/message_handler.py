@@ -916,7 +916,7 @@ class MessageHandler(ABC):
     ) -> None:
         """受控通道 /rewind N：发送确认提示（两步确认第一步）。
 
-        与 Claude Code 对齐：IM 渠道 /rewind 是不可逆操作，需要确认后才执行。
+        IM 渠道 /rewind 是不可逆操作，需要确认后才执行。
         """
         state = self._get_or_create_channel_state(msg)
         target_sid = state.session_id

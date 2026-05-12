@@ -31,7 +31,7 @@ export interface RewindPayload {
   restore_errors?: { file: string; error: string }[];
 }
 
-/** 恢复选项类型，与 Claude Code MessageSelector 对齐 */
+/** 恢复选项类型 */
 type RestoreOption = "both" | "conversation" | "code" | "cancel";
 
 export function createRewindCommand(): SlashCommand {
@@ -135,7 +135,7 @@ export function createRewindCommand(): SlashCommand {
         // 判断目标 turn 是否有文件变更（决定是否显示 code 相关选项）
         const hasCodeChanges = selectedTurn.stats.filesChanged > 0;
 
-        // 构建恢复选项，与 Claude Code MessageSelector 对齐
+        // 构建恢复选项
         const restoreOptions: { label: string; description: string; value: RestoreOption }[] = [
           {
             label: "Restore conversation and code",
@@ -163,7 +163,7 @@ export function createRewindCommand(): SlashCommand {
           value: "cancel",
         });
 
-        // 局限提示（与 Claude Code "Rewinding does not affect files edited manually or via bash" 对齐）
+        // 局限提示
         const limitationNote =
           "\nNote: Rewinding does not affect files edited manually or via bash commands.";
 
