@@ -21,13 +21,19 @@ class _InterruptHarness(JiuWenClaw):
 
 
 class _FakeTeamManager:
-    def __init__(self, pause_result: bool = True) -> None:
+    def __init__(self, pause_result: bool = True, cancel_result: bool = True) -> None:
         self.pause_result = pause_result
-        self.calls: list[tuple[str, str]] = []
+        self.cancel_result = cancel_result
+        self.pause_calls: list[tuple[str, str]] = []
+        self.cancel_calls: list[tuple[str, str]] = []
 
     async def pause_session_runtime(self, session_id: str, reason: str = "") -> bool:
-        self.calls.append((session_id, reason))
+        self.pause_calls.append((session_id, reason))
         return self.pause_result
+
+    async def cancel_session_runtime(self, session_id: str, reason: str = "") -> bool:
+        self.cancel_calls.append((session_id, reason))
+        return self.cancel_result
 
 
 def _build_team_interrupt_request(
@@ -90,7 +96,12 @@ async def test_team_interrupt_pause_like_intents_use_team_manager(
         "message": expected_message,
     }
     assert cancelled == [("team-session-1", f"interrupt(intent={intent}): ")]
-    assert fake_manager.calls == [("team-session-1", f"interrupt(intent={intent}): ")]
+    if intent == "pause":
+        assert fake_manager.pause_calls == [("team-session-1", f"interrupt(intent={intent}): ")]
+        assert fake_manager.cancel_calls == []
+    else:
+        assert fake_manager.cancel_calls == [("team-session-1", f"interrupt(intent={intent}): ")]
+        assert fake_manager.pause_calls == []
 
 
 @pytest.mark.asyncio
@@ -121,7 +132,8 @@ async def test_team_interrupt_resume_is_ack_only(monkeypatch: pytest.MonkeyPatch
         "message": "团队暂停后，直接发送下一条消息即可继续。",
     }
     assert cancelled == []
-    assert fake_manager.calls == []
+    assert fake_manager.pause_calls == []
+    assert fake_manager.cancel_calls == []
 
 
 @pytest.mark.asyncio
@@ -156,4 +168,5 @@ async def test_code_team_interrupt_uses_team_manager_without_team_flag(
         "message": "团队已暂停",
     }
     assert cancelled == [("team-session-1", "interrupt(intent=pause): ")]
-    assert fake_manager.calls == [("team-session-1", "interrupt(intent=pause): ")]
+    assert fake_manager.pause_calls == [("team-session-1", "interrupt(intent=pause): ")]
+    assert fake_manager.cancel_calls == []

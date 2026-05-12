@@ -1038,48 +1038,7 @@ class TeamManager:
             await self._destroy_team(stale_session_id)
 
     async def _destroy_team(self, session_id: str) -> bool:
-        watcher_task = self._team_evolution_watchers.pop(session_id, None)
-        if watcher_task and not watcher_task.done():
-            watcher_task.cancel()
-            try:
-                await watcher_task
-            except asyncio.CancelledError:
-                pass
-            except Exception as exc:
-                logger.warning(
-                    "[TeamManager] evolution watcher stop failed: session_id=%s error=%s",
-                    session_id,
-                    exc,
-                )
-
-        stream_task = self._stream_tasks.pop(session_id, None)
-        if stream_task and not stream_task.done():
-            stream_task.cancel()
-            try:
-                await stream_task
-            except asyncio.CancelledError:
-                pass
-            except Exception as exc:
-                logger.warning(
-                    "[TeamManager] stream stop failed: session_id=%s error=%s",
-                    session_id,
-                    exc,
-                )
-
-        monitor_handler = self._team_monitors.pop(session_id, None)
-        if monitor_handler is not None:
-            try:
-                await monitor_handler.stop()
-            except Exception as exc:
-                logger.warning(
-                    "[TeamManager] monitor stop failed: session_id=%s error=%s",
-                    session_id,
-                    exc,
-                )
-
-        # Clean up sync state for the team skill rail.
-        self._team_skill_rails.pop(session_id, None)
-        self._team_skill_sync_targets.pop(session_id, None)
+        await self._cleanup_runtime_locals(session_id)
 
         team_agent = self._team_agents.pop(session_id, None)
         cleaned = False
@@ -1215,11 +1174,11 @@ class TeamManager:
         self._team_skill_sync_targets.pop(session_id, None)
 
     async def terminate_session_runtime(self, session_id: str, reason: str = "") -> bool:
-        """Pause-like teardown for the current team session runtime.
+        """Stop-like teardown for the current team session runtime.
 
         This stops the foreground stream/monitor owned by claw and then asks the
-        Runner-owned team runtime to enter the paused state. It is used for both
-        explicit team pause and protocol-compatible team cancel semantics.
+        Runner-owned team runtime to enter the stop state. Used for explicit
+        team stop so the same session can resume later.
         """
         async with self._lock:
             has_stream_task = session_id in self._stream_tasks
@@ -1237,71 +1196,108 @@ class TeamManager:
                 reason,
                 session_id,
             )
+
+            # Resolve team_name early before cleanup, from active/pending/metadata
+            team_name = self._resolve_session_team_name(session_id)
+
+            # Stop Runner-owned runtime first before cleaning locals
+            # to avoid gate/teardown races
+            if team_name:
+                try:
+                    await Runner.stop_agent_team(team_name=team_name, session_id=session_id)
+                except Exception as exc:
+                    logger.warning(
+                        "[TeamManager] runner stop failed: session_id=%s error=%s",
+                        session_id,
+                        exc,
+                    )
+
             if has_local_team_runtime:
                 cleaned = await self._destroy_team(session_id)
             else:
                 cleaned = False
-                watcher_task = self._team_evolution_watchers.pop(session_id, None)
-                if watcher_task and not watcher_task.done():
-                    watcher_task.cancel()
-                    try:
-                        await watcher_task
-                    except asyncio.CancelledError:
-                        pass
-                    except Exception as exc:
-                        logger.warning(
-                            "[TeamManager] evolution watcher stop failed: session_id=%s error=%s",
-                            session_id,
-                            exc,
-                        )
+                await self._cleanup_runtime_locals(session_id)
 
-                stream_task = self._stream_tasks.pop(session_id, None)
-                if stream_task and not stream_task.done():
-                    stream_task.cancel()
-                    try:
-                        await stream_task
-                    except asyncio.CancelledError:
-                        pass
-                    except Exception as exc:
-                        logger.warning(
-                            "[TeamManager] stream stop failed: session_id=%s error=%s",
-                            session_id,
-                            exc,
-                        )
-
-                monitor_handler = self._team_monitors.pop(session_id, None)
-                if monitor_handler is not None:
-                    try:
-                        await monitor_handler.stop()
-                    except Exception as exc:
-                        logger.warning(
-                            "[TeamManager] monitor stop failed: session_id=%s error=%s",
-                            session_id,
-                            exc,
-                        )
-
-                self._team_skill_rails.pop(session_id, None)
-                self._team_skill_sync_targets.pop(session_id, None)
-
-                if self._active_session_id == session_id:
-                    try:
-                        team_name = self._resolve_session_team_name(session_id)
-                        if team_name:
-                            await Runner.pause_agent_team(team_name=team_name, session_id=session_id)
-                    except Exception as exc:
-                        logger.warning(
-                            "[TeamManager] runner pause failed: session_id=%s error=%s",
-                            session_id,
-                            exc,
-                        )
-                    self.clear_active_runtime(session_id)
-
-                self.clear_pending_runtime(session_id)
+            self.clear_active_runtime(session_id)
+            self.clear_pending_runtime(session_id)
         logger.info(
             "[TeamManager] %steam session terminated: session_id=%s cleaned=%s",
             reason,
             session_id,
             cleaned,
+        )
+        return True
+
+    async def cancel_session_runtime(self, session_id: str, reason: str = "") -> bool:
+        """Cancel the current team session runtime, removing it from Runner pool.
+
+        Unlike pause/terminate, this fully stops the Runner-owned team runtime
+        so it is removed from the pool. This prevents subsequent sessions from
+        hitting "present in pool but missing from DB" reject_inconsistent errors.
+
+        Used for team cancel intent where the session should not be resumed.
+        """
+        async with self._lock:
+            has_stream_task = session_id in self._stream_tasks
+            has_local_team_runtime = self._has_local_team_runtime(session_id)
+            has_team_runtime = (
+                has_local_team_runtime
+                or session_id in self._team_monitors
+                or self._active_session_id == session_id
+                or self._pending_session_id == session_id
+            )
+            if not has_stream_task and not has_team_runtime:
+                return False
+
+            logger.info(
+                "[TeamManager] %s cancel team session runtime: session_id=%s",
+                reason,
+                session_id,
+            )
+
+            # Resolve team_name early before cleanup, from active/pending/metadata
+            team_name = self._resolve_session_team_name(session_id)
+
+            # Stop Runner-owned runtime first before cancelling stream task
+            # to avoid gate/teardown races and ensure pool removal
+            runner_stopped = False
+            if team_name:
+                try:
+                    runner_stopped = await Runner.stop_agent_team(
+                        team_name=team_name,
+                        session_id=session_id,
+                    )
+                    logger.info(
+                        "[TeamManager] Runner pool entry removed: session_id=%s team_name=%s stopped=%s",
+                        session_id,
+                        team_name,
+                        runner_stopped,
+                    )
+                except Exception as exc:
+                    logger.warning(
+                        "[TeamManager] runner stop failed: session_id=%s team_name=%s error=%s",
+                        session_id,
+                        team_name,
+                        exc,
+                    )
+
+            if has_local_team_runtime:
+                cleaned = await self._destroy_team(session_id)
+            else:
+                cleaned = False
+
+            # Cleanup locals (watcher, stream, monitor, skill rails)
+            await self._cleanup_runtime_locals(session_id)
+
+            self.clear_active_runtime(session_id)
+            self.clear_pending_runtime(session_id)
+
+        logger.info(
+            "[TeamManager] %steam session cancelled: session_id=%s cleaned=%s runner_stopped=%s",
+            reason,
+            session_id,
+            cleaned,
+            runner_stopped,
         )
         return True
 

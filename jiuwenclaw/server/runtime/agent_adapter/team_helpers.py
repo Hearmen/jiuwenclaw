@@ -739,6 +739,7 @@ async def _consume_stream_with_query(
     initial_query: str,
 ) -> None:
     """Consume the team stream in the background and broadcast parsed events."""
+    received_chunks = 0
     try:
         logger.info(
             "[TeamHelpers] stream started: channel_id=%s session_id=%s",
@@ -750,6 +751,7 @@ async def _consume_stream_with_query(
             inputs={"query": initial_query},
             session=session_id,
         ):
+            received_chunks += 1
             parsed = parse_stream_chunk(chunk)
             if parsed is not None:
                 if parsed.get("event_type") == "team.runtime_ready":
@@ -770,11 +772,28 @@ async def _consume_stream_with_query(
                     )
                 _broadcast_event(channel_id, session_id, parsed)
 
-        logger.warning(
-            "[TeamHelpers] stream ended unexpectedly: channel_id=%s session_id=%s",
-            _resolve_channel_id(channel_id),
-            session_id,
-        )
+        # If stream ended without any chunks, broadcast an error event
+        if received_chunks == 0:
+            logger.warning(
+                "[TeamHelpers] stream ended with no output: channel_id=%s session_id=%s",
+                _resolve_channel_id(channel_id),
+                session_id,
+            )
+            _broadcast_event(
+                channel_id,
+                session_id,
+                {
+                    "event_type": "team.error",
+                    "error": "Team stream ended with no output (possible pool/DB inconsistency or internal error)",
+                    "session_id": session_id,
+                },
+            )
+        else:
+            logger.warning(
+                "[TeamHelpers] stream ended unexpectedly: channel_id=%s session_id=%s",
+                _resolve_channel_id(channel_id),
+                session_id,
+            )
     except asyncio.CancelledError:
         logger.info(
             "[TeamHelpers] stream cancelled: channel_id=%s session_id=%s",

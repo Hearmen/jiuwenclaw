@@ -559,11 +559,13 @@ class JiuWenClaw:
     ) -> AgentResponse:
         """Handle interrupt requests for Team mode.
 
-        Team runtime is persistent and owned by openjiuwen. For team sessions:
-        - pause/cancel both stop the current foreground stream and park the runtime
-          in a paused state so a later `chat.send` can resume the same session.
+        Team runtime is persistent and owned by openjiuwen Runner pool. For team sessions:
+        - pause stops the foreground stream and parks the runtime in paused state
+          via Runner.pause_agent_team, allowing same-session resume.
+        - cancel removes the runtime from Runner pool via Runner.stop_agent_team,
+          preventing pool/DB inconsistency for subsequent sessions.
         - resume is not a first-class runtime action. Users should send the next
-          message directly to continue the paused session.
+          message directly to continue a paused session.
         """
         from jiuwenclaw.agents.harness.team import get_team_manager
 
@@ -580,15 +582,18 @@ class JiuWenClaw:
 
         if intent in {"pause", "cancel"}:
             await self._session_manager.cancel_session_task(session_id, reason)
-            paused = await team_manager.pause_session_runtime(session_id, reason=reason)
             if intent == "pause":
+                paused = await team_manager.pause_session_runtime(session_id, reason=reason)
                 message = "团队已暂停" if paused else "当前没有可暂停的团队任务"
             else:
-                message = "团队当前执行已结束" if paused else "当前没有可取消的团队任务"
+                # Use cancel_session_runtime to remove from Runner pool
+                cancelled = await team_manager.cancel_session_runtime(session_id, reason=reason)
+                message = "团队当前执行已结束" if cancelled else "当前没有可取消的团队任务"
+            success = paused if intent == "pause" else cancelled
             return self._build_interrupt_result_response(
                 request,
                 intent=intent,
-                success=paused,
+                success=success,
                 message=message,
             )
 
