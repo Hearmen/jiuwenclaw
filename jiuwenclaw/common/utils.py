@@ -156,6 +156,8 @@ def _log_component_from_logger_name(name: str) -> str:
         return "channel"
     if name.startswith("jiuwenclaw.agents.harness.common.rails.permissions"):
         return "permissions"
+    if name.startswith("openjiuwen.harness.security") or name.startswith("openjiuwen.harness.rails.security"):
+        return "permissions"
     if name.startswith("jiuwenclaw.agents") or name.startswith("jiuwenclaw.server"):
         return "agent_server"
     return "gateway"

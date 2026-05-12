@@ -16,6 +16,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import logging
+import logging.handlers
 import os
 import sys
 
@@ -53,6 +54,64 @@ if _logging_yaml.exists():
 else:
     for _lg in LogManager.get_all_loggers().values():
         _lg.set_level(logging.CRITICAL)
+
+    from jiuwenclaw.common.utils import get_logs_dir
+    _logs_root = get_logs_dir()
+    _logs_root.mkdir(parents=True, exist_ok=True)
+    _perm_fmt = logging.Formatter(
+        "%(asctime)s.%(msecs)03d %(levelname)s %(name)s: %(message)s",
+        datefmt="%Y-%m-%d %H:%M:%S",
+    )
+    _perm_fh = logging.handlers.RotatingFileHandler(
+        _logs_root / "permissions.log",
+        maxBytes=20 * 1024 * 1024,
+        backupCount=5,
+        encoding="utf-8",
+    )
+    _perm_fh.setLevel(logging.INFO)
+    _perm_fh.setFormatter(_perm_fmt)
+    _perm_sh = logging.StreamHandler()
+    _perm_sh.setLevel(logging.INFO)
+    _perm_sh.setFormatter(_perm_fmt)
+
+    _sec_logger = logging.getLogger("openjiuwen.harness.security")
+    _sec_logger.setLevel(logging.INFO)
+    if not _sec_logger.handlers:
+        _sec_logger.addHandler(_perm_fh)
+        _sec_logger.addHandler(_perm_sh)
+    _sec_logger.propagate = False
+
+    _common_logger = logging.getLogger("common")
+    _common_logger.setLevel(logging.INFO)
+
+    class _PermissionEngineFilter(logging.Filter):
+        def filter(self, record: logging.LogRecord) -> bool:
+            return "[PermissionEngine]" in record.getMessage()
+
+    _perm_filter = _PermissionEngineFilter()
+    _common_fh = logging.handlers.RotatingFileHandler(
+        _logs_root / "permissions.log",
+        maxBytes=20 * 1024 * 1024,
+        backupCount=5,
+        encoding="utf-8",
+    )
+    _common_fh.setLevel(logging.INFO)
+    _common_fh.setFormatter(_perm_fmt)
+    _common_fh.addFilter(_perm_filter)
+    _common_sh = logging.StreamHandler()
+    _common_sh.setLevel(logging.INFO)
+    _common_sh.setFormatter(_perm_fmt)
+    _common_sh.addFilter(_perm_filter)
+    _common_logger.addHandler(_common_fh)
+    _common_logger.addHandler(_common_sh)
+    _common_logger.propagate = False
+
+    _perm_ns_logger = logging.getLogger("jiuwenclaw.agents.harness.common.rails.permissions")
+    _perm_ns_logger.setLevel(logging.INFO)
+    if not _perm_ns_logger.handlers:
+        _perm_ns_logger.addHandler(_perm_fh)
+        _perm_ns_logger.addHandler(_perm_sh)
+    _perm_ns_logger.propagate = False
 
 # Load env from user workspace config/.env
 load_dotenv(dotenv_path=get_env_file(), override=True)
