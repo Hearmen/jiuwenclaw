@@ -40,7 +40,7 @@
 | `/new_session` | 新建会话（仅 IM 生效） |
 | `/mode` | 模式切换（支持一级入口与直达写法） |
 | `/switch` | 在当前模式族内切换二级模式 |
-| `/skills` | 技能管理（列表、安装、导入、卸载、市场源） |
+| `/skills` | 技能管理（列表、安装、卸载、市场源） |
 | `/model` | 模型查看、新增、切换（见下文） |
 | `/mcp` | MCP 服务管理（见下文） |
 | `/diff` | 查看当前会话按轮次改动（见下文） |
@@ -291,15 +291,14 @@
 
 ### `/skills`（技能管理）
 
-管理技能的完整生命周期：列表查看、安装、导入、卸载以及市场源管理。
+管理技能的完整生命周期：列表查看、安装、卸载以及市场源管理。
 
 #### 子命令
 
 | 命令 | 说明 |
 |---|---|
 | `/skills` 或 `/skills list` | 列出技能（分两组：已安装 / 可安装） |
-| `/skills install <skill>` 或 `/skills install <skill@marketplace>` | 安装技能：内置技能可直接用名称，市场技能需用 `<名称>@<市场源>` 格式 |
-| `/skills import <path>` | 从本地路径或远程 URL 导入自定义技能 |
+| `/skills install <skill>` 或 `/skills install <skill@marketplace>` 或 `/skills install <path_or_url>` | 安装技能：内置技能可直接用名称，市场技能需用 `<名称>@<市场源>` 格式，本地路径或远程 URL 可直接传入路径 |
 | `/skills uninstall <name>` | 按名称卸载技能 |
 | `/skills marketplace` 或 `/skills marketplace list` | 列出市场源（名称、URL、启用状态、最后更新时间） |
 | `/skills marketplace add <name> <url>` | 添加新的市场源 |
@@ -313,7 +312,7 @@
 - **内置技能（Builtin skill）**：随软件打包发布的预置技能，安装时可直接使用技能名称（如 `/skills install advanced-daily-report`），无需指定市场源。
 - **市场源（Marketplace source）**：托管可用技能的远程仓库（通常为 Git URL），每个源包含名称、URL 和启用/禁用状态。
 - **规格标识（Spec）**：从市场源安装时使用的标识格式 `<技能名>@<市场源名>`；内置技能安装时可不带 `@`，自动识别为 `@builtin`。
-- **本地导入（Import）**：将本地目录（需包含 `SKILL.md`）或远程归档 URL 导入为自定义技能。
+- **本地安装（Local install）**：通过 `/skills install <path>` 将本地目录（需包含 `SKILL.md`）或远程归档 URL 安装为自定义技能；路径/URL 会自动识别并走本地导入流程。
 - **安装位置（Install location）**：技能安装后的存储目录（`~/.jiuwenclaw/agent/jiuwenclaw_workspace/skills/`）。
 - **来源标签（Source tag）**：列表中每项技能标注来源，`[builtin]` 表示内置、`[local]` 表示本地导入、`[project]` 或市场源名表示其他来源。
 
@@ -322,7 +321,7 @@
 `/skills list` 返回的技能列表分为两组：
 
 1. **已安装（Installed）**：已存在于用户 skills 目录的技能，可直接使用。
-2. **可安装（Available to install）**：内置但尚未安装的技能，以及市场源中可安装的技能，需先执行 `/skills install` 或 `/skills import` 才能使用。
+2. **可安装（Available to install）**：内置但尚未安装的技能，以及市场源中可安装的技能，需先执行 `/skills install` 才能使用。
 
 #### IM 与 TUI 的差异
 
@@ -333,12 +332,13 @@
 | IM（飞书等受控通道） | 整行精确匹配 `/skills list`（会先做空白规范化） | Gateway 拦截控制消息并请求 `skills.list`，结果以 IM 通知/卡片等形式展示；单独输入 `/skills` 不走该控制路径。 |
 | TUI（CLI 内置） | 输入 `/skills` | 本地执行内置命令并调用 `skills.list`，在会话内以分组列表视图展示（标题 `Installed Skills` 与 `Available Skills`）；无数据时提示 `No installed skills`。 |
 
-对于其他子命令（`/skills install`、`/skills import`、`/skills uninstall`、`/skills marketplace add/remove/toggle`、`/skills use`），Gateway **不会拦截**——在 IM 侧输入时会被当作普通聊天消息发送给 Agent。这些子命令仅在 TUI（CLI 内置）和 Web UI 路径下可用，通过 RPC 直连 AgentServer。
+对于其他子命令（`/skills install`、`/skills uninstall`、`/skills marketplace add/remove/toggle`、`/skills use`），Gateway **不会拦截**——在 IM 侧输入时会被当作普通聊天消息发送给 Agent。这些子命令仅在 TUI（CLI 内置）和 Web UI 路径下可用，通过 RPC 直连 AgentServer。
 
 #### 备注
 
-- **超时**：`install`、`import`、`uninstall`、`marketplace toggle` 请求在 TUI 侧有 120 秒超时；其余子命令无显式超时设置。
+- **超时**：`install`、`uninstall`、`marketplace toggle` 请求在 TUI 侧有 120 秒超时；其余子命令无显式超时设置。
 - **内置技能自动识别**：使用 `/skills install <skill>` 安装时，若技能名称不带 `@`，系统会自动检查是否为内置技能并重定向到内置安装流程；若不是内置技能则返回格式提示。
+- **路径/URL 自动识别**：使用 `/skills install <path>` 安装时，若参数为本地路径（如 `/path/to/skill`、`C:\skill`）或远程 URL（`https://...`），系统自动走本地导入流程。
 - **缓存清理**：`marketplace remove` 发送 `{ name, remove_cache: true }` 以同时清理该源的本地缓存。
 - **自动刷新**：`marketplace add`、`marketplace remove`、`marketplace toggle` 在操作成功后会自动重新列出市场源。
 - **离线处理**：`/skills use` 会检查连接状态；离线时显示 `offline: waiting for reconnect before sending /skills use request`。
@@ -350,8 +350,8 @@
 - `/skills install advanced-daily-report` — 安装内置技能（裸名自动识别）
 - `/skills install advanced-daily-report@builtin` — 安装内置技能（显式指定）
 - `/skills install my-skill@marketplace` — 从市场源安装技能
-- `/skills import /path/to/my-skill` — 从本地目录导入技能
-- `/skills import https://example.com/skill.zip` — 从远程 URL 导入技能
+- `/skills install /path/to/my-skill` — 从本地目录安装技能
+- `/skills install https://example.com/skill.zip` — 从远程 URL 安装技能
 - `/skills uninstall my-skill` — 卸载技能
 - `/skills marketplace list` — 列出市场源
 - `/skills marketplace add community https://github.com/user/skills-repo` — 添加名为"community"的市场源

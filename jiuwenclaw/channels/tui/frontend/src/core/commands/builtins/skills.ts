@@ -84,9 +84,9 @@ async function listSkills(ctx: import("../types.js").CommandContext): Promise<vo
 export function createSkillsCommand(): SlashCommand {
   return {
     name: "skills",
-    description: "Manage skills (list, install, import, uninstall, marketplace, use)",
-    usage: "/skills [list|install|import|uninstall|marketplace|use]",
-    example: "/skills list",
+    description: "Manage skills (list, install, uninstall, marketplace, use)",
+    usage: "/skills [list|install|uninstall|marketplace|use]",
+    example: "/skills install my-skill  |  /skills install /path/to/skill",
     kind: CommandKind.BUILT_IN,
     action: async (ctx) => {
       await listSkills(ctx);
@@ -105,17 +105,40 @@ export function createSkillsCommand(): SlashCommand {
       },
       {
         name: "install",
-        description: "Install a skill (builtin name or plugin@marketplace)",
-        usage: "/skills install <skill> or <skill@marketplace>",
-        example: "/skills install my-skill",
+        description: "Install a skill (builtin name, plugin@marketplace, or local path/URL)",
+        usage: "/skills install <skill> | <skill@marketplace> | <path_or_url>",
+        example: "/skills install my-skill  |  /skills install /path/to/skill",
         kind: CommandKind.BUILT_IN,
         takesArgs: true,
         action: async (ctx, args) => {
           const spec = args.trim();
           if (!spec) {
-            ctx.addItem(makeItem(ctx.sessionId, "error", "Usage: /skills install <skill> or <skill@marketplace>"));
+            ctx.addItem(makeItem(ctx.sessionId, "error", "Usage: /skills install <skill> | <skill@marketplace> | <path_or_url>"));
             return;
           }
+
+          // Detect local path / URL — delegate to import_local
+          const isLocalPath = /^([A-Za-z]:[\\/]|\/|\.\/|\.\.\/)/.test(spec);
+          const isUrl = /^https?:\/\/.+/i.test(spec);
+          if (isLocalPath || isUrl) {
+            ctx.addItem(makeItem(ctx.sessionId, "info", `Importing skill from: ${spec}`));
+            const payload = await ctx.request<{ success?: boolean; detail?: string; skill?: { name?: string } }>(
+              "skills.import_local",
+              { path: spec, force: false },
+              120_000,
+            );
+            if (payload.success) {
+              const skillName = payload.skill?.name || spec;
+              ctx.addItem(makeItem(ctx.sessionId, "info", `Skill imported: ${skillName}`));
+            } else {
+              ctx.addItem(
+                makeItem(ctx.sessionId, "error", payload.detail || `Import failed: ${spec}`),
+              );
+            }
+            return;
+          }
+
+          // Marketplace / builtin install flow
           let finalSpec = spec;
           // Bare skill name without @ — auto-detect if it's a builtin
           if (!spec.includes("@")) {
@@ -174,35 +197,6 @@ export function createSkillsCommand(): SlashCommand {
           } else {
             ctx.addItem(
               makeItem(ctx.sessionId, "error", payload.detail || `Uninstall failed: ${name}`),
-            );
-          }
-        },
-      },
-      {
-        name: "import",
-        description: "Import a skill from local path or remote URL",
-        usage: "/skills import <path>",
-        example: "/skills import /path/to/my-skill",
-        kind: CommandKind.BUILT_IN,
-        takesArgs: true,
-        action: async (ctx, args) => {
-          const path = args.trim();
-          if (!path) {
-            ctx.addItem(makeItem(ctx.sessionId, "error", "Usage: /skills import <path_or_url>"));
-            return;
-          }
-          ctx.addItem(makeItem(ctx.sessionId, "info", `Importing skill from: ${path}`));
-          const payload = await ctx.request<{ success?: boolean; detail?: string; skill?: { name?: string } }>(
-            "skills.import_local",
-            { path, force: false },
-            120_000,
-          );
-          if (payload.success) {
-            const skillName = payload.skill?.name || path;
-            ctx.addItem(makeItem(ctx.sessionId, "info", `Skill imported: ${skillName}`));
-          } else {
-            ctx.addItem(
-              makeItem(ctx.sessionId, "error", payload.detail || `Import failed: ${path}`),
             );
           }
         },
