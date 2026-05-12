@@ -1,8 +1,94 @@
-import { useEffect, useLayoutEffect, useMemo, useState, type ReactNode } from "react";
+import { useEffect, useLayoutEffect, useMemo, useState, useRef, type ReactNode } from "react";
 import { useTranslation } from 'react-i18next';
 import { useChatStore, useSessionStore } from '../../stores';
 import type { ModelEntry } from '../../types';
+import { webRequest } from '../../services/webClient';
 import { PermissionsToolsEditor } from "./PermissionsToolsEditor";
+
+function MultiSelectDropdown({
+  options,
+  selected,
+  onChange,
+  placeholder,
+}: {
+  options: string[];
+  selected: string[];
+  onChange: (selected: string[]) => void;
+  placeholder?: string;
+}) {
+  const [isOpen, setIsOpen] = useState(false);
+  const containerRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const handleClickOutside = (e: MouseEvent) => {
+      if (containerRef.current && !containerRef.current.contains(e.target as Node)) {
+        setIsOpen(false);
+      }
+    };
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, []);
+
+  const toggleOption = (option: string) => {
+    if (selected.includes(option)) {
+      onChange(selected.filter((s) => s !== option));
+    } else {
+      onChange([...selected, option]);
+    }
+  };
+
+  const removeOption = (e: React.MouseEvent, option: string) => {
+    e.stopPropagation();
+    onChange(selected.filter((s) => s !== option));
+  };
+
+  return (
+    <div ref={containerRef} className="relative flex-1">
+      <div
+        onClick={() => setIsOpen(!isOpen)}
+        className="min-h-[28px] rounded border border-border bg-bg px-2 py-1 cursor-pointer flex flex-wrap gap-1 items-center text-xs"
+      >
+        {selected.length === 0 ? (
+          <span className="text-text-muted">{placeholder || "Select..."}</span>
+        ) : (
+          selected.map((s) => (
+            <span
+              key={s}
+              className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded border border-accent/30 bg-accent/10 text-accent text-[10px]"
+            >
+              {s}
+              <button
+                type="button"
+                onClick={(e) => removeOption(e, s)}
+                className="hover:text-danger ml-1"
+              >
+                ×
+              </button>
+            </span>
+          ))
+        )}
+      </div>
+      {isOpen && options.length > 0 && (
+        <div className="absolute z-10 mt-1 w-full max-h-48 overflow-auto rounded border border-border bg-card shadow-lg">
+          {options.map((option) => (
+            <label
+              key={option}
+              className="flex items-center gap-2 px-2 py-1.5 hover:bg-secondary/50 cursor-pointer text-xs"
+            >
+              <input
+                type="checkbox"
+                checked={selected.includes(option)}
+                onChange={() => toggleOption(option)}
+                className="rounded border-border"
+              />
+              <span className="text-text">{option}</span>
+            </label>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
 
 interface AgentModel {
   provider: string;
@@ -991,12 +1077,18 @@ function MultiModelSection({
 function MultiAgentSection({
   agents,
   onAgentsChange,
+  teams,
   availableModels,
+  installedSkills,
+  onDeleteAgent,
   t,
 }: {
   agents: AgentEntry[];
   onAgentsChange: (agents: AgentEntry[]) => void;
+  teams: TeamEntry[];
   availableModels: ModelEntry[];
+  installedSkills?: string[];
+  onDeleteAgent?: (idx: number, agentName: string, references: string[]) => void;
   t: (key: string, options?: Record<string, unknown>) => string;
 }) {
   const [expandedIdx, setExpandedIdx] = useState<number | null>(null);
@@ -1008,10 +1100,46 @@ function MultiAgentSection({
     max_iterations: 200,
     completion_timeout: 600,
   });
-  // 临时保存 skills 输入框的原始值，支持中英文逗号
-  const [skillsInputValues, setSkillsInputValues] = useState<Record<number, string>>({});
-  // 新建 agent 时的 skills 临时输入值
-  const [newAgentSkillsInput, setNewAgentSkillsInput] = useState("");
+
+  // 检查 agent 是否被 team 引用
+  const getAgentReferences = (agentName: string): string[] => {
+    const references: string[] = [];
+    for (const team of teams) {
+      if (team.leader?.agent_key === agentName) {
+        references.push(team.team_name || t("config.team.untitled"));
+      }
+      if (team.teammate?.agent_key === agentName) {
+        references.push(team.team_name || t("config.team.untitled"));
+      }
+      for (const member of team.predefined_members || []) {
+        if (member.agent_key === agentName) {
+          references.push(team.team_name || t("config.team.untitled"));
+        }
+      }
+    }
+    return references;
+  };
+
+  const handleRemoveAgent = (idx: number) => {
+    const agentName = agents[idx]?.name;
+    if (!agentName) return;
+    const references = getAgentReferences(agentName);
+    if (onDeleteAgent) {
+      onDeleteAgent(idx, agentName, references);
+    } else {
+      confirmDelete(idx);
+    }
+  };
+
+  const confirmDelete = (idx: number) => {
+    onAgentsChange(agents.filter((_, i) => i !== idx));
+    setExpandedIdx((prev) => {
+      if (prev === null) return null;
+      if (idx === prev) return null;
+      if (idx < prev) return prev - 1;
+      return prev;
+    });
+  };
 
   const updateAgentField = (idx: number, field: keyof AgentEntry, value: string | number) => {
     const copy = [...agents];
@@ -1049,14 +1177,8 @@ function MultiAgentSection({
     onAgentsChange(copy);
   };
 
-  const removeAgent = (idx: number) => {
-    onAgentsChange(agents.filter((_, i) => i !== idx));
-    setExpandedIdx((prev) => {
-      if (prev === null) return null;
-      if (idx === prev) return null;
-      if (idx < prev) return prev - 1;
-      return prev;
-    });
+  const handleRemoveAgentClick = (idx: number) => {
+    handleRemoveAgent(idx);
   };
 
   const handleAddNew = () => {
@@ -1102,7 +1224,7 @@ function MultiAgentSection({
               <div className="flex items-center gap-1 ml-2">
                 <button
                   type="button"
-                  onClick={() => removeAgent(idx)}
+                  onClick={() => handleRemoveAgentClick(idx)}
                   className="text-[11px] px-2 py-0.5 rounded border border-border hover:bg-danger-subtle hover:text-danger disabled:opacity-40"
                 >
                   {t("config.agentList.removeAgent")}
@@ -1146,23 +1268,14 @@ function MultiAgentSection({
                   <div key={field} className="flex items-center gap-2 text-xs">
                     <label className="w-28 text-text-muted shrink-0">{getAgentFieldLabel(field)}</label>
                     {field === "skills" ? (
-                      <input
-                        type="text"
-                        value={skillsInputValues[idx] ?? (agent.skills || []).join(", ")}
-                        onChange={(e) => {
-                          setSkillsInputValues((prev) => ({ ...prev, [idx]: e.target.value }));
-                        }}
-                        onBlur={(e) => {
+                      <MultiSelectDropdown
+                        options={installedSkills || []}
+                        selected={agent.skills || []}
+                        onChange={(selected) => {
                           const copy = [...agents];
-                          copy[idx] = { ...copy[idx], skills: e.target.value.split(/[,，]/).map((s) => s.trim()).filter(Boolean) };
+                          copy[idx] = { ...copy[idx], skills: selected };
                           onAgentsChange(copy);
-                          setSkillsInputValues((prev) => {
-                            const newValues = { ...prev };
-                            delete newValues[idx];
-                            return newValues;
-                          });
                         }}
-                        className="flex-1 rounded border border-border bg-bg px-2 py-1 text-text text-xs"
                         placeholder={t("config.keys.agentSkillsPlaceholder")}
                       />
                     ) : field === "max_iterations" ? (
@@ -1188,6 +1301,7 @@ function MultiAgentSection({
                         type="text"
                         value={(agent[field] as string) ?? ""}
                         onChange={(e) => updateAgentField(idx, field, e.target.value)}
+                        maxLength={field === "name" ? 64 : undefined}
                         className="flex-1 rounded border border-border bg-bg px-2 py-1 text-text text-xs"
                       />
                     )}
@@ -1259,15 +1373,10 @@ function MultiAgentSection({
             <div key={field} className="flex items-center gap-2 text-xs">
               <label className="w-28 text-text-muted shrink-0">{getAgentFieldLabel(field)}</label>
               {field === "skills" ? (
-                <input
-                  type="text"
-                  value={newAgentSkillsInput}
-                  onChange={(e) => setNewAgentSkillsInput(e.target.value)}
-                  onBlur={(e) => {
-                    setNewAgent((p) => ({ ...p, skills: e.target.value.split(/[,，]/).map((s) => s.trim()).filter(Boolean) }));
-                    setNewAgentSkillsInput("");
-                  }}
-                  className="flex-1 rounded border border-border bg-bg px-2 py-1 text-text text-xs"
+                <MultiSelectDropdown
+                  options={installedSkills || []}
+                  selected={newAgent.skills || []}
+                  onChange={(selected) => setNewAgent((p) => ({ ...p, skills: selected }))}
                   placeholder={t("config.keys.agentSkillsPlaceholder")}
                 />
               ) : field === "max_iterations" ? (
@@ -1293,6 +1402,7 @@ function MultiAgentSection({
                   type="text"
                   value={newAgent[field] as string}
                   onChange={(e) => setNewAgent((p) => ({ ...p, [field]: e.target.value }))}
+                  maxLength={field === "name" ? 64 : undefined}
                   className="flex-1 rounded border border-border bg-bg px-2 py-1 text-text text-xs"
                 />
               )}
@@ -1321,20 +1431,56 @@ function TeamItemSection({
   team,
   onTeamChange,
   agents,
+  onDeleteTeamMember,
+  teamIdx,
   t,
 }: {
   team: TeamEntry;
   onTeamChange: (team: TeamEntry) => void;
   agents: AgentEntry[];
+  onDeleteTeamMember?: (teamIdx: number, memberIdx: number, memberName: string) => void;
+  teamIdx?: number;
   t: (key: string, options?: Record<string, unknown>) => string;
 }) {
   const [openLeader, setOpenLeader] = useState(false);
   const [openTeammate, setOpenTeammate] = useState(false);
   const [openMembers, setOpenMembers] = useState(false);
   const [expandedMemberIdx, setExpandedMemberIdx] = useState<number | null>(null);
+  const [memberNameError, setMemberNameError] = useState<string | null>(null);
+
+  const checkMemberNameDuplicate = (leaderName: string, members: TeamMember[], excludeIdx?: number): string | null => {
+    if (!leaderName) return null;
+    for (let i = 0; i < members.length; i++) {
+      if (excludeIdx !== undefined && i === excludeIdx) continue;
+      if (members[i].member_name === leaderName) {
+        return t("config.team.duplicateMemberName");
+      }
+    }
+    return null;
+  };
 
   const updateLeader = (field: keyof Leader, value: string) => {
+    if (field === "member_name") {
+      const error = checkMemberNameDuplicate(value, team.predefined_members || []);
+      setMemberNameError(error);
+    }
     onTeamChange({ ...team, leader: { ...team.leader, [field]: value } });
+  };
+
+  const updateMember = (idx: number, field: keyof TeamMember, value: string) => {
+    if (field === "member_name") {
+      const members = [...team.predefined_members];
+      members[idx] = { ...members[idx], [field]: value };
+      const error = checkMemberNameDuplicate(value, members, idx);
+      if (team.leader?.member_name === value) {
+        setMemberNameError(t("config.team.duplicateMemberName"));
+      } else {
+        setMemberNameError(error);
+      }
+    }
+    const updated = [...team.predefined_members];
+    updated[idx] = { ...updated[idx], [field]: value };
+    onTeamChange({ ...team, predefined_members: updated });
   };
 
   const updateTeammate = (field: keyof Teammate, value: string) => {
@@ -1346,14 +1492,19 @@ function TeamItemSection({
   };
 
   const removeMember = (idx: number) => {
-    const updated = team.predefined_members.filter((_, i) => i !== idx);
-    onTeamChange({ ...team, predefined_members: updated });
-    setExpandedMemberIdx((prev) => {
-      if (prev === null) return null;
-      if (idx === prev) return null;
-      if (idx < prev) return prev - 1;
-      return prev;
-    });
+    const memberName = team.predefined_members[idx]?.member_name || t("config.team.untitled");
+    if (onDeleteTeamMember && teamIdx !== undefined) {
+      onDeleteTeamMember(teamIdx, idx, memberName);
+    } else {
+      const updated = team.predefined_members.filter((_, i) => i !== idx);
+      onTeamChange({ ...team, predefined_members: updated });
+      setExpandedMemberIdx((prev) => {
+        if (prev === null) return null;
+        if (idx === prev) return null;
+        if (idx < prev) return prev - 1;
+        return prev;
+      });
+    }
   };
 
   const teamStringFields: (keyof TeamEntry)[] = ["team_name", "lifecycle", "teammate_mode", "spawn_mode"];
@@ -1431,6 +1582,7 @@ function TeamItemSection({
                 type="text"
                 value={(team[field] as string) ?? ""}
                 onChange={(e) => updateTeamField(field, e.target.value)}
+                maxLength={field === "team_name" ? 64 : undefined}
                 className="flex-1 rounded border border-border bg-bg px-2 py-1 text-text text-xs"
               />
             )}
@@ -1467,12 +1619,18 @@ function TeamItemSection({
                     ))}
                   </select>
                 ) : (
-                  <input
-                    type="text"
-                    value={team.leader[field] ?? ""}
-                    onChange={(e) => updateLeader(field, e.target.value)}
-                    className="flex-1 rounded border border-border bg-bg px-2 py-1 text-text text-xs"
-                  />
+                  <div className="flex-1">
+                    <input
+                      type="text"
+                      value={team.leader[field] ?? ""}
+                      onChange={(e) => updateLeader(field, e.target.value)}
+                      maxLength={field === "persona" ? 2048 : 64}
+                      className={`w-full rounded border bg-bg px-2 py-1 text-text text-xs ${field === "member_name" && memberNameError ? "border-danger" : "border-border"}`}
+                    />
+                    {field === "member_name" && memberNameError && (
+                      <p className="text-[10px] text-danger mt-1">{memberNameError}</p>
+                    )}
+                  </div>
                 )}
               </div>
             ))}
@@ -1513,6 +1671,7 @@ function TeamItemSection({
                     type="text"
                     value={team.teammate[field] ?? ""}
                     onChange={(e) => updateTeammate(field, e.target.value)}
+                    maxLength={field === "persona" ? 2048 : 64}
                     className="flex-1 rounded border border-border bg-bg px-2 py-1 text-text text-xs"
                   />
                 )}
@@ -1569,11 +1728,7 @@ function TeamItemSection({
                           {field === "agent_key" ? (
                             <select
                               value={member[field] ?? ""}
-                              onChange={(e) => {
-                                const updated = [...team.predefined_members];
-                                updated[idx] = { ...updated[idx], [field]: e.target.value };
-                                onTeamChange({ ...team, predefined_members: updated });
-                              }}
+                              onChange={(e) => updateMember(idx, field, e.target.value)}
                               className="flex-1 rounded border border-border bg-bg px-2 py-1 text-text text-xs"
                             >
                               <option value="">-- Select Agent --</option>
@@ -1585,12 +1740,9 @@ function TeamItemSection({
                             <input
                               type="text"
                               value={member[field] ?? ""}
-                              onChange={(e) => {
-                                const updated = [...team.predefined_members];
-                                updated[idx] = { ...updated[idx], [field]: e.target.value };
-                                onTeamChange({ ...team, predefined_members: updated });
-                              }}
-                              className="flex-1 rounded border border-border bg-bg px-2 py-1 text-text text-xs"
+                              onChange={(e) => updateMember(idx, field, e.target.value)}
+                              maxLength={field === "prompt_hint" ? 4096 : (field === "persona" ? 2048 : 64)}
+                              className={`flex-1 rounded border bg-bg px-2 py-1 text-text text-xs ${memberNameError ? "border-danger" : "border-border"}`}
                             />
                           )}
                         </div>
@@ -1624,11 +1776,15 @@ function TeamsSection({
   teams,
   onTeamsChange,
   agents,
+  onDeleteTeam,
+  onDeleteTeamMember,
   t,
 }: {
   teams: TeamEntry[];
   onTeamsChange: (teams: TeamEntry[]) => void;
   agents: AgentEntry[];
+  onDeleteTeam?: (idx: number, teamName: string) => void;
+  onDeleteTeamMember?: (teamIdx: number, memberIdx: number, memberName: string) => void;
   t: (key: string, options?: Record<string, unknown>) => string;
 }) {
   const [expandedIdx, setExpandedIdx] = useState<number | null>(null);
@@ -1650,13 +1806,18 @@ function TeamsSection({
   };
 
   const removeTeam = (idx: number) => {
-    onTeamsChange(teams.filter((_, i) => i !== idx));
-    setExpandedIdx((prev) => {
-      if (prev === null) return null;
-      if (idx === prev) return null;
-      if (idx < prev) return prev - 1;
-      return prev;
-    });
+    const teamName = teams[idx]?.team_name || t("config.team.untitled");
+    if (onDeleteTeam) {
+      onDeleteTeam(idx, teamName);
+    } else {
+      onTeamsChange(teams.filter((_, i) => i !== idx));
+      setExpandedIdx((prev) => {
+        if (prev === null) return null;
+        if (idx === prev) return null;
+        if (idx < prev) return prev - 1;
+        return prev;
+      });
+    }
   };
 
   const handleAddNew = () => {
@@ -1712,6 +1873,8 @@ function TeamsSection({
                   team={team}
                   onTeamChange={(t) => updateTeam(idx, t)}
                   agents={agents}
+                  onDeleteTeamMember={onDeleteTeamMember}
+                  teamIdx={idx}
                   t={t}
                 />
               </div>
@@ -1802,6 +1965,66 @@ export function ConfigPanel({
   const [configTab, setConfigTab] = useState<ConfigMainTab>("model");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [deleteAgentConfirm, setDeleteAgentConfirm] = useState<{ idx: number; agentName: string; references: string[] } | null>(null);
+  const [deleteTeamConfirm, setDeleteTeamConfirm] = useState<{ idx: number; teamName: string } | null>(null);
+  const [deleteTeamMemberConfirm, setDeleteTeamMemberConfirm] = useState<{ teamIdx: number; memberIdx: number; memberName: string } | null>(null);
+  const [installedSkills, setInstalledSkills] = useState<string[]>([]);
+
+  useEffect(() => {
+    const fetchSkills = async () => {
+      try {
+        const data = await webRequest<{ skills?: { name: string }[] }>(
+          "skills.list",
+          { with_installed: true }
+        );
+        const skillNames = (data.skills || []).map((s) => s.name).sort();
+        setInstalledSkills(skillNames);
+      } catch (error) {
+        console.error("Failed to fetch skills:", error);
+      }
+    };
+    fetchSkills();
+  }, []);
+
+  const handleDeleteAgent = (idx: number, agentName: string, references: string[]) => {
+    setDeleteAgentConfirm({ idx, agentName, references });
+  };
+
+  const confirmDeleteAgent = () => {
+    if (!deleteAgentConfirm) return;
+    setDraftAgents((prev) => prev.filter((_, i) => i !== deleteAgentConfirm.idx));
+    setAgentsTeamsEdited(true);
+    setDeleteAgentConfirm(null);
+  };
+
+  const handleDeleteTeam = (idx: number, teamName: string) => {
+    setDeleteTeamConfirm({ idx, teamName });
+  };
+
+  const confirmDeleteTeam = () => {
+    if (!deleteTeamConfirm) return;
+    setDraftTeams((prev) => prev.filter((_, i) => i !== deleteTeamConfirm.idx));
+    setAgentsTeamsEdited(true);
+    setDeleteTeamConfirm(null);
+  };
+
+  const handleDeleteTeamMember = (teamIdx: number, memberIdx: number, memberName: string) => {
+    setDeleteTeamMemberConfirm({ teamIdx, memberIdx, memberName });
+  };
+
+  const confirmDeleteTeamMember = () => {
+    if (!deleteTeamMemberConfirm) return;
+    setDraftTeams((prev) => {
+      const copy = [...prev];
+      const team = copy[deleteTeamMemberConfirm.teamIdx];
+      if (team && team.predefined_members) {
+        team.predefined_members = team.predefined_members.filter((_, i) => i !== deleteTeamMemberConfirm.memberIdx);
+      }
+      return copy;
+    });
+    setAgentsTeamsEdited(true);
+    setDeleteTeamMemberConfirm(null);
+  };
 
   const normalizedConfig = useMemo<Record<string, string>>(() => {
     if (!config) return {};
@@ -2240,7 +2463,10 @@ export function ConfigPanel({
                       <MultiAgentSection
                         agents={draftAgents}
                         onAgentsChange={(agents) => { setDraftAgents(agents); setAgentsTeamsEdited(true); }}
+                        teams={draftTeams}
                         availableModels={draftModels}
+                        installedSkills={installedSkills}
+                        onDeleteAgent={handleDeleteAgent}
                         t={t}
                       />
                     </div>
@@ -2265,6 +2491,8 @@ export function ConfigPanel({
                         teams={draftTeams}
                         onTeamsChange={(teams) => { setDraftTeams(teams); setAgentsTeamsEdited(true); }}
                         agents={draftAgents}
+                        onDeleteTeam={handleDeleteTeam}
+                        onDeleteTeamMember={handleDeleteTeamMember}
                         t={t}
                       />
                     </div>
@@ -2319,6 +2547,120 @@ export function ConfigPanel({
           </div>
         )}
       </div>
+      {deleteAgentConfirm && (
+        <div className="fixed inset-0 z-[9999] flex items-center justify-center p-4">
+          <div className="absolute inset-0 bg-black/35 backdrop-blur-[4px]" />
+          <div className="relative w-full max-w-96 rounded-xl border border-[var(--border)] bg-[var(--card)] shadow-[var(--shadow-xl)] p-6">
+            <div className="flex flex-col items-center text-center">
+              <div className="w-12 h-12 rounded-full bg-danger/15 text-danger flex items-center justify-center mb-4">
+                <svg className="w-7 h-7" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2">
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126zM12 15.75h.007v.008H12v-.008z" />
+                </svg>
+              </div>
+              <h3 className="text-base font-semibold text-text mb-1">
+                {t("config.agentList.deleteConfirmTitle")}
+              </h3>
+              <p className="text-sm text-text-muted mb-5">
+                {deleteAgentConfirm.references.length > 0
+                  ? t("config.agentList.deleteConfirmMessageSimple", { agentName: deleteAgentConfirm.agentName })
+                  : t("config.agentList.deleteConfirmMessage", { agentName: deleteAgentConfirm.agentName })}
+              </p>
+              <div className="flex gap-2">
+                <button
+                  type="button"
+                  onClick={() => setDeleteAgentConfirm(null)}
+                  className="btn !px-4 !py-2"
+                >
+                  {t("common.cancel")}
+                </button>
+                <button
+                  type="button"
+                  onClick={confirmDeleteAgent}
+                  className="btn danger !px-4 !py-2"
+                >
+                  {t("common.delete")}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+      {deleteTeamConfirm && (
+        <div className="fixed inset-0 z-[9999] flex items-center justify-center p-4">
+          <div className="absolute inset-0 bg-black/35 backdrop-blur-[4px]" />
+          <div className="relative w-full max-w-96 rounded-xl border border-[var(--border)] bg-[var(--card)] shadow-[var(--shadow-xl)] p-6">
+            <div className="flex flex-col items-center text-center">
+              <div className="w-12 h-12 rounded-full bg-danger/15 text-danger flex items-center justify-center mb-4">
+                <svg className="w-7 h-7" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2">
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126zM12 15.75h.007v.008H12v-.008z" />
+                </svg>
+              </div>
+              <h3 className="text-base font-semibold text-text mb-1">
+                {t("config.team.deleteConfirmTitle")}
+              </h3>
+              <p className="text-sm text-text-muted mb-5">
+                {t("config.team.deleteConfirmMessage", {
+                  teamName: deleteTeamConfirm.teamName,
+                })}
+              </p>
+              <div className="flex gap-2">
+                <button
+                  type="button"
+                  onClick={() => setDeleteTeamConfirm(null)}
+                  className="btn !px-4 !py-2"
+                >
+                  {t("common.cancel")}
+                </button>
+                <button
+                  type="button"
+                  onClick={confirmDeleteTeam}
+                  className="btn danger !px-4 !py-2"
+                >
+                  {t("common.delete")}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+      {deleteTeamMemberConfirm && (
+        <div className="fixed inset-0 z-[9999] flex items-center justify-center p-4">
+          <div className="absolute inset-0 bg-black/35 backdrop-blur-[4px]" />
+          <div className="relative w-full max-w-96 rounded-xl border border-[var(--border)] bg-[var(--card)] shadow-[var(--shadow-xl)] p-6">
+            <div className="flex flex-col items-center text-center">
+              <div className="w-12 h-12 rounded-full bg-danger/15 text-danger flex items-center justify-center mb-4">
+                <svg className="w-7 h-7" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2">
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126zM12 15.75h.007v.008H12v-.008z" />
+                </svg>
+              </div>
+              <h3 className="text-base font-semibold text-text mb-1">
+                {t("config.team.deleteMemberConfirmTitle")}
+              </h3>
+              <p className="text-sm text-text-muted mb-5">
+                {t("config.team.deleteMemberConfirmMessage", {
+                  memberName: deleteTeamMemberConfirm.memberName,
+                })}
+              </p>
+              <div className="flex gap-2">
+                <button
+                  type="button"
+                  onClick={() => setDeleteTeamMemberConfirm(null)}
+                  className="btn !px-4 !py-2"
+                >
+                  {t("common.cancel")}
+                </button>
+                <button
+                  type="button"
+                  onClick={confirmDeleteTeamMember}
+                  className="btn danger !px-4 !py-2"
+                >
+                  {t("common.delete")}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

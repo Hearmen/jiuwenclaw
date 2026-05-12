@@ -11,7 +11,8 @@
     "error": "Error",
     "ok": "OK",
     "and": "and",
-    "modify": "Modify"
+    "modify": "Modify",
+    "delete": "Delete"
   },
   "nav": {
     "chat": "Chat",
@@ -479,7 +480,10 @@
     "agentList": {
       "addAgent": "Add Agent",
       "removeAgent": "Remove",
-      "untitled": "Untitled"
+      "untitled": "Untitled",
+      "deleteConfirmTitle": "Delete Agent?",
+      "deleteConfirmMessage": "Are you sure you want to delete agent \"{{agentName}}\"?",
+      "deleteConfirmMessageSimple": "Agent \"{{agentName}}\" is referenced by team(s)."
     },
     "team": {
       "leader": "Leader",
@@ -490,7 +494,13 @@
       "lifecyclePersistent": "Persistent",
       "lifecycleTemporary": "Temporary",
       "teammateModeBuild": "Build Mode",
-      "teammateModePlan": "Plan Mode"
+      "teammateModePlan": "Plan Mode",
+      "untitled": "Untitled",
+      "deleteConfirmTitle": "Delete Team?",
+      "deleteConfirmMessage": "Are you sure you want to delete team \"{{teamName}}\"?",
+      "deleteMemberConfirmTitle": "Delete Member?",
+      "deleteMemberConfirmMessage": "Are you sure you want to delete member \"{{memberName}}\"?",
+      "duplicateMemberName": "Member name already exists"
     },
     "groups": {
       "modelDefault": { "label": "Default Model (Main Chat)", "hint": "Primary chat model service and auth" },

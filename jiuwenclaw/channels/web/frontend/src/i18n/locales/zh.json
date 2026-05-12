@@ -11,7 +11,8 @@
     "error": "错误",
     "ok": "确定",
     "and": "和",
-    "modify": "修改"
+    "modify": "修改",
+    "delete": "删除"
   },
   "nav": {
     "chat": "对话",
@@ -478,7 +479,10 @@
     "agentList": {
       "addAgent": "添加Agent",
       "removeAgent": "删除",
-      "untitled": "未命名"
+      "untitled": "未命名",
+      "deleteConfirmTitle": "确认删除Agent？",
+      "deleteConfirmMessage": "确定要删除 Agent \"{{agentName}}\" 吗？",
+      "deleteConfirmMessageSimple": "Agent \"{{agentName}}\" 正在被 Team 引用。"
     },
     "team": {
       "leader": "Leader",
@@ -489,7 +493,13 @@
       "lifecyclePersistent": "持久化 (persistent)",
       "lifecycleTemporary": "临时 (temporary)",
       "teammateModeBuild": "构建模式 (build_mode)",
-      "teammateModePlan": "计划模式 (plan_mode)"
+      "teammateModePlan": "计划模式 (plan_mode)",
+      "untitled": "未命名",
+      "deleteConfirmTitle": "确认删除Team？",
+      "deleteConfirmMessage": "确定要删除 Team \"{{teamName}}\" 吗？",
+      "deleteMemberConfirmTitle": "确认删除成员？",
+      "deleteMemberConfirmMessage": "确定要删除成员 \"{{memberName}}\" 吗？",
+      "duplicateMemberName": "成员名称已存在"
     },
     "groups": {
       "modelDefault": { "label": "默认模型（主对话）", "hint": "主对话模型服务与鉴权参数" },
