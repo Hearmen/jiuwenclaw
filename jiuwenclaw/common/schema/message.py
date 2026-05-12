@@ -19,6 +19,8 @@ class ReqMethod(Enum):
     COMMAND_ADD_DIR = "command.add_dir"
     COMMAND_CHROME = "command.chrome"
     COMMAND_COMPACT = "command.compact"
+    COMMAND_CONTEXT = "command.context"
+    COMMAND_RECAP = "command.recap"
     COMMAND_DIFF = "command.diff"
     COMMAND_MCP = "command.mcp"
     COMMAND_MODEL = "command.model"

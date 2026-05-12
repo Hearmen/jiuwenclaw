@@ -985,6 +985,44 @@ class JiuWenClaw:
             session=session,
         )
 
+    async def get_context_usage(self, session_id: str) -> dict[str, Any]:
+        """获取当前上下文窗口占用统计。
+
+        参考 Claude Code 的 /context 命令，展示：
+        - 上下文窗口总量与当前占用量
+        - 系统提示词、对话消息、工具定义各自的 token 消耗
+        - 上下文窗口占用百分比
+
+        Args:
+            session_id: 会话ID
+
+        Returns:
+            包含上下文使用情况统计的字典
+        """
+        adapter = self._adapter
+        if adapter is None:
+            raise ValueError("Agent adapter not available")
+        return await adapter.get_context_usage(session_id=session_id)
+
+    async def generate_recap(self, session_id: str) -> dict[str, Any]:
+        """生成会话快速回顾（read-only，不修改对话历史）。
+
+        取最近30条消息 → fast model → 1-2句摘要。
+
+        Args:
+            session_id: 会话ID
+
+        Returns:
+            包含 recap 结果的字典:
+            - status: "ok" | "no_turn" | "aborted" | "failed"
+            - summary: 摘要文本（仅当 status == "ok" 时）
+            - error: 错误信息（仅当 status == "failed" 时）
+        """
+        adapter = self._adapter
+        if adapter is None:
+            raise ValueError("Agent adapter not available")
+        return await adapter.generate_recap(session_id=session_id)
+
     # ---------- 资源清理 ----------
 
     async def cancel_inflight_work(self, log_prefix: str = "[gateway disconnect] ") -> None:

@@ -4558,6 +4558,212 @@ class JiuWenClawDeepAdapter:
 
         return response
 
+    async def get_context_usage(self, session_id: str) -> dict[str, Any]:
+        """获取当前上下文窗口占用统计。
+
+        Args:
+            session_id: 会话ID
+
+        Returns:
+            包含上下文使用情况统计的字典:
+            - context_window_limit: 模型上下文窗口总 token 数
+            - total_tokens: 当前上下文已用 token 数
+            - system_prompt_tokens: 系统提示词 token 数
+            - messages_tokens: 对话消息 token 数
+            - tools_tokens: 工具定义 token 数
+            - occupancy_rate: 占用率 (0-100)
+            - message_count: 对话消息数量
+            - context_occupancy: 上下文占用详情（来自 deepagent）
+        """
+        if self._instance is None:
+            raise ValueError("Agent instance not available")
+
+        context_engine = self._instance.react_agent.context_engine
+        react_agent = self._instance.react_agent
+        context = context_engine.get_context(session_id=session_id)
+        if context is None:
+            return {
+                "context_window_limit": 0, "total_tokens": 0,
+                "system_prompt_tokens": 0, "messages_tokens": 0,
+                "tools_tokens": 0, "occupancy_rate": 0,
+                "message_count": 0, "context_occupancy": None,
+            }
+
+        # 分项估算：直接用 context engine 的 token counter
+        token_counter = context.token_counter()
+        from openjiuwen.core.foundation.tool import ToolInfo
+
+        # 系统提示词
+        system_prompt = ""
+        if hasattr(react_agent, "prompt_builder") and react_agent.prompt_builder is not None:
+            system_prompt = react_agent.prompt_builder.build()
+        elif hasattr(react_agent, "system_prompt_builder") and react_agent.system_prompt_builder is not None:
+            system_prompt = react_agent.system_prompt_builder.build()
+        if system_prompt and token_counter:
+            system_prompt_tokens = token_counter.count(system_prompt) or 0
+        elif system_prompt:
+            system_prompt_tokens = len(system_prompt) // 4
+        else:
+            system_prompt_tokens = 0
+
+        # 对话消息
+        context_messages = context.get_messages() or []
+        if context_messages and token_counter:
+            messages_tokens = token_counter.count_messages(context_messages) or 0
+        elif context_messages:
+            messages_tokens = sum(len(str(msg.content)) // 4 for msg in context_messages)
+        else:
+            messages_tokens = 0
+
+        # 工具定义
+        tools: list[ToolInfo] = []
+        if hasattr(react_agent, "ability_manager") and react_agent.ability_manager is not None:
+            for card in react_agent.ability_manager.list() or []:
+                if hasattr(card, "to_tool_info"):
+                    tools.append(card.to_tool_info())
+                elif hasattr(card, "name") and hasattr(card, "description"):
+                    tools.append(ToolInfo(
+                        name=card.name,
+                        description=card.description or "",
+                        parameters=getattr(card, "input_params", {}),
+                    ))
+        if tools and token_counter:
+            tools_tokens = token_counter.count_tools(tools) or 0
+        else:
+            tools_tokens = 0
+
+        # 总量 & 窗口限制：优先用 DeepAgent 的准确值，回退到估算
+        total_tokens = system_prompt_tokens + messages_tokens + tools_tokens
+        context_window_limit = 0
+        occupancy_rate = 0.0
+        context_occupancy = None
+
+        try:
+            usage = self._instance.get_context_usage(session_id=session_id)
+            context_occupancy = usage
+            # DeepAgent 的 total_tokens 来自 usage_metadata，比估算更准确
+            da_total = usage.get("total_tokens", 0)
+            if da_total > 0:
+                total_tokens = da_total
+            context_window_limit = usage.get("context_window_tokens", 0)
+            occupancy_rate = usage.get("usage_percent", 0)
+        except Exception as exc:
+            logger.debug("[JiuWenClaw] DeepAgent.get_context_usage failed: %s", exc)
+            from openjiuwen.core.context_engine.context.context_utils import ContextUtils
+            model_name = (
+                getattr(self._model_request_config, "model_name", "") or ""
+                if self._model_request_config else ""
+            )
+            context_window_limit = ContextUtils.resolve_context_max(model_name=model_name)
+            if context_window_limit > 0:
+                occupancy_rate = round(total_tokens / context_window_limit * 100, 1)
+
+        message_count = len(context_messages)
+
+        return {
+            "context_window_limit": context_window_limit,
+            "total_tokens": total_tokens,
+            "system_prompt_tokens": system_prompt_tokens,
+            "messages_tokens": messages_tokens,
+            "tools_tokens": tools_tokens,
+            "occupancy_rate": occupancy_rate,
+            "message_count": message_count,
+            "context_occupancy": context_occupancy,
+        }
+
+    async def generate_recap(self, session_id: str) -> dict[str, Any]:
+        """生成会话快速回顾（read-only，不修改对话历史）。
+
+        取最近30条消息 → fast model → 1-3句摘要。
+        """
+        from jiuwenclaw.server.runtime.agent_adapter.recap_prompts import (
+            RECENT_MESSAGE_WINDOW,
+            build_recap_prompt,
+        )
+
+        messages = self._get_recent_messages(session_id, window=RECENT_MESSAGE_WINDOW)
+        if not messages:
+            return {"status": "no_turn"}
+
+        prompt = build_recap_prompt(memory=None)
+        summary_text = await self._call_model_for_recap(messages, prompt)
+        if not summary_text:
+            return {"status": "failed", "error": "Model returned empty response"}
+
+        return {"status": "ok", "summary": summary_text.strip()}
+
+    def _get_recent_messages(self, session_id: str, window: int = 30) -> list[Any]:
+        """从当前 agent 对话上下文中提取最近N条消息。"""
+        if self._instance is None or self._instance.react_agent is None:
+            return []
+
+        context_engine = self._instance.react_agent.context_engine
+        context = context_engine.get_context(session_id=session_id)
+        if context is None:
+            return []
+
+        try:
+            all_messages = list(context.get_messages() or [])
+        except Exception as exc:
+            logger.debug("[JiuWenClaw] _get_recent_messages failed: %s", exc)
+            return []
+
+        return all_messages[-window:]
+
+    async def _call_model_for_recap(
+        self,
+        messages: list[Any],
+        prompt: str,
+    ) -> str | None:
+        """调用 fast model 生成 recap 摘要。
+
+        - 不传 system prompt（空）
+        - prompt 作为最后一条 user message 追加到对话末尾
+        - 不传 tools
+        - 不启用 thinking
+        """
+        from openjiuwen.core.foundation.llm.schema.message import UserMessage, AssistantMessage
+
+        if self._model is None:
+            logger.error("[generate_recap] no model instance available")
+            return None
+
+        recap_messages: list[Any] = []
+
+        for msg in messages:
+            role = getattr(msg, "role", None) or ""
+            content = getattr(msg, "content", None) or ""
+            if isinstance(content, list):
+                # Multimodal content — extract text parts only
+                content = " ".join(
+                    str(p) for p in content
+                    if isinstance(p, str) or (isinstance(p, dict) and p.get("type") == "text")
+                )
+            content = str(content)
+            if not content.strip():
+                continue
+
+            if role == "user":
+                recap_messages.append(UserMessage(content=content))
+            elif role == "assistant":
+                recap_messages.append(AssistantMessage(content=content))
+            else:
+                recap_messages.append(UserMessage(content=content))
+
+        # Prompt 作为最后一条 user message 追加（对齐 Claude Code）
+        recap_messages.append(UserMessage(content=prompt))
+
+        try:
+            result = await self._model.invoke(
+                recap_messages,
+                max_tokens=300,
+                temperature=0,
+            )
+            return getattr(result, "content", None) or str(result)
+        except Exception:
+            logger.exception("[generate_recap] model call failed")
+            return None
+
     async def _count_full_context_tokens(
         self,
         context: Any,

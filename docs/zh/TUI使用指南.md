@@ -64,6 +64,7 @@
 | `/color` | - | 设置提示条强调色 | `/color blue` | 全部 |
 | `/compact` | - | 压缩上下文，保留摘要 | `/compact` | 全部 |
 | `/config` | `/settings`, `/setting` | 查看/设置后端配置 | `/config`、`/config get`、`/config set key value` | 全部 |
+| `/context` | - | 查看上下文窗口占用与 Token 用量明细 | `/context` | 全部 |
 | `/diff` | - | 查看本会话按轮次的文件改动 | `/diff` | 全部 |
 | `/evolve` | - | 触发技能演进或列出待处理（转发为聊天内容） | `/evolve`、`/evolve list` | 全部 |
 | `/evolve_list` | - | 列出某技能的演进条目 | `/evolve_list myskill --sort score` | 全部 |
@@ -123,6 +124,20 @@
 
 - **`/diff`**：调用 `command.diff`，展示本会话内有文件变更的轮次（非完整 `git diff` 替代）。
 - **`/compact`**：调用 `command.compact`，返回 `busy` | `compressed` | `noop`；成功时展示 token 节省比例（`compact.ts`）。
+
+#### `/context`（上下文窗口用量）
+
+- **`/context`**（`context.ts`）
+  - 无参数，无子命令。
+  - 调用 `command.context` RPC，携带当前 `mode`，获取上下文窗口占用与 Token 用量明细。
+  - 展示分为多个面板：
+    - **概览面板**：进度条 + 占用百分比；`context_window`（已用/上限 tokens）、`occupancy`（占用率）、`messages`（消息数）。
+    - **Token 拆分面板**：按 `system_prompt`、`messages`、`tools`、`total` 展示。
+    - **DeepAgent 占用明细**（如有数据）：`context_occupancy` 键值列表。
+    - **DeepAgent 用量明细**（如有数据）：`deepagent_usage` 键值列表。
+  - 阈值提示：占用率 >= 90% 时，提示 `Context window 90% full — consider /compact`。
+  - 错误处理：请求失败时显示 `context failed: <错误信息>`。
+  - 与 `/status usage` 的区别：`/context` 侧重**实时上下文窗口占用**，含进度条和阈值告警；`/status usage` 侧重**会话累计用量统计**与**按模型拆分**。
 
 #### `/config`
 

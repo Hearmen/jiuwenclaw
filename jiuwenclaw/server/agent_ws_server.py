@@ -470,6 +470,12 @@ class AgentWebSocketServer:
             if request.req_method == ReqMethod.COMMAND_COMPACT:
                 await self._handle_command_compact(ws, request, send_lock)
                 return
+            if request.req_method == ReqMethod.COMMAND_CONTEXT:
+                await self._handle_command_context(ws, request, send_lock)
+                return
+            if request.req_method == ReqMethod.COMMAND_RECAP:
+                await self._handle_command_recap(ws, request, send_lock)
+                return
             if request.req_method == ReqMethod.COMMAND_DIFF:
                 await self._handle_command_diff(ws, request, send_lock)
                 return
@@ -1276,6 +1282,82 @@ class AgentWebSocketServer:
                 channel_id=request.channel_id,
                 ok=False,
                 payload={"error": str(e)},
+            )
+        wire = encode_agent_response_for_wire(resp, response_id=request.request_id)
+        async with send_lock:
+            await ws.send(json.dumps(wire, ensure_ascii=False))
+
+    async def _handle_command_context(self, ws: Any, request: AgentRequest, send_lock: asyncio.Lock) -> None:
+        try:
+            session_id = request.session_id or "default"
+            params = request.params or {}
+
+            channel_id = request.channel_id or "default"
+            mode, _, _ = resolve_agent_request_mode(params.get("mode", "agent.plan"))
+            agent = await self._agent_manager.get_agent(
+                channel_id=channel_id,
+                mode=mode,
+                project_dir=params.get("project_dir", None)
+            )
+
+            if agent is None:
+                raise ValueError("Failed to get agent")
+
+            result_data = await agent.get_context_usage(session_id=session_id)
+
+            resp = AgentResponse(
+                request_id=request.request_id,
+                channel_id=request.channel_id,
+                ok=True,
+                payload=result_data,
+            )
+        except Exception as e:  # noqa: BLE001
+            logger.exception("[AgentWebSocketServer] command.context failed: %s", e)
+            resp = AgentResponse(
+                request_id=request.request_id,
+                channel_id=request.channel_id,
+                ok=False,
+                payload={"error": str(e)},
+            )
+        wire = encode_agent_response_for_wire(resp, response_id=request.request_id)
+        async with send_lock:
+            await ws.send(json.dumps(wire, ensure_ascii=False))
+
+    async def _handle_command_recap(self, ws: Any, request: AgentRequest, send_lock: asyncio.Lock) -> None:
+        """处理 /recap 命令：生成会话快速回顾（read-only，不修改历史）"""
+        try:
+            session_id = request.session_id or "default"
+            params = request.params or {}
+            channel_id = request.channel_id or "default"
+            mode, _, _ = resolve_agent_request_mode(params.get("mode", "agent.plan"))
+
+            agent = await self._agent_manager.get_agent(
+                channel_id=channel_id,
+                mode=mode,
+                project_dir=params.get("project_dir", None),
+            )
+
+            if agent is None:
+                raise ValueError("Failed to get agent")
+
+            result_data = await agent.generate_recap(session_id=session_id)
+
+            resp = AgentResponse(
+                request_id=request.request_id,
+                channel_id=request.channel_id,
+                ok=True,
+                payload=result_data,
+            )
+        except Exception as e:  # noqa: BLE001
+            logger.exception("[AgentWebSocketServer] command.recap failed: %s", e)
+            resp = AgentResponse(
+                request_id=request.request_id,
+                channel_id=request.channel_id,
+                ok=False,
+                payload={
+                    "status": "failed",
+                    "error": str(e),
+                },
             )
         wire = encode_agent_response_for_wire(resp, response_id=request.request_id)
         async with send_lock:

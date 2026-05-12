@@ -284,6 +284,13 @@ FIRST_BATCH_REGISTRY: tuple[SlashCommandEntry, ...] = (
         req_method="session.rewind",
         notes="受控通道回退对话到指定轮次；IM 须带正整数轮次编号；CLI 同路径见 builtins/rewind.ts。",
     ),
+    SlashCommandEntry(
+        id="recap",
+        canonical_text="/recap",
+        scope="client",
+        req_method="command.recap",
+        notes="客户端命令，生成会话快速回顾（read-only）；TUI → Gateway → AgentServer。",
+    ),
 )
 
 

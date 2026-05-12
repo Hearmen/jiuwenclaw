@@ -20,6 +20,7 @@ Executed locally in the terminal UI, not through Gateway control pipeline.
 | `/help` | Show available commands |
 | `/theme` | Switch theme |
 | `/config` | Modify configuration (currently local, planned to unify with Gateway) |
+| `/context` | Show context window usage and token breakdown (see below) |
 | `/workspace` | Manage trusted directories (see below) |
 | `/teamskills` | TeamSkills Hub publish/delete (`publish`/`delete`) |
 | `/export` | Export current conversation to file or clipboard (see below) |
@@ -142,6 +143,19 @@ Manages directories AI can access for file read, edit, and execute operations.
   - `busy`: Compression in progress, retry later;
   - `compressed`: Success, shows before/after token counts and savings ratio;
   - `noop`: No compression needed, context already optimal.
+
+### `/context` (Context Window Usage)
+
+- Usage: `/context` (no parameters, no subcommands).
+- Function: View the current session's context window occupancy and token usage details.
+- Data source: TUI requests Agent context statistics service via `command.context`, carrying the current `mode`.
+- Display contents:
+  - **Overview panel**: Context window occupancy percentage + progress bar; `context_window` (used / limit tokens), `occupancy` (rate), `messages` (count);
+  - **Token breakdown panel**: Shows token usage by `system_prompt`, `messages`, `tools`, and `total`;
+  - **DeepAgent occupancy details** (if available): Key-value list of `context_occupancy` fields;
+  - **DeepAgent usage details** (if available): Key-value list of `deepagent_usage` fields.
+- Threshold warning: When occupancy >= 90%, the overview title shows `Context window 90% full — consider /compact`.
+- Error handling: On request failure, displays `context failed: <error message>`.
 
 ### `/init` (Project Initialization)
 
@@ -437,7 +451,6 @@ If StatusView is unavailable, the command falls back to inline key-value display
 | Command | Description |
 |---|---|
 | `/btw` | Ask question |
-| `/context` | Context status view |
 | `/memory` | Memory management |
 | `/export` | Export related files |
 | `/permissions` | Permission management |

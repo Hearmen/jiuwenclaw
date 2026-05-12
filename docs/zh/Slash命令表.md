@@ -20,6 +20,7 @@
 | `/help` | 查看可用命令 |
 | `/theme` | 切换主题 |
 | `/config` | 修改配置（当前为本地实现，后续计划统一到 Gateway） |
+| `/context` | 查看上下文窗口占用与 Token 用量明细（见下文） |
 | `/workspace` | 管理可信目录（见下文） |
 | `/teamskills` | TeamSkills 管理（`init/validate/pack/info/search/list/install/uninstall/config/publish/delete`） |
 | `/export` | 导出当前会话到文件或剪贴板（见下文） |
@@ -142,6 +143,19 @@
   - `busy`：压缩正在进行中，请稍后重试；
   - `compressed`：压缩成功，显示压缩前后 token 数及节省比例；
   - `noop`：无需压缩，上下文已处于最优状态。
+
+### `/context`（上下文窗口用量）
+
+- 用法：`/context`（无参数、无子命令）。
+- 功能：查看当前会话的上下文窗口占用情况与 Token 用量明细。
+- 数据来源：TUI 通过 `command.context` 请求 Agent 侧上下文统计服务，携带当前 `mode`。
+- 展示内容：
+  - **概览面板**：上下文窗口占用百分比 + 进度条；`context_window`（已用/上限 tokens）、`occupancy`（占用率）、`messages`（消息数）；
+  - **Token 拆分面板**：按 `system_prompt`、`messages`、`tools`、`total` 展示 Token 用量；
+  - **DeepAgent 占用明细**（如有数据）：以键值列表展示 `context_occupancy` 各字段；
+  - **DeepAgent 用量明细**（如有数据）：以键值列表展示 `deepagent_usage` 各字段。
+- 阈值提示：当占用率 >= 90% 时，概览标题显示 `Context window 90% full — consider /compact` 提示。
+- 错误处理：请求失败时显示 `context failed: <错误信息>`。
 
 ### `/init`（项目初始化）
 
@@ -448,7 +462,6 @@
 | 命令             | 说明      |
 |----------------|---------|
 | `/btw`         | 提问      |
-| `/context`     | 上下文状态查看 |
 | `/export`      | 导出相关文件  |
 | `/permissions` | 权限管理    |
 
