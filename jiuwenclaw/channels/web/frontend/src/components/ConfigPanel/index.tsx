@@ -168,7 +168,7 @@ interface ConfigPanelProps {
       teammate: { agent_key: string };
       predefined_members: Array<{ member_name: string; display_name: string; persona: string; prompt_hint: string; agent_key: string }>;
     }>;
-  }) => Promise<void>;
+  }, showRestartModal?: boolean) => Promise<void>;
 }
 
 interface ConfigGroup {
@@ -1856,15 +1856,13 @@ function TeamsSection({
                 <span className="truncate">{team.team_name || t("config.agentList.untitled")}</span>
               </button>
               <div className="flex items-center gap-1 ml-2">
-                {teams.length > 1 && (
-                  <button
-                    type="button"
-                    onClick={() => removeTeam(idx)}
-                    className="text-[11px] px-2 py-0.5 rounded border border-border hover:bg-danger-subtle hover:text-danger"
-                  >
-                    {t("config.agentList.removeAgent")}
-                  </button>
-                )}
+                <button
+                  type="button"
+                  onClick={() => removeTeam(idx)}
+                  className="text-[11px] px-2 py-0.5 rounded border border-border hover:bg-danger-subtle hover:text-danger"
+                >
+                  {t("config.agentList.removeAgent")}
+                </button>
               </div>
             </div>
             {isExpanded && (
@@ -2246,8 +2244,9 @@ export function ConfigPanel({
     if (!hasChanges) return;
     setDraftValues(normalizedConfig);
     setDraftModels(storeAvailableModels.map((m) => ({ ...m, alias: m.alias || "" })));
-    setDraftAgents(agentsFromConfig);
-    setDraftTeams(teamsFromConfig);
+    const cached = loadCachedAgentsTeams();
+    setDraftAgents(cached?.agents || []);
+    setDraftTeams(cached?.teams || []);
     setAgentsTeamsEdited(false);
     setError(null);
   };
@@ -2305,10 +2304,12 @@ export function ConfigPanel({
             completion_timeout: agent.completion_timeout,
           };
         }
+        // 当同时有 agents/teams 变更和普通配置变更时，先不弹窗，等最后统一弹窗
+        const showRestartModal = !(hasConfigChanges || hasModelChanges);
         await onAgentsTeamsSave({
           agents: agentsPayload,
           team: draftTeams.map((t) => ({ ...t })),
-        });
+        }, showRestartModal);
         // 保存成功后清除 localStorage 缓存
         try {
           localStorage.removeItem('jiuwenclaw_agents_teams_cache');
@@ -2317,8 +2318,10 @@ export function ConfigPanel({
         }
         setAgentsTeamsEdited(false);
       }
-      // 模型保存全部成功后，再保存非模型配置（视频/音频/embed/第三方等）并触发成功弹窗
-      await onSaveConfig(draftValues);
+      // 只有当有普通配置或模型变更时，才保存并弹窗
+      if (hasConfigChanges || hasModelChanges) {
+        await onSaveConfig(draftValues);
+      }
     } catch (saveError) {
       const message = saveError instanceof Error ? saveError.message : t('config.errors.saveFailed');
       setError(message);
