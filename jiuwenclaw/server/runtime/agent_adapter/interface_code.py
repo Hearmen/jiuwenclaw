@@ -40,6 +40,7 @@ from openjiuwen.harness.subagents.code_agent import build_code_agent_config
 from openjiuwen.harness.subagents.explore_agent import build_explore_agent_config
 from openjiuwen.harness.subagents.plan_agent import build_plan_agent_config
 from openjiuwen.harness.tools import WebFetchWebpageTool, WebFreeSearchTool, WebPaidSearchTool
+from openjiuwen.harness.tools.worktree import WorktreeConfig, WorktreeRail
 from openjiuwen.harness.workspace.workspace import Workspace
 
 from jiuwenclaw.server.runtime.agent_adapter.interface_deep import (
@@ -75,6 +76,7 @@ _RAIL_BUILD_NAMES: dict[str, str] = {
     "SkillEvolutionRail": "_build_skill_evolution_rail_via_config",
     "ProjectMemoryRail": "_build_project_memory_rail",
     "CodingMemoryRail": "_build_coding_memory_rail",
+    "WorktreeRail": "_build_worktree_rail_via_config",
 }
 
 _TOOL_BUILD_NAMES: dict[str, str] = {
@@ -126,6 +128,7 @@ class JiuwenClawCodeAdapter(JiuWenClawDeepAdapter):
         self._lsp_rail: LspRail | None = None
         self._project_memory_rail: ProjectMemoryRail | None = None
         self._coding_memory_rail: CodingMemoryRail | None = None
+        self._worktree_rail: WorktreeRail | None = None
 
     # ─── 初始化 ──────────────────────────────
 
@@ -493,6 +496,33 @@ class JiuwenClawCodeAdapter(JiuWenClawDeepAdapter):
             logger.warning(
                 "[JiuwenClawCodeAdapter] ProjectMemoryRail create failed: %s", exc,
             )
+            return None
+
+    def _build_worktree_rail_via_config(self) -> WorktreeRail | None:
+        """Build WorktreeRail for code mode.
+
+        Mounts enter_worktree / exit_worktree tools on the main agent so it
+        can work in an isolated git worktree. WorktreeManager resolves the
+        repo root from the runtime cwd via ``find_canonical_git_root``;
+        jiuwenclaw anchors the agent cwd to project_dir through Workspace
+        on init, so worktrees land under the user's actual repo. Only
+        enabled=True is set; other WorktreeConfig knobs keep library
+        defaults until a config schema is introduced. The instance is
+        cached because mode switches do not unregister this rail.
+        """
+        if self._worktree_rail is not None:
+            logger.info("[JiuwenClawCodeAdapter] WorktreeRail reuse cached instance")
+            return self._worktree_rail
+        try:
+            rail = WorktreeRail(config=WorktreeConfig(enabled=True))
+            self._worktree_rail = rail
+            logger.info(
+                "[JiuwenClawCodeAdapter] WorktreeRail create success (project_dir=%s)",
+                self._project_dir,
+            )
+            return rail
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("[JiuwenClawCodeAdapter] WorktreeRail create failed: %s", exc)
             return None
 
     # ─── 配置驱动的 Rail/Tool 构建代理 ──────────

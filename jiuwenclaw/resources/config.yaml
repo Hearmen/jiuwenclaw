@@ -717,6 +717,7 @@ modes:
     #   ConfirmInterruptRail, ContextProcessorRail
     rails:
       - SkillUseRail
+      - WorktreeRail
 
     # 动态 Tools — 列表中出现的 = 启用
     # send_file_to_user 由运行时 _update_session_tools 注册，不在此配置
