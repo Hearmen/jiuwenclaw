@@ -11,6 +11,7 @@ import { buildTranscriptLines } from "./transcript-renderer.js";
 
 export interface ScreenLayoutOptions {
   width: number;
+  height?: number;
   questionLines: string[];
   editorLines: string[];
   composerPreviewLines: string[];
@@ -215,7 +216,7 @@ export function buildAppScreenLines(snapshot: AppSnapshot, options: ScreenLayout
           options.width,
         )
       : [];
-  return [
+  const lines = [
     ...transcriptLines,
     ...todoLines,
     ...(todoLines.length > 0 &&
@@ -231,4 +232,6 @@ export function buildAppScreenLines(snapshot: AppSnapshot, options: ScreenLayout
     ...statusLines,
     ...shortcutLines,
   ];
+  const height = Math.floor(options.height ?? 0);
+  return height > 0 && lines.length > height ? lines.slice(-height) : lines;
 }

@@ -921,6 +921,7 @@ export class AppScreen implements Component, Focusable {
     ];
     return buildAppScreenLines(snapshot, {
       width,
+      height: this.tui.terminal.rows,
       questionLines,
       editorLines,
       composerPreviewLines,

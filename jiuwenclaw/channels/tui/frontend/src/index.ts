@@ -42,7 +42,6 @@ commandService.register(createBuiltinCommands());
 
 const terminal = new ProcessTerminal();
 const tui = new TUI(terminal);
-tui.setClearOnShrink(true);
 
 let closed = false;
 let screen: AppScreen | null = null;
