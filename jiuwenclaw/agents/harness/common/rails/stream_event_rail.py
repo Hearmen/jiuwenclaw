@@ -26,7 +26,6 @@ from openjiuwen.core.single_agent.rail.base import (
     ToolCallInputs,
 )
 from openjiuwen.core.runner import Runner
-from openjiuwen.core.single_agent import BaseAgent
 from openjiuwen.harness.rails.base import DeepAgentRail
 from openjiuwen.harness.schema.task import TodoStatus
 from openjiuwen.harness.tools import TodoListTool
@@ -61,6 +60,8 @@ class JiuClawStreamEventRail(DeepAgentRail):
         self._abort_requested = False
         self._conversation_id: str = ""
         self._stream_tasks: set[asyncio.Task] = set()
+        self._main_session: Optional[Session] = None
+        self._main_todo_tool: Optional[TodoListTool] = None
 
     def init(self, agent: Any) -> None:
         self._deep_agent = agent
@@ -82,20 +83,32 @@ class JiuClawStreamEventRail(DeepAgentRail):
         self._abort_requested = False
 
     def reset_for_new_task(self) -> None:
-        """为新任务重置暂停状态.
+        """Unblock the pause event for the next task without touching the abort flag.
 
-        只解除 pause 阻塞，不影响 abort 标志。
-        用于 cancel 操作后允许新任务启动，避免因 pause 状态残留导致新任务永久阻塞。
+        Called on cancel so that a new task can start without being stuck at
+        the _pause_event.wait() checkpoint.
         """
         self._pause_event.set()
+        self._conversation_id = ""
+        self._main_session = None
+        self._main_todo_tool = None
 
     # ------------------------------------------------------------------
     # before_invoke (Outer event on DeepAgent): capture conversation_id
     # ------------------------------------------------------------------
 
     async def before_invoke(self, ctx: AgentCallbackContext) -> None:
-        if isinstance(ctx.inputs, InvokeInputs):
-            self._conversation_id = ctx.inputs.conversation_id or ""
+        if not isinstance(ctx.inputs, InvokeInputs):
+            return
+        # Subagents have no session on their before_invoke (ctx.session is None);
+        # the main agent always has one.  Use this to distinguish without relying
+        # on conv_id naming conventions.
+        if ctx.session is None:
+            return
+        new_id = ctx.inputs.conversation_id or ""
+        if new_id:
+            self._conversation_id = new_id
+        self._main_session = ctx.session
 
     # ------------------------------------------------------------------
     # before_model_call: pause check + context fix + compression info
@@ -139,8 +152,14 @@ class JiuClawStreamEventRail(DeepAgentRail):
         await self._emit_tool_result(session, ctx.inputs.tool_call, ctx.inputs.tool_result)
 
         tool_name = ctx.inputs.tool_name
-        if tool_name in _TODO_TOOL_NAMES and self._conversation_id:
-            await self._emit_todo_updated(ctx.agent, session, self._conversation_id)
+        if not self._conversation_id:
+            return
+        if tool_name in _TODO_TOOL_NAMES:
+            # Subagent tool calls have a different session object than _main_session.
+            # Only emit todo.updated for the main agent's calls.
+            if self._main_session is None or session is not self._main_session:
+                return
+            await self._emit_todo_updated(session, self._conversation_id)
 
     # ------------------------------------------------------------------
     # on_model_exception: attempt context repair
@@ -217,20 +236,9 @@ class JiuClawStreamEventRail(DeepAgentRail):
         except Exception:
             logger.debug("tool_update emit failed", exc_info=True)
 
-    async def _emit_todo_updated(
-        self, agent: BaseAgent, session: Session, session_id: str
-    ) -> None:
-        """Emit todo list update event to frontend.
-
-        Loads current todos using TodoListTool, maps internal status to
-        frontend-compatible values, and emits a 'todo.updated' stream event.
-
-        Args:
-            agent: The agent instance to access ability_manager for tool lookup.
-            session: Session object for writing stream events.
-            session_id: Session ID used to locate the todo JSON file.
-        """
-        todo_tool = self._get_todo_tool(agent)
+    async def _emit_todo_updated(self, session: Session, session_id: str) -> None:
+        """Load the main agent's todo list and push a todo.updated event to the frontend."""
+        todo_tool = self._get_todo_tool()
         if todo_tool is None:
             logger.debug("[StreamEventRail] TodoListTool not available")
             return
@@ -259,41 +267,33 @@ class JiuClawStreamEventRail(DeepAgentRail):
         except Exception:
             logger.debug("todo.updated emit failed", exc_info=True)
 
-    def _get_todo_tool(self, agent: BaseAgent) -> TodoListTool | None:
-        """Get TodoListTool from agent's ability_manager or create new instance.
+    def _get_todo_tool(self) -> TodoListTool | None:
+        """Build and cache a TodoListTool from the main agent's deep_config workspace.
 
-        First attempts to retrieve the registered tool from the agent's
-        ability_manager and Runner's resource_mgr. If not found, falls back
-        to creating a new TodoListTool instance with rail's workspace config.
-
-        Args:
-            agent: The agent instance to access ability_manager.
-
-        Returns:
-            TodoListTool instance or None if unavailable.
+        Avoids Runner.resource_mgr: subagents register their own tools there and
+        overwrite the main agent's entry, causing load_todos to read from the wrong
+        workspace path.  deep_config.workspace is fixed at main-agent init time.
         """
-        # Try to get registered tool from agent's ability_manager
-        try:
-            tool_card = agent.ability_manager.get("todo_list")
-            registered_tool = Runner.resource_mgr.get_tool(tool_card.id)
-            if isinstance(registered_tool, TodoListTool):
-                return registered_tool
-        except Exception:
-            pass
+        if self._main_todo_tool is not None:
+            return self._main_todo_tool
 
-        # Fallback: create new tool instance
+        da = self._deep_agent
+        if da is None:
+            return None
+
         try:
-            language = getattr(
-                getattr(self._deep_agent, "system_prompt_builder", None),
-                "language", "cn",
+            deep_config = da.deep_config
+            workspace_path = str(deep_config.workspace.get_node_path(WorkspaceNode.TODO))
+            language = getattr(deep_config, "language", None) or getattr(
+                getattr(da, "system_prompt_builder", None), "language", "cn"
             ) or "cn"
-            agent_id = self._deep_agent.card.id if self._deep_agent else None 
-            return TodoListTool(
-                operation=self.sys_operation,
-                workspace=str(self.workspace.get_node_path(WorkspaceNode.TODO)),
+            self._main_todo_tool = TodoListTool(
+                operation=deep_config.sys_operation,
+                workspace=workspace_path,
                 language=language,
-                agent_id=agent_id
+                agent_id=da.card.id,
             )
+            return self._main_todo_tool
         except Exception as exc:
             logger.debug(
                 "[StreamEventRail] Failed to create TodoListTool: %s", exc

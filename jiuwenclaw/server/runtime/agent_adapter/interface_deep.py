@@ -2221,6 +2221,9 @@ class JiuWenClawDeepAdapter:
 
         self._sys_operation = sys_operation
         configured_subagents, should_add_general_agent = self._build_configured_subagents(model, config, config_base)
+        should_enable_general_agent = should_add_general_agent and (
+            sub_mode == "plan" or (isinstance(mode, str) and mode.startswith("agent"))
+        )
         common_kwargs = dict(
             model=model,
             card=agent_card,
@@ -2237,7 +2240,7 @@ class JiuWenClawDeepAdapter:
             subagents=configured_subagents,
             rails=rails_list if rails_list else [],
             enable_task_loop=self._resolve_enable_task_loop(config, config_base),
-            add_general_purpose_agent=should_add_general_agent if sub_mode == "plan" else False,
+            add_general_purpose_agent=should_enable_general_agent,
             max_iterations=config.get("max_iterations", 15),
             workspace=Workspace(
                 root_path=self._workspace_dir or "./",
