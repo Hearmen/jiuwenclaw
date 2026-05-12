@@ -177,6 +177,8 @@ class AgentWebSocketServer:
         self._acp_client_capabilities_by_ws: dict[int, dict[str, Any]] = {}
         # AgentManager 实例
         self._agent_manager = AgentManager()
+        # session_id → 正在运行的流式 asyncio.Task，用于 interrupt 时精确取消
+        self._session_stream_tasks: dict[str, asyncio.Task] = {}
         # Scheduler service instance (for scheduled auto_harness tasks)
         self._scheduler_service: Optional[AutoHarnessService] = None
         # Model cache for scheduled task execution (same approach as interface_deep)
@@ -368,6 +370,7 @@ class AgentWebSocketServer:
             self._current_ws = None
             self._current_send_lock = None
             self._clear_ws_acp_client_capabilities(ws)
+            self._session_stream_tasks.clear()
             # Gateway 进程退出/端口关闭时，必须先取消各 session 内流式生产者（SessionManager）
             # 并中止 DeepAgent 内层循环；否则仅等待 _handle_message 任务结束会一直阻塞到任务自然完成。
             try:
@@ -583,10 +586,28 @@ class AgentWebSocketServer:
             if request.req_method == ReqMethod.SCHEDULE_DELETE:
                 await self._handle_schedule_request(ws, request, send_lock, "delete")
                 return
+            if request.req_method == ReqMethod.CHAT_CANCEL:
+                # 中断请求：先取消该 session 正在运行的流式任务，再继续正常处理
+                sid = request.session_id or "default"
+                stream_task = self._session_stream_tasks.get(sid)
+                if stream_task is not None and not stream_task.done():
+                    logger.info(
+                        "[AgentWebSocketServer] cancel: 终止 session 流式任务: session_id=%s",
+                        sid,
+                    )
+                    stream_task.cancel()
+                # 继续走 _handle_unary 让 agent 适配器处理 interrupt_result
             if request.is_stream:
                 await self._handle_stream(ws, request, send_lock)
             else:
                 await self._handle_unary(ws, request, send_lock)
+        except asyncio.CancelledError:
+            # 流式任务被 interrupt 取消，正常退出无需报错
+            logger.info(
+                "[AgentWebSocketServer] 任务被取消: request_id=%s session_id=%s",
+                request.request_id,
+                request.session_id,
+            )
         except Exception as e:
             logger.exception(
                 "[AgentWebSocketServer] 处理请求失败: request_id=%s: %s",
@@ -692,6 +713,10 @@ class AgentWebSocketServer:
     async def _handle_stream(self, ws: Any, request: AgentRequest, send_lock: asyncio.Lock) -> None:
         """流式处理：调用 process_message_stream，逐条发送 E2AResponse 线 JSON。"""
         channel_id = request.channel_id or "default"
+        session_id = request.session_id or "default"
+        current_task = asyncio.current_task()
+        if current_task is not None:
+            self._session_stream_tasks[session_id] = current_task
         mode, sub_mode = _apply_resolved_mode_to_request(request)
         agent_mode = "agent" if mode == "auto_harness" else mode
         trusted_dirs = request.params.get("trusted_dirs", None)
@@ -779,6 +804,9 @@ class AgentWebSocketServer:
                     await heartbeat_task
                 except asyncio.CancelledError:
                     pass
+            # 清除 session 流式任务追踪（仅清除自身，避免误删后续新任务）
+            if self._session_stream_tasks.get(session_id) is current_task:
+                self._session_stream_tasks.pop(session_id, None)
 
         logger.info(
             "[AgentWebSocketServer] 流式响应已发送: request_id=%s 共 %s 个 chunk",

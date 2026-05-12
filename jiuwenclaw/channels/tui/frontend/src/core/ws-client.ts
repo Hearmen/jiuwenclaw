@@ -1,5 +1,5 @@
 import WebSocket from "ws";
-import type { Frame, ResFrame } from "./protocol.js";
+import type { Frame, ReqFrame, ResFrame } from "./protocol.js";
 import { isResFrame } from "./protocol.js";
 
 export type FrameHandler = (frame: Frame) => void;
@@ -87,13 +87,14 @@ export class WsClient {
     method: string,
     params: Record<string, unknown>,
     timeoutMs = 30000,
+    isStream = false,
   ): Promise<ResFrame> {
     return new Promise((resolve, reject) => {
       if (this.ws?.readyState !== WebSocket.OPEN) {
         reject(new Error(`socket not connected: ${method}`));
         return;
       }
-      const frame = { type: "req" as const, id, method, params };
+      const frame: ReqFrame = { type: "req", id, method, params, ...(isStream ? { is_stream: true } : {}) };
       const timer = setTimeout(() => {
         this.pending.delete(id);
         reject(new Error(`request timeout: ${method}`));

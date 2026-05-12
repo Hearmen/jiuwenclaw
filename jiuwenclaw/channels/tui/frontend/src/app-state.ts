@@ -510,7 +510,7 @@ export class CliPiAppState {
     this._getInputValueRef = ref;
   }
 
-  readonly sendEventOnly = (method: string, params: Record<string, unknown>): string => {
+  readonly sendEventOnly = (method: string, params: Record<string, unknown>, isStream = false): string => {
     const id = `tui_${Date.now().toString(16)}_${Math.random().toString(36).slice(2, 6)}`;
     const trustedDirs = getTrustedDirs();
     const workspaceDir = trustedDirs[0] || process.cwd();
@@ -518,6 +518,7 @@ export class CliPiAppState {
       type: "req",
       id,
       method,
+      ...(isStream ? { is_stream: true } : {}),
       params: {
         ...params,
         session_id: (params.session_id as string | undefined) ?? this.sessionId,
@@ -703,7 +704,7 @@ readonly request = async <T = Record<string, unknown>>(
       query: content,
       mode,
       ...(attachments?.length ? { attachments } : {}),
-    });
+    }, true);
     this.lastError = null;
     if (options?.logAsUser !== false) {
       this.entries = [
@@ -763,7 +764,7 @@ readonly request = async <T = Record<string, unknown>>(
     const hadLocalWork = this.getSnapshot().cancellableWork;
     this.sendEventOnly("chat.interrupt", { intent: "cancel" });
     if (options?.showNotice !== false && hadLocalWork) {
-      this.addItem(addInfo(this.sessionId, "Interrupt requested", "i"));
+      this.addItem(addInfo(this.sessionId, "Request Interrupted", "i"));
     }
     return true;
   }
@@ -794,7 +795,7 @@ readonly request = async <T = Record<string, unknown>>(
         answers,
         source,
         mode: this.mode,
-      });
+      }, true);
     } else {
       this.sendEventOnly("chat.user_answer", {
         request_id: this.pendingQuestion.requestId,

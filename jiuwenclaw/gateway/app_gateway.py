@@ -612,6 +612,8 @@ class GatewayServer:
             if cwd and isinstance(cwd, str) and cwd.strip():
                 metadata["cwd"] = cwd.strip()
 
+            is_stream = bool(data.get("is_stream", False))
+
             msg = Message(
                 id=req_id,
                 type="req",
@@ -623,6 +625,7 @@ class GatewayServer:
                 req_method=req_method,
                 mode=mode,
                 metadata=metadata,
+                is_stream=is_stream,
             )
 
             if self._on_message_cb is not None:
