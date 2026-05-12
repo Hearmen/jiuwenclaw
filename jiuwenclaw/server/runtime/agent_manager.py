@@ -10,6 +10,8 @@ import uuid
 from typing import Any, TYPE_CHECKING
 
 from jiuwenclaw.common.e2a.acp.protocol import build_acp_initialize_result
+from jiuwenclaw.agents.harness.team import get_team_manager
+from jiuwenclaw.common.config import get_config
 
 if TYPE_CHECKING:
     from jiuwenclaw.server.runtime.agent_adapter.interface import JiuWenClaw
@@ -221,6 +223,15 @@ class AgentManager:
                 await agent.reload_agent_config(
                     config_base=config,
                     env_overrides=env,
+                )
+            try:
+                team_config = config if isinstance(config, dict) else get_config()
+                await get_team_manager(channel_id).update_evolution_config(team_config)
+            except Exception as exc:
+                logger.warning(
+                    "[AgentManager] team evolution config hot-update failed: channel=%s error=%s",
+                    channel_id,
+                    exc,
                 )
             logger.info(f"channel {channel_id} reload agent config success.")
 

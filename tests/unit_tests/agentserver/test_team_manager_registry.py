@@ -11,6 +11,10 @@ import pytest
 
 from jiuwenclaw.agents.harness.team.team_manager import (
     TeamManager,
+    TeamRailMountContext,
+    MemberInfo,
+    RuntimeInfo,
+    TeamWorkspaceInfo,
     get_team_manager,
     reset_team_manager,
     sync_team_skills_across_managers,
@@ -32,6 +36,36 @@ class _TeamManagerHarness(TeamManager):
         return self._resolve_session_team_name(session_id)
 
 
+class _FakeRail:
+    pass
+
+
+class _FakeSkillEvolutionRail:
+    def __init__(self, auto_scan: bool = True) -> None:
+        self.auto_scan = auto_scan
+
+
+class _FakeTeamSkillRail:
+    pass
+
+
+class _FakeTeamSkillCreateRail:
+    pass
+
+
+class _FakeAgent:
+    def __init__(self) -> None:
+        self.unregistered: list[object] = []
+        self.added_rails: list[object] = []
+
+    async def unregister_rail(self, rail: object):
+        self.unregistered.append(rail)
+        return self
+
+    def add_rail(self, rail: object) -> None:
+        self.added_rails.append(rail)
+
+
 def setup_function() -> None:
     reset_team_manager()
 
@@ -49,6 +83,160 @@ def test_get_team_manager_is_scoped_by_channel() -> None:
     assert isinstance(feishu_manager, TeamManager)
     assert web_manager is web_manager_again
     assert web_manager is not feishu_manager
+
+
+@pytest.mark.asyncio
+async def test_update_evolution_config_updates_member_skill_evolution_auto_scan(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    manager = TeamManager()
+    rail = _FakeSkillEvolutionRail(auto_scan=True)
+    manager.register_team_member_skill_evolution_rail("sess-1", rail)
+
+    monkeypatch.delenv("EVOLUTION_AUTO_SCAN", raising=False)
+    await manager.update_evolution_config({"evolution": {"auto_scan": False}})
+
+    assert rail.auto_scan is False
+
+    await manager.update_evolution_config({"evolution": {"auto_scan": True}})
+
+    assert rail.auto_scan is True
+
+
+@pytest.mark.asyncio
+async def test_update_evolution_config_disables_team_skill_rail_and_watcher(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    manager = TeamManager()
+    rail = _FakeRail()
+    agent = _FakeAgent()
+    task = asyncio.create_task(asyncio.sleep(3600))
+
+    monkeypatch.delenv("EVOLUTION_AUTO_SCAN", raising=False)
+    manager.register_team_skill_rail("sess-1", rail)
+    manager.register_team_live_rail("sess-1", agent, rail)
+    manager.register_team_evolution_watcher("sess-1", task)
+
+    await manager.update_evolution_config({"evolution": {"auto_scan": False}})
+
+    assert manager.get_team_skill_rail("sess-1") is None
+    assert manager.get_team_evolution_watcher("sess-1") is None
+    assert agent.unregistered == [rail]
+    assert task.cancelled()
+
+
+@pytest.mark.asyncio
+async def test_update_evolution_config_disables_team_skill_create_rail() -> None:
+    manager = TeamManager()
+    rail = _FakeRail()
+    agent = _FakeAgent()
+
+    manager.register_team_skill_create_rail("sess-1", rail)
+    manager.register_team_live_rail("sess-1", agent, rail)
+
+    await manager.update_evolution_config({"evolution": {"skill_create": False}})
+
+    assert manager.get_team_skill_create_rail("sess-1") is None
+    assert agent.unregistered == [rail]
+
+
+@pytest.mark.asyncio
+async def test_update_evolution_config_enabled_does_not_mount_missing_rails(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    manager = TeamManager()
+    rail = _FakeSkillEvolutionRail(auto_scan=False)
+    manager.register_team_member_skill_evolution_rail("sess-1", rail)
+
+    monkeypatch.delenv("EVOLUTION_AUTO_SCAN", raising=False)
+    monkeypatch.delenv("SKILL_CREATE", raising=False)
+    await manager.update_evolution_config(
+        {"evolution": {"auto_scan": True, "skill_create": True}}
+    )
+
+    assert rail.auto_scan is True
+    assert manager.get_team_skill_rail("sess-1") is None
+    assert manager.get_team_skill_create_rail("sess-1") is None
+
+
+@pytest.mark.asyncio
+async def test_update_evolution_config_recreates_missing_team_rails_when_enabled(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    manager = TeamManager()
+    agent = _FakeAgent()
+    context = TeamRailMountContext(
+        agent=agent,
+        member_info=MemberInfo(role="leader"),
+        runtime=RuntimeInfo(channel="web"),
+        team_workspace=TeamWorkspaceInfo(
+            root_dir="/tmp/team",
+            skills_dir="/tmp/team/skills",
+            trajectories_dir="/tmp/team/trajectories",
+            team_id="demo-team",
+            config={},
+        ),
+    )
+    manager.register_team_rail_context("sess-1", context)
+
+    monkeypatch.delenv("EVOLUTION_AUTO_SCAN", raising=False)
+    monkeypatch.delenv("SKILL_CREATE", raising=False)
+    monkeypatch.setattr(
+        "jiuwenclaw.agents.harness.team.team_manager.build_member_rails",
+        lambda **kwargs: (
+            [_FakeTeamSkillRail(), _FakeTeamSkillCreateRail()]
+            if kwargs["team_workspace"].config.get("evolution", {}).get("auto_scan")
+            and kwargs["team_workspace"].config.get("evolution", {}).get("skill_create")
+            else []
+        ),
+    )
+    monkeypatch.setattr(
+        "jiuwenclaw.agents.harness.team.team_manager.TeamSkillRail",
+        _FakeTeamSkillRail,
+    )
+    monkeypatch.setattr(
+        "jiuwenclaw.agents.harness.team.team_manager.TeamSkillCreateRail",
+        _FakeTeamSkillCreateRail,
+    )
+    monkeypatch.setattr(
+        "jiuwenclaw.agents.harness.team.team_manager.get_config",
+        lambda: {"evolution": {"auto_scan": True, "skill_create": True}},
+    )
+
+    await manager.update_evolution_config(
+        {"evolution": {"auto_scan": True, "skill_create": True}}
+    )
+
+    assert isinstance(manager.get_team_skill_rail("sess-1"), _FakeTeamSkillRail)
+    assert isinstance(manager.get_team_skill_create_rail("sess-1"), _FakeTeamSkillCreateRail)
+    assert len(agent.added_rails) == 2
+
+
+@pytest.mark.asyncio
+async def test_destroy_team_cleans_registered_evolution_rails(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    manager = TeamManager()
+    rail = _FakeRail()
+    agent = _FakeAgent()
+
+    monkeypatch.setattr(
+        "jiuwenclaw.agents.harness.team.team_manager.release_a2x_reservations_for_team",
+        lambda team_agent: None,
+    )
+    manager.register_team_skill_rail("sess-1", rail)
+    manager.register_team_member_skill_evolution_rail("sess-1", rail)
+    manager.register_team_skill_create_rail("sess-1", rail)
+    manager.register_team_live_rail("sess-1", agent, rail)
+    manager.register_team_skill_sync_target("sess-1", Path("/tmp/src"), Path("/tmp/dst"))
+    manager.commit_runtime_ready("sess-1", "demo-team")
+
+    cleaned = await manager.destroy_team("sess-1")
+
+    assert cleaned is False
+    assert manager.get_team_skill_rail("sess-1") is None
+    assert manager.get_team_skill_create_rail("sess-1") is None
+    assert not manager.has_team_skill_sync_target("sess-1")
 
 
 @pytest.mark.asyncio

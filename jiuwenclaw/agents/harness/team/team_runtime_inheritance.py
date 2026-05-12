@@ -30,6 +30,7 @@ from jiuwenclaw.agents.harness.common.rails.response_prompt_rail import Response
 from jiuwenclaw.agents.harness.common.rails.runtime_prompt_rail import RuntimePromptRail
 from jiuwenclaw.agents.harness.common.rails.stream_event_rail import JiuClawStreamEventRail
 from jiuwenclaw.agents.harness.team.rails.team_workspace_report_path_rail import TeamWorkspaceReportPathRail
+from jiuwenclaw.common.config import get_config
 
 logger = logging.getLogger(__name__)
 
@@ -238,7 +239,7 @@ def build_member_rails(
             logger.warning("[TeamRuntime] TeamWorkspaceReportPathRail failed: %s", exc)
 
     # Leader-only: TeamSkillRail for team skill evolution.
-    if role == "leader" and team_ws_skills_dir:
+    if role == "leader" and team_ws_skills_dir and get_evolution_auto_scan_enabled(config):
         try:
             Path(team_ws_skills_dir).mkdir(parents=True, exist_ok=True)
             llm_model, actual_model_name = build_evolution_llm()
@@ -260,28 +261,23 @@ def build_member_rails(
         except Exception as exc:
             logger.warning("[TeamRuntime] TeamSkillRail failed: %s", exc, exc_info=True)
 
-        # Leader-only: TeamSkillCreateRail for team skill creation proposals.
-        # Requires skill_create config enabled (same as SkillCreateRail for single agent).
-        # Env: SKILL_CREATE takes precedence over config.yaml.
-        env_skill_create = os.getenv("SKILL_CREATE")
-        if env_skill_create is not None:
-            skill_create_enabled = env_skill_create.lower() in ("true", "1", "yes")
-        else:
-            skill_create_enabled = (config or {}).get("evolution", {}).get("skill_create", False)
-        if skill_create_enabled and team_ws_skills_dir:
-            try:
-                team_skill_create_rail = TeamSkillCreateRail(
-                    skills_dir=team_ws_skills_dir,
-                    language=language,
-                    auto_trigger=True,
-                )
-                rails_list.append(team_skill_create_rail)
-                logger.info(
-                    "[TeamRuntime] TeamSkillCreateRail created: skills_dir=%s",
-                    team_ws_skills_dir,
-                )
-            except Exception as exc:
-                logger.warning("[TeamRuntime] TeamSkillCreateRail failed: %s", exc, exc_info=True)
+    # Leader-only: TeamSkillCreateRail for team skill creation proposals.
+    # Requires skill_create config enabled (same as SkillCreateRail for single agent).
+    # Env: SKILL_CREATE takes precedence over config.yaml.
+    if role == "leader" and team_ws_skills_dir and get_skill_create_enabled(config):
+        try:
+            team_skill_create_rail = TeamSkillCreateRail(
+                skills_dir=team_ws_skills_dir,
+                language=language,
+                auto_trigger=True,
+            )
+            rails_list.append(team_skill_create_rail)
+            logger.info(
+                "[TeamRuntime] TeamSkillCreateRail created: skills_dir=%s",
+                team_ws_skills_dir,
+            )
+        except Exception as exc:
+            logger.warning("[TeamRuntime] TeamSkillCreateRail failed: %s", exc, exc_info=True)
 
     # Non-leader: SkillEvolutionRail for member skill self-evolution.
     if role != "leader" and team_ws_skills_dir:
@@ -336,7 +332,6 @@ def get_default_model_name(config: dict[str, Any] | None = None) -> str:
     """
     if config is None:
         try:
-            from jiuwenclaw.common.config import get_config
             config = get_config()
         except Exception as exc:
             logger.warning("[TeamRuntime] Failed to load config for default model: %s", exc)
@@ -352,6 +347,38 @@ def get_default_model_name(config: dict[str, Any] | None = None) -> str:
         logger.warning("[TeamRuntime] Failed to resolve default model name: %s", exc)
 
     return "gpt-4"
+
+
+def _get_bool_env(value: str | None) -> bool | None:
+    if value is None:
+        return None
+    return value.lower() in ("true", "1", "yes")
+
+
+def _get_evolution_config(config: dict[str, Any] | None) -> dict[str, Any]:
+    if not isinstance(config, dict):
+        return {}
+    react_config = config.get("react")
+    if isinstance(react_config, dict) and isinstance(react_config.get("evolution"), dict):
+        return react_config["evolution"]
+    evolution_config = config.get("evolution")
+    if isinstance(evolution_config, dict):
+        return evolution_config
+    return {}
+
+
+def get_evolution_auto_scan_enabled(config: dict[str, Any] | None) -> bool:
+    env_auto_scan = _get_bool_env(os.getenv("EVOLUTION_AUTO_SCAN"))
+    if env_auto_scan is not None:
+        return env_auto_scan
+    return _get_evolution_config(config).get("auto_scan", False)
+
+
+def get_skill_create_enabled(config: dict[str, Any] | None) -> bool:
+    env_skill_create = _get_bool_env(os.getenv("SKILL_CREATE"))
+    if env_skill_create is not None:
+        return env_skill_create
+    return _get_evolution_config(config).get("skill_create", False)
 
 
 def resolve_model_config(
@@ -426,7 +453,6 @@ def build_evolution_llm(
     )
 
     if config is None:
-        from jiuwenclaw.common.config import get_config
         config = get_config()
 
     model_client_config, model_config_obj, model_name = resolve_model_config(config)
@@ -455,11 +481,7 @@ def build_skill_evolution_rail(
     """
     try:
         llm, model_name = build_evolution_llm(config)
-        _env_auto_scan = os.getenv("EVOLUTION_AUTO_SCAN")
-        if _env_auto_scan is not None:
-            evolution_auto_scan: bool = _env_auto_scan.lower() in ("true", "1", "yes")
-        else:
-            evolution_auto_scan = (config or {}).get("evolution", {}).get("auto_scan", False)
+        evolution_auto_scan = get_evolution_auto_scan_enabled(config)
 
         rail = SkillEvolutionRail(
             skills_dir=skills_dir,

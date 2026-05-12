@@ -9,6 +9,7 @@ import copy
 import json
 import logging
 import shutil
+from dataclasses import dataclass
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, Callable
@@ -19,6 +20,12 @@ from openjiuwen.agent_teams.schema.blueprint import TeamAgentSpec
 from openjiuwen.agent_teams.context import reset_session_id, set_session_id
 from openjiuwen.core.runner import Runner
 from openjiuwen.harness import DeepAgent
+from openjiuwen.harness.rails import SkillEvolutionRail, TeamSkillCreateRail, TeamSkillRail
+from jiuwenclaw.agents.harness.common.plugins.rail_manager import get_rail_manager
+from jiuwenclaw.agents.harness.team.rails.team_member_skill_toolkit_rail import (
+    MemberSkillToolkitRail,
+)
+from jiuwenclaw.server.runtime.skill.skill_manager import SkillManager
 
 from jiuwenclaw.agents.harness.team.bootstrap import configure_agent_teams_home
 
@@ -50,6 +57,8 @@ from jiuwenclaw.agents.harness.team.team_runtime_inheritance import (
     RAIL_WHITELIST,
     RuntimeInfo,
     TeamWorkspaceInfo,
+    get_evolution_auto_scan_enabled,
+    get_skill_create_enabled,
     build_member_rails,
     filter_inheritable_ability_cards,
     get_default_model_name,
@@ -92,6 +101,16 @@ def _sync_skills_dir(source: Path, target: Path) -> None:
         logger.info("[TeamManager] synced %d skills: %s -> %s", synced, source, target)
 
 
+@dataclass
+class TeamRailMountContext:
+    """Context needed to rebuild team rails after a hot config toggle."""
+
+    agent: Any
+    member_info: MemberInfo
+    runtime: RuntimeInfo
+    team_workspace: TeamWorkspaceInfo
+
+
 async def _stop_team_messager(team_agent: Any, *, session_id: str) -> None:
     """Stop a team's mailbox transport so per-team ZMQ sockets release their ports."""
     messager = getattr(team_agent, "_messager", None) or getattr(team_agent, "mailbox_transport", None)
@@ -119,6 +138,14 @@ class TeamManager:
         self._pending_team_name: str | None = None
         # session_id → TeamSkillRail instance (set by customizer, used for drain/approval)
         self._team_skill_rails: dict[str, Any] = {}
+        # session_id → member SkillEvolutionRail instances
+        self._team_member_skill_evolution_rails: dict[str, list[Any]] = {}
+        # session_id → TeamSkillCreateRail instance
+        self._team_skill_create_rails: dict[str, Any] = {}
+        # session_id → context used to rebuild team rails on config enable
+        self._team_rail_contexts: dict[str, TeamRailMountContext] = {}
+        # session_id → live rails and owning DeepAgent, for hot-unregister
+        self._team_live_rails: dict[str, list[tuple[Any, Any]]] = {}
         # session_id → (workspace_skills_dir, global_team_skills_dir)
         self._team_skill_sync_targets: dict[str, tuple[Path, Path]] = {}
         # session_id → evolution watcher task
@@ -458,12 +485,6 @@ class TeamManager:
         channel_id: str | None = None,
         request_metadata: dict[str, Any] | None = None,
     ) -> Callable[..., None]:
-        from jiuwenclaw.agents.harness.team.rails.team_member_skill_toolkit_rail import (
-            MemberSkillToolkitRail,
-        )
-        from jiuwenclaw.server.runtime.skill.skill_manager import SkillManager
-        from jiuwenclaw.agents.harness.common.plugins.rail_manager import get_rail_manager
-
         global_skills_dir = get_agent_skills_dir()
         global_skills_state_path = global_skills_dir / "skills_state.json"
         resolved_channel = channel_id or "default"
@@ -731,6 +752,14 @@ class TeamManager:
                     )
 
             # Build all member rails (common + skill rails via role).
+            team_workspace = TeamWorkspaceInfo(
+                root_dir=str(Path(team_ws_root)),
+                skills_dir=str(team_ws_skills_dir),
+                trajectories_dir=str(team_ws_trajectories_dir),
+                team_id=spec.team_name,
+                config=get_config(),
+            )
+
             try:
                 member_rails = build_member_rails(
                     member_info=MemberInfo(
@@ -739,23 +768,30 @@ class TeamManager:
                         role=role
                     ),
                     runtime=RuntimeInfo(channel=resolved_channel),
-                    team_workspace=TeamWorkspaceInfo(
-                        root_dir=str(Path(team_ws_root)),
-                        skills_dir=str(team_ws_skills_dir),
-                        trajectories_dir=str(team_ws_trajectories_dir),
-                        team_id=spec.team_name,
-                        config=get_config(),
-                    ),
+                    team_workspace=team_workspace,
                 )
-                from openjiuwen.harness.rails import TeamSkillRail
                 team_skill_rail: Any | None = None
+                team_skill_create_rail: Any | None = None
                 for rail in member_rails:
                     if type(rail).__name__ in RAIL_WHITELIST:
                         agent.add_rail(rail)
+                        if isinstance(rail, (TeamSkillRail, TeamSkillCreateRail)):
+                            get_team_manager(resolved_channel).register_team_live_rail(
+                                session_id,
+                                agent,
+                                rail,
+                            )
                     else:
                         logger.debug("[TeamManager] Skipping non-whitelisted rail: %s", type(rail).__name__)
                     if isinstance(rail, TeamSkillRail):
                         team_skill_rail = rail
+                    elif isinstance(rail, SkillEvolutionRail):
+                        get_team_manager(resolved_channel).register_team_member_skill_evolution_rail(
+                            session_id,
+                            rail,
+                        )
+                    elif isinstance(rail, TeamSkillCreateRail):
+                        team_skill_create_rail = rail
                 logger.info("[TeamManager] Added %d rails for team member", len(member_rails))
                 # Register TeamSkillRail with TeamManager for approval/sync.
                 if team_skill_rail is not None:
@@ -771,6 +807,24 @@ class TeamManager:
                         "(skills_dir=%s, sync_target=%s)",
                         team_ws_skills_dir, get_agent_skills_dir(),
                     )
+                if team_skill_create_rail is not None:
+                    get_team_manager(resolved_channel).register_team_skill_create_rail(
+                        session_id,
+                        team_skill_create_rail,
+                    )
+                get_team_manager(resolved_channel).register_team_rail_context(
+                    session_id,
+                    TeamRailMountContext(
+                        agent=agent,
+                        member_info=MemberInfo(
+                            agent_name=getattr(agent.card, "name", "team_member"),
+                            model_name=resolved_model_name,
+                            role=role,
+                        ),
+                        runtime=RuntimeInfo(channel=resolved_channel),
+                        team_workspace=team_workspace,
+                    ),
+                )
             except Exception as exc:
                 logger.warning("[TeamManager] build_member_rails failed: %s", exc)
 
@@ -984,10 +1038,13 @@ class TeamManager:
             logger.error("[TeamManager] interact failed: session_id=%s, error=%s", session_id, exc)
             return False
 
-    # ── TeamSkillRail accessor ──────────────────────────────────
+    # TeamSkillRail accessors.
 
     def get_team_skill_rail(self, session_id: str) -> Any | None:
         return self._team_skill_rails.get(session_id)
+
+    def get_team_skill_create_rail(self, session_id: str) -> Any | None:
+        return self._team_skill_create_rails.get(session_id)
 
     def find_team_skill_rail_for_request(self, request_id: str) -> Any | None:
         """Find the TeamSkillRail that owns a pending patch with this request_id."""
@@ -1007,6 +1064,162 @@ class TeamManager:
         """Register a TeamSkillRail instance for the given session."""
         self._team_skill_rails[session_id] = rail
 
+    def register_team_member_skill_evolution_rail(self, session_id: str, rail: Any) -> None:
+        """Register a member SkillEvolutionRail instance for hot config updates."""
+        rails = self._team_member_skill_evolution_rails.setdefault(session_id, [])
+        if rail not in rails:
+            rails.append(rail)
+
+    def register_team_skill_create_rail(self, session_id: str, rail: Any) -> None:
+        """Register a TeamSkillCreateRail instance for hot config updates."""
+        self._team_skill_create_rails[session_id] = rail
+
+    def register_team_rail_context(self, session_id: str, context: TeamRailMountContext) -> None:
+        """Register session context needed to rebuild missing team rails."""
+        self._team_rail_contexts[session_id] = context
+
+    def register_team_live_rail(self, session_id: str, agent: Any, rail: Any) -> None:
+        """Remember a live rail owner so hot reload can unregister mounted rails."""
+        rails = self._team_live_rails.setdefault(session_id, [])
+        entry = (agent, rail)
+        if entry not in rails:
+            rails.append(entry)
+
+    def _clear_team_rail_registries(self, session_id: str) -> None:
+        self._team_skill_rails.pop(session_id, None)
+        self._team_member_skill_evolution_rails.pop(session_id, None)
+        self._team_skill_create_rails.pop(session_id, None)
+        self._team_rail_contexts.pop(session_id, None)
+        self._team_live_rails.pop(session_id, None)
+        self._team_skill_sync_targets.pop(session_id, None)
+
+    async def _cancel_team_evolution_watcher(self, session_id: str) -> None:
+        watcher_task = self._team_evolution_watchers.pop(session_id, None)
+        if watcher_task and not watcher_task.done():
+            watcher_task.cancel()
+            try:
+                await watcher_task
+            except asyncio.CancelledError:
+                pass
+            except Exception as exc:
+                logger.warning(
+                    "[TeamManager] evolution watcher stop failed: session_id=%s error=%s",
+                    session_id,
+                    exc,
+                )
+
+    async def _unregister_live_rail(self, session_id: str, rail: Any) -> None:
+        live_rails = self._team_live_rails.get(session_id, [])
+        remaining: list[tuple[Any, Any]] = []
+        for agent, live_rail in live_rails:
+            if live_rail is not rail:
+                remaining.append((agent, live_rail))
+                continue
+            unregister = getattr(agent, "unregister_rail", None)
+            if callable(unregister):
+                try:
+                    result = unregister(live_rail)
+                    if hasattr(result, "__await__"):
+                        await result
+                except Exception as exc:
+                    logger.warning(
+                        "[TeamManager] live rail unregister failed: session_id=%s rail=%s error=%s",
+                        session_id,
+                        type(live_rail).__name__,
+                        exc,
+                    )
+        if remaining:
+            self._team_live_rails[session_id] = remaining
+        else:
+            self._team_live_rails.pop(session_id, None)
+
+    def _build_and_mount_member_rails_for_context(
+        self,
+        session_id: str,
+        context: TeamRailMountContext,
+        *,
+        mount_team_skill_rail: bool,
+        mount_team_skill_create_rail: bool,
+        mount_skill_evolution_rail: bool,
+    ) -> tuple[Any | None, Any | None]:
+        """Rebuild team rails for a session using the stored mount context."""
+        latest_config = get_config()
+        context.team_workspace.config = latest_config
+        member_rails = build_member_rails(
+            member_info=context.member_info,
+            runtime=context.runtime,
+            team_workspace=context.team_workspace,
+        )
+        team_skill_rail: Any | None = None
+        team_skill_create_rail: Any | None = None
+        for rail in member_rails:
+            if isinstance(rail, TeamSkillRail) and mount_team_skill_rail:
+                context.agent.add_rail(rail)
+                self.register_team_live_rail(session_id, context.agent, rail)
+                team_skill_rail = rail
+            elif isinstance(rail, SkillEvolutionRail) and mount_skill_evolution_rail:
+                context.agent.add_rail(rail)
+                self.register_team_member_skill_evolution_rail(session_id, rail)
+            elif isinstance(rail, TeamSkillCreateRail) and mount_team_skill_create_rail:
+                context.agent.add_rail(rail)
+                self.register_team_live_rail(session_id, context.agent, rail)
+                team_skill_create_rail = rail
+
+        if team_skill_rail is not None:
+            self.register_team_skill_rail(session_id, team_skill_rail)
+            if context.team_workspace.skills_dir:
+                self.register_team_skill_sync_target(
+                    session_id,
+                    Path(context.team_workspace.skills_dir),
+                    get_agent_skills_dir(),
+                )
+        if team_skill_create_rail is not None:
+            self.register_team_skill_create_rail(session_id, team_skill_create_rail)
+        return team_skill_rail, team_skill_create_rail
+
+    async def update_evolution_config(self, config: dict[str, Any] | None) -> None:
+        """Hot-update team evolution rails for existing team runtimes."""
+        auto_scan_enabled = get_evolution_auto_scan_enabled(config)
+        skill_create_enabled = get_skill_create_enabled(config)
+
+        for rails in self._team_member_skill_evolution_rails.values():
+            for rail in rails:
+                try:
+                    rail.auto_scan = auto_scan_enabled
+                except Exception as exc:
+                    logger.warning(
+                        "[TeamManager] SkillEvolutionRail auto_scan update failed: %s",
+                        exc,
+                    )
+
+        if not auto_scan_enabled:
+            for session_id, rail in list(self._team_skill_rails.items()):
+                await self._cancel_team_evolution_watcher(session_id)
+                await self._unregister_live_rail(session_id, rail)
+                self._team_skill_rails.pop(session_id, None)
+                self._team_skill_sync_targets.pop(session_id, None)
+
+        if not skill_create_enabled:
+            for session_id, rail in list(self._team_skill_create_rails.items()):
+                await self._unregister_live_rail(session_id, rail)
+                self._team_skill_create_rails.pop(session_id, None)
+
+        for session_id, context in list(self._team_rail_contexts.items()):
+            needs_team_skill_rail = auto_scan_enabled and session_id not in self._team_skill_rails
+            needs_team_skill_create_rail = skill_create_enabled and session_id not in self._team_skill_create_rails
+            needs_skill_evolution_rail = (
+                auto_scan_enabled
+                and not self._team_member_skill_evolution_rails.get(session_id)
+            )
+            if needs_team_skill_rail or needs_team_skill_create_rail or needs_skill_evolution_rail:
+                self._build_and_mount_member_rails_for_context(
+                    session_id,
+                    context,
+                    mount_team_skill_rail=needs_team_skill_rail,
+                    mount_team_skill_create_rail=needs_team_skill_create_rail,
+                    mount_skill_evolution_rail=needs_skill_evolution_rail,
+                )
+
     def register_team_skill_sync_target(
         self, session_id: str, source: Path, target: Path,
     ) -> None:
@@ -1017,7 +1230,7 @@ class TeamManager:
         """Return whether the session has a registered team skill sync target."""
         return session_id in self._team_skill_sync_targets
 
-    # ── Skill sync helpers ──────────────────────────────────────
+    # Skill sync helpers.
 
     def sync_team_skills(self, session_id: str) -> None:
         """Sync team skills from workspace dir to global team_skills dir after approval."""
@@ -1170,8 +1383,7 @@ class TeamManager:
                     exc,
                 )
 
-        self._team_skill_rails.pop(session_id, None)
-        self._team_skill_sync_targets.pop(session_id, None)
+        self._clear_team_rail_registries(session_id)
 
     async def terminate_session_runtime(self, session_id: str, reason: str = "") -> bool:
         """Stop-like teardown for the current team session runtime.
@@ -1390,7 +1602,7 @@ class TeamManager:
             return False
 
     async def cancel_all_stream_tasks(self, reason: str = "") -> None:
-        """Gateway 与 AgentServer 断开时取消 Team 后台 stream 协程（含 create_task 绕开 SessionManager 的任务）。"""
+        """Cancel Team stream tasks after AgentServer disconnects."""
         async with self._lock:
             pending = list(self._stream_tasks.items())
         for session_id, task in pending:
