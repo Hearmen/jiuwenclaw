@@ -376,15 +376,34 @@ class MessageHandler(ABC):
         # 即使网关侧已无活跃流式拉取任务（例如 Agent 正在执行 shell/工具），也必须通知 AgentServer，
         # 否则仅断开 CLI WebSocket 无法停止已派发的工作。
 
+        # 从 msg.params（已被 _apply_channel_state 注入 mode）或 channel_states
+        # 获取 mode 信息，注入到 cancel params 以确保 AgentServer 找到正确的 agent
+        cancel_params = {
+            "intent": "cancel",
+            "session_id": sid_for_agent,
+        }
+        cancel_mode = None
+        if isinstance(msg.params, dict) and msg.params.get("mode"):
+            # _apply_channel_state 已将 mode 写入 msg.params
+            cancel_mode = msg.params["mode"]
+        else:
+            # 回退到 channel_states
+            state = self._channel_states.get(
+                self._get_channel_state_key(msg.channel_id, msg.session_id)
+            ) or self._channel_states.get(msg.channel_id)
+            if state is not None:
+                cancel_mode = state.mode.value if hasattr(state.mode, 'value') else str(state.mode)
+        if cancel_mode:
+            cancel_params["mode"] = cancel_mode
+        if isinstance(msg.params, dict) and msg.params.get("trusted_dirs"):
+            cancel_params["trusted_dirs"] = msg.params["trusted_dirs"]
+
         cancel_req = Message(
             id=f"interrupt_{int(time.time() * 1000):x}_{secrets.token_hex(3)}",
             type="req",
             channel_id=msg.channel_id,
             session_id=sid_for_agent,
-            params={
-                "intent": "cancel",
-                "session_id": sid_for_agent,
-            },
+            params=cancel_params,
             timestamp=time.time(),
             ok=True,
             req_method=ReqMethod.CHAT_CANCEL,
@@ -455,12 +474,23 @@ class MessageHandler(ABC):
             if not sid or sid in seen:
                 continue
             seen.add(sid)
+            # 注入 mode 信息，确保 AgentServer 找到正确的 agent
+            disconnect_params = {"intent": "cancel", "session_id": sid}
+            disconnect_state = self._channel_states.get(
+                self._get_channel_state_key(_channel_id, sid)
+            ) or self._channel_states.get(_channel_id)
+            if disconnect_state is not None:
+                disconnect_params["mode"] = (
+                    disconnect_state.mode.value
+                    if hasattr(disconnect_state.mode, 'value')
+                    else str(disconnect_state.mode)
+                )
             stub = Message(
                 id=f"ws_drop_{int(time.time() * 1000):x}_{secrets.token_hex(4)}",
                 type="req",
                 channel_id=_channel_id,
                 session_id=sid,
-                params={"intent": "cancel", "session_id": sid},
+                params=disconnect_params,
                 timestamp=time.time(),
                 ok=True,
                 req_method=ReqMethod.CHAT_CANCEL,
@@ -2068,12 +2098,23 @@ class MessageHandler(ABC):
                         from jiuwenclaw.common.e2a.gateway_normalize import e2a_from_agent_fields
 
                         agent_msg = await self._prepare_agent_dispatch_message(msg)
+                        # 注入 mode 信息，确保 AgentServer 找到正确的 agent
+                        supplement_params = {"intent": "supplement", "session_id": agent_msg.session_id}
+                        sup_state = self._channel_states.get(
+                            self._get_channel_state_key(msg.channel_id, msg.session_id)
+                        ) or self._channel_states.get(msg.channel_id)
+                        if sup_state is not None:
+                            supplement_params["mode"] = (
+                                sup_state.mode.value
+                                if hasattr(sup_state.mode, 'value')
+                                else str(sup_state.mode)
+                            )
                         supplement_env = e2a_from_agent_fields(
                             request_id=f"supplement_{int(time.time() * 1000):x}",
                             channel_id=msg.channel_id,
                             session_id=agent_msg.session_id,
                             req_method=ReqMethod.CHAT_CANCEL,
-                            params={"intent": "supplement", "session_id": agent_msg.session_id},
+                            params=supplement_params,
                             is_stream=False,
                             timestamp=time.time(),
                         )
@@ -2129,6 +2170,17 @@ class MessageHandler(ABC):
                     elif intent in ("pause", "resume"):
                         # 暂停/恢复：不取消流式任务，转发给 AgentServer 处理 ReAct 循环
                         agent_msg = await self._prepare_agent_dispatch_message(msg)
+                        # 确保 mode 信息存在，否则从 channel_states 注入
+                        if isinstance(agent_msg.params, dict) and not agent_msg.params.get("mode"):
+                            pr_state = self._channel_states.get(
+                                self._get_channel_state_key(msg.channel_id, msg.session_id)
+                            ) or self._channel_states.get(msg.channel_id)
+                            if pr_state is not None:
+                                agent_msg.params["mode"] = (
+                                    pr_state.mode.value
+                                    if hasattr(pr_state.mode, 'value')
+                                    else str(pr_state.mode)
+                                )
                         env_interrupt = self.message_to_e2a(agent_msg)
                         asyncio.create_task(self._send_interrupt_to_agent(env_interrupt))
                         # 检查当前 session 是否有活跃的流式任务

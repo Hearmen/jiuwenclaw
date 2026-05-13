@@ -2955,15 +2955,31 @@ class JiuWenClawDeepAdapter:
             message = "任务已切换"
 
         else:
-            # cancel（默认）：仅做当前 session 的清理与回执。
-            # 真正停止运行中的任务由 facade 层的 SessionManager.cancel_session_task(session_id) 完成，
-            # 避免共享 DeepAgent 实例上的全局 abort 误伤其它并发 session。
-            # 解除 pause 状态，允许新任务启动（否则新任务会阻塞在 _pause_event.wait()）
+            # cancel（默认）：终止当前正在运行的 agent 任务 + 清理 todos。
+            # 必须同时调用 rail.abort() 和 instance.abort()，否则流式模式下
+            # DeepAgent 的 _run_task_loop_stream 后台 Task 不会停止
+            # （stream_task.cancel() 只取消了 chunk 转发 Task，不影响 _stream_process）。
+            # SessionManager.cancel_session_task 仅管理非流式队列 Task，对流式后台 Task 无效。
             if self._stream_event_rail is not None:
+                self._stream_event_rail.abort()
                 self._stream_event_rail.reset_for_new_task()
                 logger.info(
-                    "[JiuWenClawDeepAdapter] interrupt(cancel): 已解除 pause 阻塞，允许新任务启动"
+                    "[JiuWenClawDeepAdapter] interrupt(cancel): 已设置 abort 并解除 pause 阻塞"
                 )
+            if self._instance is not None:
+                try:
+                    await self._instance.abort()
+                    logger.info(
+                        "[JiuWenClawDeepAdapter] interrupt(cancel): 已终止 DeepAgent 任务循环"
+                    )
+                except Exception as exc:
+                    logger.warning(
+                        "[JiuWenClawDeepAdapter] interrupt(cancel): instance.abort 失败: %s",
+                        exc,
+                    )
+                # 协作式 abort 只能在 checkpoint 之间生效，无法打断 in-flight LLM HTTP 调用。
+                # 直接取消 TaskScheduler 中运行中的 asyncio.Task，注入 CancelledError 到 HTTP await 点。
+                self._cancel_scheduler_running_tasks()
 
             updated_todos = None
             if request.session_id:
@@ -3017,6 +3033,39 @@ class JiuWenClawDeepAdapter:
             payload=payload,
             metadata=request.metadata,
         )
+
+    def _cancel_scheduler_running_tasks(self) -> None:
+        """Cancel in-flight asyncio.Tasks in the Controller's TaskScheduler.
+
+        Cooperative abort (rail.abort + instance.abort) only stops at checkpoints,
+        but in-flight LLM HTTP requests need CancelledError injected directly
+        at the await point to abort immediately.
+        """
+        try:
+            controller = getattr(self._instance, '_loop_controller', None)
+            if controller is None:
+                return
+            scheduler = getattr(controller, '_task_scheduler', None)
+            if scheduler is None:
+                return
+            running = getattr(scheduler, '_running_tasks', None)
+            if not running:
+                return
+            cancelled_count = 0
+            for _task_id, (_executor, exec_task) in list(running.items()):
+                if exec_task is not None and not exec_task.done():
+                    exec_task.cancel()
+                    cancelled_count += 1
+            if cancelled_count > 0:
+                logger.info(
+                    "[JiuWenClawDeepAdapter] interrupt: 已取消 %d 个 TaskScheduler 运行中的任务",
+                    cancelled_count,
+                )
+        except Exception as exc:
+            logger.warning(
+                "[JiuWenClawDeepAdapter] _cancel_scheduler_running_tasks 失败: %s",
+                exc,
+            )
 
     async def abort_on_gateway_disconnect(self) -> None:
         """Gateway 与 AgentServer 的 WebSocket 断开时：与 interrupt(cancel) 同样中止 rail 与 DeepAgent 实例。"""

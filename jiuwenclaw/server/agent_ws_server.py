@@ -587,7 +587,7 @@ class AgentWebSocketServer:
                 await self._handle_schedule_request(ws, request, send_lock, "delete")
                 return
             if request.req_method == ReqMethod.CHAT_CANCEL:
-                # 中断请求：先取消该 session 正在运行的流式任务，再继续正常处理
+                # 中断请求：先取消该 session 正在运行的流式任务，再复用已有 agent 处理 interrupt
                 sid = request.session_id or "default"
                 stream_task = self._session_stream_tasks.get(sid)
                 if stream_task is not None and not stream_task.done():
@@ -596,7 +596,9 @@ class AgentWebSocketServer:
                         sid,
                     )
                     stream_task.cancel()
-                # 继续走 _handle_unary 让 agent 适配器处理 interrupt_result
+                # 专门处理 cancel，复用已有 agent（不再 fallthrough 到 _handle_unary）
+                await self._handle_cancel(ws, request, send_lock)
+                return
             if request.is_stream:
                 await self._handle_stream(ws, request, send_lock)
             else:
@@ -654,6 +656,52 @@ class AgentWebSocketServer:
         )
 
         await ExtensionRegistry.get_instance().trigger(AgentServerHookEvents.BEFORE_CHAT_REQUEST, ctx)
+
+    async def _handle_cancel(self, ws: Any, request: AgentRequest, send_lock: asyncio.Lock) -> None:
+        """处理 CHAT_CANCEL 中断请求：复用已有 agent 实例，避免创建新实例。
+
+        cancel 请求的 params 中可能没有 mode 信息，如果走 _handle_unary 的 get_agent(mode) 路径
+        会按默认 mode 创建新的 agent 实例，导致 interrupt 设置到空实例上，无法终止真正运行的 agent。
+        因此 cancel 请求必须直接定位已有 agent 来处理。
+        """
+        channel_id = request.channel_id or "default"
+
+        # 1. 尝试按 params 中的 mode 查找已有 agent
+        mode_param = request.params.get("mode", "")
+        if mode_param:
+            mode, sub_mode, _canonical = resolve_agent_request_mode(mode_param)
+            agent_mode = "agent" if mode == "auto_harness" else mode
+            agent = self._agent_manager.agents.get(channel_id, {}).get(agent_mode)
+        else:
+            agent = None
+
+        # 2. 如果按 mode 没找到，用 get_agent_nowait 找任何已有 agent
+        if agent is None:
+            agent = self._agent_manager.get_agent_nowait(channel_id)
+
+        # 3. 仍然没找到时 fallback 到 get_agent（异常场景）
+        if agent is None:
+            logger.warning(
+                "[AgentWebSocketServer] cancel: 未找到已有 agent，fallback 创建: channel_id=%s",
+                channel_id,
+            )
+            mode, sub_mode = _apply_resolved_mode_to_request(request)
+            agent_mode = "agent" if mode == "auto_harness" else mode
+            trusted_dirs = request.params.get("trusted_dirs", None)
+            agent = await self._agent_manager.get_agent(
+                channel_id=channel_id,
+                mode=agent_mode,
+                project_dir=trusted_dirs[0] if trusted_dirs else None,
+                sub_mode=sub_mode,
+            )
+
+        if agent is None:
+            raise ValueError("Failed to get agent for cancel request")
+
+        resp = await agent.process_message(request)
+        wire = encode_agent_response_for_wire(resp, response_id=request.request_id)
+        async with send_lock:
+            await ws.send(json.dumps(wire, ensure_ascii=False))
 
     async def _handle_unary(self, ws: Any, request: AgentRequest, send_lock: asyncio.Lock) -> None:
         """非流式处理：调用 process_message，返回一条 E2AResponse 线 JSON。"""
