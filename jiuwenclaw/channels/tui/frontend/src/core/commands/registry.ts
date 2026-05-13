@@ -31,6 +31,7 @@ import { createRenameCommand } from "./builtins/rename.js";
 import { createRewindCommand } from "./builtins/rewind.js";
 import { createSessionCommand } from "./builtins/session.js";
 import { createStatusCommand } from "./builtins/status.js";
+import { createStatusLineCommand } from "./builtins/statusline.js";
 import { createSkillsCommand } from "./builtins/skills.js";
 import { createTeamSkillsCommand } from "./builtins/teamskills.js";
 import { createAutoHarnessCommand } from "./builtins/auto-harness.js";
@@ -67,6 +68,7 @@ export function createBuiltinCommands(): SlashCommand[] {
     createSessionCommand(),
     createSkillsCommand(),
     createStatusCommand(),
+    createStatusLineCommand(),
     createTeamSkillsCommand(),
     createAutoHarnessCommand(),
     createThemeCommand(),

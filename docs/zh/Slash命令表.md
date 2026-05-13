@@ -25,6 +25,7 @@
 | `/teamskills` | TeamSkills 管理（`init/validate/pack/info/search/list/install/uninstall/config/publish/delete`） |
 | `/export` | 导出当前会话到文件或剪贴板（见下文） |
 | `/status` | 查看 jiuwenclaw 运行状态概览、用量统计、配置编辑（见下文） |
+| `/statusline` | 配置 TUI 底部状态栏的自定义命令（见下文） |
 | `/permissions` | 管理工具权限（`allow`/`ask`/`deny`） |
 
 > 说明：`/mode` 的受控切换逻辑以 Gateway 侧行为为主，详见下文「`/mode` 与 `/switch`」。
@@ -454,6 +455,126 @@
 - `/status overview` — 显示概览（显式）
 - `/status usage` — 显示 token 用量
 - `/status config` — 打开配置编辑器
+
+### `/statusline`（TUI 状态栏配置）
+
+配置 TUI 底部状态栏，通过自定义 shell 命令动态显示会话信息（模式、模型、工作目录等），仿照 Claude Code 的 `/statusline` 实现。
+
+#### 子命令
+
+| 命令 | 说明 |
+|---|---|
+| `/statusline` 或 `/statusline get` | 查看当前状态栏配置 |
+| `/statusline set <shell-command>` | 设置状态栏命令（命令输出将显示在 TUI 底部） |
+| `/statusline clear` | 清除状态栏配置（底部栏将不再显示） |
+| `/statusline help` | 显示状态栏 JSON 输入字段参考 |
+
+#### 概念说明
+
+- **状态栏（StatusLine）**：TUI 底部的一行文字区域，实时显示用户自定义的动态信息。配置了自定义状态栏后，内置状态栏会自动隐藏，避免信息冗余。
+- **Shell 命令**：用户配置的 shell 命令每 2 秒自动执行一次，其 stdout 输出渲染为状态栏文字。
+- **JSON 输入**：每次执行时，系统将当前会话信息以 JSON 格式传入命令，用户可在命令中用 `jq` 等工具解析。POSIX（Linux/macOS）通过 stdin 管道传入；Windows 上因 MSYS2 管道继承限制，系统自动将 JSON 写入临时文件，并将命令中的 `$(cat)` 替换为 `$(cat "文件路径")`，用户无需修改命令格式。
+- **前置依赖**：需要 `jq`（https://stedolan.github.io/jq/）用于解析 JSON；Windows 用户还需将 Git Bash 的 `usr\bin` 目录加入系统 PATH（如 `E:\Git\usr\bin`）。
+
+#### JSON 输入字段
+
+命令执行时接收如下 JSON 数据：
+
+| 字段 | 说明 |
+|---|---|
+| `session_id` | 当前会话 ID |
+| `session_name` | 会话标题（通过 `/rename` 设置） |
+| `cwd` | 当前工作目录 |
+| `mode` | 当前模式（`agent.plan` / `agent.fast` / `code.plan` / `code.normal` / `team`） |
+| `model` | 当前模型名称 |
+| `provider` | 模型提供商 |
+| `version` | jiuwenclaw 版本号 |
+| `connection` | 连接状态（`idle` / `connecting` / `connected` / `reconnecting` / `auth_failed`） |
+| `theme` | 当前主题名 |
+| `accent_color` | 当前强调色名 |
+| `transcript_mode` | 对话显示模式（`compact` / `detailed`） |
+| `transcript_fold_mode` | 折叠模式（`none` / `tools` / `thinking` / `all`） |
+| `is_processing` | 是否正在处理（`true` / `false`） |
+| `is_paused` | 是否暂停（`true` / `false`） |
+| `is_interrupted` | 是否中断（`true` / `false`） |
+| `cancellable_work` | 是否有可取消的工作（`true` / `false`） |
+| `streaming_state` | 流式传输状态（`idle` / `streaming` / `tool_call` / `tool_result`） |
+| `last_error` | 最近错误信息或 `null` |
+| `evolution_status` | 演化状态（`idle` / `running`） |
+| `active_subtask_count` | 活跃子任务数 |
+| `todo_count` | 待办事项数 |
+| `usage.total_input_tokens` | 会话总输入 token |
+| `usage.total_output_tokens` | 会话总输出 token |
+| `usage.total_tokens` | 会话总 token |
+
+#### 命令编写模板
+
+推荐使用以下模板编写命令。`input=$(cat)` 将 JSON 读入变量，后续用 `echo "$input" | jq -r .字段` 提取各字段。`// "默认值"` 是 jq 的备选语法，字段为空时使用默认值。
+
+**通用公式**：
+
+```
+/statusline set 'input=$(cat); 字段1=$(echo "$input" | jq -r '.字段1 // "默认值"'); 字段2=$(echo "$input" | jq -r '.字段2 // "默认值"'); echo "格式化字符串"'
+```
+
+**推荐通用命令**（显示模式、模型、token、连接状态）：
+
+```
+/statusline set 'input=$(cat); mode=$(echo "$input" | jq -r '.mode // "?"'); model=$(echo "$input" | jq -r '.model // "?"'); tokens=$(echo "$input" | jq -r '.usage.total_tokens // 0'); conn=$(echo "$input" | jq -r '.connection // "?"'); echo "$mode | $model | tokens:$tokens | $conn"'
+```
+
+**各字段提取速查**：
+
+| 要显示的字段 | jq 写法 |
+|---|---|
+| 会话名 | `jq -r '.session_name // ""'` |
+| 工作目录 | `jq -r '.cwd // "?"'` |
+| 模式 | `jq -r '.mode // "?"'` |
+| 模型名 | `jq -r '.model // "?"'` |
+| 提供商 | `jq -r '.provider // "?"'` |
+| 版本号 | `jq -r '.version // "?"'` |
+| 连接状态 | `jq -r '.connection // "?"'` |
+| 是否在处理 | `jq -r '.is_processing // false'` |
+| 是否暂停 | `jq -r '.is_paused // false'` |
+| 流式状态 | `jq -r '.streaming_state // "idle"'` |
+| 最近错误 | `jq -r '.last_error // ""'` |
+| 演化状态 | `jq -r '.evolution_status // "idle"'` |
+| 子任务数 | `jq -r '.active_subtask_count // 0'` |
+| 待办数 | `jq -r '.todo_count // 0'` |
+| 总输入 token | `jq -r '.usage.total_input_tokens // 0'` |
+| 总输出 token | `jq -r '.usage.total_output_tokens // 0'` |
+| 总 token | `jq -r '.usage.total_tokens // 0'` |
+
+#### 更多示例
+
+- `/statusline` — 查看当前配置
+- `/statusline set 'input=$(cat); model=$(echo "$input" | jq -r .model); echo "$model"'` — 只显示模型名
+- `/statusline set 'input=$(cat); proc=$(echo "$input" | jq -r .is_processing); model=$(echo "$input" | jq -r .model); echo "$proc | $model"'` — 显示是否在处理和模型名
+- `/statusline set 'input=$(cat); err=$(echo "$input" | jq -r .last_error); if [ "$err" != "null" ] && [ "$err" != "" ]; then echo "error: $err"; else echo "ok"; fi'` — 有错误时显示错误信息，无错误时显示 ok
+- `/statusline clear` — 清除状态栏配置
+- `/statusline help` — 查看 JSON 输入字段参考
+
+#### 行为细节
+
+- **轮询频率**：每 2 秒自动执行一次配置的命令。
+- **超时保护**：单次执行超时 3 秒后自动终止，不影响后续轮询。
+- **输出限制**：命令输出超过 10KB 时截断；显示宽度自动适配 TUI 终端宽度。
+- **故障静默**：命令执行失败时不显示错误，保持上一次成功输出或隐藏状态栏。
+- **持久化**：配置保存在 `~/.jiuwenclaw-tui/config.json` 的 `statusLine` 字段，重启 TUI 后自动恢复。
+- **别名**：`/sl`
+- **Windows 适配**：系统自动将 `$(cat)` 替换为读取临时文件，用户命令格式不变；需确保 Git Bash 的 `usr\bin` 在系统 PATH 中。
+
+#### 配置文件结构
+
+```json
+{
+  "statusLine": {
+    "type": "command",
+    "command": "input=$(cat); mode=$(echo \"$input\" | jq -r '.mode // \"?\"'); model=$(echo \"$input\" | jq -r '.model // \"?\"'); tokens=$(echo \"$input\" | jq -r '.usage.total_tokens // 0'); echo \"$mode | $model | tokens:$tokens\"",
+    "padding": 0
+  }
+}
+```
 
 ---
 

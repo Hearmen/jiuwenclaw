@@ -87,6 +87,7 @@ export interface CommandContext {
   ) => void;
   enterStatusView?: (tab?: StatusViewTab) => void;
   openInEditor?: (filePath: string) => void;
+  restartStatusLine?: () => void;
 }
 
 export interface SlashCommand {

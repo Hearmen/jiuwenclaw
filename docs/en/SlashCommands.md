@@ -25,6 +25,7 @@ Executed locally in the terminal UI, not through Gateway control pipeline.
 | `/teamskills` | TeamSkills Hub publish/delete (`publish`/`delete`) |
 | `/export` | Export current conversation to file or clipboard (see below) |
 | `/status` | Show jiuwenclaw status overview, usage, config (see below) |
+| `/statusline` | Configure the TUI footer status bar with a custom command (see below) |
 | `/permissions` | Manage tool permissions (`allow`/`ask`/`deny`) |
 
 > Note: `/mode` controlled switching logic is primarily on Gateway side, see "`/mode` and `/switch`" below.
@@ -443,6 +444,126 @@ If StatusView is unavailable, the command falls back to inline key-value display
 - `/status overview` — Show overview (explicit)
 - `/status usage` — Show token usage
 - `/status config` — Open config editor
+
+### `/statusline` (TUI Footer Status Bar)
+
+Configure the TUI footer status bar with a custom shell command that dynamically displays session info (mode, model, cwd, etc.), modeled after Claude Code's `/statusline` implementation.
+
+#### Subcommands
+
+| Command | Description |
+|---|---|
+| `/statusline` or `/statusline get` | View current status line configuration |
+| `/statusline set <shell-command>` | Set the status line command (its output will appear in the TUI footer) |
+| `/statusline clear` | Remove the status line configuration (footer bar will hide) |
+| `/statusline help` | Show the JSON input fields reference |
+
+#### Concepts
+
+- **StatusLine**: A one-line text area at the bottom of the TUI that displays user-defined dynamic information. When a custom statusline is configured, the built-in status line is automatically hidden to avoid redundant information.
+- **Shell command**: The configured shell command is automatically executed every 2 seconds; its stdout output is rendered as the status bar text.
+- **JSON input**: Each execution receives current session info as JSON, which can be parsed with `jq` or other tools. On POSIX (Linux/macOS), JSON is passed via stdin pipe; on Windows, due to MSYS2 pipe inheritance limitations, the system automatically writes JSON to a temp file and replaces `$(cat)` in the command with `$(cat "filepath")` — the user doesn't need to modify their command format.
+- **Prerequisites**: Requires `jq` (https://stedolan.github.io/jq/) for JSON parsing; Windows users also need to add Git Bash's `usr\bin` directory to the system PATH (e.g., `E:\Git\usr\bin`).
+
+#### JSON Input Fields
+
+The command receives the following JSON data on each execution:
+
+| Field | Description |
+|---|---|
+| `session_id` | Current session ID |
+| `session_name` | Session title (set via `/rename`) |
+| `cwd` | Current working directory |
+| `mode` | Current mode (`agent.plan` / `agent.fast` / `code.plan` / `code.normal` / `team`) |
+| `model` | Current model name |
+| `provider` | Model provider |
+| `version` | jiuwenclaw version |
+| `connection` | Connection status (`idle` / `connecting` / `connected` / `reconnecting` / `auth_failed`) |
+| `theme` | Current theme name |
+| `accent_color` | Current accent color name |
+| `transcript_mode` | Transcript display mode (`compact` / `detailed`) |
+| `transcript_fold_mode` | Fold mode (`none` / `tools` / `thinking` / `all`) |
+| `is_processing` | Whether agent is working (`true` / `false`) |
+| `is_paused` | Whether paused (`true` / `false`) |
+| `is_interrupted` | Whether interrupted (`true` / `false`) |
+| `cancellable_work` | Whether there is running work (`true` / `false`) |
+| `streaming_state` | Streaming state (`idle` / `streaming` / `tool_call` / `tool_result`) |
+| `last_error` | Last error message or `null` |
+| `evolution_status` | Evolution status (`idle` / `running`) |
+| `active_subtask_count` | Number of active subtasks |
+| `todo_count` | Number of todo items |
+| `usage.total_input_tokens` | Total input tokens for session |
+| `usage.total_output_tokens` | Total output tokens for session |
+| `usage.total_tokens` | Total tokens for session |
+
+#### Command Writing Template
+
+Use the following template to write commands. `input=$(cat)` reads JSON into a variable, then `echo "$input" | jq -r .field` extracts each field. `// "default"` is jq's fallback syntax — when a field is null or empty, the default value is used.
+
+**General formula**:
+
+```
+/statusline set 'input=$(cat); field1=$(echo "$input" | jq -r '.field1 // "default"'); field2=$(echo "$input" | jq -r '.field2 // "default"'); echo "format string"'
+```
+
+**Recommended universal command** (shows mode, model, tokens, connection):
+
+```
+/statusline set 'input=$(cat); mode=$(echo "$input" | jq -r '.mode // "?"'); model=$(echo "$input" | jq -r '.model // "?"'); tokens=$(echo "$input" | jq -r '.usage.total_tokens // 0'); conn=$(echo "$input" | jq -r '.connection // "?"'); echo "$mode | $model | tokens:$tokens | $conn"'
+```
+
+**Field extraction quick reference**:
+
+| Field to display | jq syntax |
+|---|---|
+| Session name | `jq -r '.session_name // ""'` |
+| Working directory | `jq -r '.cwd // "?"'` |
+| Mode | `jq -r '.mode // "?"'` |
+| Model name | `jq -r '.model // "?"'` |
+| Provider | `jq -r '.provider // "?"'` |
+| Version | `jq -r '.version // "?"'` |
+| Connection | `jq -r '.connection // "?"'` |
+| Is processing | `jq -r '.is_processing // false'` |
+| Is paused | `jq -r '.is_paused // false'` |
+| Streaming state | `jq -r '.streaming_state // "idle"'` |
+| Last error | `jq -r '.last_error // ""'` |
+| Evolution status | `jq -r '.evolution_status // "idle"'` |
+| Subtask count | `jq -r '.active_subtask_count // 0'` |
+| Todo count | `jq -r '.todo_count // 0'` |
+| Total input tokens | `jq -r '.usage.total_input_tokens // 0'` |
+| Total output tokens | `jq -r '.usage.total_output_tokens // 0'` |
+| Total tokens | `jq -r '.usage.total_tokens // 0'` |
+
+#### More Examples
+
+- `/statusline` — View current configuration
+- `/statusline set 'input=$(cat); model=$(echo "$input" | jq -r .model); echo "$model"'` — Show model name only
+- `/statusline set 'input=$(cat); proc=$(echo "$input" | jq -r .is_processing); model=$(echo "$input" | jq -r .model); echo "$proc | $model"'` — Show processing state and model
+- `/statusline set 'input=$(cat); err=$(echo "$input" | jq -r .last_error); if [ "$err" != "null" ] && [ "$err" != "" ]; then echo "error: $err"; else echo "ok"; fi'` — Show error when present, otherwise "ok"
+- `/statusline clear` — Remove status line configuration
+- `/statusline help` — View JSON input fields reference
+
+#### Behavior Details
+
+- **Poll frequency**: The configured command runs every 2 seconds automatically.
+- **Timeout protection**: Individual executions timeout after 3 seconds; no impact on subsequent polls.
+- **Output limit**: Command output over 10KB is truncated; display width auto-fits the TUI terminal width.
+- **Failure silence**: Command execution failures don't show errors; previous successful output is kept or the bar hides.
+- **Persistence**: Configuration is saved in `~/.jiuwenclaw-tui/config.json` under the `statusLine` field; restored on TUI restart.
+- **Alias**: `/sl`
+- **Windows adaptation**: The system automatically replaces `$(cat)` with reading from a temp file; the user's command format remains unchanged. Git Bash's `usr\bin` must be in the system PATH.
+
+#### Config File Structure
+
+```json
+{
+  "statusLine": {
+    "type": "command",
+    "command": "input=$(cat); mode=$(echo \"$input\" | jq -r '.mode // \"?\"'); model=$(echo \"$input\" | jq -r '.model // \"?\"'); tokens=$(echo \"$input\" | jq -r '.usage.total_tokens // 0'); echo \"$mode | $model | tokens:$tokens\"",
+    "padding": 0
+  }
+}
+```
 
 ---
 

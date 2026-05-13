@@ -7,10 +7,17 @@ import type { AccentColorName, ThemeName } from "../ui/theme.js";
 const CONFIG_DIR = join(homedir(), ".jiuwenclaw-tui");
 const CONFIG_FILE = join(CONFIG_DIR, "config.json");
 
+export interface StatusLineSetting {
+  type: "command";
+  command: string;
+  padding?: number;
+}
+
 export interface TuiConfig {
   theme?: ThemeName;
   accentColor?: AccentColorName;
   trustedDirs?: string[];
+  statusLine?: StatusLineSetting;
 }
 
 export function loadTuiConfig(): TuiConfig {

@@ -46,7 +46,6 @@ import {
   type ThemeName,
 } from "./ui/theme.js";
 import { type ConnectionStatus, WsClient } from "./core/ws-client.js";
-import { loadTuiConfig } from "./core/tui-config-store.js";
 import {
   getTrustedDirs,
   validateDirPath,
@@ -55,6 +54,11 @@ import {
   removeTrustedDir,
   clearTrustedDirs,
 } from "./core/tui-trusted-dirs-store.js";
+import { loadTuiConfig, type StatusLineSetting } from "./core/tui-config-store.js";
+import { execFile } from "node:child_process";
+import { writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join, sep } from "node:path";
 
 export interface ModelUsageEntry {
   model: string;
@@ -101,6 +105,7 @@ export interface AppSnapshot {
   contextCompression: ContextCompressionStats | null;
   modelInfo: { provider: string; model: string; version: string };
   sessionTitle: string;
+  statusLineText: string | null;
 }
 
 export class CliPiAppState {
@@ -152,6 +157,8 @@ export class CliPiAppState {
   private historyPageDoneResolvers = new Map<number, () => void>();
   private unlistenStatus: (() => void) | null = null;
   private unlistenFrames: (() => void) | null = null;
+  private statusLineText: string | null = null;
+  private statusLineTimer: ReturnType<typeof setInterval> | null = null;
   private usageByModel = new Map<string, ModelUsageEntry>();
   private modelInfo: { provider: string; model: string; version: string } = {
     provider: "",
@@ -296,6 +303,7 @@ export class CliPiAppState {
     });
 
     this.wsClient.connect();
+    this.startStatusLinePoll();
   }
 
   stop(): void {
@@ -315,6 +323,7 @@ export class CliPiAppState {
     this.unlistenStatus = null;
     this.unlistenFrames?.();
     this.unlistenFrames = null;
+    this.stopStatusLinePoll();
     this.wsClient.disconnect();
   }
 
@@ -410,6 +419,7 @@ export class CliPiAppState {
       contextCompression: this.contextCompression ? { ...this.contextCompression } : null,
       modelInfo: this.modelInfo,
       sessionTitle: this.sessionTitle,
+      statusLineText: this.statusLineText,
     };
   }
 
@@ -487,6 +497,7 @@ export class CliPiAppState {
       setInput: this._setInputRef ?? undefined,
       enterStatusView: undefined,
       getUsageSummary: () => this.getUsageSummary(),
+      restartStatusLine: () => this.restartStatusLinePoll(),
     };
   }
 
@@ -1335,6 +1346,115 @@ readonly request = async <T = Record<string, unknown>>(
     this.toolExecutionOrder = rebuilt.toolExecutionOrder;
     this.orphanToolResults = new Map();
     this.scheduleToolTimeoutCheck();
+  }
+
+  private startStatusLinePoll(): void {
+    this.executeStatusLineCommand();
+    this.statusLineTimer = setInterval(() => {
+      this.executeStatusLineCommand();
+    }, 2_000);
+  }
+
+  private stopStatusLinePoll(): void {
+    if (this.statusLineTimer) {
+      clearInterval(this.statusLineTimer);
+      this.statusLineTimer = null;
+    }
+  }
+
+  restartStatusLinePoll(): void {
+    this.stopStatusLinePoll();
+    this.statusLineText = null;
+    this.emitChange();
+    this.startStatusLinePoll();
+  }
+
+  
+  private buildStatusLineJsonInput(): Record<string, unknown> {
+    const snapshot = this.getSnapshot();
+    const usage = this.getUsageSummary();
+    const trustedDirs = getTrustedDirs();
+    const cwd = trustedDirs[0] || process.cwd();
+    return {
+      session_id: snapshot.sessionId,
+      session_name: snapshot.sessionTitle,
+      cwd,
+      mode: snapshot.mode,
+      model: snapshot.modelInfo.model,
+      provider: snapshot.modelInfo.provider,
+      version: snapshot.modelInfo.version,
+      connection: snapshot.connectionStatus,
+      theme: snapshot.themeName,
+      accent_color: snapshot.accentColor,
+      transcript_mode: snapshot.transcriptMode,
+      transcript_fold_mode: snapshot.transcriptFoldMode,
+      is_processing: snapshot.isProcessing,
+      is_paused: snapshot.isPaused,
+      is_interrupted: snapshot.isInterrupted,
+      cancellable_work: snapshot.cancellableWork,
+      streaming_state: snapshot.streamingState,
+      last_error: snapshot.lastError,
+      evolution_status: snapshot.evolutionStatus,
+      active_subtask_count: snapshot.activeSubtasks.length,
+      todo_count: snapshot.todos.length,
+      usage: {
+        total_input_tokens: usage.total_input_tokens,
+        total_output_tokens: usage.total_output_tokens,
+        total_tokens: usage.total_tokens,
+      },
+    };
+  }
+
+  private executeStatusLineCommand(): void {
+    const config = loadTuiConfig();
+    const sl = config.statusLine;
+    if (!sl || sl.type !== "command" || !sl.command) {
+      if (this.statusLineText !== null) {
+        this.statusLineText = null;
+        this.emitChange();
+      }
+      return;
+    }
+    const jsonInput = JSON.stringify(this.buildStatusLineJsonInput());
+    const cmd = sl.command;
+    const isWindows = process.platform === "win32";
+
+    try {
+      if (isWindows) {
+        // On Windows, sh.exe from MSYS2/Git Bash can't read stdin in $(cat)
+        // inside sh -c. Solution: write JSON to a temp file and:
+        // 1. Replace $(cat) (no args) with $(cat "filepath") for inline commands
+        // 2. Export JIUWENCLAW_SL_FILE so script files can use it too:
+        //    input=$(cat "$JIUWENCLAW_SL_FILE")
+        const tmpFile = join(tmpdir(), "jiuwenclaw-sl.json");
+        writeFileSync(tmpFile, jsonInput, "utf8");
+        const msysPath = tmpFile.split(sep).join("/").replace(/^([A-Za-z]):/, (_, d) => "/" + d.toLowerCase());
+        const patchedCmd = cmd.replace(/\$\(cat\)/g, `$(cat "${msysPath}")`);
+        const fullCmd = `export JIUWENCLAW_SL_FILE="${msysPath}"; ${patchedCmd}`;
+
+        const child = execFile("sh", ["-c", fullCmd], { timeout: 3_000, maxBuffer: 10_240, cwd: process.cwd() }, (err, stdout) => {
+          if (err) return;
+          const text = stdout.trim();
+          if (text !== this.statusLineText) {
+            this.statusLineText = text || null;
+            this.emitChange();
+          }
+        });
+      } else {
+        // On POSIX, stdin piping works correctly in sh -c.
+        const child = execFile("sh", ["-c", cmd], { timeout: 3_000, maxBuffer: 10_240 }, (err, stdout) => {
+          if (err) return;
+          const text = stdout.trim();
+          if (text !== this.statusLineText) {
+            this.statusLineText = text || null;
+            this.emitChange();
+          }
+        });
+        child.stdin?.end(jsonInput);
+      }
+    } catch {
+      // Silently ignore — sh may not be in PATH on Windows
+    }
   }
 
   private emitChange(): void {

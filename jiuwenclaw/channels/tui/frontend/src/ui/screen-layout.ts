@@ -8,6 +8,7 @@ import { APP_SCREEN_KEY_BINDINGS } from "./keymap.js";
 import { padToWidth } from "./rendering/text.js";
 import { palette } from "./theme.js";
 import { buildTranscriptLines } from "./transcript-renderer.js";
+import { loadTuiConfig } from "../core/tui-config-store.js";
 
 export interface ScreenLayoutOptions {
   width: number;
@@ -150,6 +151,19 @@ function buildStatusLines(
   return lines;
 }
 
+function buildStatusLineBar(snapshot: AppSnapshot, width: number): string[] {
+  if (!snapshot.statusLineText) return [];
+  const config = loadTuiConfig();
+  const sl = config.statusLine;
+  const paddingX = sl?.padding ?? 0;
+  const paddedWidth = width - paddingX * 2;
+  if (paddedWidth <= 0) return [];
+  const text = snapshot.statusLineText.length > paddedWidth
+    ? snapshot.statusLineText.slice(0, paddedWidth)
+    : snapshot.statusLineText;
+  return [padToWidth(palette.text.dim(text), paddedWidth)];
+}
+
 function buildShortcutLines(width: number): string[] {
   const lines = [
     padToWidth(palette.text.secondary("Shortcuts"), width),
@@ -171,6 +185,11 @@ export function buildAppScreenLines(snapshot: AppSnapshot, options: ScreenLayout
     options.runningElapsedMs,
   );
   const shortcutLines = options.showShortcutHelp ? buildShortcutLines(options.width) : [];
+  const statusLineBarLines = buildStatusLineBar(snapshot, options.width);
+
+  // When a custom statusline bar is active, replace the built-in status lines
+  // to avoid redundant information (both show session name, mode, etc.)
+  const effectiveStatusLines = statusLineBarLines.length > 0 ? [] : statusLines;
 
   const transcriptLines = buildTranscriptLines(
     snapshot,
@@ -229,7 +248,8 @@ export function buildAppScreenLines(snapshot: AppSnapshot, options: ScreenLayout
     ...options.questionLines,
     ...options.editorLines,
     ...options.composerPreviewLines,
-    ...statusLines,
+    ...effectiveStatusLines,
+    ...statusLineBarLines,
     ...shortcutLines,
   ];
   const height = Math.floor(options.height ?? 0);
