@@ -418,6 +418,39 @@ async def test_stop_session_runtime_stops_runner_owned_team_runtime(
 
 
 @pytest.mark.asyncio
+async def test_pause_session_runtime_pauses_runner_owned_team_runtime(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    manager = _TeamManagerHarness()
+    manager.set_active_runtime_for_test("sess-1", "demo-team")
+
+    pause_calls: list[tuple[str, str]] = []
+
+    async def fake_pause_agent_team(*, team_name: str, session_id: str) -> bool:
+        pause_calls.append((team_name, session_id))
+        return True
+
+    async def fake_stop_agent_team(*, team_name: str, session_id: str) -> bool:
+        raise AssertionError("pause should not stop the Runner-owned team runtime")
+
+    monkeypatch.setattr(
+        "jiuwenclaw.agents.harness.team.team_manager.Runner.pause_agent_team",
+        fake_pause_agent_team,
+    )
+    monkeypatch.setattr(
+        "jiuwenclaw.agents.harness.team.team_manager.Runner.stop_agent_team",
+        fake_stop_agent_team,
+    )
+
+    paused = await manager.pause_session_runtime("sess-1", reason="interrupt(intent=pause): ")
+
+    assert paused is True
+    assert pause_calls == [("demo-team", "sess-1")]
+    assert manager.active_session_id is None
+    assert manager.active_team_name is None
+
+
+@pytest.mark.asyncio
 async def test_interact_uses_runner_only_for_active_session(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

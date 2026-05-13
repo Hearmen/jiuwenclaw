@@ -1683,11 +1683,51 @@ class TeamManager:
         tearing down the foreground stream task and parking the Runner-owned
         runtime in paused state so a later `chat.send` can resume it.
         """
-        return await self.terminate_session_runtime(session_id, reason=reason)
+        async with self._lock:
+            has_stream_task = session_id in self._stream_tasks
+            has_local_team_runtime = self._has_local_team_runtime(session_id)
+            has_team_runtime = (
+                has_local_team_runtime
+                or session_id in self._team_monitors
+                or self._active_session_id == session_id
+                or self._pending_session_id == session_id
+            )
+            if not has_stream_task and not has_team_runtime:
+                return False
 
-    async def cancel_session_stream_task(self, session_id: str, reason: str = "") -> bool:
-        """兼容旧命名；实际语义为暂停该 session 的 Team runtime。"""
-        return await self.pause_session_runtime(session_id, reason=reason)
+            logger.info(
+                "[TeamManager] %s pause team session runtime: session_id=%s",
+                reason,
+                session_id,
+            )
+
+            team_name = self._resolve_session_team_name(session_id)
+            runner_paused = False
+            if team_name:
+                try:
+                    runner_paused = await Runner.pause_agent_team(
+                        team_name=team_name,
+                        session_id=session_id,
+                    )
+                except Exception as exc:
+                    logger.warning(
+                        "[TeamManager] runner pause failed: session_id=%s team_name=%s error=%s",
+                        session_id,
+                        team_name,
+                        exc,
+                    )
+
+            await self._cleanup_runtime_locals(session_id)
+            self.clear_active_runtime(session_id)
+            self.clear_pending_runtime(session_id)
+
+        logger.info(
+            "[TeamManager] %steam session paused: session_id=%s runner_paused=%s",
+            reason,
+            session_id,
+            runner_paused,
+        )
+        return True
 
     async def delete_session_runtime(self, session_id: str, reason: str = "") -> bool:
         """Delete a single team session runtime without deleting the whole team."""

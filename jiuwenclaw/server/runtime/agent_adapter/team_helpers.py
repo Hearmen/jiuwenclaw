@@ -10,6 +10,7 @@ import logging
 from typing import Any, AsyncIterator
 
 from openjiuwen.agent_teams.runtime import RunActionKind
+from openjiuwen.agent_teams.schema.team import TeamRole
 from openjiuwen.core.runner import Runner
 from openjiuwen.harness import DeepAgent
 
@@ -168,6 +169,22 @@ def _event_type(evt: Any) -> str:
     payload = _event_payload_dict(evt)
     payload_type = payload.get("event_type")
     return payload_type if isinstance(payload_type, str) else ""
+
+
+def _is_leader_output(chunk: Any) -> bool:
+    """Return whether a team OutputSchema chunk should be shown to claw users."""
+    chunk_type = getattr(chunk, "type", None)
+    if chunk_type == "team.runtime_ready":
+        return True
+
+    role = getattr(chunk, "role", None)
+    if role is None:
+        return True
+    if role == TeamRole.LEADER:
+        return True
+
+    role_value = getattr(role, "value", role)
+    return str(role_value).strip().lower() == TeamRole.LEADER.value
 
 
 def _is_team_evolution_approval(evt: Any) -> bool:
@@ -752,6 +769,8 @@ async def _consume_stream_with_query(
             session=session_id,
         ):
             received_chunks += 1
+            if not _is_leader_output(chunk):
+                continue
             parsed = parse_stream_chunk(chunk)
             if parsed is not None:
                 if parsed.get("event_type") == "team.runtime_ready":

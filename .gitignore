@@ -15,6 +15,7 @@ ENV/
 *.egg-info/
 .coverage
 .coverage.*
+coverage.xml
 htmlcov/
 
 # Node.js / Frontend

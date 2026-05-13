@@ -124,14 +124,14 @@ class TeamMonitorHandler:
     @staticmethod
     def _handle_member_spawned(base: dict[str, Any], event: MonitorEvent) -> dict[str, Any]:
         """处理成员创建事件."""
-        base["member_id"] = event.member_id
+        base["member_id"] = event.member_name
         return base
 
     @staticmethod
     def _handle_member_status_changed(base: dict[str, Any], event: MonitorEvent) -> dict[str, Any]:
         """处理成员状态变更事件."""
         base.update({
-            "member_id": event.member_id,
+            "member_id": event.member_name,
             "old_status": event.old_status,
             "new_status": event.new_status,
         })
@@ -141,7 +141,7 @@ class TeamMonitorHandler:
     def _handle_member_execution_changed(base: dict[str, Any], event: MonitorEvent) -> dict[str, Any]:
         """处理成员执行状态变更事件."""
         base.update({
-            "member_id": event.member_id,
+            "member_id": event.member_name,
             "old_status": event.old_status,
             "new_status": event.new_status,
         })
@@ -151,7 +151,7 @@ class TeamMonitorHandler:
     def _handle_member_restarted(base: dict[str, Any], event: MonitorEvent) -> dict[str, Any]:
         """处理成员重启事件."""
         base.update({
-            "member_id": event.member_id,
+            "member_id": event.member_name,
             "reason": event.reason,
             "restart_count": event.restart_count,
         })
@@ -161,7 +161,7 @@ class TeamMonitorHandler:
     def _handle_member_shutdown(base: dict[str, Any], event: MonitorEvent) -> dict[str, Any]:
         """处理成员关闭事件."""
         base.update({
-            "member_id": event.member_id,
+            "member_id": event.member_name,
             "force": event.force,
         })
         return base
@@ -204,8 +204,8 @@ class TeamMonitorHandler:
         message_content = await self._get_message_content(event.message_id)
         base.update({
             "message_id": event.message_id,
-            "from_member": event.from_member,
-            "to_member": event.to_member,
+            "from_member": event.from_member_name,
+            "to_member": event.to_member_name,
             "content": message_content,
         })
         return base
@@ -215,7 +215,7 @@ class TeamMonitorHandler:
         message_content = await self._get_message_content(event.message_id)
         base.update({
             "message_id": event.message_id,
-            "from_member": event.from_member,
+            "from_member": event.from_member_name,
             "content": message_content,
         })
         return base
@@ -269,11 +269,11 @@ class TeamMonitorHandler:
 
         event_data: dict[str, Any] = {
             "type": team_event_type.value,
-            "team_id": event.team_id,
+            "team_id": event.team_name,
         }
 
-        if event.member_id:
-            event_data["member_id"] = event.member_id
+        if event.member_name:
+            event_data["member_id"] = event.member_name
 
         event_handlers = {
             MonitorEventType.MEMBER_SPAWNED: self._handle_member_spawned,
@@ -346,9 +346,9 @@ class TeamMonitorHandler:
             members = await self._monitor.get_members()
             # 过滤掉 leader （team_leader 不属于"团队成员"）
             team_info = await self._monitor.get_team_info()
-            leader_name = team_info.leader_id if team_info else None
+            leader_name = team_info.leader_member_name if team_info else None
             if leader_name:
-                members = [m for m in members if m.member_id != leader_name]
+                members = [m for m in members if m.member_name != leader_name]
             return {
                 "members": [m.model_dump() for m in members],
                 "team_id": self._monitor.team_id,
