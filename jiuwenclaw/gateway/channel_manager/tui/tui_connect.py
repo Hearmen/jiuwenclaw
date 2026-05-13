@@ -30,6 +30,7 @@ from jiuwenclaw.common.config import (
     get_model_config,
     add_or_update_model_in_config,
     update_default_models_in_config,
+    ensure_defaults_list_in_config,
     update_preferred_language_in_config,
 )
 from jiuwenclaw.gateway.routing.route_binding import GatewayRouteBinding
@@ -1328,6 +1329,7 @@ def register_cli_handlers(bind: CliHandlersBindParams) -> None:
                 "model": "model_name",
                 "provider": "client_provider",
                 "api_key": "api_key",
+                "key": "api_key",
                 "api_base": "api_base",
                 "url": "api_base",
                 "base_url": "api_base",
@@ -1368,53 +1370,65 @@ def register_cli_handlers(bind: CliHandlersBindParams) -> None:
             }
             new_entry["alias"] = effective_alias
             try:
-                _raw = get_config_raw()
-                _raw_defs = (_raw.get("models") or {}).get("defaults")
-                if isinstance(_raw_defs, list):
-                    # alias 唯一性校验（仅在 alias 非空时执行）
-                    if effective_alias:
-                        for _e in _raw_defs:
-                            if not isinstance(_e, dict):
-                                continue
-                            _emn = resolve_env_vars(str((_e.get("model_client_config") or {}).get("model_name", "")))
-                            _ea = resolve_env_vars(str(_e.get("alias", "")))
-                            # 别名不能和其他模型的别名重复
-                            if _ea == effective_alias:
-                                await channel.send_response(
-                                    ws, req_id, ok=False,
-                                    error=f"Alias '{effective_alias}' is already used by model '{_emn}'",
-                                )
-                                return
-                            # 别名不能和其他模型的 model_name 冲突
-                            if _emn == effective_alias:
-                                await channel.send_response(
-                                    ws, req_id, ok=False,
-                                    error=f"Alias '{effective_alias}' conflicts with model name '{_emn}'",
-                                )
-                                return
-                    _raw_defs.append(new_entry)
-                    update_default_models_in_config(_raw_defs)
-                else:
-                    # 旧格式：通过 get_default_models 枚举现有模型，补做 alias 唯一性校验
-                    if effective_alias:
-                        for _e in get_default_models():
-                            if not isinstance(_e, dict):
-                                continue
-                            _emn = resolve_env_vars(str((_e.get("model_client_config") or {}).get("model_name", "")))
-                            _ea = resolve_env_vars(str(_e.get("alias", "")))
-                            if _ea == effective_alias:
-                                await channel.send_response(
-                                    ws, req_id, ok=False,
-                                    error=f"Alias '{effective_alias}' is already used by model '{_emn}'",
-                                )
-                                return
-                            if _emn == effective_alias:
-                                await channel.send_response(
-                                    ws, req_id, ok=False,
-                                    error=f"Alias '{effective_alias}' conflicts with model name '{_emn}'",
-                                )
-                                return
-                    add_or_update_model_in_config(target, new_entry)
+                # 统一使用 defaults 列表格式（旧格式自动迁移）
+                _raw_defs = ensure_defaults_list_in_config()
+                # 判断是新增还是更新：检查 defaults 列表中是否已有同名模型
+                _is_update = False
+                for _e in _raw_defs:
+                    if not isinstance(_e, dict):
+                        continue
+                    _emn = resolve_env_vars(str((_e.get("model_client_config") or {}).get("model_name", "")))
+                    _ea = resolve_env_vars(str(_e.get("alias", ""))) if _e.get("alias") else ""
+                    if _emn == effective_name or (_ea and _ea == effective_name):
+                        _is_update = True
+                        break
+                # 新增模型时校验四个必填字段
+                if not _is_update:
+                    _required = {
+                        "api_key": "api_key",
+                        "api_base": "api_base",
+                        "model_name": "model_name/model",
+                        "client_provider": "client_provider/provider",
+                    }
+                    _missing = []
+                    for field, display in _required.items():
+                        _val = resolve_env_vars(str(client_cfg.get(field, "")))
+                        if not _val:
+                            _missing.append(display)
+                    if _missing:
+                        _err_msg = (
+                            f"Failed to add model '{effective_name}'. "
+                            f"Required fields missing: {', '.join(_missing)}. "
+                            f"Usage: /model add <name> "
+                            f"api_base=xxx api_key=xxx "
+                            f"model=<name> provider=<provider>"
+                        )
+                        await channel.send_response(
+                            ws, req_id, ok=False,
+                            error=_err_msg,
+                        )
+                        return
+                # alias 唯一性校验（仅在 alias 非空时执行）
+                if effective_alias:
+                    for _e in _raw_defs:
+                        if not isinstance(_e, dict):
+                            continue
+                        _emn = resolve_env_vars(str((_e.get("model_client_config") or {}).get("model_name", "")))
+                        _ea = resolve_env_vars(str(_e.get("alias", "")))
+                        if _ea == effective_alias:
+                            await channel.send_response(
+                                ws, req_id, ok=False,
+                                error=f"Alias '{effective_alias}' is already used by model '{_emn}'",
+                            )
+                            return
+                        if _emn == effective_alias:
+                            await channel.send_response(
+                                ws, req_id, ok=False,
+                                error=f"Alias '{effective_alias}' conflicts with model name '{_emn}'",
+                            )
+                            return
+                _raw_defs.append(new_entry)
+                update_default_models_in_config(_raw_defs)
                 logger.info(
                     "[cli command.model] 新增模型: name=%s, "
                     "client_cfg=%s, model_config_obj=%s",
@@ -1519,230 +1533,70 @@ def register_cli_handlers(bind: CliHandlersBindParams) -> None:
             )
             return
 
-        _raw_cfg = get_config_raw()
-        _raw_defaults = (_raw_cfg.get("models") or {}).get("defaults")
-        if isinstance(_raw_defaults, list):
-            _target_entry = None
-            _target_idx = None
-            for _i, _e in enumerate(_raw_defaults):
-                if not isinstance(_e, dict):
-                    continue
-                _ename = resolve_env_vars(str((_e.get("model_client_config") or {}).get("model_name", "")))
-                _ealias = resolve_env_vars(str(_e.get("alias", ""))) if _e.get("alias") else ""
-                if _ename == target or _ealias == target:
-                    _target_entry = _e
-                    _target_idx = _i
-                    break  # 取第一个匹配
-            _other_entries = [_e for _i, _e in enumerate(_raw_defaults) if _i != _target_idx]
-            if _target_entry is None:
-                await channel.send_response(ws, req_id, ok=False, error=f"Model '{target}' config not found")
-                return
-            update_default_models_in_config([_target_entry] + _other_entries)
-            logger.info("[cli command.model] 新格式切换，已更新 models.defaults 首位: %s", target)
-            _reload_env = e2a_from_agent_fields(
-                request_id=req_id,
-                channel_id="cli",
-                session_id=session_id,
-                req_method=ReqMethod.AGENT_RELOAD_CONFIG,
-                params={},
-                is_stream=False,
-                timestamp=time.time(),
-            )
-            await real_client.send_request(_reload_env)
-            if on_config_saved:
-                try:
-                    _cb = on_config_saved(set(), env_updates={}, config_payload=get_config())
-                    if inspect.isawaitable(_cb):
-                        await _cb
-                except Exception as _e2:
-                    logger.warning("[cli model.switch] on_config_saved failed: %s", _e2)
-            _target_model_name = resolve_env_vars(
-                str((_target_entry.get("model_client_config") or {}).get("model_name", target)))
-            logger.info("[cli command.model] 切换完成(新格式): current=%s", _target_model_name)
-            await channel.send_response(ws, req_id, ok=True, payload={
-                "current": _target_model_name,
-                "requested": target,
-                "type": "switched",
-                "applied": True,
-            })
-            return
-
-        env_from_file = _load_env_from_file()
-        raw_model_cfg = get_model_config(target)
-        logger.info("[cli command.model] 模型 '%s' 原始配置: %s", target, raw_model_cfg)
-        if not raw_model_cfg:
-            await channel.send_response(
-                ws, req_id, ok=False, error=f"Model '{target}' config not found"
-            )
-            return
-        raw_client_cfg = raw_model_cfg.get("model_client_config", {})
-        raw_model_config_obj = raw_model_cfg.get("model_config_obj", {})
-        if not raw_client_cfg:
-            await channel.send_response(
-                ws,
-                req_id,
-                ok=False,
-                error=f"Model '{target}' has no model_client_config",
-            )
-            return
-
-        import re as _re
-
-        pattern = _re.compile(r"\$\{([^:}]+)(?::-([^}]*))?\}")
-        resolved_cfg = {}
-        unresolved_env_vars = {}
-        for key, raw_val in raw_client_cfg.items():
-            if not isinstance(raw_val, str):
-                resolved_cfg[key] = raw_val
+        # 统一使用 defaults 列表格式（旧格式自动迁移）
+        _raw_defaults = ensure_defaults_list_in_config()
+        _target_entry = None
+        _target_idx = None
+        for _i, _e in enumerate(_raw_defaults):
+            if not isinstance(_e, dict):
                 continue
-
-            def _replace(match):
-                var_name = match.group(1)
-                default = match.group(2)
-                if var_name in env_from_file:
-                    return env_from_file[var_name]
-                if default is not None:
-                    return default
-                unresolved_env_vars[var_name] = True
-                return ""
-
-            resolved_cfg[key] = pattern.sub(_replace, raw_val)
-
-        logger.info("[cli command.model] 解析后的配置: %s", resolved_cfg)
-
-        required_keys = {
-            "api_base": "API_BASE",
-            "api_key": "API_KEY",
-            "model_name": "MODEL_NAME",
-            "client_provider": "MODEL_PROVIDER",
-        }
-        missing = []
-        for yaml_key, env_key in required_keys.items():
-            val = resolved_cfg.get(yaml_key, "")
-            if not val:
-                is_env_ref = (
-                    yaml_key in raw_client_cfg
-                    and isinstance(raw_client_cfg[yaml_key], str)
-                    and raw_client_cfg[yaml_key].startswith("${")
-                )
-                if is_env_ref:
-                    env_var_in_raw = raw_client_cfg[yaml_key]
-                    var_names_in_val = _re.findall(
-                        r"\$\{([^:}]+)(?::-([^}]*))?\}", env_var_in_raw
-                    )
-                    for vn, vd in var_names_in_val:
-                        env_file_val = env_from_file.get(vn, "")
-                        if not env_file_val and (vd is None or vd == ""):
-                            missing.append(f"{yaml_key} (env var {vn} not set)")
-                else:
-                    missing.append(yaml_key)
-        if missing:
-            logger.error("[cli command.model] 必要配置缺失: %s, 无法切换", missing)
+            _ename = resolve_env_vars(str((_e.get("model_client_config") or {}).get("model_name", "")))
+            _ealias = resolve_env_vars(str(_e.get("alias", ""))) if _e.get("alias") else ""
+            if _ename == target or _ealias == target:
+                _target_entry = _e
+                _target_idx = _i
+                break
+        _other_entries = [_e for _i, _e in enumerate(_raw_defaults) if _i != _target_idx]
+        if _target_entry is None:
+            await channel.send_response(ws, req_id, ok=False, error=f"Model '{target}' config not found")
+            return
+        # 校验必填字段
+        _target_mcc = _target_entry.get("model_client_config") or {}
+        _missing_fields = []
+        for _req_field, _display in [
+            ("api_key", "api_key"),
+            ("api_base", "api_base"),
+            ("model_name", "model_name"),
+            ("client_provider", "client_provider"),
+        ]:
+            _val = resolve_env_vars(str(_target_mcc.get(_req_field, "")))
+            if not _val:
+                _missing_fields.append(_display)
+        if _missing_fields:
             await channel.send_response(
-                ws,
-                req_id,
-                ok=False,
-                error=(
-                    f"Model '{target}' missing required config: {', '.join(missing)}. "
-                    "Please set the corresponding environment variables."
-                ),
+                ws, req_id, ok=False,
+                error=f"Model '{target}' missing required config: {', '.join(_missing_fields)}",
             )
             return
-
-        switch_env_map = {
-            "model_name": "MODEL_NAME",
-            "client_provider": "MODEL_PROVIDER",
-            "api_key": "API_KEY",
-            "api_base": "API_BASE",
-        }
-        env_updates = {}
-        for yaml_key, env_key in switch_env_map.items():
-            if yaml_key in resolved_cfg and resolved_cfg[yaml_key]:
-                env_updates[env_key] = str(resolved_cfg[yaml_key])
-        if not env_updates:
-            await channel.send_response(ws, req_id, ok=False, error="No valid config to switch")
-            return
-
-        logger.info(
-            "[cli command.model] 写入环境变量: %s",
-            {k: (v if k != "API_KEY" else "***") for k, v in env_updates.items()},
-        )
-
-        env = e2a_from_agent_fields(
+        update_default_models_in_config([_target_entry] + _other_entries)
+        logger.info("[cli command.model] 切换，已更新 models.defaults 首位: %s", target)
+        _reload_env = e2a_from_agent_fields(
             request_id=req_id,
             channel_id="cli",
             session_id=session_id,
-            req_method=ReqMethod.COMMAND_MODEL,
-            params={
-                "action": "switch_model",
-                "model": target,
-                "env_updates": env_updates,
-            },
+            req_method=ReqMethod.AGENT_RELOAD_CONFIG,
+            params={},
             is_stream=False,
             timestamp=time.time(),
         )
-        resp = await real_client.send_request(env)
-
-        if resp.ok:
-            for k, v in env_updates.items():
-                os.environ[k] = v
-            _persist_env_updates(env_updates)
+        await real_client.send_request(_reload_env)
+        if on_config_saved:
             try:
-                config_templates = {
-                    "api_base": "${API_BASE}",
-                    "api_key": "${API_KEY}",
-                    "model_name": "${MODEL_NAME}",
-                    "client_provider": "${MODEL_PROVIDER}",
-                }
-                config_templates["verify_ssl"] = resolved_cfg.get("verify_ssl", False)
-                if "timeout" in resolved_cfg:
-                    config_templates["timeout"] = resolved_cfg["timeout"]
-                add_or_update_model_in_config(
-                    "default",
-                    {
-                        "model_client_config": config_templates,
-                        "model_config_obj": raw_model_config_obj,
-                    },
-                )
-                logger.info("[cli command.model] 已重置 models.default 为环境变量引用")
-            except Exception as e:
-                logger.warning("[cli command.model] 更新 config.yaml 失败: %s", e)
-            if on_config_saved:
-                config_payload = get_config()
-                try:
-                    callback_result = on_config_saved(
-                        set(env_updates.keys()),
-                        env_updates=dict(env_updates),
-                        config_payload=config_payload,
-                    )
-                    if inspect.isawaitable(callback_result):
-                        await callback_result
-                except Exception as e:
-                    logger.warning("[cli model.switch] on_config_saved failed: %s", e)
-            logger.info(
-                "[cli command.model] 切换完成: current=%s, requested=%s",
-                env_updates.get("MODEL_NAME", target),
-                target,
-            )
-            await channel.send_response(
-                ws,
-                req_id,
-                ok=True,
-                payload={
-                    "current": env_updates.get("MODEL_NAME", target),
-                    "requested": target,
-                    "type": "switched",
-                    "applied": True,
-                },
-            )
-        else:
-            logger.error("[cli command.model] agentserver 切换失败: %s", resp.error)
-            await channel.send_response(
-                ws,
-                req_id,
-                ok=False,
-                error=resp.error or "Model switch failed on agent server",
-            )
+                _cb = on_config_saved(set(), env_updates={}, config_payload=get_config())
+                if inspect.isawaitable(_cb):
+                    await _cb
+            except Exception as _e2:
+                logger.warning("[cli model.switch] on_config_saved failed: %s", _e2)
+        _target_model_name = resolve_env_vars(
+            str((_target_entry.get("model_client_config") or {}).get("model_name", target)))
+        logger.info("[cli command.model] 切换完成: current=%s", _target_model_name)
+        await channel.send_response(ws, req_id, ok=True, payload={
+            "current": _target_model_name,
+            "requested": target,
+            "type": "switched",
+            "applied": True,
+        })
+        return
 
     async def _models_list(ws, req_id, params, session_id):
         try:

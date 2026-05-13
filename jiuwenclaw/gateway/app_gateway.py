@@ -916,6 +916,11 @@ async def _run(
                     if isinstance(err_payload, dict)
                     else err_payload
                 )
+                err_str = str(err_msg or "")
+                # ValidationError 是配置格式问题，不需要重启 gateway
+                if any(kw in err_str for kw in ("ValidationError", "validation error", "Field required")):
+                    logger.warning("[App] agent.reload_config validation error (non-fatal): %s", err_str)
+                    return False
                 raise RuntimeError(f"agent.reload_config rejected: {err_msg}")
 
             if updated_env_keys and (browser_runtime_keys & set(updated_env_keys)):

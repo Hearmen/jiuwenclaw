@@ -1330,10 +1330,17 @@ class JiuWenClawDeepAdapter:
             idx = name_counter.get(model_name, 0)
             name_counter[model_name] = idx + 1
             cache_key = f"{model_name}#{idx}"
-            self._model_cache[cache_key] = self._build_model_from_entry(
-                mcc,
-                entry.get("model_config_obj") or {},
-            )
+            try:
+                self._model_cache[cache_key] = self._build_model_from_entry(
+                    mcc,
+                    entry.get("model_config_obj") or {},
+                )
+            except Exception as exc:
+                logger.warning(
+                    "[JiuWenClawDeepAdapter] 跳过无效模型条目 %s: %s",
+                    model_name, exc,
+                )
+                continue
             if model_name not in self._model_name_to_keys:
                 self._model_name_to_keys[model_name] = []
             self._model_name_to_keys[model_name].append(cache_key)
@@ -1365,13 +1372,25 @@ class JiuWenClawDeepAdapter:
             or react_config.get("model_config_obj")
             or {}
         )
-        self._model_cache[model_name] = self._build_model_from_entry(mcc, mco)
+        try:
+            self._model_cache[model_name] = self._build_model_from_entry(mcc, mco)
+        except Exception as exc:
+            logger.warning(
+                "[JiuWenClawDeepAdapter] 跳过无效模型条目(legacy) %s: %s",
+                model_name, exc,
+            )
 
     def _create_model(self, config: dict) -> Model:
         self._model_cache.clear()
         self._build_model_cache_from_defaults(config)
         if not self._model_cache:
             self._build_model_cache_legacy(config)
+
+        if not self._model_cache:
+            raise ValueError(
+                "No valid model entries found in config — all entries failed validation. "
+                "Check that api_key and api_base are set for at least one model."
+            )
 
         # 优先取 is_default=true 的条目（纯 model_name key），否则取第一个
         default_name = None

@@ -114,8 +114,8 @@ memory:
       user: ${OPENVIKING_USER:-default}
 
 models:
-  default:
-      model_client_config:
+  defaults:
+    - model_client_config:
         api_base: ${API_BASE}
         api_key: ${API_KEY}
         model_name: ${MODEL_NAME:-xiaomi/mimo-v2-omni}

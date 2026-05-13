@@ -727,16 +727,46 @@ def update_default_models_in_config(models_list: list[dict[str, Any]]) -> None:
     if "models" not in data:
         data["models"] = {}
     data["models"]["defaults"] = models_list
-    default_entry = None
-    for entry in models_list:
-        if isinstance(entry, dict) and entry.get("is_default") is True:
-            default_entry = entry
-            break
-    if default_entry is None and models_list:
-        default_entry = models_list[0]
-    if default_entry is not None:
-        data["models"]["default"] = default_entry
+    if "default" in data["models"]:
+        del data["models"]["default"]
     _dump_yaml_round_trip(_CONFIG_YAML_PATH, data)
+
+
+def ensure_defaults_list_in_config() -> list[dict[str, Any]]:
+    """确保 config.yaml 中 models.defaults 列表存在。
+
+    如果不存在，将 models.default 单对象迁移为列表条目，
+    并删除冗余的 models.default key。返回 defaults 列表。
+    """
+    data = _load_yaml_round_trip(_CONFIG_YAML_PATH)
+    models = data.get("models") or {}
+    defaults = models.get("defaults")
+    if isinstance(defaults, list) and defaults:
+        return defaults
+
+    default_entry = models.get("default")
+    if isinstance(default_entry, dict):
+        if "is_default" not in default_entry:
+            default_entry["is_default"] = True
+        defaults_list = [default_entry]
+    else:
+        defaults_list = [{
+            "model_client_config": {
+                "api_base": "${API_BASE}",
+                "api_key": "${API_KEY}",
+                "model_name": "${MODEL_NAME}",
+                "client_provider": "${MODEL_PROVIDER}",
+            },
+            "model_config_obj": {"temperature": 0.95},
+            "is_default": True,
+        }]
+
+    data["models"] = models
+    data["models"]["defaults"] = defaults_list
+    if "default" in data["models"]:
+        del data["models"]["default"]
+    _dump_yaml_round_trip(_CONFIG_YAML_PATH, data)
+    return defaults_list
 
 
 def _require_dict(value: Any, field_name: str) -> dict[str, Any]:
