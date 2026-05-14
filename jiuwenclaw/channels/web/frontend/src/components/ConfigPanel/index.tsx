@@ -1282,9 +1282,12 @@ function MultiAgentSection({
                       <input
                         type="number"
                         step="1"
-                        min="0"
-                        value={agent[field] ?? 0}
-                        onChange={(e) => updateAgentField(idx, field, parseInt(e.target.value) || 0)}
+                        min="1"
+                        value={agent[field] ?? 1}
+                        onChange={(e) => {
+                          const v = parseInt(e.target.value);
+                          updateAgentField(idx, field, v > 0 ? v : 1);
+                        }}
                         className="flex-1 rounded border border-border bg-bg px-2 py-1 text-text text-xs"
                       />
                     ) : field === "completion_timeout" ? (
@@ -1383,9 +1386,12 @@ function MultiAgentSection({
                 <input
                   type="number"
                   step="1"
-                  min="0"
-                  value={newAgent[field] ?? 0}
-                  onChange={(e) => setNewAgent((p) => ({ ...p, [field]: parseInt(e.target.value) || 0 }))}
+                  min="1"
+                  value={newAgent[field] ?? 1}
+                  onChange={(e) => {
+                    const v = parseInt(e.target.value);
+                    setNewAgent((p) => ({ ...p, [field]: v > 0 ? v : 1 }));
+                  }}
                   className="flex-1 rounded border border-border bg-bg px-2 py-1 text-text text-xs"
                 />
               ) : field === "completion_timeout" ? (
@@ -1447,6 +1453,9 @@ function TeamItemSection({
   const [openMembers, setOpenMembers] = useState(false);
   const [expandedMemberIdx, setExpandedMemberIdx] = useState<number | null>(null);
   const [memberNameError, setMemberNameError] = useState<string | null>(null);
+  const [addingNewMember, setAddingNewMember] = useState(false);
+  const [newMember, setNewMember] = useState<TeamMember>({ member_name: "", display_name: "", persona: "", prompt_hint: "", agent_key: "" });
+  const [newMemberNameError, setNewMemberNameError] = useState<string | null>(null);
 
   const checkMemberNameDuplicate = (leaderName: string, members: TeamMember[], excludeIdx?: number): string | null => {
     if (!leaderName) return null;
@@ -1459,10 +1468,20 @@ function TeamItemSection({
     return null;
   };
 
+  const checkEnglishOnly = (value: string): string | null => {
+    if (!value) return null;
+    if (!/^[a-zA-Z]+$/.test(value)) {
+      return t("config.team.memberNameEnglishOnly");
+    }
+    return null;
+  };
+
   const updateLeader = (field: keyof Leader, value: string) => {
     if (field === "member_name") {
-      const error = checkMemberNameDuplicate(value, team.predefined_members || []);
-      setMemberNameError(error);
+      const duplicateError = checkMemberNameDuplicate(value, team.predefined_members || []);
+      const englishError = checkEnglishOnly(value);
+      const errors = [englishError, duplicateError].filter(Boolean);
+      setMemberNameError(errors.length > 0 ? errors.join("; ") : null);
     }
     onTeamChange({ ...team, leader: { ...team.leader, [field]: value } });
   };
@@ -1471,16 +1490,50 @@ function TeamItemSection({
     if (field === "member_name") {
       const members = [...team.predefined_members];
       members[idx] = { ...members[idx], [field]: value };
-      const error = checkMemberNameDuplicate(value, members, idx);
-      if (team.leader?.member_name === value) {
-        setMemberNameError(t("config.team.duplicateMemberName"));
-      } else {
-        setMemberNameError(error);
-      }
+      const duplicateError = checkMemberNameDuplicate(value, members, idx);
+      const leaderDuplicate = team.leader?.member_name === value ? t("config.team.duplicateMemberName") : null;
+      const englishError = checkEnglishOnly(value);
+      const errors = [englishError, duplicateError, leaderDuplicate].filter(Boolean);
+      setMemberNameError(errors.length > 0 ? errors[0] : null);
     }
     const updated = [...team.predefined_members];
     updated[idx] = { ...updated[idx], [field]: value };
     onTeamChange({ ...team, predefined_members: updated });
+  };
+
+  const validateNewMemberName = (value: string): boolean => {
+    const englishError = checkEnglishOnly(value);
+    const duplicateInMembers = team.predefined_members.some((m) => m.member_name === value);
+    const duplicateError = duplicateInMembers ? t("config.team.duplicateMemberName") : null;
+    const leaderDuplicate = team.leader?.member_name === value ? t("config.team.duplicateMemberName") : null;
+    const errors = [englishError, duplicateError, leaderDuplicate].filter(Boolean);
+    setNewMemberNameError(errors.length > 0 ? errors[0] : null);
+    return errors.length === 0;
+  };
+
+  const updateNewMember = (field: keyof TeamMember, value: string) => {
+    setNewMember((prev) => ({ ...prev, [field]: value }));
+    if (field === "member_name") {
+      validateNewMemberName(value);
+    }
+  };
+
+  const handleAddNewMember = () => {
+    if (!newMember.member_name.trim()) return;
+    if (!validateNewMemberName(newMember.member_name)) return;
+    onTeamChange({
+      ...team,
+      predefined_members: [...team.predefined_members, newMember],
+    });
+    setNewMember({ member_name: "", display_name: "", persona: "", prompt_hint: "", agent_key: "" });
+    setNewMemberNameError(null);
+    setAddingNewMember(false);
+  };
+
+  const cancelAddNewMember = () => {
+    setNewMember({ member_name: "", display_name: "", persona: "", prompt_hint: "", agent_key: "" });
+    setNewMemberNameError(null);
+    setAddingNewMember(false);
   };
 
   const updateTeammate = (field: keyof Teammate, value: string) => {
@@ -1737,13 +1790,18 @@ function TeamItemSection({
                               ))}
                             </select>
                           ) : (
-                            <input
-                              type="text"
-                              value={member[field] ?? ""}
-                              onChange={(e) => updateMember(idx, field, e.target.value)}
-                              maxLength={field === "prompt_hint" ? 4096 : (field === "persona" ? 2048 : 64)}
-                              className={`flex-1 rounded border bg-bg px-2 py-1 text-text text-xs ${memberNameError ? "border-danger" : "border-border"}`}
-                            />
+                            <div className="flex-1">
+                              <input
+                                type="text"
+                                value={member[field] ?? ""}
+                                onChange={(e) => updateMember(idx, field, e.target.value)}
+                                maxLength={field === "prompt_hint" ? 4096 : (field === "persona" ? 2048 : 64)}
+                                className={`w-full rounded border bg-bg px-2 py-1 text-text text-xs ${field === "member_name" && memberNameError ? "border-danger" : "border-border"}`}
+                              />
+                              {field === "member_name" && memberNameError && (
+                                <p className="text-[10px] text-danger mt-1">{memberNameError}</p>
+                              )}
+                            </div>
                           )}
                         </div>
                       ))}
@@ -1752,18 +1810,52 @@ function TeamItemSection({
                 </div>
               );
             })}
-            <button
-              type="button"
-              onClick={() => {
-                onTeamChange({
-                  ...team,
-                  predefined_members: [...team.predefined_members, { member_name: "", display_name: "", persona: "", prompt_hint: "", agent_key: "" }],
-                });
-              }}
-              className="w-full rounded border border-dashed border-border py-1 text-xs text-text-muted hover:bg-secondary/40"
-            >
-              + {t("config.team.addMember")}
-            </button>
+            {addingNewMember ? (
+              <div className="rounded border border-accent/40 bg-accent/5 p-2 space-y-2">
+                {memberFields.map((field) => (
+                  <div key={field} className="flex items-center gap-2 text-xs">
+                    <label className="w-28 text-text-muted shrink-0">{getMemberFieldLabel(field)}</label>
+                    {field === "agent_key" ? (
+                      <select
+                        value={newMember[field] ?? ""}
+                        onChange={(e) => updateNewMember(field, e.target.value)}
+                        className="flex-1 rounded border border-border bg-bg px-2 py-1 text-text text-xs"
+                      >
+                        <option value="">-- Select Agent --</option>
+                        {agents.map((agent) => (
+                          <option key={agent.name} value={agent.name}>{agent.name || "(unnamed)"}</option>
+                        ))}
+                      </select>
+                    ) : (
+                      <div className="flex-1">
+                        <input
+                          type="text"
+                          value={newMember[field] ?? ""}
+                          onChange={(e) => updateNewMember(field, e.target.value)}
+                          maxLength={field === "prompt_hint" ? 4096 : (field === "persona" ? 2048 : 64)}
+                          className={`w-full rounded border bg-bg px-2 py-1 text-text text-xs ${field === "member_name" && newMemberNameError ? "border-danger" : "border-border"}`}
+                        />
+                        {field === "member_name" && newMemberNameError && (
+                          <p className="text-[10px] text-danger mt-1">{newMemberNameError}</p>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                ))}
+                <div className="flex justify-end gap-2 pt-1">
+                  <button type="button" onClick={cancelAddNewMember} className="btn !px-3 !py-1 text-xs">{t("common.cancel")}</button>
+                  <button type="button" onClick={handleAddNewMember} disabled={!newMember.member_name.trim()} className="btn primary !px-3 !py-1 text-xs">{t("common.confirm")}</button>
+                </div>
+              </div>
+            ) : (
+              <button
+                type="button"
+                onClick={() => setAddingNewMember(true)}
+                className="w-full rounded border border-dashed border-border py-1 text-xs text-text-muted hover:bg-secondary/40"
+              >
+                + {t("config.team.addMember")}
+              </button>
+            )}
           </div>
         )}
       </div>
@@ -1990,7 +2082,24 @@ export function ConfigPanel({
 
   const confirmDeleteAgent = () => {
     if (!deleteAgentConfirm) return;
+    const deletedName = deleteAgentConfirm.agentName;
     setDraftAgents((prev) => prev.filter((_, i) => i !== deleteAgentConfirm.idx));
+    setDraftTeams((prev) =>
+      prev.map((team) => ({
+        ...team,
+        leader: team.leader?.agent_key === deletedName
+          ? { ...team.leader, agent_key: "" }
+          : team.leader,
+        teammate: team.teammate?.agent_key === deletedName
+          ? { agent_key: "" }
+          : team.teammate,
+        predefined_members: (team.predefined_members || []).map((member) =>
+          member.agent_key === deletedName
+            ? { ...member, agent_key: "" }
+            : member
+        ),
+      }))
+    );
     setAgentsTeamsEdited(true);
     setDeleteAgentConfirm(null);
   };
@@ -2058,7 +2167,7 @@ export function ConfigPanel({
           model: matchedModel.model_name || "",
         } : { provider: "", api_base: "", api_key: "", model: modelName },
         skills: (normalizedConfig[`agent_skills_${i}`] || normalizedConfig[`agent_${i}_skills`] || "").split(/[,，]/).map((s: string) => s.trim()).filter(Boolean),
-        max_iterations: Number(normalizedConfig[`agent_max_iterations_${i}`]) || Number(normalizedConfig[`agent_${i}_max_iterations`]) || 200,
+        max_iterations: Math.max(1, Number(normalizedConfig[`agent_max_iterations_${i}`]) || Number(normalizedConfig[`agent_${i}_max_iterations`]) || 200),
         completion_timeout: Number(normalizedConfig[`agent_completion_timeout_${i}`]) || Number(normalizedConfig[`agent_${i}_completion_timeout`]) || 600,
       });
     }

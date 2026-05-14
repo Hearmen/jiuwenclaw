@@ -605,7 +605,8 @@
       "deleteConfirmMessage": "Are you sure you want to delete team \"{{teamName}}\"?",
       "deleteMemberConfirmTitle": "Delete Member?",
       "deleteMemberConfirmMessage": "Are you sure you want to delete member \"{{memberName}}\"?",
-      "duplicateMemberName": "Member name already exists"
+      "duplicateMemberName": "Member name already exists",
+      "memberNameEnglishOnly": "Member name can only contain English letters"
     },
     "groups": {
       "modelDefault": { "label": "Default Model (Main Chat)", "hint": "Primary chat model service and auth" },

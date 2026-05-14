@@ -604,7 +604,8 @@
       "deleteConfirmMessage": "确定要删除 Team \"{{teamName}}\" 吗？",
       "deleteMemberConfirmTitle": "确认删除成员？",
       "deleteMemberConfirmMessage": "确定要删除成员 \"{{memberName}}\" 吗？",
-      "duplicateMemberName": "成员名称已存在"
+      "duplicateMemberName": "成员名称已存在",
+      "memberNameEnglishOnly": "成员名称只能包含英文字母"
     },
     "groups": {
       "modelDefault": { "label": "默认模型（主对话）", "hint": "主对话模型服务与鉴权参数" },
