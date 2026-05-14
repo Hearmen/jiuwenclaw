@@ -4,11 +4,34 @@
 
 from pathlib import Path
 
+import yaml
+
+from jiuwenclaw.common.config import resolve_env_vars
 from jiuwenclaw.agents.harness.team.config_loader import load_team_spec_dict, resolve_team_sqlite_db_path
 
 
 def _wrap_modes_team(team_mapping: dict[str, dict]) -> dict:
     return {"modes": {"team": team_mapping}}
+
+
+def test_load_team_spec_dict_reads_models_defaults_from_repository_config(monkeypatch):
+    """Repository config template should provide the default team model from models.defaults."""
+    repo_config = Path(__file__).resolve().parents[3] / "jiuwenclaw" / "resources" / "config.yaml"
+    monkeypatch.setenv("API_BASE", "https://example.test/v1")
+    monkeypatch.setenv("API_KEY", "sk-test")
+    monkeypatch.setenv("MODEL_NAME", "gpt-template")
+    monkeypatch.setenv("MODEL_PROVIDER", "OpenAI")
+
+    config = resolve_env_vars(yaml.safe_load(repo_config.read_text(encoding="utf-8")) or {})
+
+    spec = load_team_spec_dict(config_base=config)
+
+    model = spec["agents"]["leader"]["model"]
+    assert model["model_client_config"]["api_base"] == "https://example.test/v1"
+    assert model["model_client_config"]["api_key"] == "sk-test"
+    assert model["model_client_config"]["model_name"] == "gpt-template"
+    assert model["model_client_config"]["client_provider"] == "OpenAI"
+    assert model["model_request_config"]["model"] == "gpt-template"
 
 
 def test_load_team_spec_dict_supports_member_specific_agents(monkeypatch, tmp_path):
