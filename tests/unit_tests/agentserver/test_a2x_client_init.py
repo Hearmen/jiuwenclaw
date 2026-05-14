@@ -199,7 +199,7 @@ async def test_create_instance_registers_blank_agent_for_teammate(monkeypatch: p
                      return_value=(None, False)),
         patch.object(interface_module.JiuWenClawDeepAdapter, "load_user_rails", AsyncMock()),
         patch.object(interface_module, "init_permission_engine", return_value=None),
-        patch.object(interface_module, "create_deep_agent", return_value=MagicMock(name="deep_agent")),
+        patch.object(interface_module, "create_deep_agent", return_value=MagicMock(name="deep_agent", ensure_initialized=AsyncMock())),
     ):
         await adapter.create_instance()
 
@@ -361,7 +361,7 @@ async def test_create_instance_continues_when_a2x_client_init_fails(monkeypatch:
     monkeypatch.setitem(sys.modules, "jiuwenclaw.agents.harness.team.a2x.client", fake_module)
     monkeypatch.setattr(interface_module, "get_config", lambda: config_base)
 
-    created_instance = MagicMock(name="deep_agent")
+    created_instance = MagicMock(name="deep_agent", ensure_initialized=AsyncMock())
 
     with (
         patch.object(interface_module.JiuWenClawDeepAdapter, "set_checkpoint", AsyncMock()),

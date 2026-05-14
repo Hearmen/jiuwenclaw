@@ -118,7 +118,7 @@ def _make_request(session_id: str = "web_a2x_system_test") -> tuple[AgentRequest
 
 
 async def _create_adapter_and_run_chat(config_base: dict) -> AsyncMock:
-    created_agent = SimpleNamespace(card=SimpleNamespace(id="jiuwenclaw", name="main_agent"))
+    created_agent = SimpleNamespace(card=SimpleNamespace(id="jiuwenclaw", name="main_agent"), ensure_initialized=AsyncMock())
     request, inputs = _make_request()
 
     with (

@@ -42,6 +42,7 @@ from openjiuwen.core.sys_operation.config import (
     PreDeployLauncherConfig,
     ContainerScope,
 )
+from openjiuwen.core.sys_operation.cwd import set_cwd
 from openjiuwen.harness import (
     AudioModelConfig,
     DeepAgent,
@@ -2279,6 +2280,12 @@ class JiuWenClawDeepAdapter:
             audio_model_config=self._audio_model_config,
             completion_timeout=config.get("completion_timeout", 3600.0),
         )
+
+        await self._instance.ensure_initialized()
+        project_dir = self._instance_overrides.get("project_dir")
+        if project_dir:
+            set_cwd(project_dir)
+
         self._sync_a2x_runtime_state()
         self._registered_mcp_server_ids.clear()
         self._registered_mcp_servers.clear()

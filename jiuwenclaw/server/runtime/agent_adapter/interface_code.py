@@ -24,6 +24,7 @@ from openjiuwen.core.foundation.llm import Model
 from openjiuwen.core.foundation.store.base_embedding import EmbeddingConfig
 from openjiuwen.core.runner import Runner
 from openjiuwen.core.single_agent import AgentCard
+from openjiuwen.core.sys_operation.cwd import set_cwd
 from openjiuwen.harness.factory import create_deep_agent
 from openjiuwen.harness.rails import (
     AgentModeRail,
@@ -207,6 +208,11 @@ class JiuwenClawCodeAdapter(JiuWenClawDeepAdapter):
             enable_task_planning=True,
             auto_create_workspace=False
         )
+
+        await self._instance.ensure_initialized()
+        if self._project_dir:
+            set_cwd(self._project_dir)
+
         setattr(self._instance, "_jiuwenclaw_adapter_mode", "code")
         setattr(
             self._instance,
