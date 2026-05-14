@@ -10,6 +10,7 @@ import {
   type SlashCommand as TuiSlashCommand,
   TUI,
   matchesKey,
+  truncateToWidth,
 } from "@mariozechner/pi-tui";
 import { spawnSync } from "node:child_process";
 import { statSync } from "node:fs";
@@ -150,6 +151,16 @@ type StatusViewState = {
   list: SelectList;
   statusPayload: import("../core/commands/builtins/status.js").StatusPayload | null;
   configPayload: (Record<string, unknown> & { schema?: ConfigItemSchema[] }) | null;
+};
+
+// FileViewer state for viewing large content (e.g., formatted logs)
+type FileViewerState = {
+  content: string;       // Full content text
+  title: string;         // Title for header
+  source: string;        // Source info
+  scrollOffset: number;  // Current scroll position
+  searchMode: boolean;   // Whether in search mode
+  searchTerm: string;    // Search term
 };
 
 class ComposerAutocompleteProvider implements AutocompleteProvider {
@@ -477,6 +488,8 @@ export class AppScreen implements Component, Focusable {
   private transcriptScrollOffset = 0;
   /** Image attachments keyed by composer `@path` tokens (e.g. cached base64 for terminal preview). */
   private composerAttachments: FileAttachment[] = [];
+  /** FileViewer state for viewing large content (e.g., formatted logs) */
+  private fileViewerState: FileViewerState | null = null;
 
   constructor(
     private readonly tui: TUI,
@@ -574,6 +587,124 @@ export class AppScreen implements Component, Focusable {
     this.editor.invalidate();
   }
 
+  /** Enter FileViewer mode to view large content (e.g., formatted logs) */
+  enterFileViewer(content: string, title: string, source: string): void {
+    this.fileViewerState = {
+      content,
+      title,
+      source,
+      scrollOffset: 0,
+      searchMode: false,
+      searchTerm: "",
+    };
+    this.tui.requestRender();
+  }
+
+  /** Exit FileViewer mode and return to normal view */
+  exitFileViewer(): void {
+    this.fileViewerState = null;
+    this.tui.requestRender();
+  }
+
+  /** Handle FileViewer input - scrolling and navigation */
+  private handleFileViewerInput(data: string): void {
+    if (!this.fileViewerState) return;
+
+    const contentLines = this.fileViewerState.content.split("\n");
+    const height = this.tui.terminal.rows;
+    const availableHeight = Math.max(1, height - 2); // Reserve for title + hint
+
+    // Esc or q to exit
+    if (matchesKey(data, "escape") || data.toLowerCase() === "q") {
+      this.exitFileViewer();
+      return;
+    }
+
+    // Scroll up (up arrow or k)
+    if (matchesKey(data, "up") || data.toLowerCase() === "k") {
+      this.fileViewerState.scrollOffset = Math.max(0, this.fileViewerState.scrollOffset - 1);
+      this.tui.requestRender();
+      return;
+    }
+
+    // Scroll down (down arrow or j)
+    if (matchesKey(data, "down") || data.toLowerCase() === "j") {
+      const maxScroll = Math.max(0, contentLines.length - availableHeight);
+      this.fileViewerState.scrollOffset = Math.min(maxScroll, this.fileViewerState.scrollOffset + 1);
+      this.tui.requestRender();
+      return;
+    }
+
+    // Page up
+    if (matchesKey(data, "pageUp")) {
+      this.fileViewerState.scrollOffset = Math.max(0, this.fileViewerState.scrollOffset - availableHeight);
+      this.tui.requestRender();
+      return;
+    }
+
+    // Page down
+    if (matchesKey(data, "pageDown")) {
+      const maxScroll = Math.max(0, contentLines.length - availableHeight);
+      this.fileViewerState.scrollOffset = Math.min(maxScroll, this.fileViewerState.scrollOffset + availableHeight);
+      this.tui.requestRender();
+      return;
+    }
+
+    // Go to top (Home)
+    if (matchesKey(data, "home") || data.toLowerCase() === "g") {
+      this.fileViewerState.scrollOffset = 0;
+      this.tui.requestRender();
+      return;
+    }
+
+    // Go to bottom (End)
+    if (matchesKey(data, "end") || data.toLowerCase() === "shift+g") {
+      const maxScroll = Math.max(0, contentLines.length - availableHeight);
+      this.fileViewerState.scrollOffset = maxScroll;
+      this.tui.requestRender();
+      return;
+    }
+  }
+
+  /** Render FileViewer mode - show content in a scrollable viewer */
+  private renderFileViewer(width: number): string[] {
+    if (!this.fileViewerState) return [];
+
+    const height = Math.max(3, this.tui.terminal.rows);
+    const safeWidth = Math.max(1, width);
+    const lines: string[] = [];
+
+    // Title bar (line 1)
+    const titleText = `━━━ ${this.fileViewerState.title} ━━━`;
+    lines.push(padToWidth(palette.border.panel(titleText), safeWidth));
+
+    // Content area
+    const contentLines = this.fileViewerState.content.split("\n");
+    const availableHeight = Math.max(1, height - 2);
+    const scrollOffset = this.fileViewerState.scrollOffset;
+
+    // Add visible content lines
+    for (let i = 0; i < availableHeight; i++) {
+      const lineIndex = scrollOffset + i;
+      if (lineIndex < contentLines.length) {
+        const rawLine = contentLines[lineIndex] || "";
+        lines.push(truncateToWidth(rawLine, safeWidth, ""));
+      } else {
+        // Pad with empty lines
+        lines.push(" ".repeat(safeWidth));
+      }
+    }
+
+    // Hint bar (last line) - show scroll position
+    const totalLines = contentLines.length;
+    const scrollPercent = totalLines > 0 ? Math.round((scrollOffset / totalLines) * 100) : 0;
+    const positionInfo = totalLines > availableHeight ? ` [${scrollOffset + 1}-${Math.min(scrollOffset + availableHeight, totalLines)}/${totalLines} (${scrollPercent}%)]` : "";
+    const hintText = `按 Esc/q 退出 | ↑↓ 滚动 | PgUp/PgDown 翻页${positionInfo}`;
+    lines.push(padToWidth(palette.text.dim(hintText), safeWidth));
+
+    return lines;
+  }
+
   /**
    * Ctrl+C / SIGINT 始终尝试向服务端发送当前 session 的中断请求。
    * 是否真的存在运行任务由服务端判断；CLI/TUI 本身不退出。
@@ -585,6 +716,12 @@ export class AppScreen implements Component, Focusable {
   }
 
   handleInput(data: string): void {
+    // FileViewer mode: handle input separately
+    if (this.fileViewerState) {
+      this.handleFileViewerInput(data);
+      return;
+    }
+
     const snapshot = this.state.getSnapshot();
     const pendingQuestion = snapshot.pendingQuestion;
     const activeQuestion =
@@ -912,6 +1049,11 @@ export class AppScreen implements Component, Focusable {
   }
 
   render(width: number): string[] {
+    // FileViewer mode: render file viewer instead of normal view
+    if (this.fileViewerState) {
+      return this.renderFileViewer(width);
+    }
+
     const snapshot = this.state.getSnapshot();
     const teamWorking =
       isTeamMode(snapshot.mode) &&
@@ -1079,6 +1221,9 @@ export class AppScreen implements Component, Focusable {
           },
           openInEditor: (filePath: string) => {
             openInExternalEditor(this.tui, filePath);
+          },
+          enterFileViewer: (content, title, source) => {
+            this.enterFileViewer(content, title, source);
           },
         });
       } finally {

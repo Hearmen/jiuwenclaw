@@ -87,6 +87,8 @@ export interface CommandContext {
   ) => void;
   enterStatusView?: (tab?: StatusViewTab) => void;
   openInEditor?: (filePath: string) => void;
+  /** Enter FileViewer mode to view large content (e.g., formatted logs) */
+  enterFileViewer?: (content: string, title: string, source: string) => void;
   restartStatusLine?: () => void;
 }
 

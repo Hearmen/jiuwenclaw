@@ -292,6 +292,10 @@ class Scheduler:
                 request, session_id, execution_id, query, model=model
             ):
                 if chunk.payload:
+                    # Skip context compression events - not needed in logs
+                    event_type = chunk.payload.get("event_type", "")
+                    if event_type in ("context.compressed", "context_compression_state"):
+                        continue
                     # Append log chunk immediately (JSON Lines format)
                     log_file.write(json.dumps(chunk.payload, ensure_ascii=False) + "\n")
                     log_file.flush()

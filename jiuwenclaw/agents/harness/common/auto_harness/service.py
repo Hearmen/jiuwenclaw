@@ -23,6 +23,7 @@ import json
 import logging
 import os
 import shutil
+import sys
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -68,6 +69,11 @@ _AUTO_HARNESS_DATA_DIR = get_user_workspace_dir() / "auto-harness"
 _HARNESS_PACKAGES_FILE = _AUTO_HARNESS_DATA_DIR / "harness-packages.json"
 # Default repo URL if not specified in request (per §5.5)
 _DEFAULT_REPO_URL = "https://gitcode.com/openJiuwen/agent-core.git"
+# Default local repo path
+_DEFAULT_LOCAL_REPO = _AUTO_HARNESS_DATA_DIR / "repo" / "openJiuwen--agent-core"
+# Default values for ci_gate config
+_DEFAULT_CI_GATE_PYTHON_EXECUTABLE = sys.executable
+_DEFAULT_CI_GATE_INSTALL_COMMAND = "uv sync --active --group dev --extra cli"
 
 
 def reset_harness_packages_state() -> None:
@@ -228,10 +234,64 @@ class AutoHarnessService:
                 exc,
             )
 
+    @staticmethod
+    def _fill_config_defaults(config_path: Path) -> None:
+        """Fill default values for missing config items and save to file.
+
+        Args:
+            config_path: Path to the config.yaml file
+
+        This function reads the config file, checks for missing defaults,
+        fills them in if needed, and saves the updated config.
+        """
+        config_dict: dict[str, Any] = {}
+        if config_path.exists():
+            try:
+                config_dict = yaml.safe_load(config_path.read_text(encoding="utf-8")) or {}
+            except Exception as e:
+                logger.warning("[AutoHarnessService] Failed to parse config.yaml: %s", e)
+                config_dict = {}
+
+        needs_save = False
+
+        # Ensure local_repo is a string (not Path object which causes YAML serialization issues)
+        local_repo = config_dict.get("local_repo")
+        if not local_repo:
+            config_dict["local_repo"] = str(_DEFAULT_LOCAL_REPO)
+            needs_save = True
+        elif hasattr(local_repo, "__fspath__"):  # Path-like object
+            config_dict["local_repo"] = str(local_repo)
+            needs_save = True
+
+        ci_gate = config_dict.get("ci_gate") or {}
+        if not ci_gate.get("python_executable"):
+            ci_gate["python_executable"] = _DEFAULT_CI_GATE_PYTHON_EXECUTABLE
+            needs_save = True
+
+        if not ci_gate.get("install_command"):
+            ci_gate["install_command"] = _DEFAULT_CI_GATE_INSTALL_COMMAND
+            needs_save = True
+
+        if needs_save:
+            config_dict["ci_gate"] = ci_gate
+            config_path.parent.mkdir(parents=True, exist_ok=True)
+            config_path.write_text(
+                yaml.dump(config_dict, allow_unicode=True, sort_keys=False, default_flow_style=False),
+                encoding="utf-8"
+            )
+            logger.info(
+                "[AutoHarnessService] Auto-filled config defaults: " \
+                "local_repo=%s, python_executable=%s, install_command=%s",
+                config_dict.get("local_repo"),
+                ci_gate.get("python_executable"),
+                ci_gate.get("install_command"),
+            )
+
     def _load_base_config(self) -> None:
         """Load base config.yaml once at init (per §5.6.2).
 
         Config is bootstrapped from template if not exists.
+        Auto-fills default values for missing config items and saves to file.
         This provides default values; per-request overrides applied in build_auto_harness_config.
         """
         try:
@@ -239,7 +299,19 @@ class AutoHarnessService:
                 "[AutoHarnessService] Loading base config from: %s",
                 self.config_path,
             )
+
+            # Check if config file exists before calling load_auto_harness_config
+            config_exists = self.config_path.exists()
+
+            # Step 1: Call load_auto_harness_config to bootstrap default config file if not exists
             self._base_config = load_auto_harness_config(str(self.config_path))
+
+            # Step 2: Fill defaults only when config file was newly created
+            if not config_exists:
+                self._fill_config_defaults(self.config_path)
+                # Reload config with updated values
+                self._base_config = load_auto_harness_config(str(self.config_path))
+
             logger.info(
                 "[AutoHarnessService] Base config loaded successfully",
             )
@@ -408,6 +480,7 @@ class AutoHarnessService:
         local_repo: Path,
         model: Optional[Model],
         optimization_goal: str = "",
+        pipeline_preference: Optional[str] = None
     ) -> AutoHarnessConfig:
         """Build AutoHarnessConfig with per-request overrides (per §5.6.3).
 
@@ -442,7 +515,7 @@ class AutoHarnessService:
         config.workspace = str(resolved_local_repo)
         config.repo_url = repo_url
         config.experience_dir = str(self.experience_dir)
-        config.pipeline_preference = EXTENDED_EVOLVE_PIPELINE
+        config.pipeline_preference = pipeline_preference if pipeline_preference else EXTENDED_EVOLVE_PIPELINE
         config.optimization_goal = str(optimization_goal or "")
 
         # Set model from JiuwenClaw
@@ -1124,6 +1197,8 @@ class AutoHarnessService:
         )
 
         active_run: Optional[ActiveAutoHarnessRun] = None
+        params = getattr(request, "params", {}) or {}
+        pipeline_preference = params.get("pipeline_preference")
         try:
             # Clone/update repository
             local_repo = await self.clone_or_update_repo(repo_url)
@@ -1135,6 +1210,7 @@ class AutoHarnessService:
                 local_repo,
                 model,
                 optimization_goal=query,
+                pipeline_preference=pipeline_preference
             )
 
             # Build optimization task from query

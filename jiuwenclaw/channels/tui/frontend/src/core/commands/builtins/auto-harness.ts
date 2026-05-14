@@ -265,6 +265,13 @@ const scheduleLogsCommand: SlashCommand = {
       return !p.startsWith("-") && p !== historyIndexValue && !/^\d+$/.test(p);
     }) || "";
 
+    // Helper: build completion string preserving existing arguments
+    // Returns the full argument string including existing args and the completion
+    const buildCompletion = (completion: string, replaceLast: boolean = true): string => {
+      const prefixParts = replaceLast ? parts.slice(0, -1) : parts;
+      return [...prefixParts, completion].join(" ");
+    };
+
     // Step 1: Check if we need a history index value
     // --history is present and we're at the value position
     if (parts.includes("--history")) {
@@ -273,9 +280,20 @@ const scheduleLogsCommand: SlashCommand = {
       if (parts.length === historyIdx + 1) {
         const values = ["0", "1", "2", "3", "4"];
         if (lastPart && /^\d/.test(lastPart)) {
-          return values.filter((v) => v.startsWith(lastPart));
+          // Preserve existing task_id before --history when completing index value
+          const taskIdBeforeHistory = parts.slice(0, historyIdx).find((p) => !p.startsWith("-"));
+          const filtered = values.filter((v) => v.startsWith(lastPart));
+          if (taskIdBeforeHistory) {
+            return filtered.map((v) => `${taskIdBeforeHistory} --history ${v}`);
+          }
+          return filtered.map((v) => buildCompletion(v));
         }
-        return values;
+        // No number typed yet, suggest values with existing args preserved
+        const taskIdBeforeHistory = parts.slice(0, historyIdx).find((p) => !p.startsWith("-"));
+        if (taskIdBeforeHistory) {
+          return values.map((v) => `${taskIdBeforeHistory} --history ${v}`);
+        }
+        return values.map((v) => buildCompletion(v));
       }
       // If history index is complete with trailing space, suggest task_ids
       // Check: history value exists AND there's a trailing space
@@ -283,7 +301,9 @@ const scheduleLogsCommand: SlashCommand = {
         try {
           const result = await ctx.request<{ tasks?: Array<{ task_id: string }> }>("schedule.list", {}, 5000);
           const tasks = result.tasks || [];
-          return tasks.map((t) => t.task_id);
+          // Return full string with existing args + task_id
+          const existingArgs = parts.slice(0, -1).join(" ");
+          return tasks.map((t) => `${existingArgs} ${t.task_id}`);
         } catch {
           return [];
         }
@@ -296,18 +316,26 @@ const scheduleLogsCommand: SlashCommand = {
 
     // Step 2: Check if lastPart is exactly --history - suggest values immediately
     if (lastPart === "--history") {
-      return ["0", "1", "2", "3", "4"];
+      // Preserve existing task_id when suggesting history index values
+      if (existingTaskId) {
+        return ["0", "1", "2", "3", "4"].map((v) => `${existingTaskId} --history ${v}`);
+      }
+      return ["0", "1", "2", "3", "4"].map((v) => buildCompletion(v));
     }
 
-    // Step 3: If typing a flag, suggest --history only (--current is default, no need to suggest)
+    // Step 3: If typing a flag, suggest --history with existing args preserved
     if (lastPart.startsWith("-") && lastPart !== "--history") {
       if (parts.includes("--history")) return [];
-      return ["--history"].filter((f) => f.startsWith(lastPart));
+      // Preserve existing task_id when completing --history flag
+      if (existingTaskId) {
+        return ["--history"].filter((f) => f.startsWith(lastPart)).map((f) => `${existingTaskId} ${f}`);
+      }
+      return ["--history"].filter((f) => f.startsWith(lastPart)).map((f) => buildCompletion(f));
     }
 
-    // Step 4: If we have a task_id already, suggest --history flag
+    // Step 4: If we have a task_id already, suggest --history flag (preserve task_id)
     if (existingTaskId && !parts.includes("--history")) {
-      return ["--history"];
+      return [`${existingTaskId} --history`];
     }
 
     // Step 5: Otherwise, suggest task_ids
@@ -351,6 +379,14 @@ interface LogEntry {
   source_chunk_type?: string;
   tool_name?: string;
   is_error?: boolean;
+  // Error message (from chat.error event)
+  error?: string;
+  // Pipeline and stages info (from harness.message)
+  pipeline?: string;
+  stages?: Array<{ slot: string; display_name: string }>;
+  // Session finished info
+  is_terminal?: boolean;
+  results_count?: number;
   // Nested tool payload (as in history-parser.ts resolveToolPayload)
   tool_call?: {
     name?: string;
@@ -386,6 +422,9 @@ async function streamCurrentLogs(
   let pollCount = 0;
   let consecutiveEmptyPolls = 0;
   const maxEmptyPolls = 3; // Stop after 3 consecutive empty polls when not running
+
+  // Parse state for maintaining pipeline info across batches
+  let parseState: ParseState | undefined;
 
   // Clear any previous interrupt flag before starting new stream
   ctx.clearInterruptRequested();
@@ -443,8 +482,8 @@ async function streamCurrentLogs(
         task_id,
         log_type: "current",
         offset,
-        limit: 1000,
-      }, 30000);  // 30s timeout
+        limit: 3000,
+      }, 1200000);  // 60s timeout
 
       // Request was interrupted - clear flag and show message via helper
       if (result === null) {
@@ -474,49 +513,17 @@ async function streamCurrentLogs(
       if (logs.length > 0) {
         consecutiveEmptyPolls = 0;
 
-        // Check first event type to decide how to handle reasoning
-        const firstEventType = logs[0]?.event_type || "";
-
-        if (firstEventType === "chat.reasoning") {
-          // Logs start with reasoning - find first non-reasoning index
-          let firstNonReasoningIdx = -1;
-          for (let i = 0; i < logs.length; i++) {
-            if (logs[i]?.event_type !== "chat.reasoning") {
-              firstNonReasoningIdx = i;
-              break;
-            }
+        const parseResult = parseAndAggregateLogs(logs, parseState);
+        parseState = parseResult.state;
+        for (const section of parseResult.sections) {
+          // Check interrupt during log display
+          if (checkInterrupt()) return;
+          const formattedLine = formatLogSection(section);
+          if (formattedLine) {
+            ctx.addItem(addInfo(ctx.sessionId, formattedLine, "i"));
           }
-
-          if (firstNonReasoningIdx === -1) {
-            // All logs are reasoning - discard entire batch
-            offset = offset + logs.length;
-          } else {
-            // Skip leading reasoning, display rest
-            const logsToDisplay = logs.slice(firstNonReasoningIdx);
-            const sections = parseAndAggregateLogs(logsToDisplay);
-            for (const section of sections) {
-              // Check interrupt during log display
-              if (checkInterrupt()) return;
-              const formattedLine = formatLogSection(section);
-              if (formattedLine) {
-                ctx.addItem(addInfo(ctx.sessionId, formattedLine, "i"));
-              }
-            }
-            offset = offset + logs.length;
-          }
-        } else {
-          // Not starting with reasoning - display all
-          const sections = parseAndAggregateLogs(logs);
-          for (const section of sections) {
-            // Check interrupt during log display
-            if (checkInterrupt()) return;
-            const formattedLine = formatLogSection(section);
-            if (formattedLine) {
-              ctx.addItem(addInfo(ctx.sessionId, formattedLine, "i"));
-            }
-          }
-          offset = offset + logs.length;
         }
+        offset = offset + logs.length;
       } else {
         consecutiveEmptyPolls++;
       }
@@ -564,7 +571,7 @@ async function readFullHistoryLogs(
 
   let allLogs: Array<LogEntry> = [];
   let offset = 0;
-  const batchSize = 2000;
+  const batchSize = 5000;
   let executionId = "";
   let completedAt = "";
   let status = "";
@@ -612,29 +619,21 @@ async function readFullHistoryLogs(
     hasMore = result.has_more ?? (logs.length >= batchSize);
   }
 
-  // Filter out ALL reasoning entries for history logs (no thinking display)
-  // Remove chat.reasoning events AND chat.delta with llm_reasoning source
-  allLogs = allLogs.filter((log) => {
-    if (log.event_type === "chat.reasoning") return false;
-    if (log.event_type === "chat.delta" && log.source_chunk_type === "llm_reasoning") return false;
-    return true;
-  });
-
   // Display full aggregated logs
   if (allLogs.length === 0) {
     ctx.addItem(addInfo(ctx.sessionId, "日志为空"));
     return;
   }
 
-  const sections = parseAndAggregateLogs(allLogs);
-  const lines: string[] = [`\n【执行日志: ${executionId}】`];
+  const result = parseAndAggregateLogs(allLogs);
+  const lines: string[] = [`【执行日志: ${executionId}】`];
   if (completedAt) {
     lines.push(`完成时间: ${formatLocalTime(completedAt)} | 状态: ${status}`);
   }
   lines.push("");
   lines.push("=" .repeat(60));
 
-  for (const section of sections) {
+  for (const section of result.sections) {
     const formattedLine = formatLogSectionDetailed(section);
     if (formattedLine) {
       lines.push(formattedLine);
@@ -644,7 +643,19 @@ async function readFullHistoryLogs(
   lines.push("=" .repeat(60));
   lines.push("");
 
-  ctx.addItem(addInfo(ctx.sessionId, lines.join("\n")));
+  const formattedContent = lines.join("\n");
+
+  // Use FileViewer mode if available (TUI environment)
+  if (ctx.enterFileViewer) {
+    ctx.enterFileViewer(
+      formattedContent,
+      `执行日志: ${executionId}`,
+      `task_id: ${task_id}, history_index: ${history_index}`,
+    );
+  } else {
+    // Fallback: display directly (non-TUI environment)
+    ctx.addItem(addInfo(ctx.sessionId, formattedContent));
+  }
 }
 
 /**
@@ -652,13 +663,17 @@ async function readFullHistoryLogs(
  * Merges streaming chunks (chat.delta, chat.reasoning) into complete messages.
  */
 interface ParsedLogSection {
-  type: "thinking" | "assistant" | "stage" | "status" | "error" | "info" | "tool";
+  type: "thinking" | "assistant" | "stage" | "status" | "error" | "info" | "tool" | "pipeline" | "session_finished";
   content: string;
   stage?: string;
   status?: string;
   timestamp?: string;
   tool_name?: string;
   tool_success?: boolean;
+  // Pipeline info
+  pipeline?: string;
+  stages?: Array<{ slot: string; display_name: string }>;
+  completed_stages?: string[];
 }
 
 // ANSI color codes for log display differentiation
@@ -668,46 +683,189 @@ const ANSI = {
   red: "\x1b[31m",      // 错误/失败
   yellow: "\x1b[33m",   // 阶段
   blue: "\x1b[34m",     // 状态
+  magenta: "\x1b[35m",  // 压缩信息
   brightWhite: "\x1b[97m",  // 辅助输出 (柔和)
-  gray: "\x1b[90m",     // 思考 (dim)
+  gray: "\x1b[90m",     // 普通 gray (bright black)
+  dimGray: "\x1b[38;5;240m", // 更暗的灰色 (256-color mode)
   bold: "\x1b[1m",
   reset: "\x1b[0m",
 };
+
+// Helper function to calculate visual width (Chinese/CJK chars = 2, others = 1)
+function visualWidth(str: string): number {
+  let width = 0;
+  for (const char of str) {
+    const code = char.charCodeAt(0);
+    // Box drawing characters (U+2500-U+257F) are width 1
+    // Emoji and CJK characters (above U+257F or in CJK ranges) are width 2
+    // ASCII and other symbols are width 1
+    if (code >= 0x2500 && code <= 0x257F) {
+      width += 1; // Box drawing
+    } else if (
+      (code >= 0x4E00 && code <= 0x9FFF) || // CJK Unified Ideographs
+      (code >= 0x3000 && code <= 0x303F) || // CJK Symbols
+      (code >= 0xFF00 && code <= 0xFFEF) || // Halfwidth/Fullwidth
+      code >= 0x1F000 // Emoji and other high ranges
+    ) {
+      width += 2; // Wide characters (Chinese, emoji)
+    } else {
+      width += 1; // ASCII and others
+    }
+  }
+  return width;
+}
+
+// Helper function to wrap text to a maximum visual width
+function wrapText(text: string, maxWidth?: number): string {
+  // Auto-detect terminal width if not provided
+  // "💬 " prefix takes 4 visual chars (emoji=2, space=1), leave 2 margin on right
+  const defaultWidth = (process.stdout.columns || 100) - 6;
+  const wrapWidth = maxWidth ?? defaultWidth;
+
+  const lines: string[] = [];
+  const paragraphs = text.split('\n');
+
+  for (const paragraph of paragraphs) {
+    if (paragraph.trim() === '') {
+      lines.push('');
+      continue;
+    }
+
+    let currentLine = '';
+    let currentWidth = 0;
+
+    for (const char of paragraph) {
+      const charWidth = visualWidth(char);
+
+      if (currentWidth + charWidth > wrapWidth && currentLine.length > 0) {
+        lines.push(currentLine);
+        currentLine = char;
+        currentWidth = charWidth;
+      } else {
+        currentLine += char;
+        currentWidth += charWidth;
+      }
+    }
+
+    if (currentLine.length > 0) {
+      lines.push(currentLine);
+    }
+  }
+
+  return lines.join('\n');
+}
+
+// Helper function to create a proper box with title embedded in top border
+function createBox(title: string, content: string, color: string): string {
+  // Fixed structure: left padding 32 ═, right padding 37 ═ (asymmetric for visual balance)
+  const leftDashes = 32;
+  const rightDashes = 37;
+
+  // Calculate visual widths
+  const titleVisualWidth = visualWidth(title);
+  const contentVisualWidth = visualWidth(content);
+
+  // Calculate required widths:
+  // Top border: ╔(1) + ═(32) + sp(1) + title + sp(1) + ═(37) + ╗(1) = 72 + titleVisualWidth
+  const topVisualWidth = 72 + titleVisualWidth;
+
+  // Content line: ║(1) + sp(1) + content + padding + sp(1) + ║(1) = 4 + contentVisualWidth + padding
+  // We need content line to match top border width
+  // So: padding = topVisualWidth - 4 - contentVisualWidth
+  const contentPadding = topVisualWidth - 3 - contentVisualWidth;
+
+  // If content is wider than available space (negative padding), truncate
+  const topBorder = `╔${"═".repeat(leftDashes)} ${title} ${"═".repeat(rightDashes)}╗`;
+  const paddedContent = contentPadding < 0
+    ? `║ ${content.substring(0, topVisualWidth - 7)}... ║`
+    : `║ ${content}${" ".repeat(Math.max(0, contentPadding))} ║`;
+  // Bottom border: all ═ characters matching top visual width (minus corners)
+  const bottomBorder = `╚${"═".repeat(topVisualWidth - 1)}╝`;
+
+  return `${ANSI.bold}${color}${topBorder}${ANSI.reset}\n${color}${paddedContent}${ANSI.reset}\n${color}${ANSI.bold}${bottomBorder}${ANSI.reset}`;
+}
+
+// Helper: format thinking content (shared between formatLogSection and formatLogSectionDetailed)
+function formatThinkingContent(content: string): string {
+  // Apply wrapText for auto line break, then ensure gray color on each line
+  const wrapped = wrapText(content);
+  const lines = wrapped.split('\n');
+  // First line has 🧠 思考: prefix, subsequent lines have indentation
+  const coloredLines = lines.map((line, index) => {
+    if (index === 0) {
+      return `${ANSI.gray}🧠 思考: ${line}${ANSI.reset}`;
+    }
+    return `${ANSI.gray}   ${line}${ANSI.reset}`;  // 9 spaces indent to align with "🧠 思考: "
+  });
+  return coloredLines.join('\n');
+}
+
+// Helper: format assistant content with proper indentation for multi-line
+function formatAssistantContent(content: string): string {
+  const wrapped = wrapText(content);
+  const lines = wrapped.split('\n');
+  // First line has 💬 prefix, subsequent lines have indentation
+  const formattedLines = lines.map((line, index) => {
+    if (index === 0) {
+      return `${ANSI.brightWhite}💬 ${line}${ANSI.reset}`;
+    }
+    return `${ANSI.brightWhite}   ${line}${ANSI.reset}`;  // 3 spaces indent to align with 💬
+  });
+  return formattedLines.join('\n');
+}
 
 // Format log section for streaming display (compact but differentiated with colors)
 function formatLogSection(section: ParsedLogSection): string | null {
   switch (section.type) {
     case "thinking":
-      // Thinking content - display truncated preview with brain icon
-      const thinkingPreview = section.content.length > 150
-        ? section.content.substring(0, 150) + "..."
-        : section.content;
-      return `${ANSI.gray}🧠 思考: ${thinkingPreview}${ANSI.reset}`;
+      return formatThinkingContent(section.content);
 
     case "assistant":
-      // Assistant output - bright white color, no truncation
-      return `${ANSI.brightWhite}💬 ${section.content}${ANSI.reset}`;
+      // Assistant output - bright white color with proper multi-line formatting
+      return formatAssistantContent(section.content);
+
+    case "pipeline":
+      // Pipeline header - show workflow structure in a proper box
+      const stagesDisplay = section.stages?.map((s) => s.display_name).join(" → ") || "";
+      return `\n${createBox(`Pipeline: ${section.pipeline || "unknown"}`, `流程: ${stagesDisplay}`, ANSI.cyan)}\n`;
 
     case "stage":
+      // Get display_name for this stage
+      const stageDisplayName = section.stages?.find((s) => s.slot === section.stage)?.display_name || section.stage || "?";
+
       if (section.status) {
-        // Stage completion - prominent double-line separator
+        // Stage completion - show progress bar and simple completion line
+        const progressBar = formatStageProgress(section.stages, section.completed_stages);
         const icon = section.status === "success" ? "✅" :
                     section.status === "failed" ? "❌" : "⏸️";
         const color = section.status === "success" ? ANSI.green :
                      section.status === "failed" ? ANSI.red : ANSI.yellow;
         const statusText = section.status === "success" ? "完成" :
                           section.status === "failed" ? "失败" : section.status;
-        return `\n${ANSI.bold}${color}╔═════════════════ ${icon} 阶段${statusText}: ${section.stage || "?"} ═════════════════╗${ANSI.reset}\n`;
+        return `\n${progressBar}\n${color}${ANSI.bold}${icon} ${stageDisplayName} ${statusText}${ANSI.reset}\n`;
       }
-      // Stage start - prominent single-line header
-      const stageContent = section.content.length > 100
-        ? section.content.substring(0, 100) + "..."
-        : section.content;
-      return `\n${ANSI.bold}${ANSI.yellow}┌───────────────── 📊 Stage Running: ${section.stage} ─────────────────┐${ANSI.reset}\n${ANSI.yellow}│ ${stageContent}${ANSI.reset}`;
+      // Stage start - show progress bar and current stage indicator
+      const startProgressBar = formatStageProgress(section.stages, section.completed_stages, section.stage);
+      // Skip duplicate content - if content equals display_name, don't show it again
+      const showContent = section.content && section.content !== stageDisplayName;
+      if (showContent) {
+        const stageContent = section.content.length > 80
+          ? section.content.substring(0, 80) + "..."
+          : section.content;
+        return `\n${startProgressBar}\n${ANSI.yellow}${ANSI.bold}▶ 📊 ${stageDisplayName}${ANSI.reset}\n${ANSI.yellow}${stageContent}${ANSI.reset}\n`;
+      }
+      // Only show progress bar and stage name
+      return `\n${startProgressBar}\n${ANSI.yellow}${ANSI.bold}▶ 📊 ${stageDisplayName}${ANSI.reset}\n`;
+
+    case "session_finished":
+      // Session finished - prominent completion banner in a proper box
+      const finishedIcon = section.status === "success" ? "🎉" : "⚠️";
+      const finishedColor = section.status === "success" ? ANSI.green : ANSI.yellow;
+      return `\n${createBox(`${finishedIcon} ${section.content}`, `Pipeline: ${section.pipeline || "unknown"}`, finishedColor)}\n`;
 
     case "status":
-      // Status change - blue separator
-      return `${ANSI.blue}────────────────── ⏳ ${section.content} ──────────────────${ANSI.reset}`;
+      // Status change - simple indicator
+      return `${ANSI.blue}▶ ${section.content}${ANSI.reset}`;
 
     case "error":
       // Error - red color
@@ -719,11 +877,11 @@ function formatLogSection(section: ParsedLogSection): string | null {
         // Tool call start - skip, only show result
         return null;
       } else if (section.tool_success) {
-        // Tool success result - green incoming arrow
-        return `${ANSI.green}  ← ✅ ${section.tool_name || "unknown"}${ANSI.reset}`;
+        // Tool success result - green check
+        return `${ANSI.green}  ✓ ${section.tool_name || "unknown"}${ANSI.reset}`;
       } else {
-        // Tool failure result - red incoming arrow
-        return `${ANSI.red}  ← ❌ ${section.tool_name || "unknown"}${ANSI.reset}`;
+        // Tool failure result - red cross
+        return `${ANSI.red}  ✗ ${section.tool_name || "unknown"}${ANSI.reset}`;
       }
 
     case "info":
@@ -734,11 +892,64 @@ function formatLogSection(section: ParsedLogSection): string | null {
   }
 }
 
-function parseAndAggregateLogs(logs: Array<LogEntry>): ParsedLogSection[] {
+// Helper: format stage progress bar with visual progress indicator
+function formatStageProgress(
+  stages?: Array<{ slot: string; display_name: string }>,
+  completedStages?: string[],
+  currentStage?: string
+): string {
+  if (!stages || stages.length === 0) return "";
+
+  // Calculate progress
+  const completedCount = completedStages?.length || 0;
+  const total = stages.length;
+  const percent = Math.round((completedCount / total) * 100);
+
+  // Create visual progress bar: ████████░░░░░░░░░░░░ 50%
+  const barLength = 80;
+  const filledLength = Math.round((completedCount / total) * barLength);
+  const bar = `${ANSI.green}${"█".repeat(filledLength)}${ANSI.reset}${ANSI.gray}${"░".repeat(barLength - filledLength)}${ANSI.reset}`;
+
+  // Create stage status line with icons
+  const parts = stages.map((s) => {
+    const isCompleted = completedStages?.includes(s.slot);
+    const isCurrent = currentStage === s.slot;
+
+    if (isCompleted) {
+      return `${ANSI.green}✅ ${s.display_name}${ANSI.reset}`;
+    } else if (isCurrent) {
+      return `${ANSI.yellow}▶ ${s.display_name}${ANSI.reset}`;
+    } else {
+      // 沙漏图标单独使用更暗淡的颜色，名称用普通 gray
+      return `${ANSI.dimGray}⏳${ANSI.reset}${ANSI.gray} ${s.display_name}${ANSI.reset}`;
+    }
+  });
+
+  // Combine: progress bar with percent, then stage names on separate line
+  return `${ANSI.bold}进度: ${ANSI.reset}${bar} ${percent}%\n${ANSI.gray}${parts.join(" → ")}${ANSI.reset}`;
+}
+
+// State for incremental log parsing (to maintain pipeline info across batches)
+interface ParseState {
+  pipelineInfo: { pipeline: string; stages: Array<{ slot: string; display_name: string }> } | null;
+  completedStages: string[];
+  currentThinking: string | null;
+  currentAssistant: string | null;
+  currentStage: string | null;
+}
+
+function parseAndAggregateLogs(
+  logs: Array<LogEntry>,
+  initialState?: ParseState
+): { sections: ParsedLogSection[]; state: ParseState } {
   const sections: ParsedLogSection[] = [];
-  let currentThinking: string | null = null;
-  let currentAssistant: string | null = null;
-  let currentStage: string | null = null;
+
+  // Track pipeline progress - use initial state if provided (for incremental parsing)
+  let pipelineInfo = initialState?.pipelineInfo ?? null;
+  const completedStages: string[] = initialState?.completedStages ?? [];
+  let currentThinking = initialState?.currentThinking ?? null;
+  let currentAssistant = initialState?.currentAssistant ?? null;
+  let currentStage = initialState?.currentStage ?? null;
 
   for (const log of logs) {
     const eventType = log.event_type || "";
@@ -777,37 +988,38 @@ function parseAndAggregateLogs(logs: Array<LogEntry>): ParsedLogSection[] {
           } else {
             currentThinking += content;
           }
-        } else {
-          // Regular assistant content
-          if (currentAssistant === null) {
-            currentAssistant = content;
-          } else {
-            currentAssistant += content;
-          }
         }
+        // Don't accumulate assistant content from chat.delta - use chat.final instead
         break;
 
       case "chat.final":
-        // Final message - finalize assistant content
-        if (content) {
-          if (currentAssistant !== null) {
-            currentAssistant += content;
-          } else {
-            currentAssistant = content;
-          }
-        }
+        // Final message - finalize accumulated content (don't append, chat.delta already accumulated)
         if (currentThinking !== null) {
           sections.push({ type: "thinking", content: currentThinking });
           currentThinking = null;
         }
-        if (currentAssistant !== null) {
-          sections.push({ type: "assistant", content: currentAssistant });
-          currentAssistant = null;
+        // Use chat.final's content directly (it contains the complete message)
+        if (content) {
+          sections.push({ type: "assistant", content: content });
         }
+        currentAssistant = null; // Clear any accumulated chat.delta content (should be empty now)
         break;
 
       case "harness.message":
-        // Harness stage messages - finalize pending content before stage start
+        // Check if this is pipeline info with stages
+        if (log.stages && log.pipeline) {
+          // Pipeline header - show workflow structure
+          pipelineInfo = { pipeline: log.pipeline, stages: log.stages };
+          sections.push({
+            type: "pipeline",
+            content: log.content || "",
+            pipeline: log.pipeline,
+            stages: log.stages,
+          });
+          break;
+        }
+
+        // Regular stage message - finalize pending content before stage start
         const stage = log.stage || "";
         if (currentStage !== stage) {
           // Stage change - finalize any pending content from previous stage
@@ -821,7 +1033,15 @@ function parseAndAggregateLogs(logs: Array<LogEntry>): ParsedLogSection[] {
           }
           currentStage = stage;
         }
-        sections.push({ type: "stage", content: content, stage: stage });
+
+        // Show stage with progress info if we have pipeline info
+        sections.push({
+          type: "stage",
+          content: content,
+          stage: stage,
+          stages: pipelineInfo?.stages,
+          completed_stages: [...completedStages],
+        });
         break;
 
       case "harness.stage_result":
@@ -834,12 +1054,42 @@ function parseAndAggregateLogs(logs: Array<LogEntry>): ParsedLogSection[] {
           sections.push({ type: "assistant", content: currentAssistant });
           currentAssistant = null;
         }
+
+        // Track completed stage
+        if (log.stage) {
+          completedStages.push(log.stage);
+        }
+
         sections.push({
           type: "stage",
           content: `阶段完成: ${log.stage || "unknown"}`,
           stage: log.stage,
           status: log.status,
+          stages: pipelineInfo?.stages,
+          completed_stages: [...completedStages],
         });
+        break;
+
+      case "harness.session_finished":
+        // Session finished - finalize pending content and show completion
+        if (currentThinking !== null) {
+          sections.push({ type: "thinking", content: currentThinking });
+          currentThinking = null;
+        }
+        if (currentAssistant !== null) {
+          sections.push({ type: "assistant", content: currentAssistant });
+          currentAssistant = null;
+        }
+        sections.push({
+          type: "session_finished",
+          content: log.status === "success" ? "任务执行成功" : `任务执行${log.status || "完成"}`,
+          status: log.status,
+          pipeline: log.pipeline,
+        });
+        break;
+
+      case "context.compressed":
+        // Context compression event
         break;
 
       case "chat.tool_call":
@@ -876,11 +1126,12 @@ function parseAndAggregateLogs(logs: Array<LogEntry>): ParsedLogSection[] {
           sections.push({ type: "assistant", content: currentAssistant });
           currentAssistant = null;
         }
-        sections.push({ type: "error", content: content || "未知错误" });
+        const errorMsg = log.error || content || "未知错误";
+        sections.push({ type: "error", content: errorMsg });
         break;
 
       default:
-        // Other events
+        // Other events - skip empty content events
         if (content) {
           sections.push({ type: "info", content: `[${eventType}] ${content.substring(0, 100)}` });
         }
@@ -888,47 +1139,70 @@ function parseAndAggregateLogs(logs: Array<LogEntry>): ParsedLogSection[] {
     }
   }
 
-  // Finalize any remaining pending content
-  if (currentThinking !== null) {
-    sections.push({ type: "thinking", content: currentThinking });
-  }
-  if (currentAssistant !== null) {
-    sections.push({ type: "assistant", content: currentAssistant });
+  if (!initialState) {
+    if (currentThinking !== null) {
+      sections.push({ type: "thinking", content: currentThinking });
+      currentThinking = null;
+    }
+    if (currentAssistant !== null) {
+      sections.push({ type: "assistant", content: currentAssistant });
+      currentAssistant = null;
+    }
   }
 
-  return sections;
+  return { sections, state: { pipelineInfo, completedStages, currentThinking, currentAssistant, currentStage } };
 }
 
 // Format log section for history display (detailed with colors)
 function formatLogSectionDetailed(section: ParsedLogSection): string | null {
   switch (section.type) {
     case "thinking":
-      return null;
+      return formatThinkingContent(section.content);
     case "assistant":
       // Assistant output - bright white color
-      return `${ANSI.brightWhite}💬 ${section.content}${ANSI.reset}`;
+      return formatAssistantContent(section.content);
+    case "pipeline":
+      // Pipeline header - show workflow structure in a proper box
+      const stagesDisplayDetailed = section.stages?.map((s) => s.display_name).join(" → ") || "";
+      return `\n${createBox(`Pipeline: ${section.pipeline || "unknown"}`, `流程: ${stagesDisplayDetailed}`, ANSI.cyan)}\n`;
     case "stage":
+      // Get display_name for this stage
+      const stageDisplayNameDetailed = section.stages?.find((s) => s.slot === section.stage)?.display_name || section.stage || "?";
+
       if (section.status) {
-        const statusText = section.status === "success" ? "✓ 成功" :
-                          section.status === "failed" ? "✗ 失败" : section.status;
+        // Stage completion - show progress bar and simple completion line
+        const progressBarDetailed = formatStageProgress(section.stages, section.completed_stages);
         const icon = section.status === "success" ? "✅" :
                     section.status === "failed" ? "❌" : "⏸️";
         const color = section.status === "success" ? ANSI.green :
                      section.status === "failed" ? ANSI.red : ANSI.yellow;
-        return `\n${ANSI.bold}${color}╔══ ${icon} Stage Complete: ${section.stage} (${statusText}) ══╗${ANSI.reset}\n`;
+        const statusText = section.status === "success" ? "完成" :
+                          section.status === "failed" ? "失败" : section.status;
+        return `\n${progressBarDetailed}\n${color}${ANSI.bold}${icon} ${stageDisplayNameDetailed} ${statusText}${ANSI.reset}\n`;
       }
-      // Stage start - with full content in detailed view
-      return `\n${ANSI.bold}${ANSI.yellow}┌───────────────── 📊 Stage Running: ${section.stage} ─────────────────┐${ANSI.reset}\n${ANSI.yellow}│ ${indentMultiline(section.content, "│ ", 300)}${ANSI.reset}\n${ANSI.yellow}└──${ANSI.reset}`;
+      // Stage start - show progress bar and current stage indicator
+      const startProgressBarDetailed = formatStageProgress(section.stages, section.completed_stages, section.stage);
+      // Skip duplicate content display
+      const showContentDetailed = section.content && section.content !== stageDisplayNameDetailed;
+      if (showContentDetailed) {
+        return `\n${startProgressBarDetailed}\n${ANSI.yellow}${ANSI.bold}▶ 📊 ${stageDisplayNameDetailed}${ANSI.reset}\n${ANSI.yellow}${indentMultiline(section.content, "  ", 300)}${ANSI.reset}\n`;
+      }
+      return `\n${startProgressBarDetailed}\n${ANSI.yellow}${ANSI.bold}▶ 📊 ${stageDisplayNameDetailed}${ANSI.reset}\n`;
+    case "session_finished":
+      // Session finished - completion banner in a proper box
+      const finishedIconDetailed = section.status === "success" ? "🎉" : "⚠️";
+      const finishedColorDetailed = section.status === "success" ? ANSI.green : ANSI.yellow;
+      return `\n${createBox(`${finishedIconDetailed} ${section.content}`, `Pipeline: ${section.pipeline || "unknown"}`, finishedColorDetailed)}\n`;
     case "status":
-      return `${ANSI.blue}⏳ ${section.content}${ANSI.reset}`;
+      return `${ANSI.blue}▶ ${section.content}${ANSI.reset}`;
     case "error":
-      return `${ANSI.red}❌ 错误: ${section.content}${ANSI.reset}`;
+      return `${ANSI.red}🔥 错误: ${section.content}${ANSI.reset}`;
     case "tool":
       // Only show tool results, skip call starts to reduce noise
       if (section.tool_success === undefined) {
         return null;
       } else if (section.tool_success) {
-        return `${ANSI.green}  ← ✅ ${section.tool_name || "unknown"}${ANSI.reset}`;
+        return `${ANSI.green}  ✓ ${section.tool_name || "unknown"}${ANSI.reset}`;
       } else {
         return `${ANSI.red}  ← ❌ ${section.tool_name || "unknown"}${ANSI.reset}`;
       }

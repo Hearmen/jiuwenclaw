@@ -6,6 +6,7 @@ import inspect
 import logging
 import os
 import shutil
+import sys
 import time
 from dataclasses import dataclass
 from typing import Any
@@ -42,17 +43,52 @@ logger = logging.getLogger(__name__)
 # Auto-Harness config file path
 _AUTO_HARNESS_CONFIG_DIR = get_user_workspace_dir() / "auto-harness"
 _AUTO_HARNESS_CONFIG_FILE = _AUTO_HARNESS_CONFIG_DIR / "config.yaml"
+_AUTO_HARNESS_LOCAL_REPO = _AUTO_HARNESS_CONFIG_DIR / "repo" / "openJiuwen--agent-core"
+
+# Default values for ci_gate config
+_DEFAULT_CI_GATE_PYTHON_EXECUTABLE = sys.executable
+_DEFAULT_CI_GATE_INSTALL_COMMAND = "uv sync --active --group dev --extra cli"
 
 
 def _get_auto_harness_config() -> dict[str, Any]:
-    """Load auto-harness config.yaml."""
-    if not _AUTO_HARNESS_CONFIG_FILE.exists():
-        return {}
-    try:
-        return yaml.safe_load(_AUTO_HARNESS_CONFIG_FILE.read_text(encoding="utf-8")) or {}
-    except Exception as e:
-        logger.warning("[auto-harness config] Failed to load: %s", e)
-        return {}
+    """Load auto-harness config.yaml with auto-fill for ci_gate defaults."""
+    config: dict[str, Any] = {}
+
+    if _AUTO_HARNESS_CONFIG_FILE.exists():
+        try:
+            config = yaml.safe_load(_AUTO_HARNESS_CONFIG_FILE.read_text(encoding="utf-8")) or {}
+        except Exception as e:
+            logger.warning("[auto-harness config] Failed to load: %s", e)
+            config = {}
+
+    # Auto-fill ci_gate defaults if missing
+    ci_gate = config.get("ci_gate") or {}
+    needs_save = False
+
+    # Ensure local_repo is a string (not Path object which causes YAML serialization issues)
+    local_repo = config.get("local_repo")
+    if not local_repo:
+        config["local_repo"] = str(_AUTO_HARNESS_LOCAL_REPO)
+        needs_save = True
+    elif hasattr(local_repo, "__fspath__"):  # Path-like object
+        config["local_repo"] = str(local_repo)
+        needs_save = True
+
+    if not ci_gate.get("python_executable"):
+        ci_gate["python_executable"] = _DEFAULT_CI_GATE_PYTHON_EXECUTABLE
+        needs_save = True
+
+    if not ci_gate.get("install_command"):
+        ci_gate["install_command"] = _DEFAULT_CI_GATE_INSTALL_COMMAND
+        needs_save = True
+
+    if needs_save:
+        config["ci_gate"] = ci_gate
+        _save_auto_harness_config(config)
+        logger.info("[auto-harness config] Auto-filled ci_gate defaults: python_executable=%s, install_command=%s",
+                    ci_gate.get("python_executable"), ci_gate.get("install_command"))
+
+    return config
 
 
 def _save_auto_harness_config(config: dict[str, Any]) -> None:

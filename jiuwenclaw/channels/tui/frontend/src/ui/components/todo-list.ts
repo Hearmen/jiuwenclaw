@@ -37,6 +37,10 @@ export function renderTodoList(
   collapsed: boolean = false,
   animationPhase: number = 0
 ): string[] {
+  if (todos.length === 0) {
+    return [];
+  }
+
   const pendingCount = todos.filter((t) => t.status === "pending").length;
   const inProgressCount = todos.filter((t) => t.status === "in_progress").length;
   const completedCount = todos.filter((t) => t.status === "completed").length;
