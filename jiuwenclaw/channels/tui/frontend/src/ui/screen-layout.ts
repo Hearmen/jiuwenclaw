@@ -28,6 +28,8 @@ export interface ScreenLayoutOptions {
   transientNotice: string | null;
   animationPhase: number;
   runningElapsedMs?: number;
+  transcriptScrollOffset?: number;
+  onTranscriptScrollOffsetChange?: (offset: number) => void;
 }
 
 function formatSubtaskStatus(status: string): string {
@@ -235,8 +237,7 @@ export function buildAppScreenLines(snapshot: AppSnapshot, options: ScreenLayout
           options.width,
         )
       : [];
-  const lines = [
-    ...transcriptLines,
+  const fixedLines = [
     ...todoLines,
     ...(todoLines.length > 0 &&
     (teamStatusLines.length > 0 || miniTeamTreeLines.length > 0 || teamPanelLines.length > 0)
@@ -253,5 +254,38 @@ export function buildAppScreenLines(snapshot: AppSnapshot, options: ScreenLayout
     ...shortcutLines,
   ];
   const height = Math.floor(options.height ?? 0);
-  return height > 0 && lines.length > height ? lines.slice(-height) : lines;
+  if (height <= 0) {
+    return [...transcriptLines, ...fixedLines];
+  }
+  if (fixedLines.length >= height) {
+    if ((options.transcriptScrollOffset ?? 0) !== 0) {
+      options.onTranscriptScrollOffsetChange?.(0);
+    }
+    return fixedLines.slice(-height);
+  }
+
+  const transcriptHeight = height - fixedLines.length;
+  if (transcriptLines.length <= transcriptHeight) {
+    if ((options.transcriptScrollOffset ?? 0) !== 0) {
+      options.onTranscriptScrollOffsetChange?.(0);
+    }
+    return [...transcriptLines, ...fixedLines];
+  }
+
+  const requestedOffset = Math.max(0, Math.floor(options.transcriptScrollOffset ?? 0));
+  const teamWorking =
+    isTeamMode(snapshot.mode) &&
+    isTeamWorking(snapshot.teamMemberEvents, snapshot.teamMessageEvents);
+  const liveTranscript = snapshot.isProcessing || snapshot.isPaused || teamWorking;
+  if (requestedOffset === 0 && !liveTranscript) {
+    return [...transcriptLines, ...fixedLines];
+  }
+
+  const maxOffset = transcriptLines.length - transcriptHeight;
+  const offset = Math.min(maxOffset, requestedOffset);
+  if (offset !== requestedOffset) {
+    options.onTranscriptScrollOffsetChange?.(offset);
+  }
+  const start = transcriptLines.length - transcriptHeight - offset;
+  return [...transcriptLines.slice(start, start + transcriptHeight), ...fixedLines];
 }

@@ -474,6 +474,7 @@ export class AppScreen implements Component, Focusable {
   private pendingSubmittedInput: string | null = null;
   private pendingSubmittedBaseline = 0;
   private pendingSubmittedSessionId: string | null = null;
+  private transcriptScrollOffset = 0;
   /** Image attachments keyed by composer `@path` tokens (e.g. cached base64 for terminal preview). */
   private composerAttachments: FileAttachment[] = [];
 
@@ -888,6 +889,10 @@ export class AppScreen implements Component, Focusable {
       return;
     }
 
+    if (!snapshot.pendingQuestion && this.handleTranscriptScrollInput(data)) {
+      return;
+    }
+
     // Detect pasted file paths (drag-and-drop) in the terminal
     // When files are dragged in, they arrive as a pasted string.
     // Windows/PowerShell may not send bracketed paste markers,
@@ -951,6 +956,10 @@ export class AppScreen implements Component, Focusable {
       viewedTeamMemberId: this.viewedTeamMemberId,
       transientNotice: this.transientNotice,
       animationPhase: this.animationPhase,
+      transcriptScrollOffset: this.transcriptScrollOffset,
+      onTranscriptScrollOffsetChange: (offset) => {
+        this.transcriptScrollOffset = offset;
+      },
       runningElapsedMs:
         !snapshot.isInterrupted &&
         (snapshot.isProcessing || teamWorking) &&
@@ -1158,10 +1167,36 @@ export class AppScreen implements Component, Focusable {
     text: string,
     snapshot: ReturnType<CliPiAppState["getSnapshot"]>,
   ): void {
+    this.transcriptScrollOffset = 0;
     this.pendingSubmittedInput = text;
     this.pendingSubmittedBaseline = snapshot.entries.length;
     this.pendingSubmittedSessionId = snapshot.sessionId;
     this.tui.requestRender();
+  }
+
+  private handleTranscriptScrollInput(data: string): boolean {
+    const pageSize = Math.max(1, Math.floor(this.tui.terminal.rows * 0.8));
+    if (matchesKey(data, "pageUp") || matchesKey(data, "shift+pageUp")) {
+      this.transcriptScrollOffset += pageSize;
+      this.tui.requestRender();
+      return true;
+    }
+    if (matchesKey(data, "pageDown") || matchesKey(data, "shift+pageDown")) {
+      this.transcriptScrollOffset = Math.max(0, this.transcriptScrollOffset - pageSize);
+      this.tui.requestRender();
+      return true;
+    }
+    if (matchesKey(data, "ctrl+home")) {
+      this.transcriptScrollOffset = Number.MAX_SAFE_INTEGER;
+      this.tui.requestRender();
+      return true;
+    }
+    if (matchesKey(data, "ctrl+end")) {
+      this.transcriptScrollOffset = 0;
+      this.tui.requestRender();
+      return true;
+    }
+    return false;
   }
 
   private clearPendingSubmittedInput(requestRender = true): void {

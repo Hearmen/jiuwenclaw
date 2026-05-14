@@ -13,7 +13,7 @@ const MAX_STRUCTURED_LINES_COLLAPSED = 6;
 const MAX_STRUCTURED_LINES_EXPANDED = 18;
 
 function toolPrefix(tool: ToolCallDisplay, animationPhase = 0): string {
-  if (tool.isError || tool.status === "error") return "! ";
+  if (tool.isError || tool.status === "error") return "● ";
   if (tool.status === "timeout") return "◌ ";
   if (isToolRunning(tool)) return ["◐ ", "◓ ", "◑ ", "◒ "][animationPhase % 4]!;
   return "● ";

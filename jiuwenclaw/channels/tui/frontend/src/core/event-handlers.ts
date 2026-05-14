@@ -311,6 +311,22 @@ function handleDelta(
   return true;
 }
 
+function chooseFinalAssistantContent(streamedContent: string, finalContent: string): string {
+  if (!streamedContent) {
+    return finalContent;
+  }
+  if (!finalContent) {
+    return streamedContent;
+  }
+  if (finalContent === streamedContent || finalContent.startsWith(streamedContent)) {
+    return finalContent;
+  }
+  if (streamedContent.includes(finalContent)) {
+    return streamedContent;
+  }
+  return finalContent.length >= streamedContent.length ? finalContent : streamedContent;
+}
+
 function handleFinal(
   delegate: AppEventDelegate,
   payload: Record<string, unknown>,
@@ -323,6 +339,11 @@ function handleFinal(
     entries,
     (entry) => entry.kind === "assistant" && entry.streaming === true,
   );
+  const streamedContent =
+    streamingIndex !== -1 && entries[streamingIndex]?.kind === "assistant"
+      ? entries[streamingIndex].content
+      : "";
+  const finalContent = chooseFinalAssistantContent(streamedContent, content);
   delegate.setEntries(
     streamingIndex !== -1
       ? [
@@ -331,11 +352,7 @@ function handleFinal(
           ),
           {
             ...(entries[streamingIndex] as Extract<HistoryItem, { kind: "assistant" }>),
-            content:
-              content ||
-              (entries[streamingIndex]?.kind === "assistant"
-                ? entries[streamingIndex].content
-                : ""),
+            content: finalContent,
             requestId:
               typeof payload.request_id === "string"
                 ? payload.request_id

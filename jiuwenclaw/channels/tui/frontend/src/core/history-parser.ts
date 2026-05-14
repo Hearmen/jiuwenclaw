@@ -160,6 +160,86 @@ function parseArguments(raw: unknown): Record<string, unknown> | undefined {
   return undefined;
 }
 
+function parseStructuredText(raw: unknown): unknown {
+  if (typeof raw !== "string") return raw;
+  const text = raw.trim();
+  if (!text) return raw;
+  try {
+    return JSON.parse(text);
+  } catch {
+    return raw;
+  }
+}
+
+function isFalseLike(value: unknown): boolean {
+  return (
+    value === false ||
+    (typeof value === "string" && ["false", "0", "no"].includes(value.trim().toLowerCase()))
+  );
+}
+
+function isTrueLike(value: unknown): boolean {
+  return (
+    value === true ||
+    (typeof value === "string" && ["true", "1", "yes"].includes(value.trim().toLowerCase()))
+  );
+}
+
+function nonzeroExit(value: unknown): boolean | undefined {
+  if (typeof value === "boolean") return undefined;
+  if (typeof value === "number" && Number.isFinite(value)) return value !== 0;
+  if (typeof value === "string" && value.trim()) {
+    const parsed = Number(value.trim());
+    return Number.isInteger(parsed) ? parsed !== 0 : undefined;
+  }
+  return undefined;
+}
+
+function inferToolResultError(value: unknown): boolean | undefined {
+  const parsed = parseStructuredText(value);
+  if (Array.isArray(parsed)) {
+    for (const item of parsed) {
+      if (inferToolResultError(item)) return true;
+    }
+    return undefined;
+  }
+  if (parsed && typeof parsed === "object") {
+    const record = parsed as Record<string, unknown>;
+    if ("success" in record) {
+      if (isFalseLike(record.success)) return true;
+      if (isTrueLike(record.success)) return false;
+    }
+    if (isTrueLike(record.is_error) || isTrueLike(record.isError)) return true;
+    if (
+      typeof record.status === "string" &&
+      ["error", "failed", "failure"].includes(record.status.trim().toLowerCase())
+    ) {
+      return true;
+    }
+    for (const key of ["exit_code", "exitCode", "returncode", "return_code"]) {
+      const failed = nonzeroExit(record[key]);
+      if (failed !== undefined) return failed;
+    }
+    for (const key of ["data", "raw_output", "rawOutput", "result"]) {
+      const nested = record[key];
+      if (nested && typeof nested === "object") {
+        const nestedError = inferToolResultError(nested);
+        if (nestedError !== undefined) return nestedError;
+      }
+    }
+    return undefined;
+  }
+  if (typeof parsed === "string") {
+    if (/\bsuccess\s*[:=]\s*False\b/i.test(parsed)) return true;
+    if (parsed.trimStart().startsWith("[ERROR]")) return true;
+    const exitMatch = parsed.match(
+      /\b(?:exit(?:[_ ]?code)?|returncode|return[_ ]code)\s*[:= ]\s*(-?\d+)\b/i,
+    );
+    if (exitMatch) return Number(exitMatch[1]) !== 0;
+  }
+  return undefined;
+}
+
 function resolveToolPayload(
   payload: Record<string, unknown>,
   key: "tool_call" | "tool_result",
@@ -494,6 +574,9 @@ export function applyToolResult(
     (success !== undefined ? !success : undefined) ??
     (status ? status === "error" : undefined) ??
     asBoolean(payload.is_error) ??
+    inferToolResultError(toolPayload) ??
+    inferToolResultError(payload) ??
+    inferToolResultError(result) ??
     false;
   return {
     ...tool,

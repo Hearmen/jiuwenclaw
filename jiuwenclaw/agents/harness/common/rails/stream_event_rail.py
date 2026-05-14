@@ -10,6 +10,8 @@ Migrated from JiuClawReActAgent:
 from __future__ import annotations
 
 import asyncio
+import json
+import re
 from typing import Any, List, Optional
 
 import tiktoken
@@ -39,6 +41,88 @@ _TODO_TOOL_NAMES = frozenset(["todo_create", "todo_list", "todo_modify"])
 def _structured_tool_result_payload(result: Any) -> Any | None:
     if isinstance(result, (dict, list)):
         return result
+    return None
+
+
+def _boolish_false(value: Any) -> bool:
+    if value is False:
+        return True
+    return isinstance(value, str) and value.strip().lower() in {"false", "0", "no"}
+
+
+def _boolish_true(value: Any) -> bool:
+    if value is True:
+        return True
+    return isinstance(value, str) and value.strip().lower() in {"true", "1", "yes"}
+
+
+def _nonzero_exit(value: Any) -> bool | None:
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, int):
+        return value != 0
+    if isinstance(value, str):
+        try:
+            return int(value.strip()) != 0
+        except ValueError:
+            return None
+    return None
+
+
+def _infer_tool_result_error(value: Any) -> bool | None:
+    if isinstance(value, dict):
+        if "success" in value:
+            if _boolish_false(value.get("success")):
+                return True
+            if _boolish_true(value.get("success")):
+                return False
+        if _boolish_true(value.get("is_error")) or _boolish_true(value.get("isError")):
+            return True
+        status = value.get("status")
+        if isinstance(status, str) and status.strip().lower() in {"error", "failed", "failure"}:
+            return True
+        for key in ("exit_code", "exitCode", "returncode", "return_code"):
+            exit_failed = _nonzero_exit(value.get(key))
+            if exit_failed is not None:
+                return exit_failed
+        for key in ("data", "raw_output", "rawOutput", "result"):
+            nested = value.get(key)
+            if isinstance(nested, (dict, list)):
+                nested_error = _infer_tool_result_error(nested)
+                if nested_error is not None:
+                    return nested_error
+        return None
+
+    if isinstance(value, list):
+        for item in value:
+            item_error = _infer_tool_result_error(item)
+            if item_error:
+                return True
+        return None
+
+    if isinstance(value, str):
+        text = value.strip()
+        if not text:
+            return None
+        try:
+            parsed = json.loads(text)
+        except Exception:
+            parsed = None
+        if isinstance(parsed, (dict, list)):
+            parsed_error = _infer_tool_result_error(parsed)
+            if parsed_error is not None:
+                return parsed_error
+        if re.search(r"\bsuccess\s*[:=]\s*False\b", text, re.IGNORECASE):
+            return True
+        if text.startswith("[ERROR]"):
+            return True
+        exit_match = re.search(
+            r"\b(?:exit(?:[_ ]?code)?|returncode|return[_ ]code)\s*[:= ]\s*(-?\d+)\b",
+            text,
+            re.IGNORECASE,
+        )
+        if exit_match:
+            return int(exit_match.group(1)) != 0
     return None
 
 
@@ -204,6 +288,12 @@ class JiuClawStreamEventRail(DeepAgentRail):
             }
             if raw_output is not None:
                 tool_result_payload["raw_output"] = raw_output
+            error_state = _infer_tool_result_error(raw_output if raw_output is not None else result)
+            if error_state is not None:
+                tool_result_payload["success"] = not error_state
+                if error_state:
+                    tool_result_payload["status"] = "error"
+                    tool_result_payload["is_error"] = True
             await session.write_stream(
                 OutputSchema(
                     type="tool_result",
@@ -428,7 +518,6 @@ class JiuClawStreamEventRail(DeepAgentRail):
         Returns:
             Valid JSON string (e.g., '{"key": "value"}').
         """
-        import json
         if isinstance(arguments, dict):
             return json.dumps(arguments, ensure_ascii=False)
         if isinstance(arguments, str):
@@ -503,8 +592,6 @@ class JiuClawStreamEventRail(DeepAgentRail):
         Returns:
             Repaired JSON string, or original if no repair possible
         """
-        import re
-
         s = json_str.strip()
 
         # Pattern 1: Fix Windows paths (D:/path, C:/path)
