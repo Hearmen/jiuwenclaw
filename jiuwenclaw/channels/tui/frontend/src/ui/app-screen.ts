@@ -2976,8 +2976,8 @@ export class AppScreen implements Component, Focusable {
       const reject = question.options.find((option) => option.label === "拒绝");
       if (reject) {
         this.handleQuestionSelection(reject.label);
-      } else if (question.options.length > 0) {
-        this.handleQuestionSelection(question.options[0].label);
+      } else {
+        this.handleQuestionSelection("");
       }
     };
     const selectedValue = this.pendingQuestionAnswers.get(this.activeQuestionIndex);
