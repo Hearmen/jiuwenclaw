@@ -279,12 +279,14 @@ function AppContent() {
   /** 仅用于强制重跑「首屏 history」effect：从会话列表恢复时若 sessionId 未变，也要重新拉 history 并恢复 historyPagerMeta */
   const [historyBootstrapKey, setHistoryBootstrapKey] = useState(0);
   const sessionIdRef = useRef(sessionId);
+  const historyLoadingMoreRef = useRef(false);
   const historyRestoreHandleRef = useRef<HistoryRestoreHandle | null>(null);
   const historyPageHandleRef = useRef<HistoryRestoreHandle | null>(null);
   /** 为 true 表示刚从「会话列表」恢复；history 为空时在 useEffect 的 onEmpty 中提示一次 */
   const historyRestoreFromPanelHintRef = useRef(false);
 
   const disposeInFlightHistoryHandles = useCallback(() => {
+    historyLoadingMoreRef.current = false;
     historyRestoreHandleRef.current?.dispose();
     historyRestoreHandleRef.current = null;
     historyPageHandleRef.current?.dispose();
@@ -953,18 +955,24 @@ function AppContent() {
 
   const handleLoadMoreHistory = useCallback(async () => {
     if (!sessionId.startsWith('sess_') || !historyPagerMeta) return;
-    if (historyLoadingMore || historyPagerMeta.loadedPages >= historyPagerMeta.totalPages) return;
+    if (historyLoadingMoreRef.current || historyPagerMeta.loadedPages >= historyPagerMeta.totalPages) return;
 
     const sid = sessionId;
     const nextPage = historyPagerMeta.loadedPages + 1;
     const fallbackTotal = historyPagerMeta.totalPages;
+    const finishLoadingMore = () => {
+      historyLoadingMoreRef.current = false;
+      setHistoryLoadingMore(false);
+    };
 
+    historyLoadingMoreRef.current = true;
     setHistoryLoadingMore(true);
     const pageHandle = fetchHistoryPage({
       sessionId: sid,
+      pageIdx: nextPage,
       onReady: ({ messages, toolReplay, harnessReplay, totalPages }) => {
         if (sessionIdRef.current !== sid) {
-          setHistoryLoadingMore(false);
+          finishLoadingMore();
           historyPageHandleRef.current = null;
           return;
         }
@@ -1038,12 +1046,12 @@ function AppContent() {
           loadedPages: nextPage,
           totalPages: totalPages ?? fallbackTotal,
         });
-        setHistoryLoadingMore(false);
+        finishLoadingMore();
         historyPageHandleRef.current = null;
       },
       onEmpty: (emptyTotalPages) => {
         if (sessionIdRef.current !== sid) {
-          setHistoryLoadingMore(false);
+          finishLoadingMore();
           historyPageHandleRef.current = null;
           return;
         }
@@ -1051,7 +1059,7 @@ function AppContent() {
           loadedPages: nextPage,
           totalPages: emptyTotalPages ?? fallbackTotal,
         });
-        setHistoryLoadingMore(false);
+        finishLoadingMore();
         historyPageHandleRef.current = null;
       },
       onError: (message) => {
@@ -1069,12 +1077,11 @@ function AppContent() {
       pageHandle.dispose();
       historyPageHandleRef.current = null;
       console.error('Failed to load older history:', error);
-      setHistoryLoadingMore(false);
+      finishLoadingMore();
     }
   }, [
     addToolCall,
     addToolResult,
-    historyLoadingMore,
     historyPagerMeta,
     prependMessages,
     request,

@@ -377,9 +377,16 @@ function isHistoryBatchEnd(payload: Record<string, unknown>): boolean {
  * 仅处理属于当前 `history.get` 会话的帧，避免多标签/乱序下的串台。
  * 无 `session_id` 时：丢弃数据行；仍接受明确的结束帧（兼容未注入 id 的旧链路）。
  */
-function shouldProcessHistoryPayload(payload: Record<string, unknown>, expectedSessionId: string): boolean {
+function shouldProcessHistoryPayload(
+  payload: Record<string, unknown>,
+  expectedSessionId: string,
+  expectedPageIdx?: number
+): boolean {
   const sid = typeof payload.session_id === 'string' ? payload.session_id.trim() : '';
   if (sid && sid !== expectedSessionId) {
+    return false;
+  }
+  if (expectedPageIdx !== undefined && payload.page_idx !== expectedPageIdx) {
     return false;
   }
   if (!sid) {
@@ -534,6 +541,7 @@ export interface FetchHistoryPageResult {
 
 export interface FetchHistoryPageOptions {
   sessionId: string;
+  pageIdx: number;
   onReady: (result: FetchHistoryPageResult) => void;
   onEmpty?: (totalPages: number | null) => void;
   onError?: (message: string) => void;
@@ -568,7 +576,7 @@ export function fetchHistoryPage(options: FetchHistoryPageOptions): HistoryResto
     }
 
     const payload = event.payload;
-    if (!shouldProcessHistoryPayload(payload, options.sessionId)) {
+    if (!shouldProcessHistoryPayload(payload, options.sessionId, options.pageIdx)) {
       return;
     }
 

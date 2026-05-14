@@ -74,13 +74,14 @@ export function ChatPanel({
   historyPager = null,
 }: ChatPanelProps) {
   const { t } = useTranslation();
-  const { messages, isThinking } = useChatStore();
+  const { messages, isThinking, toolExecutionOrder } = useChatStore();
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const scrollContainerRef = useRef<HTMLDivElement>(null);
   const prependScrollSnapRef = useRef<{ sh: number; st: number } | null>(null);
   const wasHistoryLoadingRef = useRef(false);
   const suppressNextScrollToEndRef = useRef(false);
   const [isSending, setIsSending] = React.useState(false);
+  const hasTimelineContent = messages.length > 0 || toolExecutionOrder.length > 0;
   const suggestions = [
     t('chat.welcomeSuggestions.journey'),
     t('chat.welcomeSuggestions.skills'),
@@ -196,7 +197,7 @@ export function ChatPanel({
                 onLoadMore={historyPager.onLoadMore}
               />
             )}
-            {messages.length > 0 ? (
+            {hasTimelineContent ? (
               <>
                 <MessageList messages={messages} />
                 <SubtaskProgress />
