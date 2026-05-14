@@ -541,67 +541,6 @@ def register_cli_handlers(bind: CliHandlersBindParams) -> None:
         payload["app_version"] = __version__
         try:
             raw = get_config_raw()
-            # Resolve model-related fields from config.yaml.
-            # When models.defaults (list) exists, the current model is determined by
-            # the first entry — env vars may be stale after /model switch.
-            # When models.default (dict) exists, resolve ${VAR:-default} fallbacks.
-            _defaults = (raw.get("models") or {}).get("defaults")
-            _has_defaults_list = isinstance(_defaults, list) and len(_defaults) > 0
-            _default_model_entry = None
-            if _has_defaults_list:
-                _default_model_entry = _defaults[0]  # type: ignore[index]
-            elif isinstance((raw.get("models") or {}).get("default"), dict):
-                _default_model_entry = raw["models"]["default"]
-            if isinstance(_default_model_entry, dict):
-                mcc = _default_model_entry.get("model_client_config") or {}
-                _model_key_map = {
-                    "model": "model_name",
-                    "model_provider": "client_provider",
-                    "api_base": "api_base",
-                    "api_key": "api_key",
-                }
-                for param_key, yaml_key in _model_key_map.items():
-                    yaml_val = mcc.get(yaml_key, "")
-                    resolved = str(resolve_env_vars(str(yaml_val))) if yaml_val else ""
-                    # With defaults list: always override (env vars may be stale).
-                    # With single default dict: only override when env var is empty.
-                    if _has_defaults_list:
-                        if resolved:
-                            payload[param_key] = resolved
-                    elif not payload.get(param_key):
-                        if resolved:
-                            payload[param_key] = resolved
-            # Resolve multimodal model fields (vision, video, audio) from config.yaml
-            _multimodal_sections = {
-                "vision": {
-                    "vision_model": "model_name",
-                    "vision_provider": "client_provider",
-                    "vision_api_base": "api_base",
-                    "vision_api_key": "api_key",
-                },
-                "video": {
-                    "video_model": "model_name",
-                    "video_provider": "client_provider",
-                    "video_api_base": "api_base",
-                    "video_api_key": "api_key",
-                },
-                "audio": {
-                    "audio_model": "model_name",
-                    "audio_provider": "client_provider",
-                    "audio_api_base": "api_base",
-                    "audio_api_key": "api_key",
-                },
-            }
-            for section_name, key_map in _multimodal_sections.items():
-                _section = (raw.get("models") or {}).get(section_name)
-                if isinstance(_section, dict):
-                    _mcc = _section.get("model_client_config") or {}
-                    for param_key, yaml_key in key_map.items():
-                        if not payload.get(param_key):
-                            yaml_val = _mcc.get(yaml_key, "")
-                            resolved = str(resolve_env_vars(str(yaml_val))) if yaml_val else ""
-                            if resolved:
-                                payload[param_key] = resolved
             for key, val in payload.items():
                 from jiuwenclaw.extensions import ExtensionRegistry
 
@@ -623,6 +562,61 @@ def register_cli_handlers(bind: CliHandlersBindParams) -> None:
                 "true" if mem_cfg.get("enabled", False) else "false"
             )
             payload["preferred_language"] = raw.get("preferred_language") or "zh"
+
+            # Resolve model-related fields from config.yaml.
+            # When models.defaults list is in use, it is the canonical source
+            # for the current model. Environment variables may be stale if the
+            # model was switched via /model or Web UI without restarting gateway.
+            try:
+                _default_models = get_default_models()
+                if _default_models:
+                    _current = _default_models[0]
+                    _mcc = _current.get("model_client_config") or {}
+                    _model_overrides = {
+                        "model": _mcc.get("model_name"),
+                        "model_provider": _mcc.get("client_provider"),
+                        "api_base": _mcc.get("api_base"),
+                        "api_key": _mcc.get("api_key"),
+                    }
+                    for _k, _v in _model_overrides.items():
+                        if _v:
+                            payload[_k] = str(_v)
+            except Exception as e:
+                logger.warning("[config.get] Failed to resolve default model config: %s", e)
+
+            # Resolve multimodal model configs (vision, video, audio)
+            _multimodal_sections = {
+                "vision": {
+                    "vision_model": "model_name",
+                    "vision_provider": "client_provider",
+                    "vision_api_base": "api_base",
+                    "vision_api_key": "api_key",
+                },
+                "video": {
+                    "video_model": "model_name",
+                    "video_provider": "client_provider",
+                    "video_api_base": "api_base",
+                    "video_api_key": "api_key",
+                },
+                "audio": {
+                    "audio_model": "model_name",
+                    "audio_provider": "client_provider",
+                    "audio_api_base": "api_base",
+                    "audio_api_key": "api_key",
+                },
+            }
+            for _section_name, _key_map in _multimodal_sections.items():
+                try:
+                    _section = (raw.get("models") or {}).get(_section_name)
+                    if isinstance(_section, dict):
+                        _smcc = _section.get("model_client_config") or {}
+                        for _pk, _yk in _key_map.items():
+                            if not payload.get(_pk):
+                                _resolved = resolve_env_vars(str(_smcc.get(_yk, ""))) if _smcc.get(_yk) else ""
+                                if _resolved:
+                                    payload[_pk] = _resolved
+                except Exception as e:
+                    logger.warning("[config.get] Failed to resolve %s model config: %s", _section_name, e)
         except Exception:
             payload.setdefault("context_engine_enabled", "false")
             payload.setdefault("permissions_enabled", "false")
@@ -727,34 +721,6 @@ def register_cli_handlers(bind: CliHandlersBindParams) -> None:
 
         for env_key, value in env_updates.items():
             os.environ[env_key] = value
-
-        # When models.defaults list is in use, the current model is determined by
-        # defaults[0]. Env var updates alone won't change the actual model if
-        # defaults[0] has concrete values. Sync defaults[0] model_client_config
-        # with the new values so the change actually takes effect.
-        _raw_cfg = get_config_raw()
-        _raw_defaults = (_raw_cfg.get("models") or {}).get("defaults")
-        if isinstance(_raw_defaults, list) and _raw_defaults:
-            _first_entry = _raw_defaults[0]
-            if isinstance(_first_entry, dict):
-                _mcc = _first_entry.get("model_client_config") or {}
-                _param_to_yaml = {
-                    "model": "model_name",
-                    "model_provider": "client_provider",
-                    "api_base": "api_base",
-                    "api_key": "api_key",
-                }
-                _updated_mcc = False
-                for param_key, yaml_key in _param_to_yaml.items():
-                    if param_key in params:
-                        # Replace with env var reference so future changes propagate
-                        _mcc[yaml_key] = "${" + _CLI_CONFIG_SET_ENV_MAP[param_key] + "}"
-                        _updated_mcc = True
-                if _updated_mcc:
-                    _first_entry["model_client_config"] = _mcc
-                    update_default_models_in_config(_raw_defaults)
-                    yaml_updated.append("model_config_synced")
-
         # env 变量直接写 os.environ 立即生效；YAML 改动需要 agent 重启/热重载才生效
         applied_without_restart = not yaml_updated
 

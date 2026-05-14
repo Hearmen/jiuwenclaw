@@ -26,7 +26,6 @@ from jiuwenclaw.common.config import (
     get_config,
     get_config_raw,
     get_default_models,
-    resolve_env_vars,
     replace_teams_in_config,
     update_default_models_in_config,
     update_heartbeat_in_config,
@@ -468,67 +467,6 @@ def _register_web_handlers(bind: WebHandlersBindParams) -> None:
         # 合并 config.yaml 中的配置项
         try:
             raw = get_config_raw()
-            # Resolve model-related fields from config.yaml.
-            # When models.defaults (list) exists, the current model is determined by
-            # the first entry — env vars may be stale after /model switch.
-            # When models.default (dict) exists, resolve ${VAR:-default} fallbacks.
-            _defaults = (raw.get("models") or {}).get("defaults")
-            _has_defaults_list = isinstance(_defaults, list) and len(_defaults) > 0
-            _default_model_entry = None
-            if _has_defaults_list:
-                _default_model_entry = _defaults[0]  # type: ignore[index]
-            elif isinstance((raw.get("models") or {}).get("default"), dict):
-                _default_model_entry = raw["models"]["default"]
-            if isinstance(_default_model_entry, dict):
-                mcc = _default_model_entry.get("model_client_config") or {}
-                _model_key_map = {
-                    "model": "model_name",
-                    "model_provider": "client_provider",
-                    "api_base": "api_base",
-                    "api_key": "api_key",
-                }
-                for param_key, yaml_key in _model_key_map.items():
-                    yaml_val = mcc.get(yaml_key, "")
-                    resolved = str(resolve_env_vars(str(yaml_val))) if yaml_val else ""
-                    # With defaults list: always override (env vars may be stale).
-                    # With single default dict: only override when env var is empty.
-                    if _has_defaults_list:
-                        if resolved:
-                            payload[param_key] = resolved
-                    elif not payload.get(param_key):
-                        if resolved:
-                            payload[param_key] = resolved
-            # Resolve multimodal model fields (vision, video, audio) from config.yaml
-            _multimodal_sections = {
-                "vision": {
-                    "vision_model": "model_name",
-                    "vision_provider": "client_provider",
-                    "vision_api_base": "api_base",
-                    "vision_api_key": "api_key",
-                },
-                "video": {
-                    "video_model": "model_name",
-                    "video_provider": "client_provider",
-                    "video_api_base": "api_base",
-                    "video_api_key": "api_key",
-                },
-                "audio": {
-                    "audio_model": "model_name",
-                    "audio_provider": "client_provider",
-                    "audio_api_base": "api_base",
-                    "audio_api_key": "api_key",
-                },
-            }
-            for section_name, key_map in _multimodal_sections.items():
-                _section = (raw.get("models") or {}).get(section_name)
-                if isinstance(_section, dict):
-                    _mcc = _section.get("model_client_config") or {}
-                    for param_key, yaml_key in key_map.items():
-                        if not payload.get(param_key):
-                            yaml_val = _mcc.get(yaml_key, "")
-                            resolved = str(resolve_env_vars(str(yaml_val))) if yaml_val else ""
-                            if resolved:
-                                payload[param_key] = resolved
             for key, val in payload.items():
                 from jiuwenclaw.extensions.registry import ExtensionRegistry
                 if (("api_key" in key.lower() or "token" in key.lower())
@@ -685,34 +623,7 @@ def _register_web_handlers(bind: WebHandlersBindParams) -> None:
 
         for env_key, value in env_updates.items():
             os.environ[env_key] = value
-
-        # When models.defaults list is in use, the current model is determined by
-        # defaults[0]. Env var updates alone won't change the actual model if
-        # defaults[0] has concrete values. Sync defaults[0] model_client_config
-        # with the new values so the change actually takes effect.
-        _raw_cfg = get_config_raw()
-        _raw_defaults = (_raw_cfg.get("models") or {}).get("defaults")
-        if isinstance(_raw_defaults, list) and _raw_defaults:
-            _first_entry = _raw_defaults[0]
-            if isinstance(_first_entry, dict):
-                _mcc = _first_entry.get("model_client_config") or {}
-                _param_to_yaml = {
-                    "model": "model_name",
-                    "model_provider": "client_provider",
-                    "api_base": "api_base",
-                    "api_key": "api_key",
-                }
-                _updated_mcc = False
-                for param_key, yaml_key in _param_to_yaml.items():
-                    if param_key in params:
-                        _mcc[yaml_key] = "${" + _CONFIG_SET_ENV_MAP[param_key] + "}"
-                        _updated_mcc = True
-                if _updated_mcc:
-                    _first_entry["model_client_config"] = _mcc
-                    update_default_models_in_config(_raw_defaults)
-                    yaml_updated.append("model_config_synced")
-
-        applied_without_restart = not yaml_updated
+        applied_without_restart = True
 
         if env_updates:
             _persist_env_updates(env_updates)
