@@ -25,7 +25,12 @@ import {
   isSupportedAttachment,
   syncComposerImageTokens,
 } from "../core/attachments.js";
-import { CommandService, parseSlashCommand, type InstalledSkillEntry } from "../core/commands/CommandService.js";
+import {
+  CommandService,
+  parseSlashCommand,
+  type InstalledSkillEntry,
+} from "../core/commands/CommandService.js";
+import type { SlashCommand } from "../core/commands/types.js";
 import { addCommandEcho, addError, addInfo } from "../core/commands/helpers.js";
 import type { FileAttachment } from "../core/protocol.js";
 import {
