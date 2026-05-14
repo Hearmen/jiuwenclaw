@@ -312,6 +312,7 @@ export function createSkillsCommand(): SlashCommand {
         example: "/skills use my-skill, Code and execute a Hello World program.",
         kind: CommandKind.BUILT_IN,
         takesArgs: true,
+        completionSuffix: ", ",
         completion: async (ctx, partial) => {
           const commaIndex = partial.indexOf(",");
           if (commaIndex !== -1 && partial.slice(0, commaIndex).trim()) return [];

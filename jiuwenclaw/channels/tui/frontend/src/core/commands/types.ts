@@ -101,6 +101,7 @@ export interface SlashCommand {
   kind: CommandKind;
   action: (ctx: CommandContext, args: string) => void | Promise<void>;
   completion?: (ctx: CommandContext, partial: string) => string[] | Promise<string[]>;
+  completionSuffix?: string;
   takesArgs?: boolean;
   subCommands?: SlashCommand[];
 }

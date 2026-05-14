@@ -2535,10 +2535,12 @@ export class AppScreen implements Component, Focusable {
   }
 
   private buildSlashCommands(): TuiSlashCommand[] {
+    const hasAnyCompletion = (cmd: SlashCommand): boolean =>
+      !!cmd.completion || (cmd.subCommands?.some(hasAnyCompletion) ?? false);
     return this.commands.getAll().map((command) => ({
       name: command.name,
       description: command.description,
-      getArgumentCompletions: command.completion
+      getArgumentCompletions: hasAnyCompletion(command)
         ? async (argumentPrefix: string): Promise<AutocompleteItem[] | null> => {
             const trimmed = argumentPrefix.trim();
             // Traverse subcommand chain to find the deepest command with completion
@@ -2579,12 +2581,12 @@ export class AppScreen implements Component, Focusable {
               }
               const remainingArgs = remainingTokens.join(" ");
               const items = await currentCommand.completion(this.state.getCommandContext(), remainingArgs);
-              // Prefix completions with matched path if traversed
               const prefix = matchedPath.length > 0 ? matchedPath.join(" ") + " " : "";
+              const suffix = currentCommand.completionSuffix ?? "";
               return items.map((value) => ({
-                value: prefix + value,
-                label: prefix + value,
-                description: currentCommand.description,
+                value: prefix + value + suffix,
+                label: value,
+                description: "",
               }));
             }
 
