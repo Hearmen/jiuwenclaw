@@ -578,6 +578,12 @@
       "onlyOneInGroup": "同模型名仅一个，自动默认",
       "apiKeyRequired": "API Key 为必填项，请填写后再保存",
       "apiKeyPlaceholder": "本地模型无需 API Key 可随意填写，如 sk-1234",
+      "apiBaseRequired": "API Base URL 为必填项，请填写后再保存",
+      "apiBaseUrlInvalid": "API Base URL 必须以 http:// 或 https:// 开头",
+      "modelNameTooLong": "模型名称过长，请控制在 100 字符以内",
+      "aliasTooLong": "别名过长，请控制在 100 字符以内",
+      "apiBaseTooLong": "API Base URL 过长，请控制在 100 字符以内",
+      "apiKeyTooLong": "API Key 过长，请控制在 500 字符以内",
       "alias": "别名",
       "aliasPlaceholder": "选填，默认为空"
     },

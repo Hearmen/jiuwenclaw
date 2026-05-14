@@ -194,6 +194,36 @@ const THIRD_PARTY_API_KEYS = new Set([
 const REQUIRED_MODEL_FIELDS = ["api_base", "api_key", "model", "model_provider"] as const;
 const REQUIRED_MODEL_FIELD_SET = new Set<string>(REQUIRED_MODEL_FIELDS);
 const EVOLUTION_KEYS = new Set(["evolution_auto_scan", "skill_create"]);
+
+// 模型字段长度校验常量
+const MAX_MODEL_NAME_LENGTH = 100;
+const MAX_ALIAS_LENGTH = 100;
+const MAX_API_BASE_LENGTH = 100;
+const MAX_API_KEY_LENGTH = 500;
+
+// URL 格式校验函数
+function validateBaseUrl(url: string): boolean {
+  if (!url.trim()) return true; // 空值不校验（必填由其他逻辑控制）
+  const urlPattern = /^https?:\/\//i;
+  return urlPattern.test(url);
+}
+
+// 获取字段长度超限的错误信息（返回 i18n key）
+function getFieldLengthErrorKey(field: keyof ModelEntry, value: string): string | null {
+  const length = value.length;
+  switch (field) {
+    case "model_name":
+      return length > MAX_MODEL_NAME_LENGTH ? "config.modelList.modelNameTooLong" : null;
+    case "alias":
+      return length > MAX_ALIAS_LENGTH ? "config.modelList.aliasTooLong" : null;
+    case "api_base":
+      return length > MAX_API_BASE_LENGTH ? "config.modelList.apiBaseTooLong" : null;
+    case "api_key":
+      return length > MAX_API_KEY_LENGTH ? "config.modelList.apiKeyTooLong" : null;
+    default:
+      return null;
+  }
+}
 const AGENT_KEYS = new Set(["name", "model", "skills", "max_iterations", "completion_timeout"]);
 const TEAM_KEYS = new Set(["team_name", "lifecycle", "teammate_mode", "spawn_mode"]);
 const FREE_SEARCH_BOOLEAN_KEYS = new Set(["free_search_ddg_enabled", "free_search_bing_enabled"]);
@@ -730,6 +760,18 @@ function MultiModelSection({
   };
 
   const updateModel = (idx: number, field: keyof ModelEntry, value: string) => {
+    // 字段长度校验
+    const lengthErrorKey = getFieldLengthErrorKey(field, value);
+    if (lengthErrorKey) {
+      setLocalError(t(lengthErrorKey));
+      return;
+    }
+
+    // 校验通过，清除之前的字段长度错误（alias 冲突错误由 alias 逻辑单独处理）
+    if (field !== "alias") {
+      setLocalError(null);
+    }
+
     if (field === "alias") {
       const alias = value.trim();
       if (alias) {
@@ -743,6 +785,9 @@ function MultiModelSection({
         setLocalError(null);
       }
     }
+
+    // api_base URL 格式校验（仅在保存时校验，实时校验会导致用户输入过程中不断报错）
+
     const copy = [...models];
     copy[idx] = { ...copy[idx], [field]: value };
     if (field === "model_name" && value !== models[idx].model_name) {
@@ -859,10 +904,36 @@ function MultiModelSection({
   const handleAddNew = () => {
     const name = newModel.model_name.trim();
     if (!name) return;
+
+    // 字段长度校验
+    if (name.length > MAX_MODEL_NAME_LENGTH) {
+      setLocalError(t("config.modelList.modelNameTooLong"));
+      return;
+    }
+    if ((newModel.alias || "").length > MAX_ALIAS_LENGTH) {
+      setLocalError(t("config.modelList.aliasTooLong"));
+      return;
+    }
+    if ((newModel.api_base || "").length > MAX_API_BASE_LENGTH) {
+      setLocalError(t("config.modelList.apiBaseTooLong"));
+      return;
+    }
+    if ((newModel.api_key || "").length > MAX_API_KEY_LENGTH) {
+      setLocalError(t("config.modelList.apiKeyTooLong"));
+      return;
+    }
+
     if (!newModel.api_key.trim()) {
       setLocalError(t("config.modelList.apiKeyRequired"));
       return;
     }
+
+    // api_base URL 格式校验
+    if (newModel.api_base && !validateBaseUrl(newModel.api_base)) {
+      setLocalError(t("config.modelList.apiBaseUrlInvalid"));
+      return;
+    }
+
     const alias = newModel.alias?.trim() ?? "";
     if (alias) {
       const conflict = models.find((m) => (m.alias || "") === alias || m.model_name === alias);
@@ -986,7 +1057,7 @@ function MultiModelSection({
                 {(["model_name", "alias", "api_base", "api_key", "model_provider"] as const).map((field) => (
                   <div key={field} className="flex items-center gap-2 text-xs">
                     <label className="w-28 text-text-muted shrink-0">
-                      {field}{field === "api_key" && <span className="text-danger ml-0.5">*</span>}
+                      {field}{["api_key", "api_base", "model_name", "model_provider"].includes(field) && <span className="text-danger ml-0.5">*</span>}
                     </label>
                     {field === "model_provider" ? (
                       <select
@@ -1033,7 +1104,7 @@ function MultiModelSection({
           {(["model_name", "alias", "api_base", "api_key", "model_provider"] as const).map((field) => (
             <div key={field} className="flex items-center gap-2 text-xs">
               <label className="w-28 text-text-muted shrink-0">
-                {field}{field === "api_key" && <span className="text-danger ml-0.5">*</span>}
+                {field}{["api_key", "api_base", "model_name", "model_provider"].includes(field) && <span className="text-danger ml-0.5">*</span>}
               </label>
               {field === "model_provider" ? (
                 <select
@@ -2341,6 +2412,10 @@ export function ConfigPanel({
     () => draftModels.some((m) => !m.api_key.trim()),
     [draftModels],
   );
+  const hasMissingModelApiBase = useMemo(
+    () => draftModels.some((m) => !m.api_base.trim()),
+    [draftModels],
+  );
 
   const handleFieldChange = (key: string, value: string) => {
     setDraftValues((prev) => ({ ...prev, [key]: value }));
@@ -2371,6 +2446,10 @@ export function ConfigPanel({
       setError(t('config.modelList.apiKeyRequired'));
       return;
     }
+    if (hasMissingModelApiBase) {
+      setError(t('config.modelList.apiBaseRequired'));
+      return;
+    }
     // alias 唯一性校验
     const aliasSeen = new Map<string, string>();
     for (const m of draftModels) {
@@ -2386,6 +2465,32 @@ export function ConfigPanel({
         return;
       }
     }
+
+    // 字段长度校验
+    for (const m of draftModels) {
+      if ((m.model_name || "").length > MAX_MODEL_NAME_LENGTH) {
+        setError(t("config.modelList.modelNameTooLong"));
+        return;
+      }
+      if ((m.alias || "").length > MAX_ALIAS_LENGTH) {
+        setError(t("config.modelList.aliasTooLong"));
+        return;
+      }
+      if ((m.api_base || "").length > MAX_API_BASE_LENGTH) {
+        setError(t("config.modelList.apiBaseTooLong"));
+        return;
+      }
+      if ((m.api_key || "").length > MAX_API_KEY_LENGTH) {
+        setError(t("config.modelList.apiKeyTooLong"));
+        return;
+      }
+      // api_base URL 格式校验
+      if (m.api_base && !validateBaseUrl(m.api_base)) {
+        setError(t("config.modelList.apiBaseUrlInvalid"));
+        return;
+      }
+    }
+
     setSaving(true);
     setError(null);
     try {
@@ -2464,7 +2569,7 @@ export function ConfigPanel({
             <button
               type="button"
               onClick={() => void handleSaveAndRestart()}
-              disabled={!hasChanges || saving || hasMissingRequiredModelFields || hasMissingModelApiKey || (isProcessing && mode !== 'team')}
+              disabled={!hasChanges || saving || hasMissingRequiredModelFields || hasMissingModelApiKey || hasMissingModelApiBase || (isProcessing && mode !== 'team')}
               className="btn primary !px-3 !py-1.5 disabled:opacity-50 disabled:cursor-not-allowed"
             >
               {saving ? t('common.saving') : t('common.save')}
@@ -2479,6 +2584,11 @@ export function ConfigPanel({
         {!error && hasMissingRequiredModelFields ? (
           <div className="mb-4 rounded-md border border-[var(--border-danger)] bg-danger-subtle px-3 py-2 text-sm text-danger">
             {t('config.requiredIncomplete')}: {missingRequiredModelFields.join('、')}
+          </div>
+        ) : null}
+        {!error && hasMissingModelApiBase ? (
+          <div className="mb-4 rounded-md border border-[var(--border-danger)] bg-danger-subtle px-3 py-2 text-sm text-danger">
+            {t('config.modelList.apiBaseRequired')}
           </div>
         ) : null}
 

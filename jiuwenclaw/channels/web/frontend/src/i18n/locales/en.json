@@ -579,6 +579,12 @@
       "onlyOneInGroup": "Only one in group, auto-default",
       "apiKeyRequired": "API Key is required, please fill it in before saving",
       "apiKeyPlaceholder": "Local models don't need an API Key — enter any value, e.g. sk-1234",
+      "apiBaseRequired": "API Base URL is required, please fill it in before saving",
+      "apiBaseUrlInvalid": "API Base URL must start with http:// or https://",
+      "modelNameTooLong": "Model name is too long, please keep it under 100 characters",
+      "aliasTooLong": "Alias is too long, please keep it under 100 characters",
+      "apiBaseTooLong": "API Base URL is too long, please keep it under 100 characters",
+      "apiKeyTooLong": "API Key is too long, please keep it under 500 characters",
       "alias": "Alias",
       "aliasPlaceholder": "Optional, defaults to empty"
     },
