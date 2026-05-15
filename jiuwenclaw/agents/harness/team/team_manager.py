@@ -8,6 +8,7 @@ import asyncio
 import copy
 import json
 import logging
+import re
 import shutil
 from dataclasses import dataclass
 from pathlib import Path
@@ -25,6 +26,7 @@ from jiuwenclaw.agents.harness.common.plugins.rail_manager import get_rail_manag
 from jiuwenclaw.agents.harness.team.rails.team_member_skill_toolkit_rail import (
     MemberSkillToolkitRail,
 )
+from jiuwenclaw.gateway.channel_manager.base import ChannelType
 from jiuwenclaw.server.runtime.skill.skill_manager import SkillManager
 
 from jiuwenclaw.agents.harness.team.bootstrap import configure_agent_teams_home
@@ -259,6 +261,45 @@ class TeamManager:
         return normalized_cfg
 
     @staticmethod
+    def _is_feishu_team_session(
+        channel_id: str | None,
+        request_metadata: dict[str, Any] | None,
+    ) -> bool:
+        normalized_channel = str(channel_id or "").strip()
+        if normalized_channel == ChannelType.FEISHU.value:
+            return True
+
+        metadata = request_metadata or {}
+        return bool(str(metadata.get("feishu_chat_id") or "").strip())
+
+    @staticmethod
+    def _build_session_scoped_team_name(team_name: str, session_id: str) -> str:
+        base_name = str(team_name or "").strip() or "team"
+        session_suffix = re.sub(r"[^A-Za-z0-9_.-]+", "_", str(session_id or "").strip())
+        session_suffix = session_suffix.strip("._-")
+        if not session_suffix:
+            return base_name
+        if base_name.endswith(f"_{session_suffix}"):
+            return base_name
+        return f"{base_name}_{session_suffix}"
+
+    @staticmethod
+    def _apply_session_scoped_team_name_for_feishu(
+        spec: TeamAgentSpec,
+        *,
+        session_id: str,
+        channel_id: str | None,
+        request_metadata: dict[str, Any] | None,
+    ) -> None:
+        if not TeamManager._is_feishu_team_session(channel_id, request_metadata):
+            return
+
+        spec.team_name = TeamManager._build_session_scoped_team_name(
+            spec.team_name,
+            session_id,
+        )
+
+    @staticmethod
     def _load_team_spec(session_id: str) -> TeamAgentSpec:
         config_base = get_config()
         # Keep dependency checks scoped to distributed mode to make the
@@ -332,6 +373,12 @@ class TeamManager:
         config_base = get_config()
         await self._ensure_postgresql_for_leader(config_base)
         spec = self._load_team_spec(session_id)
+        self._apply_session_scoped_team_name_for_feishu(
+            spec,
+            session_id=session_id,
+            channel_id=channel_id,
+            request_metadata=request_metadata,
+        )
         spec.agent_customizer = self.build_agent_customizer(
             spec,
             deep_agent,
@@ -936,6 +983,12 @@ class TeamManager:
         await self._ensure_postgresql_for_leader(config_base)
         logger.info("[TeamManager] building TeamAgentSpec: session_id=%s", session_id)
         spec = self._load_team_spec(session_id)
+        self._apply_session_scoped_team_name_for_feishu(
+            spec,
+            session_id=session_id,
+            channel_id=channel_id,
+            request_metadata=request_metadata,
+        )
 
         spec.agent_customizer = self.build_agent_customizer(
             spec,
