@@ -959,6 +959,7 @@ class TeamManager:
             if self._is_distributed_mode(config_base):
                 try:
                     from jiuwenclaw.agents.harness.team.remote_member_bootstrap import (
+                        attach_clean_team_remote_destroy_wrapper,
                         attach_distributed_local_spawn_guard,
                         attach_remote_bootstrap_ack_listener,
                         attach_remote_teammate_bootstrap_listener,
@@ -971,6 +972,11 @@ class TeamManager:
                         channel_id=channel_id,
                     )
                     attach_spawn_member_remote_bootstrap_wrapper(
+                        team_agent,
+                        session_id=session_id,
+                        channel_id=channel_id,
+                    )
+                    attach_clean_team_remote_destroy_wrapper(
                         team_agent,
                         session_id=session_id,
                         channel_id=channel_id,
@@ -1375,6 +1381,7 @@ class TeamManager:
 
         try:
             from jiuwenclaw.agents.harness.team.remote_member_bootstrap import (
+                attach_clean_team_remote_destroy_wrapper,
                 attach_distributed_local_spawn_guard,
                 attach_remote_bootstrap_ack_listener,
                 attach_remote_teammate_bootstrap_listener,
@@ -1387,6 +1394,11 @@ class TeamManager:
                 channel_id=channel_id,
             )
             attach_spawn_member_remote_bootstrap_wrapper(
+                team_agent,
+                session_id=session_id,
+                channel_id=channel_id,
+            )
+            attach_clean_team_remote_destroy_wrapper(
                 team_agent,
                 session_id=session_id,
                 channel_id=channel_id,
