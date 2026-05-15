@@ -20,8 +20,8 @@ from jiuwenclaw.common.version import __version__
 
 
 DEFAULT_RELEASE_API = "https://api.github.com/repos/{owner}/{repo}/releases/latest"
-DEFAULT_ASSET_PATTERN = "jiuwenclaw-setup-{version}.exe"
-DEFAULT_SHA256_PATTERN = "jiuwenclaw-setup-{version}.exe.sha256"
+DEFAULT_ASSET_PATTERN = "jiuwenswarm-setup-{version}.exe"
+DEFAULT_SHA256_PATTERN = "jiuwenswarm-setup-{version}.exe.sha256"
 DEFAULT_TIMEOUT_SECONDS = 20
 DOWNLOAD_CHUNK_SIZE = 1024 * 512
 
@@ -205,7 +205,7 @@ class WindowsUpdaterService:
         thread = threading.Thread(
             target=self._download_worker,
             daemon=True,
-            name="jiuwenclaw-updater-download",
+            name="jiuwenswarm-updater-download",
         )
         self._download_thread = thread
         thread.start()
