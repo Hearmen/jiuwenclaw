@@ -807,8 +807,16 @@
   "skills": {
     "title": "技能管理",
     "subtitle": "管理并安装智能体可用的技能。",
+    "tabs": {
+      "mySkills": "我的技能",
+      "marketplace": "技能广场"
+    },
+    "marketplaceTabs": {
+      "builtin": "预置"
+    },
     "actions": {
       "install": "安装",
+      "installing": "安装中...",
       "uninstall": "卸载",
       "importLocal": "导入本地技能",
       "sourceManager": "源管理",
@@ -980,6 +988,7 @@
     "importPrompt": "请输入服务端本地 skill 路径（SKILL.md 或目录）",
     "uninstallConfirm": "确认卸载 {{pluginName}} ?",
     "messages": {
+      "installing": "安装中：{{name}}...",
       "installed": "已安装：{{spec}}",
       "imported": "已导入：{{name}}",
       "uninstalled": "已卸载：{{pluginName}}",

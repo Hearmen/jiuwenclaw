@@ -807,8 +807,16 @@
   "skills": {
     "title": "Skill Management",
     "subtitle": "Manage and install skills available to the agent.",
+    "tabs": {
+      "mySkills": "My Skills",
+      "marketplace": "Marketplace"
+    },
+    "marketplaceTabs": {
+      "builtin": "Built-in"
+    },
     "actions": {
       "install": "Install",
+      "installing": "Installing...",
       "uninstall": "Uninstall",
       "importLocal": "Import Local Skill",
       "sourceManager": "Source Manager",
@@ -980,6 +988,7 @@
     "importPrompt": "Enter a local skill path on the server (SKILL.md or directory)",
     "uninstallConfirm": "Uninstall {{pluginName}}?",
     "messages": {
+      "installing": "Installing: {{name}}...",
       "installed": "Installed: {{spec}}",
       "imported": "Imported: {{name}}",
       "uninstalled": "Uninstalled: {{pluginName}}",
