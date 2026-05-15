@@ -1152,8 +1152,6 @@
       "enabled": "Enable updater",
       "timeoutSeconds": "Timeout seconds",
       "releaseApiUrl": "Release API URL",
-      "repoOwner": "GitHub owner",
-      "repoName": "GitHub repo",
       "assetPattern": "Installer asset pattern",
       "sha256Pattern": "SHA256 asset pattern"
     }

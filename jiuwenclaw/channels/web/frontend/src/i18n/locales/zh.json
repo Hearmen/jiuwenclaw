@@ -1152,8 +1152,6 @@
       "enabled": "启用更新",
       "timeoutSeconds": "超时秒数",
       "releaseApiUrl": "更新地址",
-      "repoOwner": "GitHub Owner",
-      "repoName": "GitHub 仓库名",
       "assetPattern": "安装包命名规则",
       "sha256Pattern": "校验文件命名规则"
     }

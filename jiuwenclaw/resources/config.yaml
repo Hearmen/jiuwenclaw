@@ -624,11 +624,11 @@ browser:
 
 updater:
   enabled: true
-  repo_owner: CharlieZhao95
+  repo_owner: openJiuwen
   repo_name: jiuwenclaw
   release_api_url: ""
-  asset_name_pattern: "jiuwenswarm-setup-{version}.exe"
-  sha256_name_pattern: "jiuwenswarm-setup-{version}.exe.sha256"
+  asset_name_pattern: "JiuwenSwarm-setup-{version}.exe"
+  sha256_name_pattern: "JiuwenSwarm-setup-{version}.exe.sha256"
   timeout_seconds: 20
 
 extensions:
