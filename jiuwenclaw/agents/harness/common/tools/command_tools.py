@@ -9,6 +9,7 @@ import json
 import locale
 import os
 import re
+import shlex
 import shutil
 import subprocess
 from pathlib import Path
@@ -60,6 +61,15 @@ _POWERSHELL_TOKENS = (
 )
 
 _VALID_SHELL_TYPES = {"auto", "cmd", "powershell", "bash", "sh"}
+_POWERSHELL_EXECUTABLE_PATTERN = re.compile(r"^\s*(?:powershell(?:\.exe)?|pwsh(?:\.exe)?)\b", re.IGNORECASE)
+_POWERSHELL_COMMAND_ARG_PATTERN = re.compile(r"(?is)(?:^|\s)-(?:command|c)\s+(?P<script>.+)\s*$")
+_POSIX_COMMANDS = frozenset({
+    "ls", "grep", "egrep", "fgrep", "cat", "head", "tail", "find", "rm",
+    "cp", "mv", "touch", "chmod", "chown", "sed", "awk", "gawk", "cut",
+    "sort", "uniq", "wc", "du", "df", "pwd", "which", "mkdir",
+})
+_QUOTED_WINDOWS_PATH_PATTERN = re.compile(r"(?P<quote>['\"])(?P<path>[A-Za-z]:\\[^'\"]+)(?P=quote)")
+_UNQUOTED_WINDOWS_PATH_PATTERN = re.compile(r"(?<![\w/])(?P<path>[A-Za-z]:\\[^\s|&;]+)")
 
 
 def _clip_text(value: str, max_chars: int) -> str:
@@ -104,11 +114,151 @@ def _looks_like_powershell(command: str) -> bool:
 
 
 def _available_powershell() -> str:
+    if os.name == "nt":
+        system_root = os.environ.get("SystemRoot") or os.environ.get("WINDIR") or r"C:\Windows"
+        system_powershell = Path(system_root) / "System32" / "WindowsPowerShell" / "v1.0" / "powershell.exe"
+        if system_powershell.exists():
+            return str(system_powershell)
+
     for candidate in ("pwsh", "powershell", "powershell.exe"):
         resolved = shutil.which(candidate)
         if resolved:
             return resolved
     return "powershell"
+
+
+def _is_wsl_bash_path(path: str) -> bool:
+    normalized = os.path.normcase(os.path.normpath(path))
+    system_root = os.path.normcase(os.path.normpath(os.environ.get("SystemRoot") or r"C:\Windows"))
+    return normalized == os.path.join(system_root, "system32", "bash.exe") or (
+        "\\microsoft\\windowsapps\\bash.exe" in normalized
+    )
+
+
+def _git_bash_candidates() -> list[Path]:
+    candidates: list[Path] = []
+    env_path = os.environ.get("GIT_BASH") or os.environ.get("GIT_BASH_PATH")
+    if env_path:
+        candidates.append(Path(env_path))
+
+    for root in (
+        os.environ.get("ProgramFiles"),
+        os.environ.get("ProgramFiles(x86)"),
+        os.environ.get("LocalAppData") and str(Path(os.environ["LocalAppData"]) / "Programs"),
+    ):
+        if root:
+            candidates.append(Path(root) / "Git" / "bin" / "bash.exe")
+
+    git_path = shutil.which("git")
+    if git_path:
+        git_exe = Path(git_path)
+        candidates.append(git_exe.parent.parent / "bin" / "bash.exe")
+
+    return candidates
+
+
+def _available_git_bash() -> str | None:
+    if os.name != "nt":
+        return None
+    for candidate in _git_bash_candidates():
+        if candidate.exists():
+            return str(candidate)
+    return None
+
+
+def _available_bash(*, allow_wsl: bool = True) -> str | None:
+    if os.name == "nt":
+        git_bash = _available_git_bash()
+        if git_bash:
+            return git_bash
+    resolved = shutil.which("bash")
+    if resolved and (allow_wsl or not _is_wsl_bash_path(resolved)):
+        return resolved
+    return None
+
+
+def _available_sh() -> str | None:
+    if os.name == "nt":
+        git_bash = _available_git_bash()
+        if git_bash:
+            sh_path = Path(git_bash).parent.parent / "usr" / "bin" / "sh.exe"
+            if sh_path.exists():
+                return str(sh_path)
+    return shutil.which("sh")
+
+
+def _strip_matching_quotes(value: str) -> str:
+    stripped = value.strip()
+    if len(stripped) >= 2 and stripped[0] == stripped[-1] and stripped[0] in {'"', "'"}:
+        return stripped[1:-1]
+    return stripped
+
+
+def _unwrap_powershell_command(command: str) -> str | None:
+    if not _POWERSHELL_EXECUTABLE_PATTERN.match(command or ""):
+        return None
+    remainder = _POWERSHELL_EXECUTABLE_PATTERN.sub("", command, count=1).strip()
+    match = _POWERSHELL_COMMAND_ARG_PATTERN.search(remainder)
+    if not match:
+        return None
+    script = _strip_matching_quotes(match.group("script"))
+    return script or None
+
+
+def _split_shell_segments(command: str) -> list[str]:
+    segments: list[str] = []
+    current: list[str] = []
+    quote: str | None = None
+    index = 0
+    while index < len(command):
+        char = command[index]
+        if char in {'"', "'"}:
+            quote = None if quote == char else char if quote is None else quote
+        if quote is None and command.startswith(("&&", "||"), index):
+            segment = "".join(current).strip()
+            if segment:
+                segments.append(segment)
+            current = []
+            index += 2
+            continue
+        if quote is None and char in {"|", ";", "\n", "\r"}:
+            segment = "".join(current).strip()
+            if segment:
+                segments.append(segment)
+            current = []
+            index += 1
+            continue
+        current.append(char)
+        index += 1
+    segment = "".join(current).strip()
+    if segment:
+        segments.append(segment)
+    return segments
+
+
+def _segment_base_command(segment: str) -> str:
+    try:
+        tokens = shlex.split(segment, posix=False)
+    except ValueError:
+        return ""
+    if not tokens:
+        return ""
+    base = _strip_matching_quotes(tokens[0]).rsplit("/", maxsplit=1)[-1].rsplit("\\", maxsplit=1)[-1].lower()
+    return base[:-4] if base.endswith(".exe") else base
+
+
+def _looks_like_posix(command: str) -> bool:
+    return any(_segment_base_command(segment) in _POSIX_COMMANDS for segment in _split_shell_segments(command or ""))
+
+
+def _normalize_windows_paths_for_bash(command: str) -> str:
+    def replace_path(match: re.Match[str]) -> str:
+        value = match.group("path").replace("\\", "/")
+        quote = match.groupdict().get("quote")
+        return f"{quote}{value}{quote}" if quote else value
+
+    normalized = _QUOTED_WINDOWS_PATH_PATTERN.sub(replace_path, command)
+    return _UNQUOTED_WINDOWS_PATH_PATTERN.sub(replace_path, normalized)
 
 
 def _available_unix_shell(prefer_bash: bool) -> Sequence[str]:
@@ -126,18 +276,30 @@ def _resolve_execution_plan(command: str, shell_type: str) -> tuple[list[str] | 
 
     if is_windows:
         if normalized == "auto":
-            normalized = "powershell" if _looks_like_powershell(command) else "cmd"
+            powershell_command = _unwrap_powershell_command(command)
+            if powershell_command is not None:
+                exe = _available_powershell()
+                return [exe, "-NoProfile", "-NonInteractive", "-Command", powershell_command], False, "powershell"
+            if _looks_like_powershell(command):
+                exe = _available_powershell()
+                return [exe, "-NoProfile", "-NonInteractive", "-Command", command], False, "powershell"
+            if _looks_like_posix(command):
+                exe = _available_bash(allow_wsl=False)
+                if exe:
+                    return [exe, "-lc", _normalize_windows_paths_for_bash(command)], False, "bash"
+            normalized = "cmd"
         if normalized == "powershell":
             exe = _available_powershell()
+            command = _unwrap_powershell_command(command) or command
             return [exe, "-NoProfile", "-NonInteractive", "-Command", command], False, "powershell"
         if normalized == "cmd":
             return command, True, "cmd"
         if normalized in {"bash", "sh"}:
-            exe = shutil.which("bash") if normalized == "bash" else shutil.which("sh")
+            exe = _available_bash() if normalized == "bash" else _available_sh()
             if not exe:
                 raise RuntimeError(f"Requested shell '{normalized}' is not available on this system.")
             flag = "-lc" if normalized == "bash" else "-c"
-            return [exe, flag, command], False, normalized
+            return [exe, flag, _normalize_windows_paths_for_bash(command)], False, normalized
         raise RuntimeError(f"Unsupported shell_type for Windows: {normalized}")
 
     if normalized == "auto":
