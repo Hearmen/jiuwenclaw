@@ -230,10 +230,8 @@ function AppContent() {
     isConnected,
     request,
     sendMessage,
-    pause,
     cancel,
     supplement,
-    resume,
     switchMode,
     sendUserAnswer,
   } = useWebSocket({
@@ -844,23 +842,11 @@ function AppContent() {
     void supplement(currentSessionId, trimmed);
   }, [supplement]);
 
-  const handlePause = useCallback(() => {
-    const currentSessionId = sessionIdRef.current;
-    if (!currentSessionId || currentSessionId === 'new') return;
-    void pause(currentSessionId);
-  }, [pause]);
-
   const handleCancel = useCallback(() => {
     const currentSessionId = sessionIdRef.current;
     if (!currentSessionId || currentSessionId === 'new') return;
     void cancel(currentSessionId);
   }, [cancel]);
-
-  const handleResume = useCallback(() => {
-    const currentSessionId = sessionIdRef.current;
-    if (!currentSessionId || currentSessionId === 'new') return;
-    void resume(currentSessionId);
-  }, [resume]);
 
   const handleUserAnswer = useCallback((requestId: string, answers: UserAnswer[], source?: string) => {
     const currentSessionId = sessionIdRef.current;
@@ -1133,9 +1119,7 @@ function AppContent() {
                 </div>
 
                 <StatusBar
-                  onPause={handlePause}
                   onCancel={mode === 'team' ? undefined : handleCancel}
-                  onResume={mode === 'team' ? undefined : handleResume}
                   teamMode={mode === 'team'}
                 />
               </div>

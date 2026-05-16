@@ -1,7 +1,7 @@
 /**
  * StatusBar 组件
  *
- * 状态栏，显示当前模式、处理状态、暂停/恢复按钮
+ * 状态栏，显示当前模式、处理状态
  * 采用 JiuwenClaw 风格
  */
 
@@ -10,13 +10,11 @@ import { useChatStore } from '../../stores';
 import './StatusBar.css';
 
 interface StatusBarProps {
-  onPause?: () => void;
   onCancel?: () => void;
-  onResume?: () => void;
   teamMode?: boolean;
 }
 
-export function StatusBar({ onPause, onCancel, onResume, teamMode = false }: StatusBarProps) {
+export function StatusBar({ onCancel, teamMode = false }: StatusBarProps) {
   const { t } = useTranslation();
   const { isProcessing, isPaused, pausedTask, interruptResult, switchingMode } = useChatStore();
   const showExec = (isProcessing || isPaused) && !switchingMode;
@@ -38,24 +36,7 @@ export function StatusBar({ onPause, onCancel, onResume, teamMode = false }: Sta
           </div>
         ) : (
           <>
-        {teamMode && onPause && (
-          <div className="statusbar-exec">
-            {isPaused ? (
-              <div className="statusbar-pill statusbar-pill--paused">
-                <span className="statusbar-dot" />
-                <span>{t('statusBar.paused')}</span>
-              </div>
-            ) : (
-              <button
-                onClick={onPause}
-                className="statusbar-action-btn statusbar-action-btn--pause"
-              >
-                {t('statusBar.pause')}
-              </button>
-            )}
-          </div>
-        )}
-        {/* 执行状态：左侧取消，中间状态，右侧暂停/恢复 */}
+        {/* 执行状态：左侧取消，中间状态 */}
         {!teamMode && showExec && (
           <div className="statusbar-exec">
             {onCancel && (
@@ -77,26 +58,6 @@ export function StatusBar({ onPause, onCancel, onResume, teamMode = false }: Sta
                   : t('statusBar.processing')}
               </span>
             </div>
-
-            {isPaused ? (
-              onResume && (
-                <button
-                  onClick={onResume}
-                  className="statusbar-action-btn statusbar-action-btn--resume"
-                >
-                  {t('statusBar.resume')}
-                </button>
-              )
-            ) : (
-              onPause && (
-              <button
-                onClick={onPause}
-                className="statusbar-action-btn statusbar-action-btn--pause"
-              >
-                {t('statusBar.pause')}
-              </button>
-              )
-            )}
           </div>
         )}
           </>
