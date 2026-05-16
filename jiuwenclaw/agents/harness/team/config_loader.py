@@ -294,6 +294,7 @@ def load_team_spec_dict(config_base: dict[str, Any] | None = None) -> dict[str, 
     spec_dict["lifecycle"] = team_raw.get("lifecycle", "persistent")
     spec_dict["teammate_mode"] = team_raw.get("teammate_mode", "build_mode")
     spec_dict["spawn_mode"] = team_raw.get("spawn_mode", "inprocess")
+    spec_dict["enable_hitt"] = team_raw.get("enable_hitt", True)
     spec_dict["leader"] = _build_leader_spec(team_raw)
     spec_dict["agents"] = agents
     spec_dict["language"] = str(config_base.get("preferred_language", "zh")).strip().lower()

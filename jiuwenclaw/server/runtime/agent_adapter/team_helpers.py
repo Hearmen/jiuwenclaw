@@ -833,6 +833,7 @@ async def _consume_stream_with_query(
             _resolve_channel_id(channel_id),
             session_id,
             exc,
+            exc_info=True,
         )
         _broadcast_event(
             channel_id,
