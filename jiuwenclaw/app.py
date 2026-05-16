@@ -8,7 +8,6 @@ Supports ``--dotenv <path>`` for multi-instance isolation.
 """
 
 from __future__ import annotations
-import os
 import subprocess
 import sys
 import time
@@ -91,8 +90,6 @@ def main() -> None:
         gateway_cmd.extend(["--dotenv", str(dotenv_path)])
 
     _popen_kwargs: dict = {}
-    if os.name == "nt":
-        _popen_kwargs["creationflags"] = getattr(subprocess, "CREATE_NO_WINDOW", 0)
 
     agent = subprocess.Popen(agent_cmd, **_popen_kwargs)
     gateway = None

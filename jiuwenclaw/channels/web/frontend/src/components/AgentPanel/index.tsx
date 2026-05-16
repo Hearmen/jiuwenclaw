@@ -181,6 +181,7 @@ export function AgentPanel({ sessionId: _sessionId }: AgentPanelProps) {
   const [expandedKeys, setExpandedKeys] = useState<Set<string>>(
     () => new Set<string>([ROOT_FOLDER_KEY]),
   );
+  const [hasRebuiltOnce, setHasRebuiltOnce] = useState(false);
 
   const loadFolderData = async (options?: { rebuildBeforeFetch?: boolean }) => {
     const shouldRebuild = Boolean(options?.rebuildBeforeFetch);
@@ -239,8 +240,15 @@ export function AgentPanel({ sessionId: _sessionId }: AgentPanelProps) {
   };
 
   useEffect(() => {
-    void loadFolderData();
-  }, []);
+    // 首次进入时自动 rebuild，确保 agent-data.json 与实际安装的技能同步
+    // 后续进入直接读取，避免每次都触发重建
+    if (!hasRebuiltOnce) {
+      setHasRebuiltOnce(true);
+      void loadFolderData({ rebuildBeforeFetch: true });
+    } else {
+      void loadFolderData();
+    }
+  }, [hasRebuiltOnce]);
 
   const handleRefresh = () => {
     setRefreshing(true);
