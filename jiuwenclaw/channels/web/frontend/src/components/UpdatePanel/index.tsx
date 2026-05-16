@@ -242,7 +242,7 @@ export function UpdatePanel({ isConnected, request }: UpdatePanelProps) {
           </div>
           <div className="rounded-xl border border-border bg-panel-strong/70 px-4 py-3">
             <div className="text-xs uppercase tracking-wide text-text-muted">{t('updatePanel.latestVersion')}</div>
-            <div className="mt-2 font-semibold text-text">{latestVersion}</div>
+            <div className="mt-2 font-semibold text-text">{hasUpdate ? latestVersion : '-'}</div>
           </div>
           <div className="rounded-xl border border-border bg-panel-strong/70 px-4 py-3">
             <div className="text-xs uppercase tracking-wide text-text-muted">{t('updatePanel.state')}</div>
@@ -250,7 +250,7 @@ export function UpdatePanel({ isConnected, request }: UpdatePanelProps) {
           </div>
           <div className="rounded-xl border border-border bg-panel-strong/70 px-4 py-3">
             <div className="text-xs uppercase tracking-wide text-text-muted">{t('updatePanel.publishedAt')}</div>
-            <div className="mt-2 font-semibold text-text">{publishedAt}</div>
+            <div className="mt-2 font-semibold text-text">{hasUpdate ? publishedAt : '-'}</div>
           </div>
         </div>
 
@@ -272,10 +272,10 @@ export function UpdatePanel({ isConnected, request }: UpdatePanelProps) {
           </div>
         )}
 
-        <div className="flex-1 min-h-0 rounded-xl border border-border bg-panel-strong/60 p-4">
+        <div className="flex-1 flex flex-col min-h-0 rounded-xl border border-border bg-panel-strong/60 p-4">
           <div className="text-xs uppercase tracking-wide text-text-muted">{t('updatePanel.releaseNotes')}</div>
-          <pre className="mt-3 max-h-[28rem] overflow-auto whitespace-pre-wrap break-words font-sans text-sm text-text">
-            {loading ? t('common.loading') : releaseNotes || t('updatePanel.noReleaseNotes')}
+          <pre className="mt-3 flex-1 min-h-0 overflow-auto whitespace-pre-wrap break-words font-sans text-sm text-text">
+            {loading ? t('common.loading') : hasUpdate ? (releaseNotes || t('updatePanel.noReleaseNotes')) : '-'}
           </pre>
         </div>
 

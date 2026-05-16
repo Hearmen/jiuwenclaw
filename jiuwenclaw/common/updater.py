@@ -136,9 +136,27 @@ class WindowsUpdaterService:
             release = self._fetch_json(
                 config["release_api_url"], config["timeout_seconds"]
             )
-            latest_version = _normalize_version(str(release.get("tag_name") or ""))
+            latest_version = _extract_version(str(release.get("tag_name") or ""))
             if not latest_version:
                 raise RuntimeError("Latest release tag is missing.")
+
+            has_update = _is_newer_version(latest_version, __version__)
+            if not has_update:
+                self._update_status(
+                    latest_version=latest_version,
+                    has_update=False,
+                    release_notes=str(release.get("body") or ""),
+                    published_at=str(
+                        release.get("published_at")
+                        or release.get("created_at")
+                        or ""
+                    ),
+                    checked_at=time.time(),
+                    state="up_to_date",
+                    error="",
+                    installing=False,
+                )
+                return self.get_status()
 
             asset_name = config["asset_name_pattern"].format(version=_extract_version(latest_version))
             assets = release.get("assets") or []
@@ -166,8 +184,6 @@ class WindowsUpdaterService:
             if isinstance(sha_asset, dict):
                 sha256_url = str(sha_asset.get("browser_download_url") or "")
 
-            has_update = _is_newer_version(latest_version, __version__)
-            next_state = "update_available" if has_update else "up_to_date"
             published_at = str(
                 release.get("published_at")
                 or release.get("created_at")
@@ -175,25 +191,20 @@ class WindowsUpdaterService:
             )
             self._update_status(
                 latest_version=latest_version,
-                has_update=has_update,
+                has_update=True,
                 release_notes=str(release.get("body") or ""),
                 published_at=published_at,
                 asset_name=asset_name,
                 download_url=str(asset.get("browser_download_url") or ""),
                 sha256_url=sha256_url,
                 checked_at=time.time(),
-                state=next_state,
+                state="update_available",
                 error="",
                 installing=False,
             )
         except Exception as exc:  # noqa: BLE001
-            error_prefix = (
-                "Manual update check failed"
-                if manual
-                else "Startup update check failed"
-            )
             self._update_status(
-                state="error", error=f"{error_prefix}: {exc}", checked_at=time.time()
+                state="error", error=f"Update check failed: {exc}", checked_at=time.time()
             )
         return self.get_status()
 
