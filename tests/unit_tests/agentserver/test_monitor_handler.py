@@ -10,11 +10,13 @@ from jiuwenclaw.agents.harness.team.monitor_handler import TeamMonitorHandler
 
 
 class _FakeMember:
-    def __init__(self, member_name: str):
+    def __init__(self, member_name: str, display_name: str = "", status: str = "ready",
+                 execution_status: str | None = None, mode: str = "normal"):
         self.member_name = member_name
-
-    def model_dump(self) -> dict[str, str]:
-        return {"member_name": self.member_name}
+        self.display_name = display_name
+        self.status = status
+        self.execution_status = execution_status
+        self.mode = mode
 
 
 class _FakeMonitor:
@@ -45,7 +47,15 @@ async def test_get_team_snapshot_filters_leader_member() -> None:
     snapshot = await handler.get_team_snapshot()
 
     assert snapshot == {
-        "members": [{"member_name": "worker-1"}],
+        "members": [
+            {
+                "member_id": "worker-1",
+                "name": "",
+                "status": "ready",
+                "execution_status": None,
+                "mode": "normal",
+            }
+        ],
         "team_id": "team-1",
     }
 
@@ -63,6 +73,21 @@ async def test_get_team_snapshot_keeps_members_when_team_info_unavailable() -> N
     snapshot = await handler.get_team_snapshot()
 
     assert snapshot == {
-        "members": [{"member_name": "worker-1"}, {"member_name": "worker-2"}],
+        "members": [
+            {
+                "member_id": "worker-1",
+                "name": "",
+                "status": "ready",
+                "execution_status": None,
+                "mode": "normal",
+            },
+            {
+                "member_id": "worker-2",
+                "name": "",
+                "status": "ready",
+                "execution_status": None,
+                "mode": "normal",
+            },
+        ],
         "team_id": "team-1",
     }

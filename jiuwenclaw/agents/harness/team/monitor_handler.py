@@ -350,7 +350,16 @@ class TeamMonitorHandler:
             if leader_name:
                 members = [m for m in members if m.member_name != leader_name]
             return {
-                "members": [m.model_dump() for m in members],
+                "members": [
+                    {
+                        "member_id": m.member_name,
+                        "name": m.display_name,
+                        "status": m.status,
+                        "execution_status": m.execution_status,
+                        "mode": m.mode,
+                    }
+                    for m in members
+                ],
                 "team_id": self._monitor.team_id,
             }
         except Exception as e:
