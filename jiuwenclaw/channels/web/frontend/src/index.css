@@ -443,63 +443,10 @@ select {
     }
   }
 
-  /* Shell collapsed - single column, no nav */
+  /* Shell collapsed - nav column shrinks to 48px icon strip */
   .shell--collapsed {
-    grid-template-columns: minmax(0, 1fr);
-    grid-template-areas: "content";
-  }
-
-  /* Expand button when sidebar is collapsed - positioned on left center */
-  .shell--collapsed .expand-btn {
-    position: fixed;
-    left: 12px;
-    top: 50%;
-    transform: translateY(-50%);
-    z-index: 100;
-    width: 32px;
-    height: 32px;
-    border-radius: 50%;
-    background: var(--panel-strong);
-    border: 1px solid var(--border);
-    cursor: pointer;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    transition: all 0.15s ease;
-    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
-  }
-
-  .shell--collapsed .expand-btn img {
-    width: 16px;
-    height: 16px;
-    opacity: 0.5;
-    transform: scaleX(-1);
-  }
-
-  :root[data-theme="light"] .shell--collapsed .expand-btn {
-    background: #F3F4F6;
-    border-color: #E5E7EB;
-  }
-
-  .shell--collapsed .expand-btn:hover {
-    background: var(--bg-hover);
-  }
-
-  .shell--collapsed .expand-btn:hover img {
-    opacity: 0.7;
-  }
-
-  :root[data-theme="light"] .shell--collapsed .expand-btn:hover {
-    background: #E5E7EB;
-  }
-
-  :root:not([data-theme="light"]) .shell--collapsed .expand-btn img {
-    filter: brightness(0) invert(1);
-  }
-
-  /* Expand button when sidebar is expanded */
-  .expand-btn {
-    display: none;
+    grid-template-columns: 48px minmax(0, 1fr);
+    grid-template-areas: "nav content";
   }
 
   /* Topbar */

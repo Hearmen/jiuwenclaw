@@ -513,3 +513,141 @@
 :root:not([data-theme="light"]) .new-chat-btn__left img {
   filter: brightness(0) invert(1);
 }
+
+/* ============================================
+   Collapsed Mode (48px icon-only sidebar)
+   Based on Pixso high-fidelity design
+   ============================================ */
+
+.sidebar--collapsed {
+  width: 48px;
+  max-width: 48px;
+  min-width: 48px;
+  flex-shrink: 0;
+  align-items: center;
+  padding: 0;
+  transition: width 0.2s ease;
+}
+
+/* Logo in collapsed mode — SVG handles gradient + mark */
+.collapsed-logo {
+  width: 28px;
+  height: 28px;
+  margin-top: 16px;
+  margin-bottom: 16px;
+  border-radius: 7px;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: opacity 0.15s ease;
+  overflow: hidden;
+}
+
+.collapsed-logo img {
+  display: block;
+}
+
+.collapsed-logo:hover {
+  opacity: 0.85;
+}
+
+/* Nav items in collapsed mode */
+.collapsed-nav-item {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  margin-bottom: 8px;
+  border-radius: 8px;
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: background 0.15s ease;
+}
+
+.collapsed-nav-item img,
+.collapsed-nav-item svg {
+  width: 16px;
+  height: 16px;
+}
+
+.collapsed-nav-item {
+  color: #191919;
+}
+
+.collapsed-nav-item:hover {
+  background: #F5F5F5;
+}
+
+.collapsed-nav-item--active {
+  background: #EAEAEB;
+}
+
+.collapsed-nav-item--active:hover {
+  background: #DEDEE0;
+}
+
+/* Separator dot between nav groups */
+.collapsed-separator {
+  width: 4px;
+  height: 4px;
+  margin-top: 8px;
+  margin-bottom: 16px;
+  border-radius: 50%;
+  background: #DBDBDB;
+  flex-shrink: 0;
+}
+
+/* Spacer pushes bottom items down */
+.collapsed-spacer {
+  flex: 1 1;
+  min-height: 8px;
+}
+
+/* Last bottom item gets more spacing */
+.collapsed-spacer + .collapsed-nav-item {
+  margin-bottom: 12px;
+}
+
+/* Tooltip rendered via SVG — styles inlined in component */
+
+/* Dark mode overrides for collapsed mode */
+:root:not([data-theme="light"]) .sidebar--collapsed {
+  background: var(--panel);
+}
+
+:root:not([data-theme="light"]) .collapsed-nav-item img {
+  filter: brightness(0) invert(1);
+}
+
+:root:not([data-theme="light"]) .collapsed-nav-item {
+  color: var(--text);
+}
+
+:root:not([data-theme="light"]) .collapsed-nav-item--active {
+  background: rgba(255, 255, 255, 0.1);
+}
+
+:root:not([data-theme="light"]) .collapsed-nav-item--active:hover {
+  background: rgba(255, 255, 255, 0.15);
+}
+
+:root:not([data-theme="light"]) .collapsed-nav-item:hover {
+  background: rgba(255, 255, 255, 0.08);
+}
+
+:root:not([data-theme="light"]) .collapsed-separator {
+  background: rgba(255, 255, 255, 0.12);
+}
+
+:root:not([data-theme="light"]) .collapsed-logo {
+  background: transparent;
+}
+
+:root:not([data-theme="light"]) .collapsed-logo img {
+  filter: none;
+}

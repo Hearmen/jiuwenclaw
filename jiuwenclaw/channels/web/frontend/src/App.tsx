@@ -21,7 +21,7 @@ import { BrowserPanel } from './components/BrowserPanel';
 import { UpdatePanel } from './components/UpdatePanel';
 import { StatusBar } from './components/StatusBar';
 import { ExtensionsHubPanel } from './components/ExtensionsHubPanel';
-import collapseIcon from './assets/sidebar/collapse.svg';
+
 import { FEATURE_APP_UPDATER_UI } from './featureFlags';
 import { HeartbeatMessageModal } from './features/HeartbeatMessageModal';
 import {
@@ -1079,29 +1079,18 @@ function AppContent() {
 
   return (
     <div className={`shell ${sidebarCollapsed ? 'shell--collapsed' : ''}`} data-testid="app-shell" data-session-id={sessionId}>
-      {/* Navigation Sidebar */}
-      {!sidebarCollapsed && (
-        <SessionSidebar
-          activeNav={activeNav}
-          onNavigate={handleNavigate}
-          sessionId={sessionId}
-          appVersion={typeof serverConfig?.app_version === 'string' ? serverConfig.app_version : '0.1.7'}
-          isConnected={isConnected}
-          onNewSession={handleNewSession}
-          onCollapse={() => setSidebarCollapsed(true)}
-        />
-      )}
-
-      {/* Collapsed state - floating expand button on the left edge */}
-      {sidebarCollapsed && (
-        <button
-          className="expand-btn"
-          onClick={() => setSidebarCollapsed(false)}
-          title="展开侧边栏"
-        >
-          <img src={collapseIcon} alt="" />
-        </button>
-      )}
+      {/* Navigation Sidebar - always rendered, 48px icon strip when collapsed */}
+      <SessionSidebar
+        activeNav={activeNav}
+        onNavigate={handleNavigate}
+        sessionId={sessionId}
+        appVersion={typeof serverConfig?.app_version === 'string' ? serverConfig.app_version : '0.1.7'}
+        isConnected={isConnected}
+        onNewSession={handleNewSession}
+        collapsed={sidebarCollapsed}
+        onCollapse={() => setSidebarCollapsed(true)}
+        onExpand={() => setSidebarCollapsed(false)}
+      />
 
       {/* Main Content */}
       <main className="content">
