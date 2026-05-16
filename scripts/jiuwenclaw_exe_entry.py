@@ -12,9 +12,9 @@ from pathlib import Path
 # 导致 openjiuwen 的默认日志路径 "./logs/" 解析为 "/logs/"（只读）。
 # 在任何业务 import 之前，将 cwd 切换到用户可写目录。
 if getattr(sys, "frozen", False):
-    _safe_cwd = os.path.expanduser("~")
+    _ORIGINAL_CWD = os.getcwd()
     try:
-        os.chdir(_safe_cwd)
+        os.chdir(os.path.expanduser("~"))
     except OSError:
         pass
 
@@ -151,7 +151,7 @@ def main() -> None:
 
 
 def _dispatch() -> None:
-    # 子命令：初始化工作区（首次使用需运行 jiuwenclaw.exe init）
+    # 已知子命令分发（不检查单实例锁）
     if len(sys.argv) >= 2 and sys.argv[1].lower() == "init":
         sys.argv.pop(1)
         from jiuwenclaw.init_workspace import main as init_main
@@ -184,8 +184,34 @@ def _dispatch() -> None:
         sys.argv.pop(idx)
         from jiuwenclaw.agents.harness.common.tools.browser_start_client import main as browser_main
         raise SystemExit(browser_main())
-    # 默认运行桌面应用。
-    # 在 import desktop_app 之前检查单实例锁，避免加载 webview 等重量级依赖。
+
+    # 子进程模式：argv 有任何参数（.py 脚本或 -m 等），不检查单实例锁
+    if getattr(sys, "frozen", False) and len(sys.argv) >= 2:
+        script_path = next((arg for arg in sys.argv[1:] if arg.endswith(".py") or arg.endswith(".pyw")), None)
+        if script_path:
+            import runpy
+            script_abs = Path(script_path)
+            if not script_abs.is_absolute() and _ORIGINAL_CWD:
+                script_abs = (Path(_ORIGINAL_CWD) / script_path).resolve()
+            else:
+                script_abs = script_abs.resolve()
+            if script_abs.exists():
+                sys.argv.remove(script_path)
+                sys.argv[0] = str(script_abs)
+                runpy.run_path(str(script_abs), run_name="__main__")
+                raise SystemExit(0)
+
+        if sys.argv[1] == "-m" and len(sys.argv) >= 3:
+            import runpy
+            runpy.run_module(sys.argv[2], run_name="__main__", alter_sys=True)
+            raise SystemExit(0)
+
+        # 其他有参数的情况：直接执行，不检查单实例锁
+        # 例如 code 工具、browser tools 等
+        # 让子进程自己处理参数或报错
+        raise SystemExit(0)
+
+    # 只有无参数时才检查单实例锁（双击启动桌面应用）
     if not _acquire_single_instance_lock():
         _show_already_running_message()
         raise SystemExit(0)
