@@ -10,7 +10,7 @@ from openjiuwen.agent_evolving.checkpointing.types import (
     EvolutionPatch,
     VALID_SECTIONS,
 )
-from openjiuwen.agent_evolving import EvolutionSignal, EvolutionTarget, EvolutionCategory
+from openjiuwen.agent_evolving import EvolutionSignal, EvolutionTarget
 
 
 class TestEvolutionTarget:
@@ -322,17 +322,13 @@ class TestEvolutionSignal:
         """Test creating an EvolutionSignal."""
         signal = EvolutionSignal(
             signal_type="execution_failure",
-            evolution_type=EvolutionCategory.SKILL_EXPERIENCE,
             section="Troubleshooting",
             excerpt="Error: File not found",
-            tool_name="file.read",
             skill_name="test-skill",
         )
         assert signal.signal_type == "execution_failure"
-        assert signal.evolution_type == EvolutionCategory.SKILL_EXPERIENCE
         assert signal.section == "Troubleshooting"
         assert signal.excerpt == "Error: File not found"
-        assert signal.tool_name == "file.read"
         assert signal.skill_name == "test-skill"
 
     @staticmethod
@@ -340,7 +336,6 @@ class TestEvolutionSignal:
         """Test converting EvolutionSignal to dict."""
         signal = EvolutionSignal(
             signal_type="user_correction",
-            evolution_type=EvolutionCategory.SKILL_EXPERIENCE,
             section="Examples",
             excerpt="You should do it this way",
             skill_name="my-skill",
@@ -348,21 +343,17 @@ class TestEvolutionSignal:
         result = signal.to_dict()
         # Note: to_dict returns 'type' (not 'signal_type') for compatibility
         assert result["type"] == "user_correction"
-        assert result["evolution_type"] == "skill_experience"
         assert result["section"] == "Examples"
         assert result["excerpt"] == "You should do it this way"
         assert result["skill_name"] == "my-skill"
-        assert result["tool_name"] is None
 
     @staticmethod
     def test_evolution_signal_with_optional_fields():
         """Test EvolutionSignal with None optional fields."""
         signal = EvolutionSignal(
             signal_type="execution_failure",
-            evolution_type=EvolutionCategory.NEW_SKILL,
             section="Instructions",
             excerpt="Some error",
         )
         result = signal.to_dict()
-        assert result["tool_name"] is None
         assert result["skill_name"] is None

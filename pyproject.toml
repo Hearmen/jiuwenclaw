@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "jiuwenswarm"
-version = "0.1.11"
+version = "0.2.0"
 description = "JiuwenSwarm"
 requires-python = ">=3.11,<3.14"
 license = { text = "Apache-2.0" }
@@ -42,7 +42,7 @@ dependencies = [
 [project.optional-dependencies]
 desktop = ["pywebview>=5.4"]
 dev = ["pyinstaller>=6.0.0", "pywebview>=5.4"]
-tui = ["jiuwenswarm-tui==0.1.11"]
+tui = ["jiuwenswarm-tui==0.2.0"]
 distribute = ["openjiuwen[postgres,zmq]"]
 shell-ast = [
     "tree-sitter>=0.25.0,<0.26.0",

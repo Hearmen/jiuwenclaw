@@ -42,30 +42,28 @@ class TestSignalDetector:
         assert "Command failed" in signals[0].excerpt
 
     @staticmethod
-    def test_detect_user_correction_chinese():
-        """Test detecting user correction signals in Chinese."""
+    def test_detect_no_user_correction():
+        """Test that user correction signals are not detected (feature removed)."""
         detector = SignalDetector()
         messages = [
             {"role": "assistant", "content": "Here's the result"},
             {"role": "user", "content": "不对，应该这样做"},
         ]
         signals = detector.detect(messages)
-        assert len(signals) == 1
-        assert signals[0].signal_type == "user_correction"
-        assert signals[0].section == "Examples"
+        # User correction detection is no longer supported
+        assert len(signals) == 0
 
     @staticmethod
-    def test_detect_user_correction_english():
-        """Test detecting user correction signals in English."""
+    def test_detect_no_user_correction_english():
+        """Test that user correction signals are not detected (feature removed)."""
         detector = SignalDetector()
         messages = [
             {"role": "assistant", "content": "Here's the result"},
             {"role": "user", "content": "That's wrong, you should use method X"},
         ]
         signals = detector.detect(messages)
-        assert len(signals) == 1
-        assert signals[0].signal_type == "user_correction"
-        assert signals[0].section == "Examples"
+        # User correction detection is no longer supported
+        assert len(signals) == 0
 
     @staticmethod
     def test_detect_multiple_signals():
@@ -78,7 +76,6 @@ class TestSignalDetector:
                 "content": "Error: Connection timeout",
                 "name": "http.request",
             },
-            {"role": "user", "content": "不对，重新来"},
             {
                 "role": "tool",
                 "content": "TypeError: NoneType has no attribute",
@@ -86,7 +83,8 @@ class TestSignalDetector:
             },
         ]
         signals = detector.detect(messages)
-        assert len(signals) >= 2
+        # Two execution failure signals should be detected
+        assert len(signals) == 2
 
     @staticmethod
     def test_deduplicate_signals():
@@ -208,6 +206,6 @@ class TestSignalDetector:
         assert len(signals) == 1
         signal_dict = signals[0].to_dict()
         assert "type" in signal_dict
-        assert "evolution_type" in signal_dict
         assert "section" in signal_dict
         assert "excerpt" in signal_dict
+        assert "skill_name" in signal_dict
