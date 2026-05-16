@@ -10,6 +10,32 @@ const DEFAULT_TEAMSKILLS_HUB_BASE_URL = "https://teamskills.openjiuwen.com";
 
 type LoadState = "idle" | "loading" | "success" | "error";
 
+const avatarColors = [
+  "bg-red-500",
+  "bg-orange-500",
+  "bg-amber-500",
+  "bg-yellow-500",
+  "bg-lime-500",
+  "bg-green-500",
+  "bg-emerald-500",
+  "bg-teal-500",
+  "bg-cyan-500",
+  "bg-sky-500",
+  "bg-blue-500",
+  "bg-indigo-500",
+  "bg-violet-500",
+  "bg-purple-500",
+  "bg-fuchsia-500",
+  "bg-pink-500",
+  "bg-rose-500",
+];
+
+const getSkillAvatar = (name: string) => {
+  const firstChar = name.charAt(0).toUpperCase();
+  const colorIndex = name.charCodeAt(0) % avatarColors.length;
+  return { firstChar, color: avatarColors[colorIndex] };
+};
+
 type TeamSkillsHubSkillItem = {
   asset_id: string;
   name: string;
@@ -26,6 +52,8 @@ interface TeamSkillsHubModalProps {
   /** 外部传入的搜索关键词 */
   externalSearchQuery?: string;
   installedSkillNames?: ReadonlySet<string>;
+  /** 视图模式：列表或平铺 */
+  viewMode?: "list" | "grid";
   onClose: () => void;
   onInstalled?: (skillName: string) => void | Promise<void>;
 }
@@ -36,6 +64,7 @@ export function TeamSkillsHubModal({
   sessionId,
   externalSearchQuery,
   installedSkillNames,
+  viewMode = "list",
   onClose,
   onInstalled,
 }: TeamSkillsHubModalProps) {
@@ -88,11 +117,38 @@ export function TeamSkillsHubModal({
   useEffect(() => {
     if (embedded && externalSearchQuery !== undefined) {
       setQuery(externalSearchQuery);
-      if (externalSearchQuery.trim()) {
-        handleSearch();
-      }
     }
   }, [externalSearchQuery, embedded]);
+
+  useEffect(() => {
+    if (embedded && query.trim()) {
+      const q = query.trim();
+      setLoadState("loading");
+      setMessage(null);
+      void (async () => {
+        try {
+          const data = await webRequest<{
+            success: boolean;
+            detail?: string;
+            skills?: TeamSkillsHubSkillItem[];
+          }>("skills.teamskillshub.search", withSession({ q, limit: 50 }));
+          if (!data.success) {
+            throw new Error(data.detail || t("skills.teamskillshub.errors.searchFailed"));
+          }
+          setResults(data.skills || []);
+          setLoadState("success");
+        } catch (error) {
+          console.error(error);
+          setResults([]);
+          setLoadState("error");
+          showMessage(
+            "error",
+            error instanceof Error ? error.message : t("skills.teamskillshub.errors.searchFailed")
+          );
+        }
+      })();
+    }
+  }, [query, embedded, showMessage, t, withSession]);
 
   useEffect(() => {
     if (!open) return;
@@ -194,22 +250,34 @@ export function TeamSkillsHubModal({
   if (embedded) {
     return (
       <div className="flex flex-col h-full">
-        <div className="p-4 overflow-auto flex-1 min-h-0">
-          {message && (
-            <div
-              className={`mb-3 px-3 py-2.5 rounded-lg text-sm leading-snug ${
-                message.type === "success"
-                  ? "border border-[color:var(--border-ok)] bg-ok-subtle text-ok"
-                  : "border border-danger/40 bg-danger/10 text-danger"
-              }`}
-            >
+        <div className="overflow-auto flex-1 min-h-0">
+          {message && message.type === "success" && (
+            <div className="fixed top-4 right-4 z-[9999] rounded-[4px] text-sm text-black shadow-lg flex items-center gap-3 px-4" style={{ backgroundColor: "#d5f2dc", width: "564px", height: "40px" }}>
+              <span className="w-4 h-4 rounded-full bg-[#1a991d] flex items-center justify-center flex-shrink-0">
+                <svg className="w-3 h-3 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M5 13l4 4L19 7" />
+                </svg>
+              </span>
+              {message.text.replace("√", "")}
+              <button
+                type="button"
+                onClick={() => showMessage("success", "")}
+                className="ml-auto w-6 h-6 flex items-center justify-center hover:bg-white/30 rounded-full transition-colors"
+              >
+                <svg className="w-4 h-4 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
+            </div>
+          )}
+          {message && message.type === "error" && (
+            <div className="mb-3 px-3 py-2.5 rounded-lg text-sm leading-snug border border-danger/40 bg-danger/10 text-danger">
               {message.text}
             </div>
           )}
 
           {loadState === "success" && (
-            <div className="mt-4 flex-1 min-h-0 overflow-y-auto">
-              <div className="space-y-3">
+            <div className={`mt-4 flex-1 min-h-0 overflow-y-auto ${viewMode === "grid" ? "flex flex-wrap gap-4 content-start" : "space-y-3"}`}>
                 {results.length === 0 ? (
                   <div className="text-sm text-text-muted">{t("skills.teamskillshub.noResults")}</div>
                 ) : (
@@ -217,47 +285,102 @@ export function TeamSkillsHubModal({
                     const isInstalled =
                       installedNames.has(item.name) || (installedSkillNames?.has(item.name) ?? false);
                     const isInstalling = installingAssetId === item.asset_id;
+                    const avatar = getSkillAvatar(item.display_name || item.name);
                     return (
                       <div
                         key={item.asset_id}
-                        className="p-4 rounded-lg border border-border bg-panel flex items-start justify-between gap-4"
+                        className={`p-4 rounded-lg border border-border bg-panel ${viewMode === "grid" ? "flex flex-col" : "flex items-start justify-between gap-4"}`}
+                        style={viewMode === "grid" ? { width: "496px", height: "168px", flexShrink: 0 } : undefined}
                       >
-                        <div className="min-w-0 flex-1">
-                          <div className="text-base font-semibold text-text-strong truncate">
-                            {item.name}
-                          </div>
-                          <div className="text-sm text-text-muted mt-1 line-clamp-3">
-                            {item.summary || t("skills.noDescription")}
-                          </div>
-                        </div>
-                        <div className="flex flex-col items-end gap-2 flex-shrink-0">
-                          {isInstalled ? (
-                            <span className="px-4 h-[28px] flex items-center rounded-2xl text-sm whitespace-nowrap border border-[color:var(--border-ok)] bg-ok-subtle text-ok">
-                              {t("skills.status.installed")}
-                            </span>
-                          ) : (
-                            <button
-                              type="button"
-                              onClick={() => void handleInstall(item)}
-                              disabled={isInstalling}
-                              className={`w-[76px] h-[28px] rounded-[24px] text-sm text-[#191919] border border-[#191919] hover:bg-secondary/50 transition-colors whitespace-nowrap ${
-                                isInstalling
-                                  ? "text-text-muted cursor-not-allowed"
-                                  : "text-text"
-                              }`}
-                            >
-                              {isInstalling
-                                ? t("skills.teamskillshub.installing")
-                                : t("skills.actions.install")}
-                            </button>
-                          )}
-                        </div>
+                        {viewMode === "list" ? (
+                          <>
+                            <div className="flex items-center gap-3 min-w-0 flex-1">
+                              <div className={`w-10 h-10 rounded-lg ${avatar.color} flex items-center justify-center flex-shrink-0 text-white font-semibold`}>
+                                {avatar.firstChar}
+                              </div>
+                              <div className="min-w-0 flex-1">
+                                <div className="text-base font-semibold text-text-strong truncate">
+                                  {item.display_name || item.name}
+                                </div>
+                                <div className="text-sm text-text-muted mt-1 line-clamp-3">
+                                  {item.summary || t("skills.noDescription")}
+                                </div>
+                              </div>
+                            </div>
+                            <div className="flex flex-col items-end gap-2 flex-shrink-0">
+                              {isInstalled ? (
+                                <span className="px-4 h-[28px] flex items-center rounded-2xl text-sm whitespace-nowrap border border-[color:var(--border-ok)] bg-ok-subtle text-ok">
+                                  {t("skills.status.installed")}
+                                </span>
+                              ) : (
+                                <button
+                                  type="button"
+                                  onClick={() => void handleInstall(item)}
+                                  disabled={isInstalling}
+                                  className={`w-[76px] h-[28px] rounded-[24px] text-sm text-[#191919] border border-[#191919] hover:bg-secondary/50 transition-colors whitespace-nowrap ${
+                                    isInstalling
+                                      ? "text-text-muted cursor-not-allowed"
+                                      : "text-text"
+                                  }`}
+                                >
+                                  {isInstalling
+                                    ? t("skills.teamskillshub.installing")
+                                    : t("skills.actions.install")}
+                                </button>
+                              )}
+                            </div>
+                          </>
+                        ) : (
+                          <>
+                            <div className="flex items-start gap-3 flex-shrink-0">
+                              <div className={`w-10 h-10 rounded-lg ${avatar.color} flex items-center justify-center flex-shrink-0 text-white font-semibold text-sm`}>
+                                {avatar.firstChar}
+                              </div>
+                              <div className="min-w-0 flex-1">
+                                <div className="text-sm font-semibold text-text-strong truncate">
+                                  {item.display_name || item.name}
+                                </div>
+                                <div className="text-xs text-text-muted mt-1 line-clamp-2">
+                                  {item.summary || t("skills.noDescription")}
+                                </div>
+                              </div>
+                            </div>
+                            <div className="flex flex-wrap gap-1.5 mt-2 flex-shrink-0 text-xs text-text-muted">
+                              <span className="px-2 py-0.5 rounded-full bg-secondary border border-border truncate">
+                                {t("skills.versionLabel")}: {item.version || "latest"}
+                              </span>
+                            </div>
+                            <div className="flex items-center mt-auto pt-2 gap-2 flex-shrink-0" style={{ width: "100%" }}>
+                              <div className="flex gap-1.5 flex-1">
+                              </div>
+                              <div className="flex-shrink-0 ml-auto">
+                                {isInstalled ? (
+                                  <span className="px-4 h-[28px] flex items-center rounded-2xl text-sm whitespace-nowrap border border-[color:var(--border-ok)] bg-ok-subtle text-ok">
+                                    {t("skills.status.installed")}
+                                  </span>
+                                ) : (
+                                  <button
+                                    type="button"
+                                    onClick={() => void handleInstall(item)}
+                                    disabled={isInstalling}
+                                    className={`w-[76px] h-[28px] rounded-[24px] text-sm text-[#191919] border border-[#191919] hover:bg-secondary/50 transition-colors whitespace-nowrap ${
+                                      isInstalling
+                                        ? "text-text-muted cursor-not-allowed"
+                                        : "text-text"
+                                    }`}
+                                  >
+                                    {isInstalling ? t("skills.teamskillshub.installing") : t("skills.actions.install")}
+                                  </button>
+                                )}
+                              </div>
+                            </div>
+                          </>
+                        )}
                       </div>
                     );
                   })
                 )}
               </div>
-            </div>
           )}
         </div>
       </div>
@@ -298,14 +421,27 @@ export function TeamSkillsHubModal({
         </div>
 
         <div className="p-5 overflow-auto flex-1 min-h-0">
-          {message && (
-            <div
-              className={`mb-3 px-3 py-2.5 rounded-lg text-sm leading-snug ${
-                message.type === "success"
-                  ? "border border-[color:var(--border-ok)] bg-ok-subtle text-ok"
-                  : "border border-danger/40 bg-danger/10 text-danger"
-              }`}
-            >
+          {message && message.type === "success" && (
+            <div className="fixed top-4 right-4 z-[9999] rounded-[4px] text-sm text-black shadow-lg flex items-center gap-3 px-4" style={{ backgroundColor: "#d5f2dc", width: "564px", height: "40px" }}>
+              <span className="w-4 h-4 rounded-full bg-[#1a991d] flex items-center justify-center flex-shrink-0">
+                <svg className="w-3 h-3 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M5 13l4 4L19 7" />
+                </svg>
+              </span>
+              {message.text.replace("√", "")}
+              <button
+                type="button"
+                onClick={() => showMessage("success", "")}
+                className="ml-auto w-6 h-6 flex items-center justify-center hover:bg-white/30 rounded-full transition-colors"
+              >
+                <svg className="w-4 h-4 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
+            </div>
+          )}
+          {message && message.type === "error" && (
+            <div className="mb-3 px-3 py-2.5 rounded-lg text-sm leading-snug border border-danger/40 bg-danger/10 text-danger">
               {message.text}
             </div>
           )}
@@ -342,20 +478,26 @@ export function TeamSkillsHubModal({
                     const isInstalled =
                       installedNames.has(item.name) || (installedSkillNames?.has(item.name) ?? false);
                     const isInstalling = installingAssetId === item.asset_id;
+                    const avatar = getSkillAvatar(item.display_name || item.name);
                     return (
                       <div
                         key={item.asset_id}
-                        className="p-3 rounded-md border border-border bg-secondary flex items-start justify-between gap-3"
+                        className="p-4 rounded-lg border border-border bg-panel flex items-start justify-between gap-4"
                       >
-                        <div className="min-w-0 flex-1">
-                          <div className="text-sm text-text font-medium truncate">
-                            {item.display_name || item.name}
+                        <div className="flex items-center gap-3 min-w-0 flex-1">
+                          <div className={`w-10 h-10 rounded-lg ${avatar.color} flex items-center justify-center flex-shrink-0 text-white font-semibold`}>
+                            {avatar.firstChar}
                           </div>
-                          <div className="text-xs text-text-muted mt-1 line-clamp-2">
-                            {item.summary || t("skills.noDescription")}
-                          </div>
-                          <div className="text-[11px] text-text-muted mt-2">
-                            {t("skills.versionLabel")}: {item.version || "latest"}
+                          <div className="min-w-0 flex-1">
+                            <div className="text-base font-semibold text-text-strong truncate">
+                              {item.display_name || item.name}
+                            </div>
+                            <div className="text-sm text-text-muted mt-1 line-clamp-3">
+                              {item.summary || t("skills.noDescription")}
+                            </div>
+                            <div className="text-xs text-text-muted mt-1">
+                              {t("skills.versionLabel")}: {item.version || "latest"}
+                            </div>
                           </div>
                         </div>
                         <div className="flex-shrink-0">

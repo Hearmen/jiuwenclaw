@@ -6,9 +6,11 @@
 
 import { useMemo } from 'react';
 import { Message, ToolExecution } from '../../types';
-import { MessageItem } from './MessageItem';
+import { MessageItem, getMessageActor } from './MessageItem';
 import { ToolGroupDisplay } from './ToolGroupDisplay';
-import { useChatStore } from '../../stores';
+import { TeamEventGroupDisplay } from './TeamEventGroupDisplay';
+import { useChatStore, useSessionStore } from '../../stores';
+import { isTeamMemberCollaborationMessage } from './teamEventUtils';
 
 interface MessageListProps {
   messages: Message[];
@@ -34,12 +36,19 @@ type RenderItem =
   | {
       type: 'message';
       key: string;
+      showAvatar: boolean;
       message: Message;
     }
   | {
       type: 'toolGroup';
       key: string;
+      showAvatar: boolean;
       executions: ToolExecution[];
+    }
+  | {
+      type: 'teamEventGroup';
+      key: string;
+      messages: Message[];
     };
 
 /**
@@ -90,42 +99,140 @@ function buildTimelineItems(
   return [...messageItems, ...executionItems].sort(compareTimelineItems);
 }
 
-function buildRenderItems(items: TimelineItem[]): RenderItem[] {
-  const renderItems: RenderItem[] = [];
-  let toolBuf: ToolExecution[] = [];
+function isFinalMessage(message: Message): boolean {
+  if (message.role === 'assistant' && !message.isStreaming) {
+    return true;
+  }
+  if (message.id.startsWith('team-leader-')) {
+    return typeof message.content === 'string' && message.content.startsWith('team.leader:');
+  }
+  return false;
+}
 
-  const flushTools = () => {
-    if (toolBuf.length === 0) {
-      return;
+function buildRenderItems(items: TimelineItem[], isTeamMode: boolean): RenderItem[] {
+  const renderItems: RenderItem[] = [];
+  let currentSegment = {
+    toolExecutions: [] as ToolExecution[],
+    teamMessages: [] as { key: string; message: Message }[],
+    messages: [] as { key: string; message: Message }[],
+  };
+
+  const flushCurrentSegment = () => {
+    if (currentSegment.toolExecutions.length > 0) {
+      renderItems.push({
+        type: 'toolGroup',
+        key: `tool-group-${currentSegment.toolExecutions[0].toolCallId}`,
+        showAvatar: true,
+        executions: currentSegment.toolExecutions,
+      });
+      currentSegment.toolExecutions = [];
     }
-    const first = toolBuf[0];
-    renderItems.push({
-      type: 'toolGroup',
-      key: `tool-group-${first.toolCallId}`,
-      executions: toolBuf,
-    });
-    toolBuf = [];
+    if (currentSegment.teamMessages.length > 0) {
+      renderItems.push({
+        type: 'teamEventGroup',
+        key: `team-event-group-${currentSegment.teamMessages[0].key}`,
+        messages: currentSegment.teamMessages.map((item) => item.message),
+      });
+      currentSegment.teamMessages = [];
+    }
+    for (const { key, message } of currentSegment.messages) {
+      renderItems.push({
+        type: 'message',
+        key,
+        showAvatar: true,
+        message,
+      });
+    }
+    currentSegment.messages = [];
+  };
+
+  const flushSegmentIfPresent = () => {
+    if (
+      currentSegment.toolExecutions.length > 0 ||
+      currentSegment.teamMessages.length > 0 ||
+      currentSegment.messages.length > 0
+    ) {
+      flushCurrentSegment();
+    }
   };
 
   for (const item of items) {
     if (item.type === 'toolExecution') {
-      toolBuf.push(item.execution);
+      currentSegment.toolExecutions.push(item.execution);
       continue;
     }
-    flushTools();
-    renderItems.push({
-      type: 'message',
-      key: item.key,
-      message: item.message,
-    });
+
+    if (isTeamMemberCollaborationMessage(item.message)) {
+      currentSegment.teamMessages.push({ key: item.key, message: item.message });
+      continue;
+    }
+
+    if (item.message.role === 'user') {
+      flushSegmentIfPresent();
+      renderItems.push({
+        type: 'message',
+        key: item.key,
+        showAvatar: true,
+        message: item.message,
+      });
+      continue;
+    }
+
+    if (isFinalMessage(item.message)) {
+      flushSegmentIfPresent();
+      renderItems.push({
+        type: 'message',
+        key: item.key,
+        showAvatar: true,
+        message: item.message,
+      });
+      continue;
+    }
+
+    currentSegment.messages.push({ key: item.key, message: item.message });
   }
 
-  flushTools();
+  flushSegmentIfPresent();
+
+  if (!isTeamMode) {
+    for (const renderItem of renderItems) {
+      if (renderItem.type === 'toolGroup') {
+        renderItem.showAvatar = false;
+      }
+    }
+    return renderItems;
+  }
+
+  let clusterBlockActive = false;
+  for (const renderItem of renderItems) {
+    if (renderItem.type === 'toolGroup') {
+      renderItem.showAvatar = !clusterBlockActive;
+      clusterBlockActive = true;
+      continue;
+    }
+
+    if (renderItem.type === 'teamEventGroup') {
+      clusterBlockActive = true;
+      continue;
+    }
+
+    const actor = getMessageActor(renderItem.message);
+    if (actor === 'team_leader') {
+      renderItem.showAvatar = !clusterBlockActive;
+      clusterBlockActive = true;
+      continue;
+    }
+
+    clusterBlockActive = false;
+  }
+
   return renderItems;
 }
 
 export function MessageList({ messages }: MessageListProps) {
   const { toolExecutions, toolExecutionOrder } = useChatStore();
+  const { mode } = useSessionStore();
+  const isTeamMode = mode === 'team';
   const executions = useMemo(
     () => toolExecutionOrder
       .map((toolCallId) => toolExecutions.get(toolCallId))
@@ -134,8 +241,8 @@ export function MessageList({ messages }: MessageListProps) {
   );
 
   const renderItems = useMemo(
-    () => buildRenderItems(buildTimelineItems(messages, executions)),
-    [messages, executions]
+    () => buildRenderItems(buildTimelineItems(messages, executions), isTeamMode),
+    [messages, executions, isTeamMode]
   );
 
   if (renderItems.length === 0) {
@@ -150,13 +257,24 @@ export function MessageList({ messages }: MessageListProps) {
             <MessageItem
               key={item.key}
               message={item.message}
+              showAvatar={item.showAvatar}
+            />
+          );
+        }
+        if (item.type === 'toolGroup') {
+          return (
+            <ToolGroupDisplay
+              key={item.key}
+              executions={item.executions}
+              showAvatar={item.showAvatar}
+              teamLayout={isTeamMode}
             />
           );
         }
         return (
-          <ToolGroupDisplay
+          <TeamEventGroupDisplay
             key={item.key}
-            executions={item.executions}
+            messages={item.messages}
           />
         );
       })}

@@ -1,14 +1,14 @@
-import { useState, useRef, useCallback, KeyboardEvent, PointerEvent as ReactPointerEvent, useEffect } from 'react';
+// import { useState, useRef, useCallback, KeyboardEvent, PointerEvent as ReactPointerEvent, useEffect } from 'react';
+import { useState, useRef, useCallback, KeyboardEvent, useEffect } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useSpeechRecognition } from '../../hooks';
-import { stopAllTts } from '../../utils';
+// import { stopAllTts } from '../../utils';
 import { useChatStore, useSessionStore } from '../../stores';
 import { AgentMode } from '../../types';
 import clsx from 'clsx';
 import { getEvolutionPillLabel } from './evolution-status';
 import sendIcon from '../../assets/send.svg';
 import sendActiveIcon from '../../assets/send_active.svg';
-import clusterIcon from '../../assets/cluster.svg';
 
 interface InputAreaProps {
   onSubmit: (content: string) => void;
@@ -16,6 +16,17 @@ interface InputAreaProps {
   onSwitchMode: (mode: AgentMode) => void;
   isProcessing: boolean;
   onNewSession: () => Promise<void>;
+}
+
+function ClusterIcon({ className }: { className?: string }) {
+  return (
+    <svg className={className} viewBox="0 0 16 16" fill="currentColor" aria-hidden="true">
+      <path
+        fillRule="nonzero"
+        d="M13.794 3.53268L9.37399 0.986016C8.62732 0.559349 7.70732 0.559349 6.96065 0.986016L2.54065 3.53268C1.79398 3.95935 1.33398 4.75935 1.33398 5.61935L1.33398 10.7127C1.33398 11.5727 1.79398 12.3727 2.54065 12.7993L6.96065 15.346C7.33398 15.5593 7.74732 15.666 8.16732 15.666C8.58732 15.666 9.00065 15.5593 9.37399 15.346L13.794 12.7993C14.5407 12.3727 15.0007 11.5727 15.0007 10.7127L15.0007 5.61935C15.0007 4.75935 14.5407 3.95935 13.794 3.53268ZM14.0007 10.7127C14.0007 11.2127 13.7273 11.6793 13.294 11.9327L8.87399 14.4793C8.43398 14.7327 7.89398 14.7327 7.46065 14.4793L3.04065 11.9327C2.60732 11.6793 2.33398 11.2127 2.33398 10.7127L2.33398 5.61935C2.33398 5.11935 2.60732 4.65268 3.04065 4.39935L7.46065 1.85268C7.68065 1.72602 7.92065 1.66602 8.16732 1.66602C8.41398 1.66602 8.65398 1.72602 8.87399 1.85268L13.294 4.39935C13.7273 4.65268 14.0007 5.11935 14.0007 5.61935L14.0007 10.7127ZM11.8807 7.86602L10.4007 7.01268L10.4007 5.29935C10.4007 5.11935 10.3073 4.95268 10.1473 4.86602L8.41398 3.86602C8.26065 3.77935 8.06732 3.77935 7.91398 3.86602L6.18065 4.86602C6.02732 4.95268 5.92732 5.11935 5.92732 5.29935L5.92732 7.01268L4.44732 7.86602C4.29398 7.95268 4.19398 8.11935 4.19398 8.29935L4.19398 10.2993C4.19398 10.4793 4.28732 10.646 4.44732 10.7327L6.18065 11.7327C6.26065 11.7793 6.34732 11.7993 6.43398 11.7993C6.52065 11.7993 6.60732 11.7793 6.68732 11.7327L8.16732 10.8793L9.64732 11.7327C9.72732 11.7793 9.81398 11.7993 9.90065 11.7993C9.98732 11.7993 10.074 11.7793 10.154 11.7327L11.8873 10.7327C12.0407 10.646 12.1407 10.4793 12.1407 10.2993L12.1407 8.29935C12.1407 8.11935 12.0407 7.95268 11.8807 7.86602ZM6.93398 5.58602L8.16732 4.87268L9.40065 5.58602L9.40065 7.00602L8.16732 7.71935L6.93398 7.00602L6.93398 5.58602ZM6.43398 10.7193L5.20065 10.006L5.20065 8.58602L6.43398 7.87268L7.66732 8.58602L7.66732 10.006L6.43398 10.7193ZM11.1273 10.006L9.89398 10.7193L8.66065 10.006L8.66065 8.58602L9.89398 7.87268L11.1273 8.58602L11.1273 10.006Z"
+      />
+    </svg>
+  );
 }
 
 export function InputArea({
@@ -33,7 +44,7 @@ export function InputArea({
   const modeMenuRef = useRef<HTMLDivElement>(null);
   const autoSendTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const isComposingRef = useRef(false);
-  const activePointerIdRef = useRef<number | null>(null);
+  // const activePointerIdRef = useRef<number | null>(null);
   const isVoicePressingRef = useRef(false);
   const { t } = useTranslation();
   const {
@@ -64,7 +75,7 @@ export function InputArea({
       </svg>
     )},
     { value: 'team', label: t('chat.modeAgentTeam'), icon: (
-      <img src={clusterIcon} className="w-4 h-4" alt="" aria-hidden="true" />
+      <ClusterIcon className="w-4 h-4" />
     )},
     { value: 'auto_harness', label: t('chat.modeAutoHarness'), icon: (
       <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}>
@@ -76,9 +87,9 @@ export function InputArea({
   const {
     isListening,
     interimTranscript,
-    startListening,
+    // startListening,
     stopListening,
-    isSupported: speechSupported,
+    // isSupported: speechSupported,
   } = useSpeechRecognition({
     language: 'cmn-Hans-CN',
     continuous: true,
@@ -130,21 +141,21 @@ export function InputArea({
     };
   }, []);
 
-  useEffect(() => {
-    if (!isModeMenuOpen) return;
+  // useEffect(() => {
+  //   if (!isModeMenuOpen) return;
 
-    const handlePointerDown = (event: PointerEvent) => {
-      if (!modeMenuRef.current?.contains(event.target as Node)) {
-        setIsModeMenuOpen(false);
-      }
-    };
+  //   const handlePointerDown = (event: PointerEvent) => {
+  //     if (!modeMenuRef.current?.contains(event.target as Node)) {
+  //       setIsModeMenuOpen(false);
+  //     }
+  //   };
 
-    document.addEventListener('pointerdown', handlePointerDown);
+  //   document.addEventListener('pointerdown', handlePointerDown);
 
-    return () => {
-      document.removeEventListener('pointerdown', handlePointerDown);
-    };
-  }, [isModeMenuOpen]);
+  //   return () => {
+  //     document.removeEventListener('pointerdown', handlePointerDown);
+  //   };
+  // }, [isModeMenuOpen]);
 
   const handleSubmit = useCallback(() => {
     const trimmed = (inputValue + pendingVoiceText).trim();
@@ -190,57 +201,57 @@ export function InputArea({
     }
   }, []);
 
-  const handleVoiceStart = useCallback(() => {
-    if (isListening) return;
-    stopAllTts();
-    startListening();
-  }, [isListening, startListening]);
+  // const handleVoiceStart = useCallback(() => {
+  //   if (isListening) return;
+  //   stopAllTts();
+  //   startListening();
+  // }, [isListening, startListening]);
 
-  const handleVoiceEnd = useCallback(() => {
-    if (!isListening) return;
-    stopListening();
-  }, [isListening, stopListening]);
+  // const handleVoiceEnd = useCallback(() => {
+  //   if (!isListening) return;
+  //   stopListening();
+  // }, [isListening, stopListening]);
 
-  const handleVoicePointerDown = useCallback(
-    (e: ReactPointerEvent<HTMLButtonElement>) => {
-      // 仅响应主按钮按压，避免右键/多指导致状态抖动
-      if (e.pointerType === 'mouse' && e.button !== 0) return;
-      if (activePointerIdRef.current !== null) return;
-      e.preventDefault();
-      activePointerIdRef.current = e.pointerId;
-      isVoicePressingRef.current = true;
-      e.currentTarget.setPointerCapture(e.pointerId);
-      handleVoiceStart();
-    },
-    [handleVoiceStart]
-  );
+  // const handleVoicePointerDown = useCallback(
+  //   (e: ReactPointerEvent<HTMLButtonElement>) => {
+  //     // 仅响应主按钮按压，避免右键/多指导致状态抖动
+  //     if (e.pointerType === 'mouse' && e.button !== 0) return;
+  //     if (activePointerIdRef.current !== null) return;
+  //     e.preventDefault();
+  //     activePointerIdRef.current = e.pointerId;
+  //     isVoicePressingRef.current = true;
+  //     e.currentTarget.setPointerCapture(e.pointerId);
+  //     handleVoiceStart();
+  //   },
+  //   [handleVoiceStart]
+  // );
 
-  const handleVoicePointerUp = useCallback(
-    (e: ReactPointerEvent<HTMLButtonElement>) => {
-      if (activePointerIdRef.current !== e.pointerId) return;
-      e.preventDefault();
-      activePointerIdRef.current = null;
-      isVoicePressingRef.current = false;
-      if (e.currentTarget.hasPointerCapture(e.pointerId)) {
-        e.currentTarget.releasePointerCapture(e.pointerId);
-      }
-      handleVoiceEnd();
-    },
-    [handleVoiceEnd]
-  );
+  // const handleVoicePointerUp = useCallback(
+  //   (e: ReactPointerEvent<HTMLButtonElement>) => {
+  //     if (activePointerIdRef.current !== e.pointerId) return;
+  //     e.preventDefault();
+  //     activePointerIdRef.current = null;
+  //     isVoicePressingRef.current = false;
+  //     if (e.currentTarget.hasPointerCapture(e.pointerId)) {
+  //       e.currentTarget.releasePointerCapture(e.pointerId);
+  //     }
+  //     handleVoiceEnd();
+  //   },
+  //   [handleVoiceEnd]
+  // );
 
-  const handleVoicePointerCancel = useCallback(
-    (e: ReactPointerEvent<HTMLButtonElement>) => {
-      if (activePointerIdRef.current !== e.pointerId) return;
-      activePointerIdRef.current = null;
-      isVoicePressingRef.current = false;
-      if (e.currentTarget.hasPointerCapture(e.pointerId)) {
-        e.currentTarget.releasePointerCapture(e.pointerId);
-      }
-      handleVoiceEnd();
-    },
-    [handleVoiceEnd]
-  );
+  // const handleVoicePointerCancel = useCallback(
+  //   (e: ReactPointerEvent<HTMLButtonElement>) => {
+  //     if (activePointerIdRef.current !== e.pointerId) return;
+  //     activePointerIdRef.current = null;
+  //     isVoicePressingRef.current = false;
+  //     if (e.currentTarget.hasPointerCapture(e.pointerId)) {
+  //       e.currentTarget.releasePointerCapture(e.pointerId);
+  //     }
+  //     handleVoiceEnd();
+  //   },
+  //   [handleVoiceEnd]
+  // );
 
   const handleNewSession = useCallback(async () => {
     if (isListening || (isInterruptible && !isTeamMode)) return;
@@ -456,7 +467,7 @@ export function InputArea({
             </svg>
           </button>
 
-          {speechSupported && (
+          {/* {speechSupported && (
             <button
               type="button"
               onPointerDown={handleVoicePointerDown}
@@ -478,7 +489,7 @@ export function InputArea({
                 </svg>
               )}
             </button>
-          )}
+          )} */}
 
           <ModelSelector />
 

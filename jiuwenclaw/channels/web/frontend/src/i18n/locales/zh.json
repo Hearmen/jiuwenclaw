@@ -88,7 +88,7 @@
     "pausedWithTask": "已暂停: {{task}}..."
   },
   "chat": {
-    "placeholder": "Enter 发送，Shift+Enter 换行，按住语音键开始录音",
+    "placeholder": "Enter 发送，Shift+Enter 换行",
     "placeholderProcessing": "处理中，输入新指令可中断...",
     "placeholderProcessingQueue": "处理中，输入新指令将加入等待队列...",
     "placeholderTeamMode": "集群模式，输入新指令会并行执行...",
@@ -342,41 +342,17 @@
   "sourceManager": {
     "closeAria": "关闭源管理弹窗",
     "title": "源管理",
-    "subtitle": "添加、删除或启用/禁用技能源",
-    "addTitle": "添加源",
-    "add": "添加",
-    "hint": "请提供规范的源地址（包含skills目录）；如果源地址为单一skill，源名称需要与SKILL.MD中的name一致。",
-    "configuredCount": "已配置源（{{count}} 个）",
-    "empty": "暂无已配置源",
+    "subtitle": "选择在线搜索源并配置",
+    "selectSource": "选择在线搜索源",
+    "skillnetDesc": "开源技能库",
+    "clawhubDesc": "企业技能库",
+    "skillnetInfo": "SkillNet 在线搜索",
+    "skillnetInfoDesc": "SkillNet 是一个开源的技能库，无需额外配置即可使用。",
     "updatedAt": "更新于 {{time}}",
-    "placeholders": {
-      "name": "源名称",
-      "url": "Git 仓库地址（https://...）"
-    },
     "status": {
+      "label": "状态",
       "enabled": "已启用",
       "disabled": "已禁用"
-    },
-    "actions": {
-      "enable": "启用",
-      "disable": "禁用",
-      "delete": "删除"
-    },
-    "messages": {
-      "fillRequired": "请先填写源名称和仓库 URL",
-      "addFailed": "添加源失败",
-      "addFailedCheck": "添加源失败，请检查名称或 URL",
-      "added": "已添加源：{{name}}（默认禁用）",
-      "confirmDelete": "确认删除源 {{name}} ?",
-      "removeFailed": "删除源失败",
-      "removeFailedRetry": "删除源失败，请稍后重试",
-      "removed": "已删除源：{{name}}",
-      "toggleFailed": "切换源状态失败",
-      "enabled": "已启用源：{{name}}",
-      "disabled": "已禁用源：{{name}}",
-      "enableFailed": "启用源失败，请检查网络或仓库地址",
-      "disableFailed": "禁用源失败，请稍后重试",
-      "loadFailed": "源列表加载失败，请重试"
     }
   },
   "channels": {
@@ -814,6 +790,13 @@
     "marketplaceTabs": {
       "builtin": "预置"
     },
+    "swarmskills": {
+      "title": "SwarmSkills在线搜索",
+      "searchPlaceholder": "输入关键词搜索SwarmSkills"
+    },
+    "onlineSearch": {
+      "title": "Skills在线搜索"
+    },
     "actions": {
       "install": "安装",
       "installing": "安装中...",
@@ -879,7 +862,7 @@
       }
     },
     "skillNet": {
-      "title": "SkillNet 在线搜索",
+      "title": "SkillNet",
       "titleRepoLinkText": "SkillNet 开源仓库",
       "titleRepoAria": "SkillNet 官方 GitHub 仓库",
       "search": "搜索",
@@ -941,14 +924,14 @@
       }
     },
     "clawhub": {
-      "title": "ClawHub 在线搜索",
+      "title": "ClawHub",
       "search": "搜索",
       "searchPlaceholder": "输入关键词搜索技能",
       "noResults": "未找到相关技能，可换个关键词再试。",
       "install": "安装",
       "installing": "安装中…",
       "updatedAt": "更新于 {{date}}",
-      "configTitle": "配置 ClawHub CLI Token",
+      "configTitle": "配置",
       "configDescription": "请输入从 ClawHub 平台获取的 CLI Token，用于访问 ClawHub 技能库。",
       "tokenLabel": "CLI Token",
       "tokenPlaceholder": "请输入 ClawHub CLI Token (clh_...)",
@@ -967,7 +950,7 @@
       }
     },
     "teamskillshub": {
-      "title": "TeamSkills 在线检索",
+      "title": "TeamSkills",
       "titleHubLinkText": "TeamSkillsHub",
       "titleHubAria": "TeamSkillsHub 在线市场",
       "search": "搜索",

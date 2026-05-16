@@ -699,18 +699,22 @@ export function useWebSocket(options: UseWebSocketOptions): UseWebSocketReturn {
             m.id.startsWith('team-leader-') &&
             (m as { isStreaming?: boolean }).isStreaming === true
           );
+          const timestamp = payload.timestamp || Date.now();
 
           if (existingMsg) {
-            updateMessage(existingMsg.id, { content, isStreaming: false });
-          } else {
-            const timestamp = payload.timestamp || Date.now();
-            addMessage({
-              id: `team-leader-${Date.now()}`,
-              role: 'system',
+            updateMessage(existingMsg.id, {
               content: `team.leader:${JSON.stringify({ content, timestamp })}`,
+              isStreaming: false,
               timestamp: new Date().toISOString(),
             });
+            return;
           }
+          addMessage({
+            id: `team-leader-${Date.now()}`,
+            role: 'system',
+            content: `team.leader:${JSON.stringify({ content, timestamp })}`,
+            timestamp: new Date().toISOString(),
+          });
           return;
         }
 

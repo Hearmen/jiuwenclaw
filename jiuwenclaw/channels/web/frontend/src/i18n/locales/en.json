@@ -88,7 +88,7 @@
     "pausedWithTask": "Paused: {{task}}..."
   },
   "chat": {
-    "placeholder": "Enter to send, Shift+Enter for new line, hold mic to record",
+    "placeholder": "Enter to send, Shift+Enter for new line",
     "placeholderProcessing": "Processing, enter to interrupt...",
     "placeholderProcessingQueue": "Processing, new input will join the queue...",
     "placeholderTeamMode": "Team mode, new input will run in parallel...",
@@ -342,42 +342,18 @@
   "sourceManager": {
     "closeAria": "Close source manager dialog",
     "title": "Source Manager",
-    "subtitle": "Add, remove, enable, or disable skill sources",
-    "addTitle": "Add source",
-    "add": "Add",
-    "hint": "Please provide a source path containing the skills directory. If the source is a single skill, the source name must match the name in SKILL.MD.",
-    "configuredCount": "Configured sources ({{count}})",
-    "empty": "No configured sources",
+    "subtitle": "Select online search source and configure",
+    "selectSource": "Select Online Search Source",
+    "skillnetDesc": "Open source skill library",
+    "clawhubDesc": "Enterprise skill library",
+    "skillnetInfo": "SkillNet Online Search",
+    "skillnetInfoDesc": "SkillNet is an open source skill library that can be used without additional configuration.",
     "updatedAt": "Updated at {{time}}",
-    "placeholders": {
-      "name": "Source name",
-      "url": "Git repository URL (https://...)"
-    },
     "status": {
+      "label": "Status",
       "enabled": "Enabled",
       "disabled": "Disabled",
       "expired": "Expired"
-    },
-    "actions": {
-      "enable": "Enable",
-      "disable": "Disable",
-      "delete": "Delete"
-    },
-    "messages": {
-      "fillRequired": "Please enter both the source name and repository URL",
-      "addFailed": "Failed to add source",
-      "addFailedCheck": "Failed to add source. Check the name or URL.",
-      "added": "Added source: {{name}} (disabled by default)",
-      "confirmDelete": "Delete source {{name}}?",
-      "removeFailed": "Failed to remove source",
-      "removeFailedRetry": "Failed to remove source. Please try again later.",
-      "removed": "Removed source: {{name}}",
-      "toggleFailed": "Failed to change source status",
-      "enabled": "Enabled source: {{name}}",
-      "disabled": "Disabled source: {{name}}",
-      "enableFailed": "Failed to enable source. Check the network or repository URL.",
-      "disableFailed": "Failed to disable source. Please try again later.",
-      "loadFailed": "Failed to load source list. Please retry."
     }
   },
   "channels": {
@@ -814,6 +790,13 @@
     "marketplaceTabs": {
       "builtin": "Built-in"
     },
+    "swarmskills": {
+      "title": "SwarmSkills Online Search",
+      "searchPlaceholder": "Enter keywords to search SwarmSkills"
+    },
+    "onlineSearch": {
+      "title": "Skills Online Search"
+    },
     "actions": {
       "install": "Install",
       "installing": "Installing...",
@@ -879,7 +862,7 @@
       }
     },
     "skillNet": {
-      "title": "SkillNet Online Search",
+      "title": "SkillNet",
       "titleRepoLinkText": "SkillNet on GitHub",
       "titleRepoAria": "SkillNet repository on GitHub",
       "search": "Search",
@@ -941,14 +924,14 @@
       }
     },
     "clawhub": {
-      "title": "ClawHub Online Search",
+      "title": "ClawHub",
       "search": "Search",
       "searchPlaceholder": "Enter keywords to search skills",
       "noResults": "No matching skills. Try different keywords.",
       "install": "Install",
       "installing": "Installing…",
       "updatedAt": "Updated {{date}}",
-      "configTitle": "Configure ClawHub CLI Token",
+      "configTitle": "Configure",
       "configDescription": "Enter the CLI Token from the ClawHub platform to access the ClawHub skill library.",
       "tokenLabel": "CLI Token",
       "tokenPlaceholder": "Enter ClawHub CLI Token (clh_...)",
@@ -967,7 +950,7 @@
       }
     },
     "teamskillshub": {
-      "title": "TeamSkills Search",
+      "title": "TeamSkills",
       "titleHubLinkText": "TeamSkillsHub",
       "titleHubAria": "TeamSkillsHub marketplace",
       "search": "Search",

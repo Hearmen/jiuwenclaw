@@ -1,64 +1,110 @@
 /**
  * ToolGroupDisplay 组件
  *
- * 展示工具执行实体：call 可单独显示，result 仅回填显示。
+ * 以轻量折叠列表展示工具调用状态，行内可展开查看参数和结果。
  */
 
-import {
-  useState,
-  useEffect,
-  useRef,
-  useCallback,
-} from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
+import clsx from 'clsx';
 import { ToolExecution } from '../../types';
 import { formatToolArguments, formatToolResult } from '../../utils';
-import clsx from 'clsx';
+import { TeamMemberAvatar } from './MessageItem';
 
 interface ToolGroupDisplayProps {
   executions: ToolExecution[];
+  showAvatar?: boolean;
+  teamLayout?: boolean;
 }
 
-/**
- * 工具详情弹窗组件
- *
- * 以弹窗形式完整展示工具调用的参数和结果
- */
 interface ToolDetailModalProps {
   execution: ToolExecution;
   onClose: () => void;
+}
+
+type ToolStatusTone = 'success' | 'warning' | 'error' | 'pending';
+
+function ToolStatusIcon({
+  tone,
+  className,
+}: {
+  tone: ToolStatusTone;
+  className?: string;
+}) {
+  return (
+    <span className={clsx('tool-status-icon', `is-${tone}`, className)}>
+      {tone === 'success' ? (
+        <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.8">
+          <circle cx="10" cy="10" r="6.8" />
+          <path strokeLinecap="round" strokeLinejoin="round" d="M7.2 10.15 9.1 12.05l3.7-4.05" />
+        </svg>
+      ) : tone === 'error' || tone === 'warning' ? (
+        <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.8">
+          <circle cx="10" cy="10" r="6.8" />
+          <path strokeLinecap="round" d="M10 6.4v4.5" />
+          <circle cx="10" cy="13.65" r="0.75" fill="currentColor" stroke="none" />
+        </svg>
+      ) : (
+        <svg className="tool-status-icon__spinner" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.8">
+          <circle cx="10" cy="10" r="6.8" opacity="0.22" />
+          <path strokeLinecap="round" d="M10 3.2A6.8 6.8 0 0 1 16.8 10" />
+        </svg>
+      )}
+    </span>
+  );
+}
+
+function isToolResultSuccessful(result?: ToolExecution['result']) {
+  return Boolean(result?.success && !result.result.includes('success=False'));
+}
+
+function isExecutionSuccessful(execution: ToolExecution) {
+  return execution.status === 'completed' && isToolResultSuccessful(execution.result);
+}
+
+function getExecutionTone(execution: ToolExecution): ToolStatusTone {
+  if (isExecutionSuccessful(execution)) {
+    return 'success';
+  }
+  if (execution.status === 'timeout') {
+    return 'warning';
+  }
+  if (execution.status === 'error' || execution.result) {
+    return 'error';
+  }
+  return 'pending';
+}
+
+function getExecutionLabel(execution: ToolExecution, sessionCompletedLabel: string) {
+  if (execution.toolCall.name === 'session') {
+    return execution.toolCall.formatted_args || sessionCompletedLabel;
+  }
+
+  return execution.toolCall.name;
 }
 
 function ToolDetailModal({ execution, onClose }: ToolDetailModalProps) {
   const { t } = useTranslation();
   const { toolCall, result, status } = execution;
   const isTimeout = status === 'timeout';
-  const isError = status === 'error';
-  const isSuccess = status === 'completed' && !(result && result.result && result.result.includes('success=False'));
-  const hasResult = !!result;
-  const isFailed = hasResult && !isSuccess && !isTimeout;
+  const modalTone = getExecutionTone(execution);
+  const resultSuccess = isToolResultSuccessful(result);
 
-  
-  // ESC 键关闭
   useEffect(() => {
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') {
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
         onClose();
       }
     };
+
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [onClose]);
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
-      {/* 背景遮罩 - 点击关闭 */}
-      <div
-        className="absolute inset-0 bg-black/60"
-        onClick={onClose}
-      />
+      <div className="absolute inset-0 bg-black/60" onClick={onClose} />
 
-      {/* 弹窗内容 */}
       <div
         className="relative w-full max-w-2xl max-h-[85vh] overflow-hidden rounded-xl animate-rise"
         style={{
@@ -66,7 +112,6 @@ function ToolDetailModal({ execution, onClose }: ToolDetailModalProps) {
           boxShadow: 'var(--shadow-xl)',
         }}
       >
-        {/* 标题栏 */}
         <div
           className="px-6 py-4 flex items-center justify-between"
           style={{
@@ -75,28 +120,8 @@ function ToolDetailModal({ execution, onClose }: ToolDetailModalProps) {
           }}
         >
           <div className="flex items-center gap-4">
-            {!isFailed && !isError && (
-              <span className={clsx(
-                'tool-pair-icon',
-                isSuccess ? 'success' : isTimeout ? 'warning' : 'pending'
-              )}
-              style={{ width: '32px', height: '32px' }}
-              >
-                {isSuccess ? (
-                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2}>
-                    <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
-                  </svg>
-                ) : isTimeout ? (
-                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2}>
-                    <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v4m0 4h.01M12 3C7.029 3 3 7.029 3 12s4.029 9 9 9 9-4.029 9-9-4.029-9-9-9z" />
-                  </svg>
-                ) : (
-                  <svg className="w-4 h-4 animate-spin" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2}>
-                    <path strokeLinecap="round" strokeLinejoin="round" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
-                  </svg>
-                )}
-              </span>
-            )}
+            <ToolStatusIcon tone={modalTone} className="tool-status-icon--lg" />
+
             <div>
               <h2
                 className="text-lg font-semibold font-mono"
@@ -115,18 +140,17 @@ function ToolDetailModal({ execution, onClose }: ToolDetailModalProps) {
             </div>
           </div>
 
-          {/* 关闭按钮 */}
           <button
             onClick={onClose}
             className="p-2 rounded-lg transition-colors"
             style={{ color: 'var(--muted)' }}
-            onMouseEnter={(e) => {
-              e.currentTarget.style.backgroundColor = 'var(--bg-hover)';
-              e.currentTarget.style.color = 'var(--text)';
+            onMouseEnter={(event) => {
+              event.currentTarget.style.backgroundColor = 'var(--bg-hover)';
+              event.currentTarget.style.color = 'var(--text)';
             }}
-            onMouseLeave={(e) => {
-              e.currentTarget.style.backgroundColor = 'transparent';
-              e.currentTarget.style.color = 'var(--muted)';
+            onMouseLeave={(event) => {
+              event.currentTarget.style.backgroundColor = 'transparent';
+              event.currentTarget.style.color = 'var(--muted)';
             }}
           >
             <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2}>
@@ -135,12 +159,10 @@ function ToolDetailModal({ execution, onClose }: ToolDetailModalProps) {
           </button>
         </div>
 
-        {/* 内容区域 */}
         <div
           className="px-6 py-5 overflow-y-auto"
           style={{ maxHeight: '60vh' }}
         >
-          {/* 工具参数 */}
           {Object.keys(toolCall.arguments).length > 0 && (
             <div className="mb-6">
               <div
@@ -169,23 +191,20 @@ function ToolDetailModal({ execution, onClose }: ToolDetailModalProps) {
             </div>
           )}
 
-          {/* 工具结果 */}
           {result && (
             <div>
               <div
                 className="flex items-center gap-2 mb-3"
-                style={{ color: result.success && !(result.result && result.result.includes('success=False')) ? 'var(--ok)' : 'var(--danger)' }}
+                style={{
+                  color: resultSuccess
+                    ? 'var(--ok)'
+                    : 'var(--danger)',
+                }}
               >
-                {result.success && !(result.result && result.result.includes('success=False')) ? (
-                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2}>
-                    <path strokeLinecap="round" strokeLinejoin="round" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
-                  </svg>
-                ) : (
-                  '❌'
-                )}
+                <ToolStatusIcon tone={resultSuccess ? 'success' : 'error'} />
                 <span className="text-sm font-semibold">
                   {t('chatUi.toolResult.result')}
-                  {(!result.success || (result.result && result.result.includes('success=False'))) && (
+                  {!resultSuccess && (
                     <span
                       className="ml-2 px-2 py-0.5 rounded text-xs font-medium"
                       style={{
@@ -206,7 +225,9 @@ function ToolDetailModal({ execution, onClose }: ToolDetailModalProps) {
                   lineHeight: '1.5',
                   backgroundColor: 'var(--bg-elevated)',
                   border: '1px solid var(--border)',
-                  color: result.success && !(result.result && result.result.includes('success=False')) ? 'var(--text)' : 'var(--danger)',
+                  color: resultSuccess
+                    ? 'var(--text)'
+                    : 'var(--danger)',
                   wordBreak: 'break-word',
                 }}
               >
@@ -215,7 +236,6 @@ function ToolDetailModal({ execution, onClose }: ToolDetailModalProps) {
             </div>
           )}
 
-          {/* 超时状态 */}
           {!result && isTimeout && (
             <div
               className="flex items-center gap-3 p-4 rounded-lg"
@@ -225,14 +245,11 @@ function ToolDetailModal({ execution, onClose }: ToolDetailModalProps) {
                 color: 'var(--warn)',
               }}
             >
-              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2}>
-                <path strokeLinecap="round" strokeLinejoin="round" d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-              </svg>
+              <ToolStatusIcon tone="warning" />
               <span className="font-medium">{t('chatUi.toolResult.timeout')}</span>
             </div>
           )}
 
-          {/* 等待状态 */}
           {!result && !isTimeout && (
             <div
               className="flex items-center gap-3 p-4 rounded-lg"
@@ -242,9 +259,7 @@ function ToolDetailModal({ execution, onClose }: ToolDetailModalProps) {
                 color: 'var(--accent)',
               }}
             >
-              <svg className="w-5 h-5 animate-spin" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2}>
-                <path strokeLinecap="round" strokeLinejoin="round" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
-              </svg>
+              <ToolStatusIcon tone="pending" />
               <span className="font-medium">{t('chatUi.toolResult.running')}</span>
             </div>
           )}
@@ -254,77 +269,35 @@ function ToolDetailModal({ execution, onClose }: ToolDetailModalProps) {
   );
 }
 
-export function ToolExecutionItem({ execution }: { execution: ToolExecution }) {
+function ToolExecutionRow({ execution }: { execution: ToolExecution }) {
   const { t } = useTranslation();
   const [showModal, setShowModal] = useState(false);
-  const { toolCall, result, status } = execution;
-  const subtitle = toolCall.formatted_args || '';
-  const hasResult = !!result;
-  const isTimeout = status === 'timeout';
-  const isError = status === 'error';
-  const isSuccess = status === 'completed' && !(result && result.result && result.result.includes('success=False'));
-  const isFailed = hasResult && !isSuccess && !isTimeout;
-  const resultSummary = result
-    ? (result.summary || (isSuccess ? t('chatUi.toolResult.success') : '❌'))
-    : '';
+  const { toolCall, status } = execution;
+  const rowTone = getExecutionTone(execution);
 
   return (
     <>
       <div
-        className="tool-pair-item animate-rise"
+        className="tool-tree-item"
         data-testid={`tool-execution-${toolCall.id}`}
         data-tool-name={toolCall.name}
         data-tool-status={status}
       >
-        <div className="tool-pair-header" onClick={() => setShowModal(true)}>
-          {!isFailed && !isError && (
-            <span className={clsx(
-              'tool-pair-icon',
-              isSuccess ? 'success' : isTimeout ? 'warning' : 'pending'
-            )}>
-              {isSuccess ? (
-                <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2}>
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
-                </svg>
-              ) : isTimeout ? (
-                <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2}>
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v4m0 4h.01M12 3C7.029 3 3 7.029 3 12s4.029 9 9 9 9-4.029 9-9-4.029-9-9-9z" />
-                </svg>
-              ) : (
-                <svg className="w-3 h-3 animate-spin" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2}>
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
-                </svg>
-              )}
-            </span>
-          )}
+        <button
+          type="button"
+          className="tool-tree-item__button"
+          onClick={() => setShowModal(true)}
+        >
+          <ToolStatusIcon tone={rowTone} className="tool-tree-item__status" />
 
-          {toolCall.name === 'session' ? (
-            <span className="tool-pair-name">{subtitle || t('chatUi.toolGroup.sessionCompleted')}</span>
-          ) : (
-            <>
-              <span className="tool-pair-name">{toolCall.name}</span>
-              {subtitle && <span className="tool-pair-summary">{subtitle}</span>}
-            </>
-          )}
-
-          {hasResult && (
-            <span className={clsx(
-              'tool-pair-result-badge',
-              isSuccess ? 'success' : 'error'
-            )}>
-              {resultSummary}
+          <span className="tool-tree-item__main">
+            <span className="tool-tree-item__name">
+              {getExecutionLabel(execution, t('chatUi.toolGroup.sessionCompleted'))}
             </span>
-          )}
-          {!hasResult && isTimeout && (
-            <span className="tool-pair-result-badge warning">
-              {t('chatUi.toolResult.timeout')}
-            </span>
-          )}
-          <span className="tool-pair-toggle">▶</span>
-        </div>
+          </span>
+        </button>
       </div>
 
-      {/* 弹窗 */}
       {showModal && (
         <ToolDetailModal execution={execution} onClose={() => setShowModal(false)} />
       )}
@@ -332,84 +305,107 @@ export function ToolExecutionItem({ execution }: { execution: ToolExecution }) {
   );
 }
 
-export function ToolGroupDisplay({ executions }: ToolGroupDisplayProps) {
+export function ToolGroupDisplay({
+  executions,
+  showAvatar = true,
+  teamLayout = false,
+}: ToolGroupDisplayProps) {
   const { t } = useTranslation();
   const scrollRef = useRef<HTMLDivElement>(null);
+  const [groupOpen, setGroupOpen] = useState(true);
   const [userScrolled, setUserScrolled] = useState(false);
   const totalPairs = executions.length;
-  const pendingCount = executions.filter((e) => e.status === 'pending').length;
-  const timeoutCount = executions.filter((e) => e.status === 'timeout').length;
-  const allSessionType = totalPairs > 0 && executions.every((e) => e.toolCall.name === 'session');
+  const hasPending = executions.some((execution) => execution.status === 'pending');
 
   useEffect(() => {
-    if (!import.meta.env.DEV) {
-      return;
+    if (hasPending) {
+      setGroupOpen(true);
     }
-    if (totalPairs > 0) {
-      console.debug('[ws][metrics] pendingToolPairs', {
-        pendingToolPairs: pendingCount,
-        timeoutToolPairs: timeoutCount,
-        totalToolPairs: totalPairs,
-      });
-    }
-  }, [pendingCount, timeoutCount, totalPairs]);
+  }, [hasPending, executions.length]);
 
   const handleScroll = useCallback(() => {
-    const el = scrollRef.current;
-    if (!el) return;
-    const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 40;
+    const element = scrollRef.current;
+    if (!element) {
+      return;
+    }
+    const atBottom = element.scrollHeight - element.scrollTop - element.clientHeight < 24;
     setUserScrolled(!atBottom);
   }, []);
 
   const scrollInner = useCallback((smooth = true) => {
-    const el = scrollRef.current;
-    if (!el) return;
-    el.scrollTo({
-      top: el.scrollHeight,
+    const element = scrollRef.current;
+    if (!element) {
+      return;
+    }
+    element.scrollTo({
+      top: element.scrollHeight,
       behavior: smooth ? 'smooth' : 'instant',
     });
   }, []);
 
   useEffect(() => {
-    if (!userScrolled) {
-      // 自动跟随新增工具项时使用即时滚动，避免出现从顶部滑下的视觉效果
+    if (groupOpen && !userScrolled) {
       scrollInner(false);
     }
-  }, [executions.length, userScrolled, scrollInner]);
+  }, [executions.length, groupOpen, userScrolled, scrollInner]);
 
   const scrollToBottom = useCallback(() => {
     setUserScrolled(false);
     scrollInner(true);
   }, [scrollInner]);
 
+  const headerLabel = t('chatUi.toolGroup.executed', { totalPairs });
+
   return (
-    <div className="tool-group-container animate-rise" data-testid="tool-group">
-      <div className="tool-group-header">
-        <div className="tool-group-header-left">
-          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={1.5}>
-            <path strokeLinecap="round" strokeLinejoin="round" d="M11.42 15.17L17.25 21A2.652 2.652 0 0021 17.25l-5.877-5.877M11.42 15.17l2.496-3.03c.317-.384.74-.626 1.208-.766M11.42 15.17l-4.655 5.653a2.548 2.548 0 11-3.586-3.586l6.837-5.63m5.108-.233c.55-.164 1.163-.188 1.743-.14a4.5 4.5 0 004.486-6.336l-3.276 3.277a3.004 3.004 0 01-2.25-2.25l3.276-3.276a4.5 4.5 0 00-6.336 4.486c.091 1.076-.071 2.264-.904 2.95l-.102.085m-1.745 1.437L5.909 7.5H4.5L2.25 3.75l1.5-1.5L7.5 4.5v1.409l4.26 4.26m-1.745 1.437l1.745-1.437m6.615 8.206L15.75 15.75M4.867 19.125h.008v.008h-.008v-.008z" />
-          </svg>
-          <span>
-            {allSessionType
-              ? t('chatUi.toolGroup.sessionExecuted', { count: totalPairs })
-              : t('chatUi.toolGroup.executed', { totalPairs })}
-            {pendingCount > 0 && <span className="tool-group-pending"> ({t('chatUi.toolGroup.pending', { pendingCount })})</span>}
-            {timeoutCount > 0 && <span className="tool-group-pending warning"> ({t('chatUi.toolGroup.timeout', { timeoutCount })})</span>}
-          </span>
+    <div
+      className={clsx(
+        'tool-group-frame animate-rise',
+        teamLayout && 'tool-group-frame--team'
+      )}
+      data-testid="tool-group"
+    >
+      <div className="pt-0.5">
+        {showAvatar ? (
+          <TeamMemberAvatar member="team_leader" />
+        ) : null}
+      </div>
+      <div className="min-w-0">
+        <div className="tool-tree">
+          <button
+            type="button"
+            className="tool-tree__header"
+            onClick={() => setGroupOpen((current) => !current)}
+            aria-expanded={groupOpen}
+          >
+            <span className="tool-tree__header-text">
+              <span className="tool-tree__header-title-row">
+                <span className="tool-tree__header-title">{headerLabel}</span>
+                <span className={clsx('tool-tree__chevron', groupOpen && 'is-open')} aria-hidden="true">
+                  <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.8">
+                    <path strokeLinecap="round" strokeLinejoin="round" d="m6.5 8 3.5 4 3.5-4" />
+                  </svg>
+                </span>
+              </span>
+            </span>
+          </button>
+
+          {groupOpen && (
+            <>
+              <div ref={scrollRef} className="tool-tree__list" onScroll={handleScroll}>
+                {executions.map((execution) => (
+                  <ToolExecutionRow key={execution.toolCallId} execution={execution} />
+                ))}
+              </div>
+
+              {userScrolled && (
+                <button type="button" className="tool-tree__latest" onClick={scrollToBottom}>
+                  {t('chatUi.toolGroup.latest')}
+                </button>
+              )}
+            </>
+          )}
         </div>
       </div>
-
-      <div ref={scrollRef} className="tool-group-scroll" onScroll={handleScroll}>
-        {executions.map((execution) => (
-          <ToolExecutionItem key={execution.toolCallId} execution={execution} />
-        ))}
-      </div>
-
-      {userScrolled && (
-        <button className="tool-group-scroll-btn" onClick={scrollToBottom}>
-          {t('chatUi.toolGroup.latest')}
-        </button>
-      )}
     </div>
   );
 }

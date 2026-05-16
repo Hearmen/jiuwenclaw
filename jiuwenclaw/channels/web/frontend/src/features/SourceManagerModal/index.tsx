@@ -1,37 +1,30 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { webRequest } from "../../services/webClient";
 
-type MarketplaceItem = {
-  name: string;
-  url: string;
-  install_location?: string;
-  last_updated?: string | null;
-  enabled?: boolean;
-};
-
-type LoadState = "idle" | "loading" | "success" | "error";
+type SourceType = "skillnet" | "clawhub";
 
 interface SourceManagerModalProps {
   open: boolean;
   sessionId: string;
   onClose: () => void;
-  onUpdated?: () => Promise<void> | void;
+  onSourceChange?: (source: SourceType) => void;
+  currentSource?: SourceType;
 }
 
 export function SourceManagerModal({
   open,
   sessionId,
   onClose,
-  onUpdated,
+  onSourceChange,
+  currentSource = "skillnet",
 }: SourceManagerModalProps) {
-  const { t, i18n } = useTranslation();
-  const [marketplaces, setMarketplaces] = useState<MarketplaceItem[]>([]);
-  const [listState, setListState] = useState<LoadState>("idle");
-  const [message, setMessage] = useState<string | null>(null);
-  const [actionTarget, setActionTarget] = useState<string | null>(null);
-  const [nameInput, setNameInput] = useState("");
-  const [urlInput, setUrlInput] = useState("");
+  const { t } = useTranslation();
+  const [selectedSource, setSelectedSource] = useState<SourceType>(currentSource);
+  const [clawhubToken, setClawhubToken] = useState("");
+  const [tokenLoading, setTokenLoading] = useState(false);
+  const [tokenSaving, setTokenSaving] = useState(false);
+  const [hasToken, setHasToken] = useState(false);
 
   const withSession = useCallback(
     (params?: Record<string, unknown>) => ({
@@ -41,31 +34,30 @@ export function SourceManagerModal({
     [sessionId]
   );
 
-  const sortedMarketplaces = useMemo(
-    () => [...marketplaces].sort((a, b) => a.name.localeCompare(b.name)),
-    [marketplaces]
-  );
-
-  const fetchMarketplaces = useCallback(async () => {
-    setListState("loading");
+  const fetchClawhubToken = useCallback(async () => {
+    setTokenLoading(true);
     try {
-      const data = await webRequest<{ marketplaces?: MarketplaceItem[] }>(
-        "skills.marketplace.list",
+      const data = await webRequest<{ token?: string }>(
+        "skills.clawhub.get_token",
         withSession()
       );
-      setMarketplaces(data.marketplaces || []);
-      setListState("success");
+      const token = data.token || "";
+      setClawhubToken(token);
+      setHasToken(!!token);
     } catch (error) {
-      console.error("Failed to load sources:", error);
-      setListState("error");
+      console.error("Failed to load ClawHub token:", error);
+      setClawhubToken("");
+      setHasToken(false);
+    } finally {
+      setTokenLoading(false);
     }
   }, [withSession]);
 
   useEffect(() => {
     if (!open) return;
-    setMessage(null);
-    void fetchMarketplaces();
-  }, [open, fetchMarketplaces]);
+    setSelectedSource(currentSource);
+    void fetchClawhubToken();
+  }, [open, currentSource, fetchClawhubToken]);
 
   useEffect(() => {
     if (!open) return;
@@ -80,102 +72,31 @@ export function SourceManagerModal({
     };
   }, [open, onClose]);
 
-  const runAfterUpdate = useCallback(async () => {
-    await fetchMarketplaces();
-    if (onUpdated) {
-      await onUpdated();
+  const handleSourceSelect = useCallback((source: SourceType) => {
+    setSelectedSource(source);
+    if (onSourceChange) {
+      onSourceChange(source);
     }
-  }, [fetchMarketplaces, onUpdated]);
+  }, [onSourceChange]);
 
-  const handleAddSource = useCallback(async () => {
-    const name = nameInput.trim();
-    const url = urlInput.trim();
-    if (!name || !url) {
-      setMessage(t("sourceManager.messages.fillRequired"));
-      return;
-    }
-
-    setActionTarget("add");
-    setMessage(null);
+  const handleSaveToken = useCallback(async () => {
+    const token = clawhubToken.trim();
+    setTokenSaving(true);
     try {
-      const data = await webRequest<{ success: boolean; detail?: string; message?: string }>(
-        "skills.marketplace.add",
-        withSession({ name, url })
+      const data = await webRequest<{ success: boolean; detail?: string }>(
+        "skills.clawhub.set_token",
+        withSession({ token })
       );
       if (!data.success) {
-        throw new Error(data.detail || data.message || t("sourceManager.messages.addFailed"));
+        throw new Error(data.detail || t("skills.clawhub.errors.saveFailed"));
       }
-      setNameInput("");
-      setUrlInput("");
-      setMessage(t("sourceManager.messages.added", { name }));
-      await runAfterUpdate();
+      setHasToken(!!token);
     } catch (error) {
-      console.error(error);
-      setMessage(t("sourceManager.messages.addFailedCheck"));
+      console.error("Failed to save ClawHub token:", error);
     } finally {
-      setActionTarget(null);
+      setTokenSaving(false);
     }
-  }, [nameInput, runAfterUpdate, t, urlInput, withSession]);
-
-  const handleRemoveSource = useCallback(
-    async (name: string) => {
-      const confirmed = window.confirm(t("sourceManager.messages.confirmDelete", { name }));
-      if (!confirmed) return;
-
-      setActionTarget(`remove:${name}`);
-      setMessage(null);
-      try {
-        const data = await webRequest<{ success: boolean; detail?: string; message?: string }>(
-          "skills.marketplace.remove",
-          withSession({ name, remove_cache: true })
-        );
-        if (!data.success) {
-          throw new Error(data.detail || data.message || t("sourceManager.messages.removeFailed"));
-        }
-        setMessage(t("sourceManager.messages.removed", { name }));
-        await runAfterUpdate();
-      } catch (error) {
-        console.error(error);
-        setMessage(t("sourceManager.messages.removeFailedRetry"));
-      } finally {
-        setActionTarget(null);
-      }
-    },
-    [runAfterUpdate, t, withSession]
-  );
-
-  const handleToggleSource = useCallback(
-    async (source: MarketplaceItem) => {
-      const targetEnabled = !Boolean(source.enabled ?? true);
-      setActionTarget(`toggle:${source.name}`);
-      setMessage(null);
-      try {
-        const data = await webRequest<{ success: boolean; detail?: string; message?: string }>(
-          "skills.marketplace.toggle",
-          withSession({ name: source.name, enabled: targetEnabled })
-        );
-        if (!data.success) {
-          throw new Error(data.detail || data.message || t("sourceManager.messages.toggleFailed"));
-        }
-        setMessage(
-          targetEnabled
-            ? t("sourceManager.messages.enabled", { name: source.name })
-            : t("sourceManager.messages.disabled", { name: source.name })
-        );
-        await runAfterUpdate();
-      } catch (error) {
-        console.error(error);
-        setMessage(
-          targetEnabled
-            ? t("sourceManager.messages.enableFailed")
-            : t("sourceManager.messages.disableFailed")
-        );
-      } finally {
-        setActionTarget(null);
-      }
-    },
-    [runAfterUpdate, t, withSession]
-  );
+  }, [clawhubToken, t, withSession]);
 
   if (!open) {
     return null;
@@ -189,152 +110,118 @@ export function SourceManagerModal({
         onClick={onClose}
         aria-label={t("sourceManager.closeAria")}
       />
-      <div className="relative w-full max-w-4xl max-h-[88vh] overflow-hidden rounded-[8px] border border-border bg-card shadow-2xl animate-rise">
+      <div className="relative w-full max-w-xl overflow-hidden rounded-[8px] border border-border bg-card shadow-2xl animate-rise">
         <div className="flex items-center justify-between gap-3 px-5 py-3 border-b border-border bg-panel">
           <div>
             <h3 className="text-base font-semibold text-text">{t("sourceManager.title")}</h3>
             <p className="text-xs text-text-muted">{t("sourceManager.subtitle")}</p>
           </div>
-          <div className="flex items-center gap-2">
-            <button
-              type="button"
-              onClick={() => void fetchMarketplaces()}
-              className="w-7 h-7 flex items-center justify-center rounded-lg text-text hover:text-text-strong transition-colors"
-              title={t("common.refresh")}
-            >
-              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
-              </svg>
-            </button>
-            <button
-              type="button"
-              onClick={onClose}
-              className="w-7 h-7 flex items-center justify-center rounded-lg text-text hover:text-text-strong transition-colors"
-              aria-label={t("sourceManager.closeAria")}
-            >
-              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-              </svg>
-            </button>
-          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            className="w-7 h-7 flex items-center justify-center rounded-lg text-text hover:text-text-strong transition-colors"
+            aria-label={t("sourceManager.closeAria")}
+          >
+            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+            </svg>
+          </button>
         </div>
 
-        <div className="p-5 overflow-auto max-h-[calc(88vh-64px)]">
-          <div className="rounded-lg border border-border bg-panel p-4">
-            <div className="text-sm font-medium text-text mb-3">{t("sourceManager.addTitle")}</div>
-            <div className="text-xs text-text-muted mb-3">
-              {t("sourceManager.hint")}
-            </div>
-            <div className="grid grid-cols-1 md:grid-cols-[180px_1fr_auto] gap-2">
-              <input
-                value={nameInput}
-                onChange={(event) => setNameInput(event.target.value)}
-                placeholder={t("sourceManager.placeholders.name")}
-                className="px-3 py-2 rounded-md bg-card border border-border text-sm text-text placeholder:text-text-muted"
-              />
-              <input
-                value={urlInput}
-                onChange={(event) => setUrlInput(event.target.value)}
-                placeholder={t("sourceManager.placeholders.url")}
-                className="px-3 py-2 rounded-md bg-card border border-border text-sm text-text placeholder:text-text-muted"
-              />
+        <div className="p-5 overflow-auto">
+          <div className="mb-4">
+            <div className="text-sm font-medium text-text mb-3">{t("sourceManager.selectSource")}</div>
+            <div className="flex gap-3">
               <button
                 type="button"
-                onClick={() => void handleAddSource()}
-                className={`w-[76px] h-[28px] rounded-[24px] text-sm text-[#191919] border border-[#191919] hover:bg-secondary/50 transition-colors whitespace-nowrap ${
-                  actionTarget === "add"
-                    ? "text-text-muted cursor-not-allowed"
-                    : ""
+                onClick={() => handleSourceSelect("skillnet")}
+                className={`flex-1 py-3 px-4 rounded-lg border transition-all ${
+                  selectedSource === "skillnet"
+                    ? "border-[#191919] bg-[#EAEAEB] text-[#191919]"
+                    : "border-border bg-card text-text-muted hover:border-gray-400"
                 }`}
-                disabled={actionTarget === "add"}
               >
-                {t("sourceManager.add")}
+                <div className="text-left">
+                  <div className="font-medium">SkillNet</div>
+                  <div className="text-xs opacity-70">{t("sourceManager.skillnetDesc")}</div>
+                </div>
+              </button>
+              <button
+                type="button"
+                onClick={() => handleSourceSelect("clawhub")}
+                className={`flex-1 py-3 px-4 rounded-lg border transition-all ${
+                  selectedSource === "clawhub"
+                    ? "border-[#191919] bg-[#EAEAEB] text-[#191919]"
+                    : "border-border bg-card text-text-muted hover:border-gray-400"
+                }`}
+              >
+                <div className="text-left">
+                  <div className="font-medium">ClawHub</div>
+                  <div className="text-xs opacity-70">{t("sourceManager.clawhubDesc")}</div>
+                </div>
               </button>
             </div>
           </div>
 
-          {message && (
-            <div className="mt-3 px-3 py-2 rounded-md bg-secondary text-sm text-text">
-              {message}
+          {selectedSource === "clawhub" && (
+            <div className="rounded-lg border border-border bg-panel p-4">
+              <div className="text-sm font-medium text-text mb-3">{t("skills.clawhub.configTitle")}</div>
+              {tokenLoading ? (
+                <div className="text-sm text-text-muted">{t("common.loading")}</div>
+              ) : (
+                <>
+                  <p className="text-xs text-text-muted mb-3">
+                    {t("skills.clawhub.configDescription")}
+                  </p>
+                  <div className="space-y-3">
+                    <div>
+                      <label className="block text-sm font-medium text-text mb-2">
+                        {t("skills.clawhub.tokenLabel")}
+                      </label>
+                      <input
+                        type="password"
+                        value={clawhubToken}
+                        onChange={(e) => setClawhubToken(e.target.value)}
+                        placeholder={t("skills.clawhub.tokenPlaceholder")}
+                        className="w-full px-3 py-2 rounded-md bg-card border border-border text-sm text-text placeholder:text-text-muted"
+                      />
+                    </div>
+                    <div className="flex items-center justify-between">
+                      {hasToken && (
+                        <span className="text-xs text-green-600 flex items-center gap-1">
+                          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                          </svg>
+                          {t("skills.clawhub.tokenConfigured", { token: clawhubToken.slice(0, 8) + "****" })}
+                        </span>
+                      )}
+                      <button
+                        type="button"
+                        onClick={() => void handleSaveToken()}
+                        disabled={tokenSaving || !clawhubToken.trim()}
+                        className={`ml-auto w-[76px] h-[28px] rounded-[24px] text-sm transition-colors ${
+                          tokenSaving || !clawhubToken.trim()
+                            ? "bg-gray-300 text-gray-500 cursor-not-allowed"
+                            : "bg-[#191919] text-white hover:bg-gray-800"
+                        }`}
+                      >
+                        {tokenSaving ? t("common.saving") : t("common.save")}
+                      </button>
+                    </div>
+                  </div>
+                </>
+              )}
             </div>
           )}
 
-          <div className="mt-4 rounded-lg border border-border bg-panel p-4">
-            <div className="text-sm font-medium text-text mb-2">
-              {t("sourceManager.configuredCount", { count: sortedMarketplaces.length })}
+          {selectedSource === "skillnet" && (
+            <div className="rounded-lg border border-border bg-panel p-4">
+              <div className="text-sm font-medium text-text mb-2">{t("sourceManager.skillnetInfo")}</div>
+              <p className="text-xs text-text-muted">
+                {t("sourceManager.skillnetInfoDesc")}
+              </p>
             </div>
-            {listState === "loading" && (
-              <div className="text-sm text-text-muted">{t("common.loading")}</div>
-            )}
-            {listState === "error" && (
-              <div className="text-sm text-text-muted">{t("sourceManager.messages.loadFailed")}</div>
-            )}
-            {listState === "success" && sortedMarketplaces.length === 0 && (
-              <div className="text-sm text-text-muted">{t("sourceManager.empty")}</div>
-            )}
-            {listState === "success" && sortedMarketplaces.length > 0 && (
-              <div className="space-y-2">
-                {sortedMarketplaces.map((source) => {
-                  const enabled = Boolean(source.enabled ?? true);
-                  const toggleLoading = actionTarget === `toggle:${source.name}`;
-                  const removeLoading = actionTarget === `remove:${source.name}`;
-                  return (
-                    <div
-                      key={source.name}
-                      className="flex items-center justify-between p-3 rounded-md bg-secondary gap-3"
-                    >
-                      <div className="min-w-0">
-                        <div className="text-sm text-text font-medium">{source.name}</div>
-                        <div className="text-xs text-text-muted break-all">{source.url}</div>
-                        {source.last_updated && (
-                          <div className="text-xs text-text-muted mt-1">
-                            {t("sourceManager.updatedAt", {
-                              time: new Date(source.last_updated).toLocaleString(i18n.language),
-                            })}
-                          </div>
-                        )}
-                      </div>
-                      <div className="flex items-center gap-2 flex-shrink-0">
-                        <span
-                          className={`px-2 py-1 text-xs rounded-full border ${
-                            enabled
-                              ? "bg-ok/15 text-ok border-ok/30"
-                              : "bg-secondary text-text-muted border-border"
-                          }`}
-                        >
-                          {enabled ? t("sourceManager.status.enabled") : t("sourceManager.status.disabled")}
-                        </span>
-                        <button
-                          type="button"
-                          onClick={() => void handleToggleSource(source)}
-                          className={`w-[76px] h-[28px] rounded-[24px] text-sm text-[#191919] border border-[#191919] hover:bg-secondary/50 transition-colors whitespace-nowrap ${
-                            toggleLoading
-                              ? "text-text-muted cursor-not-allowed"
-                              : ""
-                          }`}
-                          disabled={toggleLoading || removeLoading}
-                        >
-                          {enabled ? t("sourceManager.actions.disable") : t("sourceManager.actions.enable")}
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => void handleRemoveSource(source.name)}
-                          className={`w-[76px] h-[28px] rounded-[24px] text-sm text-danger border border-danger hover:bg-danger hover:text-white transition-colors whitespace-nowrap ${
-                            removeLoading
-                              ? "text-text-muted cursor-not-allowed"
-                              : ""
-                          }`}
-                          disabled={toggleLoading || removeLoading}
-                        >
-                          {t("sourceManager.actions.delete")}
-                        </button>
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-            )}
-          </div>
+          )}
         </div>
       </div>
     </div>

@@ -14,6 +14,32 @@ const SKILLNET_MAX_CONCURRENT_INSTALLS = 5;
 /** SkillNet「评估」入口：暂时隐藏；后端 `skills.skillnet.evaluate` 仍可用，改回 true 即恢复按钮 */
 const SKILLNET_EVALUATE_BUTTON_ENABLED = false;
 
+const avatarColors = [
+  "bg-red-500",
+  "bg-orange-500",
+  "bg-amber-500",
+  "bg-yellow-500",
+  "bg-lime-500",
+  "bg-green-500",
+  "bg-emerald-500",
+  "bg-teal-500",
+  "bg-cyan-500",
+  "bg-sky-500",
+  "bg-blue-500",
+  "bg-indigo-500",
+  "bg-violet-500",
+  "bg-purple-500",
+  "bg-fuchsia-500",
+  "bg-pink-500",
+  "bg-rose-500",
+];
+
+const getSkillAvatar = (name: string) => {
+  const firstChar = name.charAt(0).toUpperCase();
+  const colorIndex = name.charCodeAt(0) % avatarColors.length;
+  return { firstChar, color: avatarColors[colorIndex] };
+};
+
 /** 评估结果展示顺序（与 skillnet-ai 五维一致） */
 const EVAL_DIMENSION_KEYS = [
   "safety",
@@ -100,6 +126,8 @@ interface SkillNetSearchModalProps {
   installedSkillNames?: ReadonlySet<string>;
   /** 已安装技能的来源 URL（规范化后），优先于 skill_name 匹配 SkillNet 结果 */
   installedSkillOrigins?: ReadonlySet<string>;
+  /** 视图模式：列表或平铺 */
+  viewMode?: "list" | "grid";
   onClose: () => void;
   onInstalled?: (skillName: string) => void | Promise<void>;
   /** 点击文案中的「配置页面」时：关闭弹窗并切换到应用内配置页 */
@@ -113,6 +141,7 @@ export function SkillNetSearchModal({
   externalSearchQuery,
   installedSkillNames,
   installedSkillOrigins,
+  viewMode = "list",
   onClose,
   onInstalled,
   onNavigateToConfig,
@@ -169,11 +198,49 @@ export function SkillNetSearchModal({
   useEffect(() => {
     if (embedded && externalSearchQuery !== undefined) {
       setQuery(externalSearchQuery);
-      if (externalSearchQuery.trim()) {
-        handleSearch();
-      }
     }
   }, [externalSearchQuery, embedded]);
+
+  useEffect(() => {
+    if (embedded && query.trim()) {
+      const q = query.trim();
+      setLoadState("loading");
+      setBannerError(null);
+      void (async () => {
+        try {
+          const data = await webRequest<{
+            success: boolean;
+            detail?: string;
+            detail_key?: string;
+            detail_params?: Record<string, unknown>;
+            skills?: SkillNetItem[];
+          }>("skills.skillnet.search", withSession({ q, limit: 50 }));
+          if (!data.success) {
+            const message = data.detail_key
+              ? t(data.detail_key, data.detail_params as Record<string, string> | undefined)
+              : (data.detail?.trim() || t("skills.errors.skillNetSearchFailed"));
+            throw new Error(message);
+          }
+          setResults(data.skills || []);
+          setLoadState("success");
+          setExpandedUrl(null);
+          dismissEvaluateOverlay();
+        } catch (err) {
+          console.error(err);
+          setResults([]);
+          setLoadState("error");
+          const fallbackDetail = t("skills.errors.skillNetSearchFailedHint");
+          const detail =
+            err instanceof Error && err.message.trim()
+              ? err.message.trim()
+              : fallbackDetail;
+          setBannerError(
+            t("skills.errors.skillNetSearchErrorBanner", { detail })
+          );
+        }
+      })();
+    }
+  }, [query, embedded, t, withSession, dismissEvaluateOverlay]);
 
   useEffect(() => {
     if (!open) return;
@@ -438,65 +505,35 @@ export function SkillNetSearchModal({
   if (embedded) {
     return (
       <div className="flex flex-col h-full">
-        <div className="p-4 overflow-auto flex-1 min-h-0">
+        <div className="overflow-auto flex-1 min-h-0">
           {installedSuccess && (
-            <div className="mb-3 px-3 py-2.5 rounded-lg text-sm leading-snug border border-[color:var(--border-ok)] bg-ok-subtle text-ok">
-              {t("skills.messages.skillNetInstalled", { name: installedSuccess })}
+            <div className="fixed top-4 right-4 z-[9999] rounded-[4px] text-sm text-black shadow-lg flex items-center gap-3 px-4" style={{ backgroundColor: "#d5f2dc", width: "564px", height: "40px" }}>
+              <span className="w-4 h-4 rounded-full bg-[#1a991d] flex items-center justify-center flex-shrink-0">
+                <svg className="w-3 h-3 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M5 13l4 4L19 7" />
+                </svg>
+              </span>
+              {t("skills.messages.skillNetInstalled", { name: installedSuccess }).replace("√", "")}
+              <button
+                type="button"
+                onClick={clearInstalledSuccess}
+                className="ml-auto w-6 h-6 flex items-center justify-center hover:bg-white/30 rounded-full transition-colors"
+              >
+                <svg className="w-4 h-4 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
             </div>
           )}
-          <div className="mb-4 rounded-md border border-border bg-secondary/50 px-3 py-2.5 text-xs text-text-muted leading-relaxed">
-            <div className="font-medium text-text mb-1.5">
-              {t("skills.skillNet.usageNoticeTitle")}
-            </div>
-            <ul className="list-disc pl-4 space-y-1">
-              <li>{t("skills.skillNet.usageNotice3")}</li>
-              <li>
-                <Trans
-                  i18nKey="skills.skillNet.usageNotice1"
-                  components={{
-                    strong: (
-                      <strong className="font-semibold text-text" />
-                    ),
-                  }}
-                />
-              </li>
-              <li>
-                <Trans
-                  i18nKey="skills.skillNet.usageNotice2"
-                  components={{
-                    configLink: (
-                      <button
-                        type="button"
-                        aria-label={t("skills.skillNet.configPageLinkAria")}
-                        className="inline p-0 m-0 align-baseline border-0 bg-transparent cursor-pointer font-medium text-accent underline decoration-accent/35 underline-offset-2 hover:text-accent-hover hover:decoration-accent/60"
-                        onClick={() => onNavigateToConfig?.()}
-                      />
-                    ),
-                  }}
-                />
-              </li>
-            </ul>
-          </div>
 
           {bannerError && (
-            <div className="mt-3 px-3 py-2 rounded-md bg-secondary text-sm text-danger break-words whitespace-pre-wrap max-h-48 overflow-y-auto">
+            <div className="px-3 py-2 rounded-md bg-secondary text-sm text-danger break-words whitespace-pre-wrap max-h-48 overflow-y-auto">
               {bannerError}
             </div>
           )}
 
           {loadState === "success" && (
-            <div className="mt-4 flex min-h-0 max-h-[50vh] flex-col gap-2">
-              {installingUrls.size >= SKILLNET_MAX_CONCURRENT_INSTALLS && (
-                <div
-                  className="flex-shrink-0 rounded-lg border border-amber-500/45 bg-amber-500/12 px-3 py-2.5 text-sm font-medium text-text shadow-sm"
-                  role="status"
-                >
-                  {t("skills.skillNet.concurrentLimitReached", {
-                    max: SKILLNET_MAX_CONCURRENT_INSTALLS,
-                  })}
-                </div>
-              )}
-              <div className="min-h-0 flex-1 space-y-2 overflow-y-auto pr-0.5">
+            <div className={`mt-4 flex-1 min-h-0 overflow-y-auto ${viewMode === "grid" ? "flex flex-wrap gap-4 content-start" : "space-y-3"}`}>
               {results.length === 0 ? (
                 <div className="text-xs text-text-muted">{t("skills.skillNet.noResults")}</div>
               ) : (
@@ -518,125 +555,213 @@ export function SkillNetSearchModal({
                   const rowInstallError = installErrorByUrl[item.skill_url];
                   const evalBusy = evaluatingUrl === item.skill_url;
                   const evalGloballyBusy = evaluatingUrl !== null;
+                  const avatar = getSkillAvatar(item.skill_name);
                   return (
                     <div
                       key={item.skill_url}
-                      className="p-4 rounded-lg border border-border bg-panel flex items-start justify-between gap-4"
+                      className={`p-4 rounded-lg border border-border bg-panel ${viewMode === "grid" ? "flex flex-col" : "flex items-start justify-between gap-4"}`}
+                      style={viewMode === "grid" ? { width: "496px", height: isExpanded ? "auto" : "168px", flexShrink: 0 } : undefined}
                     >
-                      <div className="min-w-0 flex-1">
-                        <div className="text-base font-semibold text-text-strong truncate">
-                          {item.skill_name}
-                        </div>
-                        <div className="text-sm text-text-muted mt-1 line-clamp-3">
-                          {item.skill_description || t("skills.noDescription")}
-                        </div>
-                        <div className="text-xs text-text-muted mt-1">
-                          {t("skills.skillNet.meta", {
-                            author: item.author || "unknown",
-                            stars: item.stars || 0,
-                          })}
-                        </div>
-                        {isExpanded && (
-                          <div className="mt-2 text-xs text-text-muted space-y-1 break-all">
-                            <div>
-                              {t("skills.skillNet.category")}: {item.category || "unknown"}
+                      {viewMode === "list" ? (
+                        <>
+                          <div className="flex items-center gap-3 min-w-0 flex-1">
+                            <div className={`w-10 h-10 rounded-lg ${avatar.color} flex items-center justify-center flex-shrink-0 text-white font-semibold`}>
+                              {avatar.firstChar}
                             </div>
-                            <div>
-                              {t("skills.skillNet.url")}:{" "}
-                              <a
-                                href={item.skill_url}
-                                target="_blank"
-                                rel="noreferrer"
-                                className="text-accent hover:underline"
-                                onClick={(e) => e.stopPropagation()}
-                              >
-                                {item.skill_url}
-                              </a>
+                            <div className="min-w-0 flex-1">
+                              <div className="text-base font-semibold text-text-strong truncate">
+                                {item.skill_name}
+                              </div>
+                              <div className="text-sm text-text-muted mt-1 line-clamp-3">
+                                {item.skill_description || t("skills.noDescription")}
+                              </div>
+                              <div className="text-xs text-text-muted mt-1">
+                                {t("skills.skillNet.meta", {
+                                  author: item.author || "unknown",
+                                  stars: item.stars || 0,
+                                })}
+                              </div>
+                              {isExpanded && (
+                                <div className="mt-2 text-xs text-text-muted space-y-1 break-all">
+                                  <div>
+                                    {t("skills.skillNet.category")}: {item.category || "unknown"}
+                                  </div>
+                                  <div>
+                                    {t("skills.skillNet.url")}:{" "}
+                                    <a
+                                      href={item.skill_url}
+                                      target="_blank"
+                                      rel="noreferrer"
+                                      className="text-accent hover:underline"
+                                      onClick={(e) => e.stopPropagation()}
+                                    >
+                                      {item.skill_url}
+                                    </a>
+                                  </div>
+                                </div>
+                              )}
                             </div>
                           </div>
-                        )}
-                      </div>
-                      <div
-                        className="flex flex-col items-end gap-1 flex-shrink-0 max-w-[min(100%,14rem)]"
-                        onClick={(e) => e.stopPropagation()}
-                      >
-                        {isInstalled ? (
-                          <span className="px-4 h-[28px] flex items-center rounded-2xl text-sm whitespace-nowrap border border-[color:var(--border-ok)] bg-ok-subtle text-ok">
-                            {t("skills.status.installed")}
-                          </span>
-                        ) : (
-                          <button
-                            type="button"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              void handleInstall(item);
-                            }}
-                            disabled={isInstalling || installBlockedByLimit}
-                            title={
-                              installBlockedByLimit
-                                ? t("skills.skillNet.concurrentLimitReached", {
-                                    max: SKILLNET_MAX_CONCURRENT_INSTALLS,
-                                  })
-                                : isInstalling
+                          <div
+                            className="flex flex-col items-end gap-1 flex-shrink-0 max-w-[min(100%,14rem)]"
+                            onClick={(e) => e.stopPropagation()}
+                          >
+                            {isInstalled ? (
+                              <span className="px-4 h-[28px] flex items-center rounded-2xl text-sm whitespace-nowrap border border-[color:var(--border-ok)] bg-ok-subtle text-ok">
+                                {t("skills.status.installed")}
+                              </span>
+                            ) : (
+                              <button
+                                type="button"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  void handleInstall(item);
+                                }}
+                                disabled={isInstalling || installBlockedByLimit}
+                                title={
+                                  installBlockedByLimit
+                                    ? t("skills.skillNet.concurrentLimitReached", {
+                                        max: SKILLNET_MAX_CONCURRENT_INSTALLS,
+                                      })
+                                    : isInstalling
+                                      ? t("skills.skillNet.installingInProgress")
+                                      : undefined
+                                }
+                                className={`w-[76px] h-[28px] rounded-[24px] text-sm text-[#191919] border border-[#191919] hover:bg-secondary/50 transition-colors whitespace-nowrap ${
+                                  isInstalling || installBlockedByLimit
+                                    ? "text-text-muted cursor-not-allowed"
+                                    : ""
+                                }`}
+                              >
+                                {isInstalling
                                   ? t("skills.skillNet.installingInProgress")
-                                  : undefined
-                            }
-                            className={`w-[76px] h-[28px] rounded-[24px] text-sm text-[#191919] border border-[#191919] hover:bg-secondary/50 transition-colors whitespace-nowrap ${
-                              isInstalling || installBlockedByLimit
-                                ? "text-text-muted cursor-not-allowed"
-                                : ""
-                            }`}
-                          >
-                            {isInstalling
-                              ? t("skills.skillNet.installingInProgress")
-                              : t("skills.skillNet.installFromResult")}
-                          </button>
-                        )}
-                        {SKILLNET_EVALUATE_BUTTON_ENABLED ? (
-                          <button
-                            type="button"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              void handleEvaluate(item);
-                            }}
-                            disabled={evalGloballyBusy}
-                            className={`w-[76px] h-[28px] rounded-[24px] text-sm text-[#191919] border border-[#191919] hover:bg-secondary/50 transition-colors ${
-                              evalGloballyBusy
-                                ? "text-text-muted cursor-not-allowed"
-                                : ""
-                            }`}
-                          >
-                            {evalBusy
-                              ? t("skills.skillNet.evaluating")
-                              : t("skills.skillNet.evaluateSkill")}
-                          </button>
-                        ) : null}
-                        <button
-                          type="button"
-                          onClick={() =>
-                            setExpandedUrl((prev) =>
-                              prev === item.skill_url ? null : item.skill_url
-                            )
-                          }
-                          className="text-xs text-[#0067d1] hover:underline whitespace-nowrap"
-                        >
-                          {isExpanded ? t("skills.skillNet.hideDetail") : t("skills.skillNet.showDetail")}
-                        </button>
-                        {rowInstallError ? (
-                          <p
-                            className="text-[11px] text-danger text-right leading-snug break-words"
-                            role="alert"
-                          >
-                            {rowInstallError}
-                          </p>
-                        ) : null}
-                      </div>
+                                  : t("skills.skillNet.installFromResult")}
+                              </button>
+                            )}
+                            {SKILLNET_EVALUATE_BUTTON_ENABLED ? (
+                              <button
+                                type="button"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  void handleEvaluate(item);
+                                }}
+                                disabled={evalGloballyBusy}
+                                className={`w-[76px] h-[28px] rounded-[24px] text-sm text-[#191919] border border-[#191919] hover:bg-secondary/50 transition-colors ${
+                                  evalGloballyBusy
+                                    ? "text-text-muted cursor-not-allowed"
+                                    : ""
+                                }`}
+                              >
+                                {evalBusy
+                                  ? t("skills.skillNet.evaluating")
+                                  : t("skills.skillNet.evaluateSkill")}
+                              </button>
+                            ) : null}
+                            <button
+                              type="button"
+                              onClick={() =>
+                                setExpandedUrl((prev) =>
+                                  prev === item.skill_url ? null : item.skill_url
+                                )
+                              }
+                              className="text-xs text-[#0067d1] hover:underline whitespace-nowrap"
+                            >
+                              {isExpanded ? t("skills.skillNet.hideDetail") : t("skills.skillNet.showDetail")}
+                            </button>
+                            {rowInstallError ? (
+                              <p
+                                className="text-[11px] text-danger text-right leading-snug break-words"
+                                role="alert"
+                              >
+                                {rowInstallError}
+                              </p>
+                            ) : null}
+                          </div>
+                        </>
+                      ) : (
+                        <>
+                          <div className="flex items-start gap-3 flex-shrink-0">
+                            <div className={`w-10 h-10 rounded-lg ${avatar.color} flex items-center justify-center flex-shrink-0 text-white font-semibold text-sm`}>
+                              {avatar.firstChar}
+                            </div>
+                            <div className="min-w-0 flex-1">
+                              <div className="text-sm font-semibold text-text-strong truncate">
+                                {item.skill_name}
+                              </div>
+                              <div className="text-xs text-text-muted mt-1 line-clamp-2">
+                                {item.skill_description || t("skills.noDescription")}
+                              </div>
+                            </div>
+                          </div>
+                          <div className="flex flex-wrap gap-1.5 mt-2 flex-shrink-0 text-xs text-text-muted">
+                            <span className="px-2 py-0.5 rounded-full bg-secondary border border-border truncate">
+                              {t("skills.skillNet.meta", { author: item.author || "unknown", stars: item.stars || 0 })}
+                            </span>
+                          </div>
+                          {isExpanded && (
+                            <div className="mt-2 text-xs text-text-muted space-y-1 break-all flex-shrink-0">
+                              <div className="truncate">
+                                {t("skills.skillNet.category")}: {item.category || "unknown"}
+                              </div>
+                              <div className="truncate">
+                                {t("skills.skillNet.url")}:{" "}
+                                <a
+                                  href={item.skill_url}
+                                  target="_blank"
+                                  rel="noreferrer"
+                                  className="text-accent hover:underline"
+                                  onClick={(e) => e.stopPropagation()}
+                                >
+                                  {item.skill_url}
+                                </a>
+                              </div>
+                            </div>
+                          )}
+                          <div className="flex items-center mt-auto pt-2 gap-2 flex-shrink-0" style={{ width: "100%" }}>
+                            <div className="flex gap-1.5 flex-1">
+                              <button
+                                type="button"
+                                onClick={() =>
+                                  setExpandedUrl((prev) =>
+                                    prev === item.skill_url ? null : item.skill_url
+                                  )
+                                }
+                                className="text-xs text-[#0067d1] hover:underline whitespace-nowrap"
+                              >
+                                {isExpanded ? t("skills.skillNet.hideDetail") : t("skills.skillNet.showDetail")}
+                              </button>
+                            </div>
+                            <div className="flex-shrink-0 ml-auto">
+                              {isInstalled ? (
+                                <span className="px-4 h-[28px] flex items-center rounded-2xl text-sm whitespace-nowrap border border-[color:var(--border-ok)] bg-ok-subtle text-ok">
+                                  {t("skills.status.installed")}
+                                </span>
+                              ) : (
+                                <button
+                                  type="button"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    void handleInstall(item);
+                                  }}
+                                  disabled={isInstalling || installBlockedByLimit}
+                                  className={`w-[76px] h-[28px] rounded-[24px] text-sm text-[#191919] border border-[#191919] hover:bg-secondary/50 transition-colors whitespace-nowrap ${
+                                    isInstalling || installBlockedByLimit
+                                      ? "text-text-muted cursor-not-allowed"
+                                      : ""
+                                  }`}
+                                >
+                                  {isInstalling ? t("skills.skillNet.installingInProgress") : t("skills.skillNet.installFromResult")}
+                                </button>
+                              )}
+                            </div>
+                          </div>
+                        </>
+                      )}
                     </div>
                   );
                 })
               )}
               </div>
-            </div>
           )}
         </div>
       </div>
@@ -680,8 +805,22 @@ export function SkillNetSearchModal({
 
         <div className="p-5 overflow-auto flex-1 min-h-0">
           {installedSuccess && (
-            <div className="mb-3 px-3 py-2.5 rounded-lg text-sm leading-snug border border-[color:var(--border-ok)] bg-ok-subtle text-ok">
-              {t("skills.messages.skillNetInstalled", { name: installedSuccess })}
+            <div className="fixed top-4 right-4 z-[9999] rounded-[4px] text-sm text-black shadow-lg flex items-center gap-3 px-4" style={{ backgroundColor: "#d5f2dc", width: "564px", height: "40px" }}>
+              <span className="w-4 h-4 rounded-full bg-[#1a991d] flex items-center justify-center flex-shrink-0">
+                <svg className="w-3 h-3 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M5 13l4 4L19 7" />
+                </svg>
+              </span>
+              {t("skills.messages.skillNetInstalled", { name: installedSuccess }).replace("√", "")}
+              <button
+                type="button"
+                onClick={clearInstalledSuccess}
+                className="ml-auto w-6 h-6 flex items-center justify-center hover:bg-white/30 rounded-full transition-colors"
+              >
+                <svg className="w-4 h-4 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
             </div>
           )}
           <div className="mb-4 rounded-md border border-border bg-secondary/50 px-3 py-2.5 text-xs text-text-muted leading-relaxed">
@@ -779,48 +918,54 @@ export function SkillNetSearchModal({
                   const rowInstallError = installErrorByUrl[item.skill_url];
                   const evalBusy = evaluatingUrl === item.skill_url;
                   const evalGloballyBusy = evaluatingUrl !== null;
+                  const avatar = getSkillAvatar(item.skill_name);
                   return (
                     <div
                       key={item.skill_url}
                       className="p-4 rounded-lg border border-border bg-panel flex items-start justify-between gap-4"
                     >
-                      <div className="min-w-0 flex-1">
-                        <div className="text-base font-semibold text-text-strong truncate">
-                          {item.skill_name}
+                      <div className="flex items-center gap-3 min-w-0 flex-1">
+                        <div className={`w-10 h-10 rounded-lg ${avatar.color} flex items-center justify-center flex-shrink-0 text-white font-semibold`}>
+                          {avatar.firstChar}
                         </div>
-                        <div className="text-sm text-text-muted mt-1 line-clamp-3">
-                          {item.skill_description || t("skills.noDescription")}
-                        </div>
-                        <div className="text-xs text-text-muted mt-1">
-                          {t("skills.skillNet.meta", {
-                            author: item.author || "unknown",
-                            stars: item.stars || 0,
-                          })}
-                        </div>
-                        <div className="text-xs text-text-muted mt-1">
-                          {isExpanded
-                            ? t("skills.skillNet.hideDetail")
-                            : t("skills.skillNet.showDetail")}
-                        </div>
-                        {isExpanded && (
-                          <div className="mt-2 text-xs text-text-muted space-y-1 break-all">
-                            <div>
-                              {t("skills.skillNet.category")}: {item.category || "unknown"}
-                            </div>
-                            <div>
-                              {t("skills.skillNet.url")}:{" "}
-                              <a
-                                href={item.skill_url}
-                                target="_blank"
-                                rel="noreferrer"
-                                className="text-accent hover:underline"
-                                onClick={(e) => e.stopPropagation()}
-                              >
-                                {item.skill_url}
-                              </a>
-                            </div>
+                        <div className="min-w-0 flex-1">
+                          <div className="text-base font-semibold text-text-strong truncate">
+                            {item.skill_name}
                           </div>
-                        )}
+                          <div className="text-sm text-text-muted mt-1 line-clamp-3">
+                            {item.skill_description || t("skills.noDescription")}
+                          </div>
+                          <div className="text-xs text-text-muted mt-1">
+                            {t("skills.skillNet.meta", {
+                              author: item.author || "unknown",
+                              stars: item.stars || 0,
+                            })}
+                          </div>
+                          <div className="text-xs text-text-muted mt-1">
+                            {isExpanded
+                              ? t("skills.skillNet.hideDetail")
+                              : t("skills.skillNet.showDetail")}
+                          </div>
+                          {isExpanded && (
+                            <div className="mt-2 text-xs text-text-muted space-y-1 break-all">
+                              <div>
+                                {t("skills.skillNet.category")}: {item.category || "unknown"}
+                              </div>
+                              <div>
+                                {t("skills.skillNet.url")}:{" "}
+                                <a
+                                  href={item.skill_url}
+                                  target="_blank"
+                                  rel="noreferrer"
+                                  className="text-accent hover:underline"
+                                  onClick={(e) => e.stopPropagation()}
+                                >
+                                  {item.skill_url}
+                                </a>
+                              </div>
+                            </div>
+                          )}
+                        </div>
                       </div>
                       <div
                         className="flex flex-col items-end gap-1 flex-shrink-0 max-w-[min(100%,14rem)]"

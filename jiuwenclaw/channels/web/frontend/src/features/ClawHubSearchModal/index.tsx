@@ -8,6 +8,32 @@ import { webRequest } from "../../services/webClient";
 
 type LoadState = "idle" | "loading" | "success" | "error";
 
+const avatarColors = [
+  "bg-red-500",
+  "bg-orange-500",
+  "bg-amber-500",
+  "bg-yellow-500",
+  "bg-lime-500",
+  "bg-green-500",
+  "bg-emerald-500",
+  "bg-teal-500",
+  "bg-cyan-500",
+  "bg-sky-500",
+  "bg-blue-500",
+  "bg-indigo-500",
+  "bg-violet-500",
+  "bg-purple-500",
+  "bg-fuchsia-500",
+  "bg-pink-500",
+  "bg-rose-500",
+];
+
+const getSkillAvatar = (name: string) => {
+  const firstChar = name.charAt(0).toUpperCase();
+  const colorIndex = name.charCodeAt(0) % avatarColors.length;
+  return { firstChar, color: avatarColors[colorIndex] };
+};
+
 type ClawHubSkillItem = {
   slug: string;
   display_name: string;
@@ -22,8 +48,10 @@ interface ClawHubSearchModalProps {
   sessionId: string;
   /** 外部传入的搜索关键词 */
   externalSearchQuery?: string;
-  /** 当前已安装技能名（用于判断是否已安装�?*/
+  /** 当前已安装技能名（用于判断是否已安装） */
   installedSkillNames?: ReadonlySet<string>;
+  /** 视图模式：列表或平铺 */
+  viewMode?: "list" | "grid";
   onClose: () => void;
   onInstalled?: (skillName: string) => void | Promise<void>;
 }
@@ -34,6 +62,7 @@ export function ClawHubSearchModal({
   sessionId,
   externalSearchQuery,
   installedSkillNames,
+  viewMode = "list",
   onClose,
   onInstalled,
 }: ClawHubSearchModalProps) {
@@ -102,11 +131,42 @@ export function ClawHubSearchModal({
   useEffect(() => {
     if (embedded && externalSearchQuery !== undefined) {
       setQuery(externalSearchQuery);
-      if (externalSearchQuery.trim()) {
-        handleSearch();
-      }
     }
   }, [externalSearchQuery, embedded]);
+
+  useEffect(() => {
+    if (embedded && query.trim()) {
+      const q = query.trim();
+      setLoadState("loading");
+      setMessage(null);
+      void (async () => {
+        try {
+          const data = await webRequest<{
+            success: boolean;
+            detail?: string;
+            detail_key?: string;
+            skills?: ClawHubSkillItem[];
+          }>("skills.clawhub.search", withSession({ q, limit: 50 }));
+          if (!data.success) {
+            const message = data.detail_key
+              ? t(data.detail_key)
+              : (data.detail?.trim() || t("skills.clawhub.errors.searchFailed"));
+            throw new Error(message);
+          }
+          setResults(data.skills || []);
+          setLoadState("success");
+        } catch (err) {
+          console.error(err);
+          setResults([]);
+          setLoadState("error");
+          showMessage(
+            "error",
+            err instanceof Error ? err.message : t("skills.clawhub.errors.searchFailed")
+          );
+        }
+      })();
+    }
+  }, [query, embedded, t, withSession, showMessage]);
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -228,135 +288,130 @@ export function ClawHubSearchModal({
       );
     }
 
-    if (showTokenConfig) {
-      return (
-        <div className="p-4">
-          <h3 className="text-lg font-semibold text-text mb-3">
-            {t("skills.clawhub.configTitle")}
-          </h3>
-          <p className="text-sm text-text-muted mb-4">
-            {t("skills.clawhub.configDescription")}
-          </p>
-          <div className="space-y-4">
-            <div>
-              <label className="block text-sm font-medium text-text mb-2">
-                {t("skills.clawhub.tokenLabel")}
-              </label>
-              <input
-                type="password"
-                value={token}
-                onChange={(e) => setToken(e.target.value)}
-                placeholder={t("skills.clawhub.tokenPlaceholder")}
-                className="w-full px-3 py-2 rounded-md bg-secondary border border-border text-sm text-text placeholder:text-text-muted"
-              />
-            </div>
-            <div className="flex items-center gap-3 justify-end">
-              <button
-                type="button"
-                onClick={() => setShowTokenConfig(false)}
-                className="w-[76px] h-[28px] rounded-[24px] text-sm text-[#191919] border border-[#191919] hover:bg-secondary/50 transition-colors"
-              >
-                {t("common.cancel")}
-              </button>
-              <button
-                type="button"
-                onClick={handleSaveToken}
-                disabled={loading || !token.trim()}
-                className={`w-[76px] h-[28px] rounded-[24px] text-sm text-[#191919] border border-[#191919] hover:bg-secondary/50 transition-colors ${
-                  loading || !token.trim()
-                    ? "text-text-muted cursor-not-allowed"
-                    : "text-text"
-                }`}
-              >
-                {loading ? t("common.saving") : t("common.save")}
-              </button>
-            </div>
-          </div>
-        </div>
-      );
-    }
-
     return (
       <div className="flex flex-col h-full">
-        <div className="p-4 overflow-auto flex-1 min-h-0">
-          {!hasToken && (
-            <div className="mb-4 p-4 rounded-lg border border-amber-500/45 bg-amber-500/12">
-              <p className="text-sm text-text mb-3">
-                {t("skills.clawhub.configDescription")}
-              </p>
+        <div className="overflow-auto flex-1 min-h-0">
+          {message && message.type === "success" && (
+            <div className="fixed top-4 right-4 z-[9999] rounded-[4px] text-sm text-black shadow-lg flex items-center gap-3 px-4" style={{ backgroundColor: "#d5f2dc", width: "564px", height: "40px" }}>
+              <span className="w-4 h-4 rounded-full bg-[#1a991d] flex items-center justify-center flex-shrink-0">
+                <svg className="w-3 h-3 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M5 13l4 4L19 7" />
+                </svg>
+              </span>
+              {message.text.replace("√", "")}
               <button
                 type="button"
-                onClick={() => setShowTokenConfig(true)}
-                className="w-[76px] h-[28px] rounded-[24px] text-sm text-[#191919] border border-[#191919] hover:bg-secondary/50 transition-colors"
+                onClick={() => showMessage("success", "")}
+                className="ml-auto w-6 h-6 flex items-center justify-center hover:bg-white/30 rounded-full transition-colors"
               >
-                {t("skills.clawhub.configTitle")}
+                <svg className="w-4 h-4 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                </svg>
               </button>
             </div>
           )}
-          {hasToken && (
-            <div className="mb-4 flex items-center justify-between p-3 rounded-lg border border-border bg-secondary/50">
-              <p className="text-xs text-text-muted">
-                {t("skills.clawhub.tokenConfigured", { token: token.slice(0, 8) + "****" })}
-              </p>
-              <button
-                type="button"
-                onClick={() => setShowTokenConfig(true)}
-                className="w-[76px] h-[28px] rounded-[24px] text-sm text-[#191919] border border-[#191919] hover:bg-secondary/50 transition-colors"
-              >
-                {t("common.modify")}
-              </button>
-            </div>
-          )}
-          {message && (
-            <div className={`mb-3 px-3 py-2 rounded-lg text-sm ${
-              message.type === "success" 
-                ? "border border-[color:var(--border-ok)] bg-ok-subtle text-ok"
-                : "border border-danger/40 bg-danger/10 text-danger"
-            }`}>
+          {message && message.type === "error" && (
+            <div className="px-3 py-2 rounded-lg text-sm border border-danger/40 bg-danger/10 text-danger">
               {message.text}
             </div>
           )}
           {loadState === "success" && (
-            <div className="space-y-2">
+            <div className={`mt-4 flex-1 min-h-0 overflow-y-auto ${viewMode === "grid" ? "flex flex-wrap gap-4 content-start" : "space-y-3"}`}>
               {results.length === 0 ? (
                 <div className="text-sm text-text-muted">{t("skills.clawhub.noResults")}</div>
               ) : (
                 results.map((item) => {
                   const isInstalled = installedSkillNames?.has(item.slug) ?? false;
                   const isInstalling = installingSlug === item.slug;
+                  const avatar = getSkillAvatar(item.display_name || item.slug);
                   return (
                     <div
                       key={item.slug}
-                      className="p-4 rounded-lg border border-border bg-panel flex items-start justify-between gap-4"
+                      className={`p-4 rounded-lg border border-border bg-panel ${viewMode === "grid" ? "flex flex-col" : "flex items-start justify-between gap-4"}`}
+                      style={viewMode === "grid" ? { width: "496px", height: "168px", flexShrink: 0 } : undefined}
                     >
-                      <div className="min-w-0 flex-1">
-                        <div className="text-base font-semibold text-text-strong truncate">
-                          {item.display_name}
-                        </div>
-                        <div className="text-sm text-text-muted mt-1 line-clamp-3">
-                          {item.summary || t("skills.noDescription")}
-                        </div>
-                      </div>
-                      <div className="flex flex-col items-end gap-2 flex-shrink-0">
-                        {isInstalled ? (
-                          <span className="px-4 h-[28px] flex items-center rounded-2xl text-sm whitespace-nowrap border border-[color:var(--border-ok)] bg-ok-subtle text-ok">
-                            {t("skills.status.installed")}
-                          </span>
-                        ) : (
-                          <button
-                            type="button"
-                            onClick={() => void handleInstall(item)}
-                            disabled={isInstalling}
-                            className={`w-[76px] h-[28px] rounded-[24px] text-sm text-[#191919] border border-[#191919] hover:bg-secondary/50 transition-colors whitespace-nowrap ${
-                              isInstalling
-                                ? "text-text-muted cursor-not-allowed"
-                                : "text-text"
-                            }`}
-                          >
-                            {isInstalling ? t("skills.clawhub.installing") : t("skills.actions.install")}
-                          </button>
-                        )}
-                      </div>
+                      {viewMode === "list" ? (
+                        <>
+                          <div className="flex items-center gap-3 min-w-0 flex-1">
+                            <div className={`w-10 h-10 rounded-lg ${avatar.color} flex items-center justify-center flex-shrink-0 text-white font-semibold`}>
+                              {avatar.firstChar}
+                            </div>
+                            <div className="min-w-0 flex-1">
+                              <div className="text-base font-semibold text-text-strong truncate">
+                                {item.display_name}
+                              </div>
+                              <div className="text-sm text-text-muted mt-1 line-clamp-3">
+                                {item.summary || t("skills.noDescription")}
+                              </div>
+                            </div>
+                          </div>
+                          <div className="flex flex-col items-end gap-2 flex-shrink-0">
+                            {isInstalled ? (
+                              <span className="px-4 h-[28px] flex items-center rounded-2xl text-sm whitespace-nowrap border border-[color:var(--border-ok)] bg-ok-subtle text-ok">
+                                {t("skills.status.installed")}
+                              </span>
+                            ) : (
+                              <button
+                                type="button"
+                                onClick={() => void handleInstall(item)}
+                                disabled={isInstalling}
+                                className={`w-[76px] h-[28px] rounded-[24px] text-sm text-[#191919] border border-[#191919] hover:bg-secondary/50 transition-colors whitespace-nowrap ${
+                                  isInstalling
+                                    ? "text-text-muted cursor-not-allowed"
+                                    : "text-text"
+                                }`}
+                              >
+                                {isInstalling ? t("skills.clawhub.installing") : t("skills.actions.install")}
+                              </button>
+                            )}
+                          </div>
+                        </>
+                      ) : (
+                        <>
+                          <div className="flex items-start gap-3 flex-shrink-0">
+                            <div className={`w-10 h-10 rounded-lg ${avatar.color} flex items-center justify-center flex-shrink-0 text-white font-semibold text-sm`}>
+                              {avatar.firstChar}
+                            </div>
+                            <div className="min-w-0 flex-1">
+                              <div className="text-sm font-semibold text-text-strong truncate">
+                                {item.display_name}
+                              </div>
+                              <div className="text-xs text-text-muted mt-1 line-clamp-2">
+                                {item.summary || t("skills.noDescription")}
+                              </div>
+                            </div>
+                          </div>
+                          <div className="flex flex-wrap gap-1.5 mt-2 flex-shrink-0 text-xs text-text-muted">
+                            <span className="px-2 py-0.5 rounded-full bg-secondary border border-border truncate">
+                              {t("skills.clawhub.updatedAt", { date: new Date(item.updated_at).toLocaleDateString() })}
+                            </span>
+                          </div>
+                          <div className="flex items-center mt-auto pt-2 gap-2 flex-shrink-0" style={{ width: "100%" }}>
+                            <div className="flex gap-1.5 flex-1">
+                            </div>
+                            <div className="flex-shrink-0 ml-auto">
+                              {isInstalled ? (
+                                <span className="px-4 h-[28px] flex items-center rounded-2xl text-sm whitespace-nowrap border border-[color:var(--border-ok)] bg-ok-subtle text-ok">
+                                  {t("skills.status.installed")}
+                                </span>
+                              ) : (
+                                <button
+                                  type="button"
+                                  onClick={() => void handleInstall(item)}
+                                  disabled={isInstalling}
+                                  className={`w-[76px] h-[28px] rounded-[24px] text-sm text-[#191919] border border-[#191919] hover:bg-secondary/50 transition-colors whitespace-nowrap ${
+                                    isInstalling
+                                      ? "text-text-muted cursor-not-allowed"
+                                      : "text-text"
+                                  }`}
+                                >
+                                  {isInstalling ? t("skills.clawhub.installing") : t("skills.actions.install")}
+                                </button>
+                              )}
+                            </div>
+                          </div>
+                        </>
+                      )}
                     </div>
                   );
                 })
@@ -377,7 +432,7 @@ export function ClawHubSearchModal({
           onClick={onClose}
           aria-label={t("common.close")}
         />
-        <div className="relative w-full max-w-md rounded-xl border border-border bg-card shadow-2xl animate-rise p-6">
+        <div className="relative p-6 border border-border bg-card animate-rise" style={{ width: "642px", height: "246px", borderRadius: "8px" }}>
           <h3 className="text-lg font-semibold text-text mb-3">
             {t("skills.clawhub.configTitle")}
           </h3>
@@ -409,13 +464,13 @@ export function ClawHubSearchModal({
                 type="button"
                 onClick={handleSaveToken}
                 disabled={loading || !token.trim()}
-                className={`w-[76px] h-[28px] rounded-[24px] text-sm text-[#191919] border border-[#191919] hover:bg-secondary/50 transition-colors ${
+                className={`w-[76px] h-[28px] rounded-[24px] text-sm transition-colors ${
                   loading || !token.trim()
-                    ? "text-text-muted cursor-not-allowed"
-                    : "text-text"
+                    ? "bg-gray-300 text-gray-500 cursor-not-allowed"
+                    : "bg-[#191919] text-white hover:bg-gray-800"
                 }`}
               >
-                {loading ? t("common.saving") : t("common.save")}
+                {loading ? t("common.saving") : "确定"}
               </button>
             </div>
           </div>
@@ -476,14 +531,27 @@ export function ClawHubSearchModal({
         </div>
 
         <div className="p-5 overflow-auto flex-1 min-h-0">
-          {message && (
-            <div
-              className={`mb-3 px-3 py-2.5 rounded-lg text-sm leading-snug ${
-                message.type === "success"
-                  ? "border border-[color:var(--border-ok)] bg-ok-subtle text-ok"
-                  : "border border-danger/40 bg-danger/10 text-danger"
-              }`}
-            >
+          {message && message.type === "success" && (
+            <div className="fixed top-4 right-4 z-[9999] rounded-[4px] text-sm text-black shadow-lg flex items-center gap-3 px-4" style={{ backgroundColor: "#d5f2dc", width: "564px", height: "40px" }}>
+              <span className="w-4 h-4 rounded-full bg-[#1a991d] flex items-center justify-center flex-shrink-0">
+                <svg className="w-3 h-3 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M5 13l4 4L19 7" />
+                </svg>
+              </span>
+              {message.text.replace("√", "")}
+              <button
+                type="button"
+                onClick={() => showMessage("success", "")}
+                className="ml-auto w-6 h-6 flex items-center justify-center hover:bg-white/30 rounded-full transition-colors"
+              >
+                <svg className="w-4 h-4 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
+            </div>
+          )}
+          {message && message.type === "error" && (
+            <div className="mb-3 px-3 py-2.5 rounded-lg text-sm leading-snug border border-danger/40 bg-danger/10 text-danger">
               {message.text}
             </div>
           )}
@@ -517,25 +585,31 @@ export function ClawHubSearchModal({
                   <div className="text-xs text-text-muted">{t("skills.clawhub.noResults")}</div>
                 ) : (
                   results.map((item) => {
-                    // 使用本地状态判断是否已安装（刚安装的会立即更新�?
+                    // 使用本地状态判断是否已安装（刚安装的会立即更新）
                     const isInstalled = installedSlugs.has(item.slug) || (installedSkillNames?.has(item.slug) ?? false);
                     const isInstalling = installingSlug === item.slug;
+                    const avatar = getSkillAvatar(item.display_name || item.slug);
                     return (
                       <div
                         key={item.slug}
                         className="p-4 rounded-lg border border-border bg-panel flex items-start justify-between gap-4"
                       >
-                        <div className="min-w-0 flex-1">
-                          <div className="text-base font-semibold text-text-strong truncate">
-                            {item.display_name || item.slug}
+                        <div className="flex items-center gap-3 min-w-0 flex-1">
+                          <div className={`w-10 h-10 rounded-lg ${avatar.color} flex items-center justify-center flex-shrink-0 text-white font-semibold`}>
+                            {avatar.firstChar}
                           </div>
-                          <div className="text-sm text-text-muted mt-1 line-clamp-3">
-                            {item.summary || t("skills.noDescription")}
-                          </div>
-                          <div className="text-xs text-text-muted mt-1">
-                            {t("skills.clawhub.updatedAt", {
-                              date: new Date(item.updated_at).toLocaleDateString(),
-                            })}
+                          <div className="min-w-0 flex-1">
+                            <div className="text-base font-semibold text-text-strong truncate">
+                              {item.display_name || item.slug}
+                            </div>
+                            <div className="text-sm text-text-muted mt-1 line-clamp-3">
+                              {item.summary || t("skills.noDescription")}
+                            </div>
+                            <div className="text-xs text-text-muted mt-1">
+                              {t("skills.clawhub.updatedAt", {
+                                date: new Date(item.updated_at).toLocaleDateString(),
+                              })}
+                            </div>
                           </div>
                         </div>
                         <div className="flex flex-col items-end gap-2 flex-shrink-0">

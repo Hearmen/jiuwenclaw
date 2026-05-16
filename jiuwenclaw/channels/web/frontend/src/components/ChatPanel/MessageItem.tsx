@@ -5,6 +5,7 @@
  */
 
 import { useState, useCallback, useEffect, useRef } from 'react';
+import type { ReactNode } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Message, FileDownloadItem } from '../../types';
 import { StreamingContent } from './StreamingContent';
@@ -15,13 +16,206 @@ import { useSpeechSynthesis } from '../../hooks';
 import clsx from 'clsx';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
+import { parseTeamEventMessage } from './teamEventUtils';
+import teamLeaderAvatar from '../../assets/teamleader.svg';
+import userInTeamAvatar from '../../assets/user-in-team.svg';
+import teamAvatar2 from '../../assets/Team-2.svg';
+import teamAvatar3 from '../../assets/Team-3.svg';
+import teamAvatar4 from '../../assets/Team-4.svg';
+import teamAvatar5 from '../../assets/Team-5.svg';
+import teamAvatar6 from '../../assets/Team-6.svg';
+
+const TEAM_MEMBER_AVATARS = [
+  teamAvatar2,
+  teamAvatar3,
+  teamAvatar4,
+  teamAvatar5,
+  teamAvatar6,
+];
+
+function normalizeMemberId(member?: string) {
+  return member?.trim().toLowerCase().replace(/[\s-]+/g, '_') ?? '';
+}
+
+function isTeamLeaderMember(member?: string) {
+  const normalized = normalizeMemberId(member);
+  return normalized === 'team_leader' || normalized === 'teamleader';
+}
+
+function isUserMember(member?: string) {
+  return normalizeMemberId(member) === 'user';
+}
+
+function hashMemberKey(value: string) {
+  let hash = 0;
+  for (let index = 0; index < value.length; index += 1) {
+    hash = (hash * 33 + value.charCodeAt(index)) >>> 0;
+  }
+  return hash;
+}
+
+function getTeamMemberAvatar(member?: string) {
+  if (isTeamLeaderMember(member)) {
+    return {
+      src: teamLeaderAvatar,
+      containerClassName: 'bg-transparent',
+      imageClassName: 'h-full w-full rounded-2xl object-cover',
+    };
+  }
+
+  if (isUserMember(member)) {
+    return {
+      src: userInTeamAvatar,
+      containerClassName: 'bg-transparent',
+      imageClassName: 'h-full w-full rounded-xl object-cover',
+    };
+  }
+
+  const normalized = normalizeMemberId(member) || 'unknown_member';
+  const src = TEAM_MEMBER_AVATARS[
+    hashMemberKey(normalized) % TEAM_MEMBER_AVATARS.length
+  ];
+
+  return {
+    src,
+    containerClassName: 'bg-transparent',
+    imageClassName: 'h-full w-full rounded-2xl object-cover',
+  };
+}
+
+export function TeamMemberAvatar({ member }: { member?: string }) {
+  const avatar = getTeamMemberAvatar(member);
+
+  return (
+    <div className={clsx(
+      'h-9 w-9 shrink-0 overflow-hidden rounded-xl',
+      avatar.containerClassName
+    )}>
+      <img
+        src={avatar.src}
+        alt={`${formatMemberName(member)} avatar`}
+        className={avatar.imageClassName}
+      />
+    </div>
+  );
+}
+
+export function formatMemberName(member?: string) {
+  if (isTeamLeaderMember(member)) {
+    return 'TeamLeader';
+  }
+
+  if (isUserMember(member)) {
+    return 'User';
+  }
+
+  return member || 'Unknown';
+}
+
+function MarkdownMessageBody({
+  content,
+  testId,
+}: {
+  content: string;
+  testId?: string;
+}) {
+  return (
+    <div className="chat-text" data-testid={testId}>
+      <ReactMarkdown
+        remarkPlugins={[remarkGfm]}
+        components={{
+          a: ({ href, children, ...props }) => (
+            <a
+              href={href}
+              target="_blank"
+              rel="noopener noreferrer"
+              {...props}
+            >
+              {children}
+            </a>
+          ),
+        }}
+      >
+        {content}
+      </ReactMarkdown>
+    </div>
+  );
+}
+
+export function TeamMemberMessageFrame({
+  member,
+  showAvatar = true,
+  children,
+  contentClassName,
+}: {
+  member?: string;
+  showAvatar?: boolean;
+  children: ReactNode;
+  contentClassName?: string;
+}) {
+  return (
+    <div className="team-member-message animate-fade-in">
+      {showAvatar && (
+        <div className="team-member-message__header">
+          <TeamMemberAvatar member={member} />
+        </div>
+      )}
+      <div className={clsx('team-member-message__body', !showAvatar && 'is-continued', contentClassName)}>
+        {children}
+      </div>
+    </div>
+  );
+}
+
+function TeamLeaderPlainTextMessage({
+  member = 'team_leader',
+  content,
+  showAvatar = true,
+}: {
+  member?: string;
+  content: string;
+  showAvatar?: boolean;
+}) {
+  return (
+    <TeamMemberMessageFrame
+      member={member}
+      showAvatar={showAvatar}
+    >
+      <div className="team-member-message__plain">
+        {content}
+      </div>
+    </TeamMemberMessageFrame>
+  );
+}
+
+export function getMessageActor(message: Message): string | null {
+  if (message.role !== 'system') {
+    return null;
+  }
+
+  if (message.content?.startsWith('team.event:')) {
+    const event = parseTeamEventMessage(message);
+    return event?.fromMember || null;
+  }
+
+  if (message.id?.startsWith('team-leader-')) {
+    return 'team_leader';
+  }
+
+  return null;
+}
 
 interface MessageItemProps {
   message: Message;
   autoSpeak?: boolean;
+  showAvatar?: boolean;
 }
 
-export function MessageItem({ message, autoSpeak = false }: MessageItemProps) {
+export function MessageItem({
+  message,
+  autoSpeak = false,
+  showAvatar = true,
+}: MessageItemProps) {
   const { t } = useTranslation();
   const {
     id,
@@ -227,86 +421,50 @@ export function MessageItem({ message, autoSpeak = false }: MessageItemProps) {
 	     
 	     // 检查是否为团队消息
 	     if (content && content.startsWith('team.event:')) {
-	       const [, jsonStr] = content.split('team.event:');
-	       try {
-	         const payload = JSON.parse(jsonStr);
-	         
-	         const event = payload.event || payload.payload?.event;
-	         
-	         if (event) {
-	           const { type, from_member, to_member, content: messageContent, timestamp: eventTimestamp } = event;
-	           
-	           const isP2P = type?.endsWith('.p2p');
-	           const isBroadcast = type?.endsWith('.broadcast');
-	           const isTeamLeaderMessage = from_member === 'team_leader' && !isP2P && !isBroadcast;
-	           
-	           const formatEventTime = (ts: number) => {
-	             if (!ts) return '';
-	             const date = new Date(ts);
-	             return date.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' });
-	           };
-	           
+	       const event = parseTeamEventMessage(message);
+	       if (event) {
 	           // team_leader 发给用户的消息（不是 p2p 也不是 broadcast）
-	           if (isTeamLeaderMessage) {
+	           if (event.isLeaderToUser) {
 	             return (
-	               <div className="flex justify-center my-2 animate-fade-in">
-	                 <div className="max-w-[85%] w-full rounded-xl border border-border bg-secondary/50 p-3 shadow-sm">
-	                   <div className="flex items-center gap-2 mb-1.5">
-	                     <div className="w-2 h-2 rounded-full bg-accent" />
-	                     <span className="font-medium text-sm text-text">
-	                       {from_member || 'Unknown'}
-	                     </span>
-	                     <span className="text-xs text-text-muted">
-	                       {formatEventTime(eventTimestamp)}
-	                     </span>
-	                   </div>
-	                   <div className="text-sm text-text leading-relaxed">
-	                     <span>{messageContent}</span>
-	                   </div>
-	                 </div>
-	               </div>
+	               <TeamLeaderPlainTextMessage
+	                 member={event.fromMember}
+	                 content={event.content}
+	                 showAvatar={showAvatar}
+	               />
 	             );
 	           }
 	           
 	           // p2p 和 broadcast 消息展示
 	           return (
-	             <div className="flex justify-center my-2 animate-fade-in">
-	               <div className="max-w-[85%] w-full rounded-xl border border-border bg-secondary/50 p-3 shadow-sm">
-	                 <div className="flex items-center gap-2 mb-1.5">
-	                   <div className="w-2 h-2 rounded-full bg-accent" />
-	                   <span className="font-medium text-sm text-text">
-	                     {from_member || 'Unknown'}
-	                   </span>
-	                   <span className="text-xs text-text-muted">
-	                     {formatEventTime(eventTimestamp)}
-	                   </span>
-	                 </div>
-	                 <div className="text-sm text-text leading-relaxed">
-	                   {isP2P && to_member && (
-	                     <span className="inline-flex items-center px-1.5 py-0.5 rounded bg-info/20 text-info text-xs mr-1.5">
-	                       @{to_member}
+	             <TeamMemberMessageFrame
+	               member={event.fromMember}
+	               showAvatar={showAvatar}
+	             >
+	               <div className="team-member-message__card">
+	                 <div className="team-member-message__content">
+	                   {event.isP2P && event.toMember && (
+	                     <span className="team-event-group-chip team-event-group-chip--p2p">
+	                       @{event.toMember}
 	                     </span>
 	                   )}
-	                   {isBroadcast && (
-	                     <span className="inline-flex items-center px-1.5 py-0.5 rounded bg-warning/20 text-warning text-xs mr-1.5">
+	                   {event.isBroadcast && (
+	                     <span className="team-event-group-chip team-event-group-chip--broadcast">
 	                       @所有人
 	                     </span>
 	                   )}
-	                   <span>{messageContent}</span>
+	                   <span>{event.content}</span>
 	                 </div>
 	               </div>
-	             </div>
+	             </TeamMemberMessageFrame>
 	           );
-	         }
-	       } catch (e) {
-	         return (
-	           <div className="flex justify-center my-4 animate-fade-in">
-	             <div className="px-4 py-2 rounded-full bg-secondary border border-border text-text-muted text-sm">
-	               {content}
-	             </div>
-	           </div>
-	         );
 	       }
+	       return (
+	         <div className="flex justify-center my-4 animate-fade-in">
+	           <div className="px-4 py-2 rounded-full bg-secondary border border-border text-text-muted text-sm">
+	             {content}
+	           </div>
+	         </div>
+	       );
 	     }
 	     
 	     // 检查是否为 team_leader 消息（通过 ID 判断）
@@ -314,41 +472,22 @@ export function MessageItem({ message, autoSpeak = false }: MessageItemProps) {
 	     
 	     if (isTeamLeaderMsg) {
 	       let messageContent = content;
-	       let eventTimestamp: number | undefined;
 	       
 	       if (content.startsWith('team.leader:')) {
 	         const [, jsonStr] = content.split('team.leader:');
 	         try {
 	           const data = JSON.parse(jsonStr);
 	           messageContent = data.content;
-	           eventTimestamp = data.timestamp;
 	         } catch (e) {
 	         }
 	       }
 	       
-	       const formatEventTime = (ts: number | undefined) => {
-	         if (!ts) return '';
-	         const date = new Date(ts);
-	         return date.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' });
-	       };
-	       
 	       return (
-	         <div className="flex justify-center my-2 animate-fade-in">
-	           <div className="max-w-[85%] w-full rounded-xl border border-border bg-secondary/50 p-3 shadow-sm">
-	             <div className="flex items-center gap-2 mb-1.5">
-	               <div className="w-2 h-2 rounded-full bg-accent" />
-	               <span className="font-medium text-sm text-text">
-	                 team_leader
-	               </span>
-	               <span className="text-xs text-text-muted">
-	                 {formatEventTime(eventTimestamp)}
-	               </span>
-	             </div>
-	             <div className="text-sm text-text leading-relaxed whitespace-pre-wrap">
-	               <span>{messageContent}</span>
-	             </div>
-	           </div>
-	         </div>
+	         <TeamLeaderPlainTextMessage
+	           member="team_leader"
+	           content={messageContent || (isStreaming ? '正在接收中...' : '')}
+	           showAvatar={showAvatar}
+	         />
 	       );
 	     }
 	     
@@ -391,29 +530,16 @@ export function MessageItem({ message, autoSpeak = false }: MessageItemProps) {
             <StreamingContent content={content} isStreaming={true} />
           ) : (
             <>
-              <div className="chat-text" data-testid={!isUser ? 'thinking-body' : undefined}>
-                {isUser ? (
+              {isUser ? (
+                <div className="chat-text">
                   <span className="whitespace-pre-wrap">{content}</span>
-                ) : (
-                  <ReactMarkdown 
-                    remarkPlugins={[remarkGfm]}
-                    components={{
-                      a: ({ node, href, children, ...props }) => (
-                        <a 
-                          href={href} 
-                          target="_blank" 
-                          rel="noopener noreferrer"
-                          {...props}
-                        >
-                          {children}
-                        </a>
-                      )
-                    }}
-                  >
-                    {content}
-                  </ReactMarkdown>
-                )}
-              </div>
+                </div>
+              ) : (
+                <MarkdownMessageBody
+                  content={content}
+                  testId="thinking-body"
+                />
+              )}
               {mediaItems && mediaItems.length > 0 && (
                 <MediaRenderer items={mediaItems} />
               )}
