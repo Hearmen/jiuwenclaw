@@ -22,6 +22,7 @@ import plusIcon from '../../assets/sidebar/plus.svg';
 import logoIcon from '../../assets/sidebar/logo.svg';
 import advancedConfigIcon from '../../assets/sidebar/advanced-config-new.svg';
 import collapseIcon from '../../assets/sidebar/collapse.svg';
+import updateIcon from '../../assets/sidebar/advanced-config.svg';
 import appearanceSystemIcon from '../../assets/sidebar/appearance-system.svg';
 import appearanceDarkIcon from '../../assets/sidebar/appearance-dark.svg';
 import appearanceLightIcon from '../../assets/sidebar/appearance-light.svg';
@@ -59,6 +60,7 @@ const settingsNavItems: NavItem[] = [
   { key: 'configpanel', labelKey: 'nav.config', icon: <img src={configIcon} alt="" /> },
   { key: 'browserpanel', labelKey: 'nav.browser', icon: <img src={webIcon} alt="" /> },
   { key: 'logspanel', labelKey: 'nav.logs', icon: <img src={logsIcon} alt="" /> },
+  { key: 'updatepanel', labelKey: 'nav.update', icon: <img src={updateIcon} alt="" /> },
 ];
 
 // Advanced Config Panel Component
