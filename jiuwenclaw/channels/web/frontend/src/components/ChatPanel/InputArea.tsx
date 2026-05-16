@@ -403,7 +403,7 @@ export function InputArea({
                 className="chat-mode-select__menu"
                 role="menu"
               >
-                {modes.map((m) => (
+                {modes.filter((m) => !m.hidden).map((m) => (
                   <button
                     type="button"
                     key={m.value}
