@@ -3,9 +3,9 @@
 
 #define MyAppName "JiuwenSwarm"
 #define MyAppVersion "0.1.11"
-#define MyAppPublisher "Jiuwen"
+#define MyAppPublisher "openJiuwen"
 #define MyAppExeName "jiuwenswarm.exe"
-#define MyAppURL "https://jiuwenswarm.com"
+#define MyAppURL "https://openjiuwen.com"
 
 [Setup]
 AppId={{B8F3A2D1-7E4C-4A9B-8D6F-1C2E3F4A5B6C}

@@ -32,7 +32,7 @@ _SINGLE_INSTANCE_LOCK_FD: int | None = None
 def _acquire_single_instance_lock() -> bool:
     """Try to acquire a single-instance lock.  Runs *before* any heavy imports."""
     global _SINGLE_INSTANCE_LOCK_FD
-    lock_path = Path.home() / ".jiuwenclaw" / ".desktop.lock"
+    lock_path = Path.home() / ".jiuwenswarm" / ".desktop.lock"
     try:
         lock_path.parent.mkdir(parents=True, exist_ok=True)
         fd = os.open(str(lock_path), os.O_CREAT | os.O_RDWR, mode=0o644)
@@ -101,7 +101,7 @@ def _is_child_mode() -> bool:
 def _write_child_error(exc: BaseException) -> None:
     """将子进程的未捕获异常写入日志文件。"""
     try:
-        log_dir = Path(os.environ.get("JIUWENCLAW_DATA_DIR", Path.home() / ".jiuwenclaw")) / "logs"
+        log_dir = Path(os.environ.get("JIUWENCLAW_DATA_DIR", Path.home() / ".jiuwenswarm")) / "logs"
         log_dir.mkdir(parents=True, exist_ok=True)
         log_file = log_dir / "child_error.log"
         with open(log_file, "a", encoding="utf-8") as f:

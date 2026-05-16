@@ -1593,7 +1593,7 @@ requires-dist = [
     { name = "discord-py", specifier = ">=2.4.0" },
     { name = "google-genai", specifier = ">=1.68.0" },
     { name = "greenlet", specifier = ">=3.3.2" },
-    { name = "jiuwenswarm-tui", marker = "extra == 'tui'", directory = "packages/jiuwenclaw-tui" },
+    { name = "jiuwenswarm-tui", marker = "extra == 'tui'", directory = "packages/jiuwenswarm-tui" },
     { name = "lark-oapi", specifier = ">=1.5.3" },
     { name = "loguru", specifier = ">=0.7.3" },
     { name = "mutagen", specifier = ">=1.47.0" },
@@ -1645,7 +1645,7 @@ test = [
 [[package]]
 name = "jiuwenswarm-tui"
 version = "0.1.11"
-source = { directory = "packages/jiuwenclaw-tui" }
+source = { directory = "packages/jiuwenswarm-tui" }
 
 [[package]]
 name = "joserfc"

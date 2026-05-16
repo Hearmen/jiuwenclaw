@@ -414,31 +414,14 @@ class DesktopRuntime:
 
     @staticmethod
     def _build_loading_html() -> str:
-        import base64
-        import io
-
         logo_svg = ""
-        # 优先用 channels/web/frontend/dist（打包后可用），
-        # 回退到 channels/web/frontend/public（开发时可用）
         pkg_dir = Path(__file__).resolve().parent
-        logo_path = pkg_dir.parent / "web" / "frontend" / "dist" / "logo.png"
+        logo_path = pkg_dir.parent / "web" / "frontend" / "dist" / "logo.svg"
         if not logo_path.is_file():
-            logo_path = pkg_dir.parent / "web" / "frontend" / "public" / "logo.png"
+            logo_path = pkg_dir.parent / "web" / "frontend" / "public" / "logo.svg"
         if logo_path.is_file():
             try:
-                from PIL import Image
-
-                img = Image.open(logo_path).convert("RGBA")
-                img = img.resize((128, 128), Image.LANCZOS)
-                buf = io.BytesIO()
-                img.save(buf, format="PNG", optimize=True)
-                logo_b64 = base64.b64encode(buf.getvalue()).decode("ascii")
-                logo_svg = (
-                    '<svg viewBox="0 0 128 128" xmlns="http://www.w3.org/2000/svg">'
-                    '<image href="data:image/png;base64,' + logo_b64
-                    + '" width="128" height="128"/>'
-                    '</svg>'
-                )
+                logo_svg = logo_path.read_text(encoding="utf-8")
             except Exception:  # noqa: BLE001
                 pass
 
@@ -495,6 +478,7 @@ transition:opacity .4s ease,transform .4s ease}
     <div class="tip-text" id="tip"></div>
 </div>
 <div class="dots" id="dots"></div>
+<div class="tip-label" style="margin-top:16px">服务启动加载中</div>
 </div>
 <script>
 const tips=[
@@ -592,8 +576,8 @@ def _kill_process_tree(process: subprocess.Popen[bytes]) -> None:
 
 
 def _parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Launch JiuwenClaw desktop window.")
-    parser.add_argument("--title", default="JiuwenClaw", help="Desktop window title.")
+    parser = argparse.ArgumentParser(description="Launch JiuwenSwarm desktop window.")
+    parser.add_argument("--title", default="JiuwenSwarm", help="Desktop window title.")
     parser.add_argument("--width", type=int, default=1440, help="Initial window width.")
     parser.add_argument(
         "--height", type=int, default=960, help="Initial window height."
