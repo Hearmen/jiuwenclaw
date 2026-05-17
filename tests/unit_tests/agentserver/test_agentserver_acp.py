@@ -135,7 +135,7 @@ class DeepAdapterHarness(interface_deep_module.JiuWenClawDeepAdapter):
 class TeamHelpersHarness:
     @staticmethod
     def sync_team_identity_metadata_for_test(**kwargs) -> None:
-        getattr(team_helpers_module, "_sync_team_identity_metadata")(**kwargs)
+        team_helpers_module.sync_team_identity_metadata(**kwargs)
 
 
 def fake_encode_agent_response_for_wire(resp, response_id):

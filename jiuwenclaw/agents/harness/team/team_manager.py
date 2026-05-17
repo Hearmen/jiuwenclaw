@@ -21,7 +21,11 @@ from openjiuwen.agent_teams.schema.blueprint import TeamAgentSpec
 from openjiuwen.agent_teams.context import reset_session_id, set_session_id
 from openjiuwen.core.runner import Runner
 from openjiuwen.harness import DeepAgent
-from openjiuwen.harness.rails import SkillEvolutionRail, TeamSkillCreateRail, TeamSkillRail
+from openjiuwen.harness.rails import (
+    SkillEvolutionRail,
+    TeamSkillCreateRail,
+    TeamSkillEvolutionRail,
+)
 from jiuwenclaw.agents.harness.common.plugins.rail_manager import get_rail_manager
 from jiuwenclaw.agents.harness.team.rails.team_member_skill_toolkit_rail import (
     MemberSkillToolkitRail,
@@ -149,7 +153,7 @@ class TeamManager:
         self._active_team_name: str | None = None
         self._pending_session_id: str | None = None
         self._pending_team_name: str | None = None
-        # session_id → TeamSkillRail instance (set by customizer, used for drain/approval)
+        # session_id → TeamSkillEvolutionRail instance (set by customizer, used for drain/approval)
         self._team_skill_rails: dict[str, Any] = {}
         # session_id → member SkillEvolutionRail instances
         self._team_member_skill_evolution_rails: dict[str, list[Any]] = {}
@@ -529,7 +533,7 @@ class TeamManager:
         resolved_channel = channel_id or "default"
         resolved_model_name = get_default_model_name()
 
-        # Resolve team shared workspace skills directory for TeamSkillRail.
+        # Resolve team shared workspace skills directory for TeamSkillEvolutionRail.
         ws_config = spec.workspace
         team_ws_root = (
             ws_config.root_path if ws_config and ws_config.root_path
@@ -814,7 +818,7 @@ class TeamManager:
                 for rail in member_rails:
                     if type(rail).__name__ in RAIL_WHITELIST:
                         agent.add_rail(rail)
-                        if isinstance(rail, (TeamSkillRail, TeamSkillCreateRail)):
+                        if isinstance(rail, (TeamSkillEvolutionRail, TeamSkillCreateRail)):
                             get_team_manager(resolved_channel).register_team_live_rail(
                                 session_id,
                                 agent,
@@ -822,7 +826,7 @@ class TeamManager:
                             )
                     else:
                         logger.debug("[TeamManager] Skipping non-whitelisted rail: %s", type(rail).__name__)
-                    if isinstance(rail, TeamSkillRail):
+                    if isinstance(rail, TeamSkillEvolutionRail):
                         team_skill_rail = rail
                     elif isinstance(rail, SkillEvolutionRail):
                         get_team_manager(resolved_channel).register_team_member_skill_evolution_rail(
@@ -832,7 +836,7 @@ class TeamManager:
                     elif isinstance(rail, TeamSkillCreateRail):
                         team_skill_create_rail = rail
                 logger.info("[TeamManager] Added %d rails for team member", len(member_rails))
-                # Register TeamSkillRail with TeamManager for approval/sync.
+                # Register TeamSkillEvolutionRail with TeamManager for approval/sync.
                 if team_skill_rail is not None:
                     tm = get_team_manager(resolved_channel)
                     tm.register_team_skill_rail(session_id, team_skill_rail)
@@ -842,28 +846,30 @@ class TeamManager:
                         get_agent_skills_dir(),
                     )
                     logger.info(
-                        "[TeamManager] TeamSkillRail mounted on leader "
+                        "[TeamManager] TeamSkillEvolutionRail mounted on leader "
                         "(skills_dir=%s, sync_target=%s)",
-                        team_ws_skills_dir, get_agent_skills_dir(),
+                        team_ws_skills_dir,
+                        get_agent_skills_dir(),
                     )
                 if team_skill_create_rail is not None:
                     get_team_manager(resolved_channel).register_team_skill_create_rail(
                         session_id,
                         team_skill_create_rail,
                     )
-                get_team_manager(resolved_channel).register_team_rail_context(
-                    session_id,
-                    TeamRailMountContext(
-                        agent=agent,
-                        member_info=MemberInfo(
-                            agent_name=getattr(agent.card, "name", "team_member"),
-                            model_name=resolved_model_name,
-                            role=role,
+                if role == "leader":
+                    get_team_manager(resolved_channel).register_team_rail_context(
+                        session_id,
+                        TeamRailMountContext(
+                            agent=agent,
+                            member_info=MemberInfo(
+                                agent_name=getattr(agent.card, "name", "team_member"),
+                                model_name=resolved_model_name,
+                                role=role,
+                            ),
+                            runtime=RuntimeInfo(channel=resolved_channel),
+                            team_workspace=team_workspace,
                         ),
-                        runtime=RuntimeInfo(channel=resolved_channel),
-                        team_workspace=team_workspace,
-                    ),
-                )
+                    )
             except Exception as exc:
                 logger.warning("[TeamManager] build_member_rails failed: %s", exc)
 
@@ -1087,7 +1093,7 @@ class TeamManager:
             logger.error("[TeamManager] interact failed: session_id=%s, error=%s", session_id, exc)
             return False
 
-    # TeamSkillRail accessors.
+    # TeamSkillEvolutionRail accessors.
 
     def get_team_skill_rail(self, session_id: str) -> Any | None:
         return self._team_skill_rails.get(session_id)
@@ -1096,21 +1102,21 @@ class TeamManager:
         return self._team_skill_create_rails.get(session_id)
 
     def find_team_skill_rail_for_request(self, request_id: str) -> Any | None:
-        """Find the TeamSkillRail that owns a pending patch with this request_id."""
+        """Find the TeamSkillEvolutionRail that owns a pending approval with this request_id."""
         for rail in self._team_skill_rails.values():
-            if request_id in getattr(rail, "_pending_patch_snapshots", {}):
+            if request_id in getattr(rail, "_pending_approval_snapshots", {}):
                 return rail
         return None
 
     async def drain_team_skill_events(self, session_id: str) -> list[dict]:
-        """Drain buffered approval events from this session's TeamSkillRail."""
+        """Drain buffered approval events from this session's TeamSkillEvolutionRail."""
         rail = self._team_skill_rails.get(session_id)
         if rail is None:
             return []
         return await rail.drain_pending_approval_events()
 
     def register_team_skill_rail(self, session_id: str, rail: Any) -> None:
-        """Register a TeamSkillRail instance for the given session."""
+        """Register a TeamSkillEvolutionRail instance for the given session."""
         self._team_skill_rails[session_id] = rail
 
     def register_team_member_skill_evolution_rail(self, session_id: str, rail: Any) -> None:
@@ -1125,7 +1131,12 @@ class TeamManager:
 
     def register_team_rail_context(self, session_id: str, context: TeamRailMountContext) -> None:
         """Register session context needed to rebuild missing team rails."""
-        self._team_rail_contexts[session_id] = context
+        if getattr(context.member_info, "role", None) == "leader":
+            self._team_rail_contexts[session_id] = context
+
+    def get_team_rail_context(self, session_id: str) -> TeamRailMountContext | None:
+        """Return the stored leader rail mount context for a session."""
+        return self._team_rail_contexts.get(session_id)
 
     def register_team_live_rail(self, session_id: str, agent: Any, rail: Any) -> None:
         """Remember a live rail owner so hot reload can unregister mounted rails."""
@@ -1202,7 +1213,7 @@ class TeamManager:
         team_skill_rail: Any | None = None
         team_skill_create_rail: Any | None = None
         for rail in member_rails:
-            if isinstance(rail, TeamSkillRail) and mount_team_skill_rail:
+            if isinstance(rail, TeamSkillEvolutionRail) and mount_team_skill_rail:
                 context.agent.add_rail(rail)
                 self.register_team_live_rail(session_id, context.agent, rail)
                 team_skill_rail = rail
@@ -1241,33 +1252,31 @@ class TeamManager:
                         exc,
                     )
 
-        if not auto_scan_enabled:
-            for session_id, rail in list(self._team_skill_rails.items()):
-                await self._cancel_team_evolution_watcher(session_id)
-                await self._unregister_live_rail(session_id, rail)
-                self._team_skill_rails.pop(session_id, None)
-                self._team_skill_sync_targets.pop(session_id, None)
+        for rail in self._team_skill_rails.values():
+            try:
+                rail.auto_scan = auto_scan_enabled
+            except Exception as exc:
+                logger.warning(
+                    "[TeamManager] TeamSkillEvolutionRail auto_scan update failed: %s",
+                    exc,
+                )
 
         if not skill_create_enabled:
             for session_id, rail in list(self._team_skill_create_rails.items()):
                 await self._unregister_live_rail(session_id, rail)
                 self._team_skill_create_rails.pop(session_id, None)
+            return
 
         for session_id, context in list(self._team_rail_contexts.items()):
-            needs_team_skill_rail = auto_scan_enabled and session_id not in self._team_skill_rails
-            needs_team_skill_create_rail = skill_create_enabled and session_id not in self._team_skill_create_rails
-            needs_skill_evolution_rail = (
-                auto_scan_enabled
-                and not self._team_member_skill_evolution_rails.get(session_id)
+            if session_id in self._team_skill_create_rails:
+                continue
+            self._build_and_mount_member_rails_for_context(
+                session_id,
+                context,
+                mount_team_skill_rail=False,
+                mount_team_skill_create_rail=True,
+                mount_skill_evolution_rail=False,
             )
-            if needs_team_skill_rail or needs_team_skill_create_rail or needs_skill_evolution_rail:
-                self._build_and_mount_member_rails_for_context(
-                    session_id,
-                    context,
-                    mount_team_skill_rail=needs_team_skill_rail,
-                    mount_team_skill_create_rail=needs_team_skill_create_rail,
-                    mount_skill_evolution_rail=needs_skill_evolution_rail,
-                )
 
     def register_team_skill_sync_target(
         self, session_id: str, source: Path, target: Path,
@@ -1839,7 +1848,7 @@ def get_team_manager(channel_id: str | None = None) -> TeamManager:
 
 
 def find_team_skill_rail_across_managers(request_id: str) -> Any | None:
-    """Find the TeamSkillRail that owns a pending request across all channel managers."""
+    """Find the TeamSkillEvolutionRail that owns a pending request across all channel managers."""
     for manager in _team_managers.values():
         rail = manager.find_team_skill_rail_for_request(request_id)
         if rail is not None:

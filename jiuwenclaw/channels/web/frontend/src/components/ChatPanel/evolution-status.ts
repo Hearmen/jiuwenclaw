@@ -8,6 +8,8 @@ const STAGE_KEY_MAP: Record<string, string> = {
   detecting: 'statusBar.evolutionStages.detecting',
   generating: 'statusBar.evolutionStages.generating',
   awaiting_approval: 'statusBar.evolutionStages.awaitingApproval',
+  approval_required: 'statusBar.evolutionStages.awaitingApproval',
+  no_evolution_generated: 'statusBar.evolutionStages.noEvolutionGenerated',
   completed: 'statusBar.evolutionStages.completed',
   timed_out: 'statusBar.evolutionStages.timedOut',
   failed: 'statusBar.evolutionStages.failed',
@@ -23,7 +25,7 @@ export function getEvolutionPillLabel(
   }
 
   const stage = (evolutionStatus.stage || '').trim().toLowerCase();
-  if (mode !== 'team' && (stage === 'failed' || stage === 'hidden')) {
+  if (stage === 'hidden' || (mode !== 'team' && stage === 'failed')) {
     return null;
   }
   const translationKey = STAGE_KEY_MAP[stage];

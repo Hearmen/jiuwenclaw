@@ -325,11 +325,13 @@ class TestEvolutionSignal:
             section="Troubleshooting",
             excerpt="Error: File not found",
             skill_name="test-skill",
+            context={"tool_name": "file.read"},
         )
         assert signal.signal_type == "execution_failure"
         assert signal.section == "Troubleshooting"
         assert signal.excerpt == "Error: File not found"
         assert signal.skill_name == "test-skill"
+        assert signal.context == {"tool_name": "file.read"}
 
     @staticmethod
     def test_evolution_signal_to_dict():
@@ -339,6 +341,7 @@ class TestEvolutionSignal:
             section="Examples",
             excerpt="You should do it this way",
             skill_name="my-skill",
+            context={"source": "passive_conversation"},
         )
         result = signal.to_dict()
         # Note: to_dict returns 'type' (not 'signal_type') for compatibility
@@ -346,6 +349,7 @@ class TestEvolutionSignal:
         assert result["section"] == "Examples"
         assert result["excerpt"] == "You should do it this way"
         assert result["skill_name"] == "my-skill"
+        assert result["context"] == {"source": "passive_conversation"}
 
     @staticmethod
     def test_evolution_signal_with_optional_fields():
@@ -357,3 +361,4 @@ class TestEvolutionSignal:
         )
         result = signal.to_dict()
         assert result["skill_name"] is None
+        assert "context" not in result

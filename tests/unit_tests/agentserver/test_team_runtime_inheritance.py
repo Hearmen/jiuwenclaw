@@ -191,15 +191,17 @@ def test_build_member_rails_accepts_team_workspace_info(tmp_path):
     assert isinstance(rails, list)
 
 
-def test_build_member_rails_skips_team_skill_rail_when_auto_scan_disabled(
+def test_build_member_rails_keeps_team_skill_evolution_rail_when_auto_scan_disabled(
     tmp_path, monkeypatch
 ):
-    class _FakeTeamSkillRail:
-        pass
+    class _FakeTeamSkillEvolutionRail:
+        def __init__(self, **kwargs):
+            self.kwargs = kwargs
 
+    monkeypatch.delenv("EVOLUTION_AUTO_SCAN", raising=False)
     monkeypatch.setattr(
-        "jiuwenclaw.agents.harness.team.team_runtime_inheritance.TeamSkillRail",
-        _FakeTeamSkillRail,
+        "jiuwenclaw.agents.harness.team.team_runtime_inheritance.TeamSkillEvolutionRail",
+        _FakeTeamSkillEvolutionRail,
     )
     monkeypatch.setattr(
         "jiuwenclaw.agents.harness.team.team_runtime_inheritance.build_evolution_llm",
@@ -214,20 +216,22 @@ def test_build_member_rails_skips_team_skill_rail_when_auto_scan_disabled(
         ),
     )
 
-    assert not any(isinstance(rail, _FakeTeamSkillRail) for rail in rails)
+    team_skill_rails = [rail for rail in rails if isinstance(rail, _FakeTeamSkillEvolutionRail)]
+    assert len(team_skill_rails) == 1
+    assert team_skill_rails[0].kwargs["auto_scan"] is False
 
 
-def test_build_member_rails_creates_team_skill_rail_when_auto_scan_enabled(
+def test_build_member_rails_creates_team_skill_evolution_rail_when_evolution_disabled(
     tmp_path, monkeypatch
 ):
-    class _FakeTeamSkillRail:
+    class _FakeTeamSkillEvolutionRail:
         def __init__(self, **kwargs):
             self.kwargs = kwargs
 
     monkeypatch.delenv("EVOLUTION_AUTO_SCAN", raising=False)
     monkeypatch.setattr(
-        "jiuwenclaw.agents.harness.team.team_runtime_inheritance.TeamSkillRail",
-        _FakeTeamSkillRail,
+        "jiuwenclaw.agents.harness.team.team_runtime_inheritance.TeamSkillEvolutionRail",
+        _FakeTeamSkillEvolutionRail,
     )
     monkeypatch.setattr(
         "jiuwenclaw.agents.harness.team.team_runtime_inheritance.build_evolution_llm",
@@ -238,24 +242,26 @@ def test_build_member_rails_creates_team_skill_rail_when_auto_scan_enabled(
         member_info=MemberInfo(role="leader"),
         team_workspace=TeamWorkspaceInfo(
             skills_dir=str(tmp_path / "skills"),
-            config={"evolution": {"auto_scan": True}},
+            config={"evolution": {"enabled": False, "auto_scan": False}},
         ),
     )
 
-    assert any(isinstance(rail, _FakeTeamSkillRail) for rail in rails)
+    team_skill_rails = [rail for rail in rails if isinstance(rail, _FakeTeamSkillEvolutionRail)]
+    assert len(team_skill_rails) == 1
+    assert team_skill_rails[0].kwargs["auto_scan"] is False
 
 
 def test_build_member_rails_reads_react_evolution_auto_scan(
     tmp_path, monkeypatch
 ):
-    class _FakeTeamSkillRail:
+    class _FakeTeamSkillEvolutionRail:
         def __init__(self, **kwargs):
             self.kwargs = kwargs
 
     monkeypatch.delenv("EVOLUTION_AUTO_SCAN", raising=False)
     monkeypatch.setattr(
-        "jiuwenclaw.agents.harness.team.team_runtime_inheritance.TeamSkillRail",
-        _FakeTeamSkillRail,
+        "jiuwenclaw.agents.harness.team.team_runtime_inheritance.TeamSkillEvolutionRail",
+        _FakeTeamSkillEvolutionRail,
     )
     monkeypatch.setattr(
         "jiuwenclaw.agents.harness.team.team_runtime_inheritance.build_evolution_llm",
@@ -266,20 +272,21 @@ def test_build_member_rails_reads_react_evolution_auto_scan(
         member_info=MemberInfo(role="leader"),
         team_workspace=TeamWorkspaceInfo(
             skills_dir=str(tmp_path / "skills"),
-            config={"react": {"evolution": {"auto_scan": True}}},
+            config={"react": {"evolution": {"enabled": True, "auto_scan": True}}},
         ),
     )
 
-    assert any(isinstance(rail, _FakeTeamSkillRail) for rail in rails)
+    assert any(isinstance(rail, _FakeTeamSkillEvolutionRail) for rail in rails)
 
 
 def test_build_member_rails_env_auto_scan_overrides_config(tmp_path, monkeypatch):
     class _FakeTeamSkillRail:
-        pass
+        def __init__(self, **kwargs):
+            self.kwargs = kwargs
 
     monkeypatch.setenv("EVOLUTION_AUTO_SCAN", "false")
     monkeypatch.setattr(
-        "jiuwenclaw.agents.harness.team.team_runtime_inheritance.TeamSkillRail",
+        "jiuwenclaw.agents.harness.team.team_runtime_inheritance.TeamSkillEvolutionRail",
         _FakeTeamSkillRail,
     )
     monkeypatch.setattr(
@@ -291,11 +298,13 @@ def test_build_member_rails_env_auto_scan_overrides_config(tmp_path, monkeypatch
         member_info=MemberInfo(role="leader"),
         team_workspace=TeamWorkspaceInfo(
             skills_dir=str(tmp_path / "skills"),
-            config={"evolution": {"auto_scan": True}},
+            config={"evolution": {"enabled": True, "auto_scan": True}},
         ),
     )
 
-    assert not any(isinstance(rail, _FakeTeamSkillRail) for rail in rails)
+    team_skill_rails = [rail for rail in rails if isinstance(rail, _FakeTeamSkillRail)]
+    assert len(team_skill_rails) == 1
+    assert team_skill_rails[0].kwargs["auto_scan"] is False
 
 
 def test_build_member_rails_keeps_member_skill_evolution_when_auto_scan_disabled(

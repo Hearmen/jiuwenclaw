@@ -80,6 +80,7 @@
       "detecting": "Detecting evolution signals...",
       "generating": "Generating evolution experience...",
       "awaitingApproval": "Evolution proposal ready, awaiting approval...",
+      "noEvolutionGenerated": "No evolution generated",
       "completed": "Skill evolution completed",
       "timedOut": "Skill evolution timed out",
       "failed": "Skill evolution failed"

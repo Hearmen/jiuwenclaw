@@ -5,8 +5,8 @@
 from __future__ import annotations
 
 import asyncio
-from dataclasses import dataclass
 import logging
+import time
 from typing import Any, AsyncIterator
 
 from openjiuwen.agent_teams.runtime import RunActionKind
@@ -23,20 +23,38 @@ from jiuwenclaw.server.runtime.session.session_metadata import (
 from jiuwenclaw.agents.harness.team.monitor_handler import TeamMonitorHandler
 from jiuwenclaw.server.utils.stream_utils import parse_stream_chunk
 from jiuwenclaw.common.schema.agent import AgentResponseChunk
+from jiuwenclaw.server.runtime.agent_adapter.evolution_helpers import (
+    EvolutionPushContext,
+    TEAM_EVOLUTION_EVENT_TIMEOUT_SEC,
+    TEAM_EVOLUTION_HIDDEN_STAGE,
+    TEAM_EVOLUTION_IDLE_SLEEP_SEC,
+    TEAM_EVOLUTION_START_MESSAGE,
+    TEAM_EVOLUTION_START_STAGE,
+    broadcast_evolution_progress,
+    build_evolution_status_update,
+    event_type,
+    evolution_outcome_from_event,
+    extract_evolution_request_id,
+    group_evolution_approvals,
+    is_evolution_started_progress,
+    is_evolution_outcome_event,
+    make_team_evolution_cycle_request_id,
+    push_evolution_event,
+    push_evolution_status,
+    team_evolution_end_update,
+    team_evolution_terminal_progress,
+)
 
 logger = logging.getLogger(__name__)
 
 _pending_waiters: dict[tuple[str, str], list[tuple[str, asyncio.Queue]]] = {}
-_TEAM_EVOLUTION_IDLE_SLEEP_SEC = 1.0
-_TEAM_EVOLUTION_START_STAGE = "collecting"
-_TEAM_EVOLUTION_START_MESSAGE = "Running team skill evolution analysis..."
 _TEAM_CREATE_KINDS = {
     RunActionKind.CREATE.value,
     RunActionKind.NEW_TEAM_IN_SESSION.value,
 }
 
 
-def _sync_team_identity_metadata(
+def sync_team_identity_metadata(
     *,
     channel_id: str | None,
     session_id: str,
@@ -70,30 +88,11 @@ def _sync_team_identity_metadata(
     )
 
 
-@dataclass(frozen=True)
-class _TeamEvolutionPushContext:
-    transport: Any
-    channel_id: str | None
-    session_id: str
-
-
-@dataclass(frozen=True)
-class _TeamEvolutionStatusUpdate:
-    request_id: str
-    status: str
-    stage: str
-    message: str = ""
-
-
 def _resolve_channel_id(channel_id: str | None) -> str:
     return str(channel_id or "default").strip() or "default"
 
 
-def _waiter_key(channel_id: str | None, session_id: str) -> tuple[str, str]:
-    return _resolve_channel_id(channel_id), session_id
-
-
-async def _ensure_monitor_for_active_runtime(
+async def ensure_monitor_for_active_runtime(
     channel_id: str | None,
     session_id: str,
     team_name: str,
@@ -140,7 +139,7 @@ def _broadcast_event(
     channel_id: str | None, session_id: str, event: dict[str, Any]
 ) -> None:
     """Broadcast an event to all request queues waiting on the same channel/session."""
-    waiter_key = _waiter_key(channel_id, session_id)
+    waiter_key = (_resolve_channel_id(channel_id), session_id)
     waiters = _pending_waiters.get(waiter_key, [])
     for request_id, queue in waiters:
         try:
@@ -154,21 +153,42 @@ def _broadcast_event(
             )
 
 
-def _event_payload_dict(evt: Any) -> dict[str, Any]:
-    if hasattr(evt, "payload") and isinstance(evt.payload, dict):
-        return dict(evt.payload)
-    if isinstance(evt, dict):
-        return dict(evt)
-    return {}
+def _approval_chunk_from_event(evt: Any) -> dict[str, Any] | None:
+    parsed = parse_stream_chunk(evt)
+    if not isinstance(parsed, dict) or parsed.get("event_type") != "chat.ask_user_question":
+        return None
+    request_id = parsed.get("request_id")
+    questions = parsed.get("questions")
+    if not isinstance(request_id, str) or not request_id.strip():
+        return None
+    if not isinstance(questions, list) or not questions:
+        return None
+    return parsed
 
 
-def _event_type(evt: Any) -> str:
-    evt_type = getattr(evt, "type", None)
-    if isinstance(evt_type, str) and evt_type:
-        return evt_type
-    payload = _event_payload_dict(evt)
-    payload_type = payload.get("event_type")
-    return payload_type if isinstance(payload_type, str) else ""
+def _approval_result_from_event_or_items(
+    *,
+    skill_name: str,
+    event: Any,
+    items: list[Any],
+    no_changes_output: str,
+    invalid_output: str,
+) -> dict[str, Any]:
+    approval_chunk = _approval_chunk_from_event(event)
+    if approval_chunk is not None:
+        questions = approval_chunk.get("questions", [])
+        return {
+            "output": f"Skill '{skill_name}' 演进请求已生成，请在审批弹框中确认。",
+            "result_type": "answer",
+            "approval_chunks": [approval_chunk],
+            "question_count": len(questions),
+        }
+    if not items:
+        return {
+            "output": no_changes_output,
+            "result_type": "answer",
+        }
+    return {"output": invalid_output, "result_type": "error"}
 
 
 def _is_leader_output(chunk: Any) -> bool:
@@ -187,94 +207,82 @@ def _is_leader_output(chunk: Any) -> bool:
     return str(role_value).strip().lower() == TeamRole.LEADER.value
 
 
-def _is_team_evolution_approval(evt: Any) -> bool:
-    return _event_type(evt) == "chat.ask_user_question"
-
-
-def _extract_team_evolution_request_id(evt: Any) -> str | None:
-    payload = _event_payload_dict(evt)
-    request_id = payload.get("request_id")
-    if isinstance(request_id, str):
-        request_id = request_id.strip()
-    return request_id or None
-
-
-def _team_rail_has_pending_evolution(rail: Any) -> bool:
-    checker = getattr(rail, "has_pending_evolution_tasks", None)
-    if callable(checker):
-        try:
-            return bool(checker())
-        except Exception as exc:
-            logger.debug("[TeamHelpers] rail pending-evolution check failed: %s", exc)
-    in_progress = getattr(rail, "_evolution_in_progress", None)
-    if in_progress is not None:
-        try:
-            return bool(in_progress)
-        except Exception as exc:
-            logger.debug("[TeamHelpers] rail evolution-in-progress check failed: %s", exc)
-    bg_tasks = getattr(rail, "_bg_tasks", None)
-    if not isinstance(bg_tasks, set):
-        return False
-    return any(not task.done() for task in bg_tasks)
-
-
-async def _broadcast_team_evolution_progress(
+def _team_processing_done_chunk(
+    request_id: str,
     channel_id: str | None,
     session_id: str,
-    events: list[Any],
-) -> None:
-    for evt in events:
-        if _is_team_evolution_approval(evt):
-            continue
-        parsed = parse_stream_chunk(evt)
-        if parsed is not None:
-            _broadcast_event(channel_id, session_id, parsed)
+) -> AgentResponseChunk:
+    return AgentResponseChunk(
+        request_id=request_id,
+        channel_id=channel_id,
+        payload={
+            "event_type": "chat.processing_status",
+            "session_id": session_id,
+            "is_processing": False,
+            "is_complete": True,
+        },
+        is_complete=False,
+    )
 
 
 def _group_team_evolution_approvals(
     session_id: str,
     events: list[Any],
 ) -> tuple[dict[str, list[Any]], list[str]]:
-    grouped: dict[str, list[Any]] = {}
-    fallback_request_ids: list[str] = []
-    for index, evt in enumerate(events, start=1):
-        if not _is_team_evolution_approval(evt):
-            continue
-        request_id = _extract_team_evolution_request_id(evt)
-        if request_id is None:
-            request_id = f"team_evolve_{session_id}_{index}"
-            fallback_request_ids.append(request_id)
-            logger.warning(
-                "[TeamHelpers] team evolution approval missing request_id: session_id=%s fallback=%s",
-                session_id,
-                request_id,
-            )
-        grouped.setdefault(request_id, []).append(evt)
-    return grouped, fallback_request_ids
+    def _warn_missing_request_id(warn_session_id: str) -> None:
+        logger.warning(
+            "[TeamHelpers] team evolution approval missing request_id: session_id=%s",
+            warn_session_id,
+        )
+
+    return group_evolution_approvals(
+        session_id,
+        events,
+        warn_missing_request_id=_warn_missing_request_id,
+    )
 
 
-def _ensure_team_evolution_watcher(
+def ensure_team_evolution_watcher(
     channel_id: str | None,
     session_id: str,
+    *,
+    source: str = "unknown",
 ) -> None:
     """Launch the per-session team evolution monitor once the team session is ready."""
     tm = get_team_manager(channel_id)
     watcher = tm.get_team_evolution_watcher(session_id)
     if watcher is not None and not watcher.done():
+        logger.info(
+            "[TeamHelpers] evolution monitor already running: channel_id=%s session_id=%s source=%s",
+            channel_id,
+            session_id,
+            source,
+        )
         return
 
     rail = tm.get_team_skill_rail(session_id)
     if rail is None:
         logger.warning(
-            "[TeamHelpers] no TeamSkillRail found, evolution watcher not launched: session_id=%s",
+            "[TeamHelpers] no TeamSkillEvolutionRail found, evolution watcher launch deferred: session_id=%s source=%s",
             session_id,
+            source,
+        )
+        return
+    if not getattr(rail, "auto_scan", True):
+        logger.info(
+            "[TeamHelpers] evolution monitor skipped because auto_scan is disabled: "
+            "channel_id=%s session_id=%s source=%s",
+            channel_id,
+            session_id,
+            source,
         )
         return
 
     logger.info(
-        "[TeamHelpers] launching evolution monitor: channel_id=%s session_id=%s",
+        "[TeamHelpers] launching evolution monitor: channel_id=%s session_id=%s source=%s",
         channel_id,
         session_id,
+        source,
     )
     task = asyncio.create_task(
         _watch_team_evolution_and_push(channel_id, session_id, rail)
@@ -298,7 +306,7 @@ async def _resolve_team_rebuild_followup(
     tm = get_team_manager(channel_id)
     rail = tm.get_team_skill_rail(session_id)
     if rail is None:
-        return None, "团队技能重建不可用：未找到 TeamSkillRail。"
+        return None, "团队技能重建不可用：未找到 TeamSkillEvolutionRail。"
 
     store = rail.store
     parts = stripped.split(maxsplit=2)
@@ -338,7 +346,7 @@ async def _handle_team_evolve_list_command(
     rail = tm.get_team_skill_rail(session_id)
     if rail is None:
         return {
-            "output": "团队技能演进记录不可用：未找到 TeamSkillRail。",
+            "output": "团队技能演进记录不可用：未找到 TeamSkillEvolutionRail。",
             "result_type": "error",
         }
 
@@ -419,7 +427,7 @@ async def _handle_team_slash_command(
     rail = tm.get_team_skill_rail(session_id)
     if rail is None:
         return {
-            "output": "团队技能演进不可用：未找到 TeamSkillRail。",
+            "output": "团队技能演进不可用：未找到 TeamSkillEvolutionRail。",
             "result_type": "error",
         }
 
@@ -456,29 +464,13 @@ async def _handle_team_slash_command(
                 "result_type": "error",
             }
 
-        if not simplify_result:
-            return {
-                "output": f"Skill '{skill_name}' 经验库状态良好，无需整理。",
-                "result_type": "answer",
-            }
-
-        if isinstance(simplify_result, str):
-            output = simplify_result
-        elif isinstance(simplify_result, dict):
-            ordered_keys = ("archived", "retained", "merged", "removed", "updated")
-            parts = [f"{key}={simplify_result[key]}" for key in ordered_keys if key in simplify_result]
-            output = (
-                f"Skill '{skill_name}' 整理完成：{', '.join(parts)}"
-                if parts
-                else f"Skill '{skill_name}' 整理完成。"
-            )
-        else:
-            output = f"Skill '{skill_name}' 整理完成。"
-
-        return {
-            "output": output,
-            "result_type": "answer",
-        }
+        return _approval_result_from_event_or_items(
+            skill_name=skill_name,
+            event=getattr(simplify_result, "approval_event", None),
+            items=list(getattr(simplify_result, "actions", []) or []),
+            no_changes_output=f"Skill '{skill_name}' 经验库状态良好，无需整理。",
+            invalid_output=f"Skill '{skill_name}' 精简方案已生成，但审批事件为空或格式无效。",
+        )
 
     parts = stripped.split(maxsplit=2)
     if len(parts) < 2:
@@ -504,11 +496,7 @@ async def _handle_team_slash_command(
         }
 
     try:
-        # Slash-command evolve returns before the normal team stream loop starts.
-        # Launch the per-session watcher first so approval events still reach
-        # session-bound clients such as TUI via the existing push path.
-        _ensure_team_evolution_watcher(channel_id, session_id)
-        await rail.request_user_evolution(skill_name, user_query)
+        evolve_result = await rail.request_user_evolution(skill_name, user_query)
     except Exception as exc:
         logger.warning(
             "[TeamHelpers] evolve failed: session_id=%s error=%s",
@@ -520,10 +508,18 @@ async def _handle_team_slash_command(
             "result_type": "error",
         }
 
-    return {
-        "output": f"Skill '{skill_name}' 演进请求已提交，请等待审批。",
-        "result_type": "answer",
-    }
+    if isinstance(evolve_result, str) and evolve_result.strip():
+        return {
+            "output": f"Skill '{skill_name}' 演进请求已提交，请等待审批。",
+            "result_type": "answer",
+        }
+    return _approval_result_from_event_or_items(
+        skill_name=skill_name,
+        event=getattr(evolve_result, "approval_event", None),
+        items=list(getattr(evolve_result, "records", []) or []),
+        no_changes_output=f"Skill '{skill_name}' 未生成新的团队技能演进经验。",
+        invalid_output=f"Skill '{skill_name}' 已生成团队技能演进经验，但审批事件为空或格式无效。",
+    )
 
 
 async def process_team_message_stream(
@@ -547,6 +543,24 @@ async def process_team_message_stream(
         str(query or ""),
     )
     if slash_result is not None:
+        approval_chunks = slash_result.get("approval_chunks")
+        if isinstance(approval_chunks, list) and approval_chunks:
+            for chunk in approval_chunks:
+                yield AgentResponseChunk(
+                    request_id=rid,
+                    channel_id=channel_id,
+                    payload=chunk,
+                    is_complete=False,
+                )
+            yield _team_processing_done_chunk(rid, channel_id, session_id)
+            yield AgentResponseChunk(
+                request_id=rid,
+                channel_id=channel_id,
+                payload={"event_type": "chat.done"},
+                is_complete=True,
+            )
+            return
+
         result_type = str(slash_result.get("result_type", "answer")).strip().lower()
         content = str(slash_result.get("output", ""))
         payload = (
@@ -560,6 +574,7 @@ async def process_team_message_stream(
             payload=payload,
             is_complete=False,
         )
+        yield _team_processing_done_chunk(rid, channel_id, session_id)
         yield AgentResponseChunk(
             request_id=rid,
             channel_id=channel_id,
@@ -618,14 +633,12 @@ async def process_team_message_stream(
     if followup_prompt is not None:
         query = followup_prompt
 
-    _ensure_team_evolution_watcher(channel_id, session_id)
-
     try:
         if is_first_request:
             team_manager.ensure_team_shared_skills_initialized(team_spec)
             await team_manager.prepare_runtime_activation(session_id, team_name)
             request_queue = asyncio.Queue()
-            waiter_key = _waiter_key(channel_id, session_id)
+            waiter_key = (_resolve_channel_id(channel_id), session_id)
             if waiter_key not in _pending_waiters:
                 _pending_waiters[waiter_key] = []
             _pending_waiters[waiter_key].append((rid, request_queue))
@@ -735,7 +748,7 @@ async def process_team_message_stream(
         )
     finally:
         if request_queue is not None:
-            waiter_key = _waiter_key(channel_id, session_id)
+            waiter_key = (_resolve_channel_id(channel_id), session_id)
             waiters = _pending_waiters.get(waiter_key, [])
             _pending_waiters[waiter_key] = [
                 (req_id, queue) for req_id, queue in waiters if req_id != rid
@@ -776,7 +789,7 @@ async def _consume_stream_with_query(
                 if parsed.get("event_type") == "team.runtime_ready":
                     ready_team_name = str(parsed.get("team_name") or team_spec.team_name)
                     activation_kind = str(parsed.get("activation_kind") or "").strip()
-                    _sync_team_identity_metadata(
+                    sync_team_identity_metadata(
                         channel_id=channel_id,
                         session_id=session_id,
                         mode="team",
@@ -790,10 +803,15 @@ async def _consume_stream_with_query(
                         session_id=session_id,
                         channel_id=channel_id,
                     )
-                    await _ensure_monitor_for_active_runtime(
+                    await ensure_monitor_for_active_runtime(
                         channel_id,
                         session_id,
                         ready_team_name,
+                    )
+                    ensure_team_evolution_watcher(
+                        channel_id,
+                        session_id,
+                        source="runtime_ready",
                     )
                 _broadcast_event(channel_id, session_id, parsed)
 
@@ -900,126 +918,157 @@ def _on_team_watcher_done(task: asyncio.Task) -> None:
         logger.warning("[TeamHelpers] evolution monitor task exception: %s", exc)
 
 
-async def _push_team_evolution_status(
-    push_context: _TeamEvolutionPushContext,
-    status_update: _TeamEvolutionStatusUpdate,
-) -> None:
-    await push_context.transport.send_push(
-        build_server_push_message(
-            session_id=push_context.session_id,
-            request_id=status_update.request_id,
-            fallback_channel_id=push_context.channel_id,
-            payload={
-                "event_type": "chat.evolution_status",
-                "request_id": status_update.request_id,
-                "status": status_update.status,
-                "stage": status_update.stage,
-                "message": status_update.message,
-            },
-        )
-    )
-
-
-async def _push_team_evolution_event(
-    push_context: _TeamEvolutionPushContext,
-    request_id: str,
-    evt: Any,
-) -> None:
-    payload = _event_payload_dict(evt)
-    evt_type = _event_type(evt)
-    if evt_type and "event_type" not in payload:
-        payload["event_type"] = evt_type
-    payload.setdefault("request_id", request_id)
-    await push_context.transport.send_push(
-        build_server_push_message(
-            session_id=push_context.session_id,
-            request_id=request_id,
-            fallback_channel_id=push_context.channel_id,
-            payload=payload,
-        )
-    )
-
-
-def _make_team_evolution_cycle_request_id(session_id: str, cycle_index: int) -> str:
-    return f"team_evolve_{session_id}_{cycle_index}"
-
-
-def _build_team_evolution_status_update(
-    request_id: str,
-    status: str,
-    stage: str,
-    message: str = "",
-) -> _TeamEvolutionStatusUpdate:
-    return _TeamEvolutionStatusUpdate(
-        request_id=request_id,
-        status=status,
-        stage=stage,
-        message=message,
-    )
-
-
-def _should_finish_active_cycle(
-    active_cycle_request_id: str | None,
-    still_running_after_drain: bool,
-    wait_for_completion: bool,
-    events: list[Any],
-    outcomes: list[dict[str, str]],
-) -> bool:
-    has_evolution_activity = wait_for_completion or bool(events) or bool(outcomes)
-    return (
-        active_cycle_request_id is not None
-        and not still_running_after_drain
-        and has_evolution_activity
-    )
-
-
 async def _watch_team_evolution_and_push(
     channel_id: str | None,
     session_id: str,
     rail: Any,
 ) -> None:
-    """Monitor TeamSkillRail and push stable status/approval events for every evolution cycle."""
+    """Monitor TeamSkillEvolutionRail and push stable status/approval events for every evolution cycle."""
     from jiuwenclaw.server.gateway_push import WebSocketGatewayPushTransport
 
-    push_context = _TeamEvolutionPushContext(
+    push_context = EvolutionPushContext(
         transport=WebSocketGatewayPushTransport(),
         channel_id=channel_id,
         session_id=session_id,
     )
     seen_request_ids: set[str] = set()
+    closed_request_ids: set[str] = set()
     fallback_cycle_index = 0
     active_cycle_request_id: str | None = None
-    active_cycle_request_is_provisional = False
+
+    async def _cleanup_rail() -> None:
+        cleanup = getattr(rail, "cleanup_background_tasks", None)
+        if cleanup is None:
+            return
+        try:
+            result = cleanup()
+            if asyncio.iscoroutine(result):
+                await result
+        except Exception as exc:
+            logger.warning(
+                "[TeamHelpers] evolution cleanup failed: session_id=%s error=%s",
+                session_id,
+                exc,
+            )
 
     try:
+        last_event_at = time.monotonic()
         while True:
-            wait_for_completion = _team_rail_has_pending_evolution(rail)
-            if wait_for_completion and active_cycle_request_id is None:
-                fallback_cycle_index += 1
-                active_cycle_request_id = _make_team_evolution_cycle_request_id(
-                    session_id,
-                    fallback_cycle_index,
-                )
-                active_cycle_request_is_provisional = True
-                await _push_team_evolution_status(
-                    push_context,
-                    _build_team_evolution_status_update(
-                        request_id=active_cycle_request_id,
-                        status="start",
-                        stage=_TEAM_EVOLUTION_START_STAGE,
-                        message=_TEAM_EVOLUTION_START_MESSAGE,
-                    ),
-                )
-            events = await rail.drain_pending_approval_events(wait=wait_for_completion)
-            still_running_after_drain = _team_rail_has_pending_evolution(rail)
-            outcomes = rail.drain_evolution_outcomes()
+            if not getattr(rail, "auto_scan", True):
+                if active_cycle_request_id is not None:
+                    await push_evolution_status(
+                        push_context,
+                        build_evolution_status_update(
+                            request_id=active_cycle_request_id,
+                            status="end",
+                            stage=TEAM_EVOLUTION_HIDDEN_STAGE,
+                            message="",
+                        ),
+                        build_server_push_message,
+                    )
+                await _cleanup_rail()
+                return
 
-            if events:
-                await _broadcast_team_evolution_progress(channel_id, session_id, events)
+            events = await rail.drain_pending_approval_events(wait=False) or []
+            if not events:
+                if active_cycle_request_id is not None:
+                    idle_for = time.monotonic() - last_event_at
+                    if idle_for >= TEAM_EVOLUTION_EVENT_TIMEOUT_SEC:
+                        logger.warning(
+                            "[TeamHelpers] evolution monitor timed out: session_id=%s "
+                            "request_id=%s idle_for=%.1fs",
+                            session_id,
+                            active_cycle_request_id,
+                            idle_for,
+                        )
+                        await push_evolution_status(
+                            push_context,
+                            build_evolution_status_update(
+                                request_id=active_cycle_request_id,
+                                status="end",
+                                stage=TEAM_EVOLUTION_HIDDEN_STAGE,
+                                message=(
+                                    "Team skill evolution analysis timed out after "
+                                    f"{TEAM_EVOLUTION_EVENT_TIMEOUT_SEC:.0f}s without host events"
+                                ),
+                            ),
+                            build_server_push_message,
+                        )
+                        await _cleanup_rail()
+                        return
+                await asyncio.sleep(TEAM_EVOLUTION_IDLE_SLEEP_SEC)
+                continue
+            last_event_at = time.monotonic()
+
+            await broadcast_evolution_progress(
+                channel_id,
+                session_id,
+                events,
+                parse_stream_chunk=parse_stream_chunk,
+                broadcast_event=_broadcast_event,
+            )
 
             grouped_approvals, _ = _group_team_evolution_approvals(session_id, events)
+            outcomes = [
+                evolution_outcome_from_event(evt)
+                for evt in events
+                if is_evolution_outcome_event(evt)
+            ]
+            terminal_progress = []
+            for evt in events:
+                terminal = team_evolution_terminal_progress(evt)
+                if terminal is not None:
+                    terminal_progress.append(terminal)
+
+            if active_cycle_request_id is None:
+                first_request_id = next(iter(grouped_approvals), None)
+                if first_request_id is None:
+                    first_request_id = None
+                    for evt in events:
+                        request_id = extract_evolution_request_id(evt)
+                        if request_id:
+                            first_request_id = request_id
+                            break
+                if first_request_id is None:
+                    if any(is_evolution_started_progress(evt) for evt in events):
+                        fallback_cycle_index += 1
+                        first_request_id = make_team_evolution_cycle_request_id(
+                            session_id,
+                            fallback_cycle_index,
+                        )
+                    else:
+                        continue
+                if first_request_id not in closed_request_ids:
+                    active_cycle_request_id = first_request_id
+                    await push_evolution_status(
+                        push_context,
+                        build_evolution_status_update(
+                            request_id=active_cycle_request_id,
+                            status="start",
+                            stage=TEAM_EVOLUTION_START_STAGE,
+                            message=TEAM_EVOLUTION_START_MESSAGE,
+                        ),
+                        build_server_push_message,
+                    )
+
+            if active_cycle_request_id is None:
+                continue
 
             for request_id, approval_events in grouped_approvals.items():
+                if request_id in closed_request_ids:
+                    continue
+                if active_cycle_request_id != request_id:
+                    active_cycle_request_id = request_id
+                    await push_evolution_status(
+                        push_context,
+                        build_evolution_status_update(
+                            request_id=active_cycle_request_id,
+                            status="start",
+                            stage=TEAM_EVOLUTION_START_STAGE,
+                            message=TEAM_EVOLUTION_START_MESSAGE,
+                        ),
+                        build_server_push_message,
+                    )
                 if request_id in seen_request_ids:
                     logger.debug(
                         "[TeamHelpers] skip duplicated team evolution approval batch: session_id=%s request_id=%s",
@@ -1028,94 +1077,67 @@ async def _watch_team_evolution_and_push(
                     )
                     continue
                 seen_request_ids.add(request_id)
-                if active_cycle_request_id is None:
-                    active_cycle_request_id = request_id
-                    active_cycle_request_is_provisional = False
-                    await _push_team_evolution_status(
-                        push_context,
-                        _build_team_evolution_status_update(
-                            request_id=active_cycle_request_id,
-                            status="start",
-                            stage=_TEAM_EVOLUTION_START_STAGE,
-                            message=_TEAM_EVOLUTION_START_MESSAGE,
-                        ),
-                    )
-                elif active_cycle_request_is_provisional and active_cycle_request_id != request_id:
-                    active_cycle_request_id = request_id
-                    active_cycle_request_is_provisional = False
-                    await _push_team_evolution_status(
-                        push_context,
-                        _build_team_evolution_status_update(
-                            request_id=active_cycle_request_id,
-                            status="start",
-                            stage=_TEAM_EVOLUTION_START_STAGE,
-                            message=_TEAM_EVOLUTION_START_MESSAGE,
-                        ),
-                    )
                 for evt in approval_events:
                     try:
-                        await _push_team_evolution_event(
+                        await push_evolution_event(
                             push_context,
                             request_id,
                             evt,
+                            build_server_push_message,
                         )
                     except Exception as exc:
                         logger.warning(
                             "[TeamHelpers] push approval failed for request_id=%s event_type=%s error=%s",
                             request_id,
-                            _event_type(evt) or "unknown",
+                            event_type(evt) or "unknown",
                             exc,
                         )
-            if _should_finish_active_cycle(
-                active_cycle_request_id,
-                still_running_after_drain,
-                wait_for_completion,
-                events,
-                outcomes,
-            ):
-                outcome = outcomes[-1] if outcomes else None
-                end_stage = "completed"
-                end_message = "Team skill evolution analysis completed"
-                if outcome is not None:
-                    end_stage = (
-                        str(outcome.get("status") or "failed").strip().lower()
-                        or "failed"
-                    )
-                    end_message = str(
-                        outcome.get("message") or "Team skill evolution analysis failed"
-                    )
-                await _push_team_evolution_status(
+                await push_evolution_status(
                     push_context,
-                    _build_team_evolution_status_update(
-                        request_id=active_cycle_request_id,
+                    build_evolution_status_update(
+                        request_id=request_id,
                         status="end",
-                        stage=end_stage,
-                        message=end_message,
+                        stage="approval_required",
+                        message="Team skill evolution proposal is awaiting approval",
                     ),
+                    build_server_push_message,
                 )
+                closed_request_ids.add(request_id)
                 active_cycle_request_id = None
-                active_cycle_request_is_provisional = False
 
-            if not events and not outcomes:
-                await asyncio.sleep(_TEAM_EVOLUTION_IDLE_SLEEP_SEC)
+            terminal = None
+            if outcomes:
+                outcome = outcomes[-1]
+                terminal = {
+                    "status": str(outcome.get("status") or "completed"),
+                    "stage": str(outcome.get("status") or "completed"),
+                    "message": str(outcome.get("message") or ""),
+                }
+            elif terminal_progress:
+                terminal = terminal_progress[-1]
+
+            if terminal is not None and active_cycle_request_id is not None:
+                await push_evolution_status(
+                    push_context,
+                    team_evolution_end_update(active_cycle_request_id, terminal),
+                    build_server_push_message,
+                )
+                closed_request_ids.add(active_cycle_request_id)
+                active_cycle_request_id = None
     except Exception as exc:
         logger.warning("[TeamHelpers] evolution monitor failed: %s", exc)
         try:
             if active_cycle_request_id is None:
-                fallback_cycle_index += 1
-                active_cycle_request_id = _make_team_evolution_cycle_request_id(
-                    session_id,
-                    fallback_cycle_index,
-                )
-                active_cycle_request_is_provisional = True
-            await _push_team_evolution_status(
+                return
+            await push_evolution_status(
                 push_context,
-                _build_team_evolution_status_update(
+                build_evolution_status_update(
                     request_id=active_cycle_request_id,
                     status="end",
-                    stage="failed",
+                    stage=TEAM_EVOLUTION_HIDDEN_STAGE,
                     message=f"团队技能演进分析失败: {exc}",
                 ),
+                build_server_push_message,
             )
         except Exception as push_exc:
             logger.warning("[TeamHelpers] push status notification failed: %s", push_exc)

@@ -5,7 +5,6 @@
 import pytest
 
 from openjiuwen.agent_evolving.signal import SignalDetector
-from openjiuwen.agent_evolving import EvolutionSignal
 
 
 class TestSignalDetector:
@@ -42,28 +41,50 @@ class TestSignalDetector:
         assert "Command failed" in signals[0].excerpt
 
     @staticmethod
-    def test_detect_no_user_correction():
-        """Test that user correction signals are not detected (feature removed)."""
-        detector = SignalDetector()
+    @pytest.mark.asyncio
+    async def test_detect_user_correction_chinese():
+        """Test detecting user correction signals in Chinese."""
+        detector = SignalDetector(existing_skills={"test-skill"})
         messages = [
-            {"role": "assistant", "content": "Here's the result"},
+            {
+                "role": "assistant",
+                "content": "Reading skill file",
+                "tool_calls": [
+                    {
+                        "name": "file.read",
+                        "arguments": '{"file_path": "/path/to/test-skill/SKILL.md"}',
+                    }
+                ],
+            },
             {"role": "user", "content": "不对，应该这样做"},
         ]
-        signals = detector.detect(messages)
-        # User correction detection is no longer supported
-        assert len(signals) == 0
+        signals = await detector.detect_user_message_feedback(messages)
+        assert len(signals) == 1
+        assert signals[0].signal_type == "user_correction"
+        assert signals[0].section == "Examples"
 
     @staticmethod
-    def test_detect_no_user_correction_english():
-        """Test that user correction signals are not detected (feature removed)."""
-        detector = SignalDetector()
+    @pytest.mark.asyncio
+    async def test_detect_user_correction_english():
+        """Test detecting user correction signals in English."""
+        detector = SignalDetector(existing_skills={"test-skill"})
         messages = [
-            {"role": "assistant", "content": "Here's the result"},
+            {
+                "role": "assistant",
+                "content": "Reading skill file",
+                "tool_calls": [
+                    {
+                        "name": "file.read",
+                        "arguments": '{"file_path": "/path/to/test-skill/SKILL.md"}',
+                    }
+                ],
+            },
             {"role": "user", "content": "That's wrong, you should use method X"},
         ]
-        signals = detector.detect(messages)
-        # User correction detection is no longer supported
-        assert len(signals) == 0
+        signals = await detector.detect_user_message_feedback(messages)
+        assert len(signals) == 1
+        assert signals[0].signal_type == "user_correction"
+        assert signals[0].section == "Examples"
 
     @staticmethod
     def test_detect_multiple_signals():
@@ -208,4 +229,4 @@ class TestSignalDetector:
         assert "type" in signal_dict
         assert "section" in signal_dict
         assert "excerpt" in signal_dict
-        assert "skill_name" in signal_dict
+        assert signal_dict["context"]["tool_name"] == "http.connect"

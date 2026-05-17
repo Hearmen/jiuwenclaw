@@ -80,6 +80,7 @@
       "detecting": "正在检测演进信号...",
       "generating": "正在生成演进经验...",
       "awaitingApproval": "演进经验已生成，等待审批...",
+      "noEvolutionGenerated": "无演进生成",
       "completed": "技能演进已完成",
       "timedOut": "技能演进已超时",
       "failed": "技能演进失败"

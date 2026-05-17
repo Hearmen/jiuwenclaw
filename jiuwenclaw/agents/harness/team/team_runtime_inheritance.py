@@ -21,7 +21,7 @@ from openjiuwen.harness.rails import (
     SecurityRail,
     SkillEvolutionRail,
     TaskPlanningRail,
-    TeamSkillRail,
+    TeamSkillEvolutionRail,
     TeamSkillCreateRail,
 )
 
@@ -69,7 +69,7 @@ RAIL_WHITELIST = frozenset({
     "HeartbeatRail",
     "AvatarPromptRail",
     "FileSystemRail",
-    "TeamSkillRail",
+    "TeamSkillEvolutionRail",
     "TeamSkillCreateRail",
     "SkillEvolutionRail",
     "TeamWorkspaceReportPathRail",
@@ -238,28 +238,34 @@ def build_member_rails(
         except Exception as exc:
             logger.warning("[TeamRuntime] TeamWorkspaceReportPathRail failed: %s", exc)
 
-    # Leader-only: TeamSkillRail for team skill evolution.
-    if role == "leader" and team_ws_skills_dir and get_evolution_auto_scan_enabled(config):
+    # Leader-only: TeamSkillEvolutionRail for team skill evolution.
+    if role == "leader" and team_ws_skills_dir:
         try:
             Path(team_ws_skills_dir).mkdir(parents=True, exist_ok=True)
             llm_model, actual_model_name = build_evolution_llm()
-            team_skill_rail = TeamSkillRail(
+            evolution_auto_scan = get_evolution_auto_scan_enabled(config)
+            team_skill_rail = TeamSkillEvolutionRail(
                 skills_dir=team_ws_skills_dir,
                 llm=llm_model,
                 model=actual_model_name,
                 language=language,
                 team_trajectory_store=shared_team_trajectory_store,
+                auto_scan=evolution_auto_scan,
                 auto_save=False,
                 team_id=team_id,
                 trajectories_dir=Path(team_trajectories_dir) if team_trajectories_dir else None,
             )
             rails_list.append(team_skill_rail)
             logger.info(
-                "[TeamRuntime] TeamSkillRail created: skills_dir=%s, model=%s, team_trajectories_dir=%s",
-                team_ws_skills_dir, actual_model_name, team_trajectories_dir,
+                "[TeamRuntime] TeamSkillEvolutionRail created: skills_dir=%s, "
+                "model=%s, auto_scan=%s, team_trajectories_dir=%s",
+                team_ws_skills_dir,
+                actual_model_name,
+                evolution_auto_scan,
+                team_trajectories_dir,
             )
         except Exception as exc:
-            logger.warning("[TeamRuntime] TeamSkillRail failed: %s", exc, exc_info=True)
+            logger.warning("[TeamRuntime] TeamSkillEvolutionRail failed: %s", exc, exc_info=True)
 
     # Leader-only: TeamSkillCreateRail for team skill creation proposals.
     # Requires skill_create config enabled (same as SkillCreateRail for single agent).

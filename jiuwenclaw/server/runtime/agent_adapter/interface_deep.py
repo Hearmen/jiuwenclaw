@@ -134,6 +134,19 @@ from jiuwenclaw.agents.harness.common.rails.permissions.tool_permission_context 
 from jiuwenclaw.server.runtime.session.session_metadata import build_server_push_message
 from jiuwenclaw.server.runtime.session.session_history import append_history_record
 from jiuwenclaw.server.runtime.skill.skill_manager import SkillManager
+from jiuwenclaw.server.runtime.agent_adapter.evolution_helpers import (
+    EvolutionPushContext,
+    TEAM_EVOLUTION_EVENT_TIMEOUT_SEC,
+    TEAM_EVOLUTION_IDLE_SLEEP_SEC,
+    build_evolution_status_update,
+    evolution_outcome_from_event,
+    is_evolution_approval_event,
+    is_evolution_outcome_event,
+    push_evolution_event,
+    push_evolution_progress,
+    push_evolution_status,
+    team_evolution_terminal_progress,
+)
 from jiuwenclaw.agents.harness.common.tools.multimodal_config import (
     apply_audio_model_config_from_yaml,
     apply_image_gen_model_config_from_yaml,
@@ -2014,6 +2027,11 @@ class JiuWenClawDeepAdapter:
                     "1",
                     "yes",
                 )
+            else:
+                self._skill_evolution_rail.auto_scan = config.get("evolution", {}).get(
+                    "auto_scan",
+                    False,
+                )
 
         self._skill_rail = self._build_skill_rail(
             config,
@@ -3191,7 +3209,7 @@ class JiuWenClawDeepAdapter:
         session_id = request.session_id
         resolved = False
         if request_id.startswith("team_skill_evolve_"):
-            resolved = await self._handle_team_skill_evolve_approval(
+            resolved = await self.handle_team_skill_evolve_approval(
                 request_id,
                 answers,
                 session_id,
@@ -3259,8 +3277,8 @@ class JiuWenClawDeepAdapter:
     # ------------------------------------------------------------------
 
     @staticmethod
-    def _find_team_skill_rail(request_id: str, channel_id: str | None = None):
-        """Find TeamSkillRail that owns the given pending request_id."""
+    def find_team_skill_rail(request_id: str, channel_id: str | None = None):
+        """Find TeamSkillEvolutionRail that owns the given pending request_id."""
         try:
             from jiuwenclaw.agents.harness.team import (
                 find_team_skill_rail_across_managers,
@@ -3290,16 +3308,16 @@ class JiuWenClawDeepAdapter:
                     return True
         return False
 
-    async def _handle_team_skill_evolve_approval(
+    async def handle_team_skill_evolve_approval(
         self,
         request_id: str,
         answers: list,
         session_id: str | None = None,
         channel_id: str | None = None,
     ) -> bool:
-        rail = self._find_team_skill_rail(request_id, channel_id)
+        rail = self.find_team_skill_rail(request_id, channel_id)
         if rail is None:
-            logger.warning("[JiuWenClaw] team skill evolve approval failed: no TeamSkillRail")
+            logger.warning("[JiuWenClaw] team skill evolve approval failed: no TeamSkillEvolutionRail")
             return False
 
         accepted = self._option_matches(answers, ("accept", "接收", "接受"))
@@ -3310,7 +3328,7 @@ class JiuWenClawDeepAdapter:
         )
 
         if accepted:
-            await rail.on_approve_patch(request_id)
+            await rail.approve_record(request_id)
             # Sync updated team skill from workspace to global team_skills dir.
             try:
                 from jiuwenclaw.agents.harness.team import sync_team_skills_across_managers
@@ -3320,20 +3338,68 @@ class JiuWenClawDeepAdapter:
                 logger.warning("[JiuWenClaw] team skill sync after patch failed: %s", exc)
             logger.info("[JiuWenClaw] team skill evolve accepted: request_id=%s", request_id)
         else:
-            await rail.on_reject_patch(request_id)
+            await rail.reject_record(request_id)
             logger.info("[JiuWenClaw] team skill evolve rejected: request_id=%s", request_id)
 
+        await self._push_team_skill_evolve_resolution_status(
+            request_id,
+            session_id=session_id,
+            channel_id=channel_id,
+            accepted=accepted,
+        )
         return True
+
+    @staticmethod
+    async def _push_team_skill_evolve_resolution_status(
+        request_id: str,
+        *,
+        session_id: str | None,
+        channel_id: str | None,
+        accepted: bool,
+    ) -> None:
+        """Close the frontend evolution status after a team skill approval is resolved."""
+        if not session_id:
+            return
+        from jiuwenclaw.server.gateway_push import WebSocketGatewayPushTransport
+
+        stage = "completed" if accepted else "hidden"
+        message = (
+            "Team skill evolution accepted"
+            if accepted
+            else "Team skill evolution rejected"
+        )
+        try:
+            await push_evolution_status(
+                EvolutionPushContext(
+                    transport=WebSocketGatewayPushTransport(),
+                    channel_id=channel_id,
+                    session_id=session_id,
+                ),
+                build_evolution_status_update(
+                    request_id=request_id,
+                    status="end",
+                    stage=stage,
+                    message=message,
+                ),
+                build_server_push_message,
+            )
+        except Exception as exc:
+            logger.warning(
+                "[JiuWenClaw] team skill evolve status push failed: request_id=%s error=%s",
+                request_id,
+                exc,
+            )
 
     # ------------------------------------------------------------------
     # /evolve, /evolve_list, /evolve_simplify & /solidify command handlers
     # ------------------------------------------------------------------
 
     async def _handle_evolve_command(self, query: str, session_id: str) -> dict[str, Any]:
-        """/evolve [list | <skill_name> [<user_query>...]] handler using the optimizer path.
+        """/evolve [list | <skill_name> [<user_query>...]] handler using the active SDK path.
 
-        Uses SkillEvolutionRail.generate_and_emit_experience to stage records
-        in memory and emit approval events.
+        Uses SkillEvolutionRail.request_user_evolution to return structured
+        approval data directly. Passive/background evolution still uses the
+        host-event drain path.
 
         Args:
             query: Command query, format: /evolve <skill_name> [<user_query>...]
@@ -3407,12 +3473,24 @@ class JiuWenClawDeepAdapter:
                 "result_type": "answer",
             }
 
-        # 3) Generate experience records and emit approval event
-        # user_query is passed directly to generate_and_emit_experience which handles
-        # synthetic signal and message creation internally.
+        evolution_intent = user_query
+        if not evolution_intent:
+            for sig in attributed:
+                if getattr(sig, "excerpt", ""):
+                    evolution_intent = sig.excerpt
+                    break
+        if not evolution_intent:
+            for message in reversed(parsed_messages):
+                content = message.get("content") if isinstance(message, dict) else getattr(message, "content", "")
+                if isinstance(content, str) and content:
+                    evolution_intent = content
+                    break
+
         try:
-            has_records = await rail.generate_and_emit_experience(
-                skill_name, attributed, parsed_messages, user_query=user_query
+            evolve_result = await rail.request_user_evolution(
+                skill_name,
+                evolution_intent,
+                auto_approve=False,
             )
         except Exception as exc:
             logger.warning("[JiuWenClaw] evolve generate failed (skill=%s): %s", skill_name, exc)
@@ -3421,25 +3499,35 @@ class JiuWenClawDeepAdapter:
                 "result_type": "error",
             }
 
-        if not has_records:
+        if not getattr(evolve_result, "has_changes", False):
             return {
                 "output": "当前对话未发现明确的演进信号（无工具执行失败、无用户纠正）。\n",
                 "result_type": "answer",
             }
 
-        # 5) Drain the buffered approval event
-        events = await rail.drain_pending_approval_events()
-        if not events:
+        approval_chunks: list[dict[str, Any]] = []
+        parsed = self._parse_stream_chunk(getattr(evolve_result, "approval_event", None))
+        if isinstance(parsed, dict) and parsed.get("event_type") == "chat.ask_user_question":
+            request_id = parsed.get("request_id")
+            questions = parsed.get("questions")
+            has_request_id = isinstance(request_id, str) and bool(request_id.strip())
+            has_questions = isinstance(questions, list) and bool(questions)
+            if has_request_id and has_questions:
+                approval_chunks.append(parsed)
+
+        if approval_chunks:
+            questions = approval_chunks[0].get("questions", [])
+        else:
+            records = list(getattr(evolve_result, "records", []) or [])
+            if not records:
+                return {
+                    "output": "当前对话未发现明确的演进信号（无工具执行失败、无用户纠正）。\n",
+                    "result_type": "answer",
+                }
             return {
-                "output": "演进经验生成失败：无法创建审批事件。",
+                "output": f"已为 Skill '{skill_name}' 生成 {len(records)} 条演进经验，但审批事件为空或格式无效。",
                 "result_type": "error",
             }
-
-        # 6) Build response with approval chunks
-        event = events[0]
-        payload = event.payload or {}
-        request_id = payload.get("request_id", "")
-        questions = payload.get("questions", [])
 
         # Build summary from questions
         summaries = "\n".join(
@@ -3452,14 +3540,89 @@ class JiuWenClawDeepAdapter:
                 f"{summaries}"
             ),
             "result_type": "answer",
-            "approval_chunks": [
-                {
-                    "event_type": "chat.ask_user_question",
-                    "request_id": request_id,
-                    "questions": questions,
-                }
-            ],
+            "approval_chunks": approval_chunks,
         }
+
+    @staticmethod
+    def _approval_chunk_from_event(event: Any) -> dict[str, Any] | None:
+        parsed = JiuWenClawDeepAdapter._parse_stream_chunk(event)
+        if not isinstance(parsed, dict) or parsed.get("event_type") != "chat.ask_user_question":
+            return None
+        request_id = parsed.get("request_id")
+        questions = parsed.get("questions")
+        if not isinstance(request_id, str) or not request_id.strip():
+            return None
+        if not isinstance(questions, list) or not questions:
+            return None
+        return parsed
+
+    @staticmethod
+    def _format_approval_summary(
+        *,
+        skill_name: str,
+        questions: list[Any],
+        action_label: str,
+    ) -> str:
+        summaries = "\n".join(
+            f"  {i + 1}. {q.get('question', '')[:200]}" for i, q in enumerate(questions) if isinstance(q, dict)
+        )
+        return f"已为 Skill '{skill_name}' {action_label} {len(questions)} 条待审批内容：\n{summaries}"
+
+    def _approval_response_from_event_or_records(
+        self,
+        *,
+        skill_name: str,
+        event: Any,
+        records: list[Any],
+        action_label: str,
+        no_changes_output: str,
+        invalid_output: str,
+    ) -> dict[str, Any]:
+        parsed = self._approval_chunk_from_event(event)
+        if parsed is not None:
+            questions = parsed.get("questions", [])
+            return {
+                "output": self._format_approval_summary(
+                    skill_name=skill_name,
+                    questions=questions,
+                    action_label=action_label,
+                ),
+                "result_type": "answer",
+                "approval_chunks": [parsed],
+            }
+        if not records:
+            return {"output": no_changes_output, "result_type": "answer"}
+        return {"output": invalid_output, "result_type": "error"}
+
+    def _approval_response_from_simplify_result(
+        self,
+        *,
+        skill_name: str,
+        simplify_result: Any,
+    ) -> dict[str, Any]:
+        return self._approval_response_from_event_or_records(
+            skill_name=skill_name,
+            event=getattr(simplify_result, "approval_event", None),
+            records=list(getattr(simplify_result, "actions", []) or []),
+            action_label="生成",
+            no_changes_output=f"Skill '{skill_name}' 经验库状态良好，无需整理。",
+            invalid_output=f"Skill '{skill_name}' 精简方案已生成，但审批事件为空或格式无效。",
+        )
+
+    def _approval_response_from_evolve_result(
+        self,
+        *,
+        skill_name: str,
+        evolve_result: Any,
+    ) -> dict[str, Any]:
+        return self._approval_response_from_event_or_records(
+            skill_name=skill_name,
+            event=getattr(evolve_result, "approval_event", None),
+            records=list(getattr(evolve_result, "records", []) or []),
+            action_label="生成",
+            no_changes_output="当前对话未发现明确的演进信号（无工具执行失败、无用户纠正）。\n",
+            invalid_output=f"已为 Skill '{skill_name}' 生成演进经验，但审批事件为空或格式无效。",
+        )
 
     def _collect_messages_for_evolve(self, session_id: str) -> list[dict]:
         """Retrieve and normalize cached conversation messages for /evolve."""
@@ -3563,23 +3726,15 @@ class JiuWenClawDeepAdapter:
             }
 
         try:
-            request_id = await rail.request_simplify(skill_name, user_intent)
+            simplify_result = await rail.request_simplify(skill_name, user_intent)
         except Exception as exc:
             logger.warning("[JiuWenClaw] evolve_simplify failed: %s", exc)
             return {"output": f"智能整理分析失败：{exc}", "result_type": "error"}
 
-        if not request_id:
-            return {
-                "output": f"Skill '{skill_name}' 经验库状态良好，无需整理。",
-                "result_type": "answer",
-            }
-
-        approval_chunks = await rail.drain_pending_approval_events()
-        return {
-            "output": f"Skill '{skill_name}' 精简方案已生成，请在审批弹框中确认。",
-            "result_type": "answer",
-            "approval_chunks": approval_chunks,
-        }
+        return self._approval_response_from_simplify_result(
+            skill_name=skill_name,
+            simplify_result=simplify_result,
+        )
 
     async def _handle_evolve_rebuild_command(self, query: str) -> dict[str, Any]:
         """/evolve_rebuild <skill_name> [user_intent] — Build followup prompt for rebuild."""
@@ -4310,16 +4465,6 @@ class JiuWenClawDeepAdapter:
                 )
 
             if self._skill_evolution_rail is not None:
-                drained_events = await self._skill_evolution_rail.drain_pending_approval_events(wait=False)
-                for evt in drained_events:
-                    parsed = self._parse_stream_chunk(evt)
-                    if parsed is not None:
-                        yield AgentResponseChunk(
-                            request_id=rid,
-                            channel_id=cid,
-                            payload=parsed,
-                            is_complete=False,
-                        )
                 task = asyncio.create_task(
                     self._watch_evolution_and_push(rid, cid, session_id)
                 )
@@ -5094,76 +5239,142 @@ class JiuWenClawDeepAdapter:
         return total_tokens
 
     async def _watch_evolution_and_push(self, rid: str, cid: str, session_id: str) -> None:
-        """等待演进后台 task 完成，通过 send_push 推送审批事件。
-
-        审批事件必须先于 evolution_status:end 推送，否则 Gateway 在清除
-        evolution_in_progress 和标记 pending_approval 之间存在竞争窗口。
-        """
+        """Poll passive evolution events and push progress, approval, and terminal status."""
         from jiuwenclaw.server.gateway_push import WebSocketGatewayPushTransport
 
-        transport = WebSocketGatewayPushTransport()
+        push_context = EvolutionPushContext(
+            transport=WebSocketGatewayPushTransport(),
+            channel_id=cid,
+            session_id=session_id,
+        )
 
         async def _push_status(status: str, stage: str, message: str = "") -> None:
-            await transport.send_push(build_server_push_message(
-                session_id=session_id,
-                request_id=rid,
-                fallback_channel_id=cid,
-                payload={
-                    "event_type": "chat.evolution_status",
-                    "status": status,
-                    "stage": stage,
-                    "message": message,
-                },
-            ))
+            await push_evolution_status(
+                push_context,
+                build_evolution_status_update(rid, status, stage, message),
+                build_server_push_message,
+                include_payload_request_id=False,
+            )
 
         async def _push_approval(evt) -> None:
-            raw_payload = evt.payload if hasattr(evt, "payload") and isinstance(evt.payload, dict) else evt
-            # Inject event_type from OutputSchema.type so Gateway routes it correctly.
-            payload = dict(raw_payload)
-            evt_type = getattr(evt, "type", None)
-            if evt_type and "event_type" not in payload:
-                payload["event_type"] = evt_type
-            await transport.send_push(build_server_push_message(
-                session_id=session_id,
-                request_id=rid,
-                fallback_channel_id=cid,
-                payload=payload,
-            ))
+            await push_evolution_event(
+                push_context,
+                rid,
+                evt,
+                build_server_push_message,
+            )
+
+        async def _cleanup_rail() -> None:
+            if self._skill_evolution_rail is None:
+                return
+            try:
+                await self._skill_evolution_rail.cleanup_background_tasks()
+            except Exception as exc:
+                logger.warning(
+                    "[JiuWenClawDeepAdapter] evolution cleanup failed: request_id=%s "
+                    "session_id=%s error=%s",
+                    rid,
+                    session_id,
+                    exc,
+                )
 
         try:
             if self._skill_evolution_rail is None:
                 return
-
-            events = await self._skill_evolution_rail.drain_pending_approval_events(wait=True)
-            outcomes = self._skill_evolution_rail.drain_evolution_outcomes()
-            await self._skill_evolution_rail.cleanup_background_tasks()
-
-            approval_events = [evt for evt in events if self._is_approval_event(evt)]
-            outcome = outcomes[-1] if outcomes else None
-            if not approval_events and outcome is None:
-                logger.info(
-                    "[JiuWenClawDeepAdapter] evolution watcher finished without approval/outcome: "
-                    "request_id=%s session_id=%s",
-                    rid,
-                    session_id,
-                )
+            if not getattr(self._skill_evolution_rail, "auto_scan", True):
                 return
 
             await _push_status("start", "collecting", "Running evolution analysis...")
+            last_event_at = time.monotonic()
 
-            for evt in approval_events:
-                await _push_approval(evt)
-
-            if outcome is not None:
-                stage = str(outcome.get("status") or "failed").strip().lower()
-                message = str(outcome.get("message") or "Evolution analysis failed")
-                if stage == "failed":
-                    await _push_status("end", "hidden", "")
+            while True:
+                if self._skill_evolution_rail is None:
                     return
-                await _push_status("end", stage, message)
-                return
+                if not getattr(self._skill_evolution_rail, "auto_scan", True):
+                    await _push_status("end", "hidden", "")
+                    await _cleanup_rail()
+                    return
 
-            await _push_status("end", "completed", "Evolution analysis completed")
+                events = await self._skill_evolution_rail.drain_pending_approval_events(wait=False) or []
+                if not events:
+                    idle_for = time.monotonic() - last_event_at
+                    if idle_for >= TEAM_EVOLUTION_EVENT_TIMEOUT_SEC:
+                        message = (
+                            f"Evolution analysis timed out after "
+                            f"{TEAM_EVOLUTION_EVENT_TIMEOUT_SEC:.0f}s without host events"
+                        )
+                        logger.warning(
+                            "[JiuWenClawDeepAdapter] evolution watcher timed out: "
+                            "request_id=%s session_id=%s idle_for=%.1fs",
+                            rid,
+                            session_id,
+                            idle_for,
+                        )
+                        await _push_status("end", "hidden", message)
+                        await _cleanup_rail()
+                        return
+                    await asyncio.sleep(TEAM_EVOLUTION_IDLE_SLEEP_SEC)
+                    continue
+                last_event_at = time.monotonic()
+
+                await push_evolution_progress(
+                    push_context,
+                    rid,
+                    events,
+                    parse_stream_chunk=self._parse_stream_chunk,
+                    build_push_message=build_server_push_message,
+                )
+
+                approval_events = [evt for evt in events if is_evolution_approval_event(evt)]
+                if approval_events:
+                    for evt in approval_events:
+                        await _push_approval(evt)
+                    await _push_status("end", "approval_required", "")
+                    await _cleanup_rail()
+                    return
+
+                outcomes = [
+                    evolution_outcome_from_event(evt)
+                    for evt in events
+                    if is_evolution_outcome_event(evt)
+                ]
+                if outcomes:
+                    outcome = outcomes[-1]
+                    stage = str(outcome.get("status") or "completed").strip().lower()
+                    message = str(outcome.get("message") or "")
+                    if stage in {"failed", "timed_out"}:
+                        await _push_status("end", "hidden", message)
+                    else:
+                        await _push_status(
+                            "end",
+                            stage or "completed",
+                            message or "Evolution analysis completed",
+                        )
+                    await _cleanup_rail()
+                    return
+
+                terminal_progress = [
+                    terminal
+                    for terminal in (team_evolution_terminal_progress(evt) for evt in events)
+                    if terminal is not None
+                ]
+                if terminal_progress:
+                    terminal = terminal_progress[-1]
+                    terminal_stage = str(terminal.get("stage") or "no_evolution_generated")
+                    if terminal_stage in {"failed", "timed_out"}:
+                        terminal_stage = "hidden"
+                    await _push_status(
+                        "end",
+                        terminal_stage,
+                        str(terminal.get("message") or ""),
+                    )
+                    await _cleanup_rail()
+                    return
+        except asyncio.CancelledError:
+            try:
+                await _cleanup_rail()
+            finally:
+                raise
         except Exception as exc:
             logger.warning("[JiuWenClawDeepAdapter] evolution watcher failed: %s", exc)
             try:
@@ -5181,13 +5392,3 @@ class JiuWenClawDeepAdapter:
             task.result()
         except Exception as exc:
             logger.warning("[JiuWenClawDeepAdapter] evolution watcher task exception: %s", exc)
-
-    @staticmethod
-    def _is_approval_event(evt) -> bool:
-        """Check whether an OutputSchema event is an approval request."""
-        evt_type = getattr(evt, "type", "")
-        if evt_type == "chat.ask_user_question":
-            return True
-        if hasattr(evt, "payload") and isinstance(evt.payload, dict):
-            return evt.payload.get("event_type") == "chat.ask_user_question"
-        return False
