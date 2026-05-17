@@ -448,6 +448,19 @@ class TeamManager:
         return None
 
     @staticmethod
+    def _resolve_delete_session_team_name(session_id: str) -> str | None:
+        metadata = get_session_metadata(session_id)
+        team_name = str(metadata.get("team_name") or "").strip()
+        if team_name:
+            return team_name
+
+        logger.warning(
+            "[TeamManager] failed to resolve delete team_name from metadata: session_id=%s",
+            session_id,
+        )
+        return None
+
+    @staticmethod
     def register_member_runtime_tools(
         agent: DeepAgent,
         *,
@@ -1782,13 +1795,32 @@ class TeamManager:
         return True
 
     async def delete_session_runtime(self, session_id: str, reason: str = "") -> bool:
-        """Delete a single team session runtime without deleting the whole team."""
-        team_name = self._resolve_session_team_name(session_id)
+        """Delete a team-mode session and its session-scoped team data.
+
+        Jiuwenclaw scopes team names by session id, so deleting a
+        team-mode session should delete the corresponding Agent Team
+        before the caller removes the local session directory. If the
+        team name cannot be resolved from session metadata, fall back to
+        releasing only the session checkpoint.
+        """
+        team_name = self._resolve_delete_session_team_name(session_id)
 
         await self.stop_session_runtime(session_id, reason=reason)
 
         try:
-            await Runner.release(session_id)
+            if team_name:
+                await Runner.delete_agent_team(
+                    team_name=team_name,
+                    session_ids=[session_id],
+                    force=True,
+                )
+            else:
+                logger.warning(
+                    "[TeamManager] delete session runtime fell back to session release: "
+                    "session_id=%s reason=missing_team_name",
+                    session_id,
+                )
+                await Runner.release(session_id)
             logger.info(
                 "[TeamManager] %steam session deleted: session_id=%s team_name=%s",
                 reason,

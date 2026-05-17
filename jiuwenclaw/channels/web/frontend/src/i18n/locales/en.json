@@ -250,6 +250,7 @@
     "unknownSession": "Unknown session-unknown time",
     "unknownTime": "unknown time",
     "deleteConfirm": "Delete session {{session}}?\nAll files in this session directory will be removed.",
+    "deleteTeamSessionConfirm": "Delete team session {{session}}?\nThis will delete team {{team}} runtime, linked session, and directory.",
     "prefixes": {
       "session": "Session",
       "cron": "Scheduled",

@@ -517,33 +517,78 @@ async def test_prepare_session_switch_stops_other_active_and_pending_sessions(
 
 
 @pytest.mark.asyncio
-async def test_delete_session_runtime_releases_single_team_session(
+async def test_delete_session_runtime_deletes_single_team_session_team(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     manager = _TeamManagerHarness()
     manager.set_active_runtime_for_test("sess-1", "demo-team")
 
     stopped: list[tuple[str, str]] = []
-    released: list[str] = []
+    deleted_teams: list[dict] = []
 
     async def fake_stop(self, session_id: str, reason: str = "") -> bool:
         stopped.append((session_id, reason))
         return True
 
-    async def fake_release(session_id: str) -> None:
-        released.append(session_id)
+    async def fake_delete_agent_team(*, team_name: str, session_ids: list[str], force: bool) -> bool:
+        deleted_teams.append(
+            {"team_name": team_name, "session_ids": session_ids, "force": force}
+        )
+        return True
 
     monkeypatch.setattr(TeamManager, "stop_session_runtime", fake_stop)
     monkeypatch.setattr(
-        "jiuwenclaw.agents.harness.team.team_manager.Runner.release",
-        fake_release,
+        "jiuwenclaw.agents.harness.team.team_manager.Runner.delete_agent_team",
+        fake_delete_agent_team,
+    )
+    monkeypatch.setattr(
+        "jiuwenclaw.agents.harness.team.team_manager.get_session_metadata",
+        lambda _session_id: {"team_name": "demo-team"},
     )
 
     deleted = await manager.delete_session_runtime("sess-1", reason="session.delete: ")
 
     assert deleted is True
     assert stopped == [("sess-1", "session.delete: ")]
-    assert released == ["sess-1"]
+    assert deleted_teams == [
+        {"team_name": "demo-team", "session_ids": ["sess-1"], "force": True}
+    ]
+
+
+@pytest.mark.asyncio
+async def test_delete_session_runtime_uses_metadata_not_active_team_name(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    manager = _TeamManagerHarness()
+    manager.set_active_runtime_for_test("sess-1", "active-team")
+
+    deleted_teams: list[dict] = []
+
+    async def fake_stop(self, session_id: str, reason: str = "") -> bool:
+        return True
+
+    async def fake_delete_agent_team(*, team_name: str, session_ids: list[str], force: bool) -> bool:
+        deleted_teams.append(
+            {"team_name": team_name, "session_ids": session_ids, "force": force}
+        )
+        return True
+
+    monkeypatch.setattr(TeamManager, "stop_session_runtime", fake_stop)
+    monkeypatch.setattr(
+        "jiuwenclaw.agents.harness.team.team_manager.Runner.delete_agent_team",
+        fake_delete_agent_team,
+    )
+    monkeypatch.setattr(
+        "jiuwenclaw.agents.harness.team.team_manager.get_session_metadata",
+        lambda _session_id: {"team_name": "metadata-team"},
+    )
+
+    deleted = await manager.delete_session_runtime("sess-1", reason="session.delete: ")
+
+    assert deleted is True
+    assert deleted_teams == [
+        {"team_name": "metadata-team", "session_ids": ["sess-1"], "force": True}
+    ]
 
 
 @pytest.mark.asyncio
@@ -723,6 +768,45 @@ async def test_delete_session_runtime_uses_metadata_team_name(
     manager = _TeamManagerHarness()
 
     stop_calls: list[tuple[str, str]] = []
+    deleted_teams: list[dict] = []
+
+    async def fake_stop(self, session_id: str, reason: str = "") -> bool:
+        stop_calls.append((session_id, reason))
+        return True
+
+    async def fake_delete_agent_team(*, team_name: str, session_ids: list[str], force: bool) -> bool:
+        deleted_teams.append(
+            {"team_name": team_name, "session_ids": session_ids, "force": force}
+        )
+        return True
+
+    monkeypatch.setattr(TeamManager, "stop_session_runtime", fake_stop)
+    monkeypatch.setattr(
+        "jiuwenclaw.agents.harness.team.team_manager.Runner.delete_agent_team",
+        fake_delete_agent_team,
+    )
+    monkeypatch.setattr(
+        "jiuwenclaw.agents.harness.team.team_manager.get_session_metadata",
+        lambda _session_id: {"team_name": "meta-team"},
+    )
+
+    deleted = await manager.delete_session_runtime("sess-1", reason="session.delete: ")
+
+    assert deleted is True
+    assert stop_calls == [("sess-1", "session.delete: ")]
+    assert deleted_teams == [
+        {"team_name": "meta-team", "session_ids": ["sess-1"], "force": True}
+    ]
+
+
+@pytest.mark.asyncio
+async def test_delete_session_runtime_falls_back_to_release_without_team_name(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    manager = _TeamManagerHarness()
+    manager.set_active_runtime_for_test("sess-1", "active-team")
+
+    stop_calls: list[tuple[str, str]] = []
     released: list[str] = []
 
     async def fake_stop(self, session_id: str, reason: str = "") -> bool:
@@ -732,14 +816,21 @@ async def test_delete_session_runtime_uses_metadata_team_name(
     async def fake_release(session_id: str) -> None:
         released.append(session_id)
 
+    async def fake_delete_agent_team(*, team_name: str, session_ids: list[str], force: bool) -> bool:
+        raise AssertionError("delete_agent_team should not use active team_name when metadata is missing")
+
     monkeypatch.setattr(TeamManager, "stop_session_runtime", fake_stop)
     monkeypatch.setattr(
         "jiuwenclaw.agents.harness.team.team_manager.Runner.release",
         fake_release,
     )
     monkeypatch.setattr(
+        "jiuwenclaw.agents.harness.team.team_manager.Runner.delete_agent_team",
+        fake_delete_agent_team,
+    )
+    monkeypatch.setattr(
         "jiuwenclaw.agents.harness.team.team_manager.get_session_metadata",
-        lambda _session_id: {"team_name": "meta-team"},
+        lambda _session_id: {},
     )
 
     deleted = await manager.delete_session_runtime("sess-1", reason="session.delete: ")

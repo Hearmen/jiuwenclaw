@@ -250,6 +250,7 @@
     "unknownSession": "未知会话-未知时间",
     "unknownTime": "未知时间",
     "deleteConfirm": "确认删除会话 {{session}} ?\n将删除该会话目录下所有文件。",
+    "deleteTeamSessionConfirm": "确认删除团队会话 {{session}} ?\n将删除团队 {{team}} 的运行时、关联会话及目录。",
     "prefixes": {
       "session": "会话",
       "cron": "定时",
