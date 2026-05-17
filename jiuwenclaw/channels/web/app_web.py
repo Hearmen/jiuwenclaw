@@ -597,6 +597,7 @@ class _SpaStaticHandler(SimpleHTTPRequestHandler):
 
         if path == "/file-api/file-content":
             file_arg = query.get("path", "")
+            encoding_arg = query.get("encoding", "utf-8")
             if not file_arg:
                 self._write_json(400, {"error": "missing_file_path"})
                 return
@@ -614,8 +615,30 @@ class _SpaStaticHandler(SimpleHTTPRequestHandler):
                 if not full_path.exists():
                     self._write_json(404, {"error": "file_not_found", "fullPath": str(full_path)})
                     return
+
+            def read_file_with_encoding(file_path: Path, encoding: str) -> tuple[str, str]:
+                if encoding == "auto":
+                    import charset_normalizer
+                    raw_data = file_path.read_bytes()
+                    detected = charset_normalizer.from_bytes(raw_data).best()
+                    if detected is None:
+                        detected_encoding = "utf-8"
+                    else:
+                        detected_encoding = detected.encoding or "utf-8"
+                    try:
+                        return raw_data.decode(detected_encoding), detected_encoding
+                    except (UnicodeDecodeError, LookupError) as decode_exc:
+                        for try_encoding in ["gbk", "gb2312", "big5", "shift_jis", "euc_kr"]:
+                            try:
+                                return raw_data.decode(try_encoding), try_encoding
+                            except (UnicodeDecodeError, LookupError):
+                                continue
+                        raise OSError(f"Unable to decode file with any known encoding") from decode_exc
+                else:
+                    return file_path.read_text(encoding=encoding), encoding
+
             try:
-                data = full_path.read_text(encoding="utf-8")
+                data, used_encoding = read_file_with_encoding(full_path, encoding_arg)
             except OSError as exc:
                 self._write_json(500, {"error": str(exc)})
                 return
@@ -623,6 +646,7 @@ class _SpaStaticHandler(SimpleHTTPRequestHandler):
             self.send_response(200)
             self.send_header("Content-Type", "text/plain; charset=utf-8")
             self.send_header("Content-Length", str(len(body)))
+            self.send_header("X-Original-Encoding", used_encoding)
             self.end_headers()
             if self.command != "HEAD":
                 self.wfile.write(body)

@@ -43,6 +43,7 @@ export function ReadOnlyFileModal({ open, filePath, fileName, onClose }: ReadOnl
   const [content, setContent] = useState<string>('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [fileEncoding, setFileEncoding] = useState<string>('auto');
 
   useEffect(() => {
     if (!open) return;
@@ -73,7 +74,7 @@ export function ReadOnlyFileModal({ open, filePath, fileName, onClose }: ReadOnl
 
       try {
         const encodedPath = encodeURIComponent(filePath);
-        const url = `/file-api/file-content?path=${encodedPath}`;
+        const url = `/file-api/file-content?path=${encodedPath}&encoding=${fileEncoding}`;
         const response = await fetch(url, { cache: 'no-store' });
 
         if (!response.ok) {
@@ -92,7 +93,7 @@ export function ReadOnlyFileModal({ open, filePath, fileName, onClose }: ReadOnl
     };
 
     loadFile();
-  }, [open, filePath, fileName, t]);
+  }, [open, filePath, fileName, t, fileEncoding]);
 
   if (!open) {
     return null;
@@ -176,6 +177,23 @@ export function ReadOnlyFileModal({ open, filePath, fileName, onClose }: ReadOnl
             <p className="text-xs text-text-muted mono truncate mt-1" title={filePath}>
               {filePath}
             </p>
+          </div>
+          <div className="flex items-center gap-2">
+            <label className="text-xs text-text-muted">Encoding:</label>
+            <select
+              value={fileEncoding}
+              onChange={(e) => setFileEncoding(e.target.value)}
+              className="rounded border border-border bg-bg px-2 py-1 text-xs text-text"
+            >
+              <option value="auto">Auto Detect</option>
+              <option value="utf-8">UTF-8</option>
+              <option value="gbk">GBK</option>
+              <option value="gb2312">GB2312</option>
+              <option value="big5">Big5</option>
+              <option value="shift_jis">Shift_JIS</option>
+              <option value="euc_kr">EUC-KR</option>
+              <option value="iso-8859-1">ISO-8859-1</option>
+            </select>
           </div>
           <button
             type="button"

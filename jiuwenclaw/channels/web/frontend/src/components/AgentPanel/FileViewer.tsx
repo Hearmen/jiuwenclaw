@@ -44,6 +44,7 @@ export function FileViewer({ filePath, fileName, reloadNonce = 0 }: FileViewerPr
   const [isEditing, setIsEditing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [saveError, setSaveError] = useState<string | null>(null);
+  const [fileEncoding, setFileEncoding] = useState<string>('auto');
   const lowerFileName = fileName.toLowerCase();
   const isMarkdown = lowerFileName.endsWith('.md') || lowerFileName.endsWith('.mdx');
   const isJson = lowerFileName.endsWith('.json');
@@ -119,12 +120,17 @@ export function FileViewer({ filePath, fileName, reloadNonce = 0 }: FileViewerPr
 
       try {
         const encodedPath = encodeURIComponent(filePath);
-        const url = `/file-api/file-content?path=${encodedPath}`;
+        const url = `/file-api/file-content?path=${encodedPath}&encoding=${fileEncoding}`;
         const response = await fetch(url, { cache: 'no-store' });
 
         if (!response.ok) {
           const errorData = await response.text();
           throw new Error(`HTTP ${response.status}: ${errorData.substring(0, 100)}`);
+        }
+
+        const originalEncoding = response.headers.get('X-Original-Encoding');
+        if (originalEncoding && fileEncoding === 'auto') {
+          console.log(`File encoding detected: ${originalEncoding}`);
         }
 
         const text = await response.text();
@@ -139,7 +145,7 @@ export function FileViewer({ filePath, fileName, reloadNonce = 0 }: FileViewerPr
     };
 
     loadFile();
-  }, [filePath, fileName, isPreviewable, reloadNonce]);
+  }, [filePath, fileName, isPreviewable, reloadNonce, fileEncoding]);
 
   useEffect(() => {
     if (isHistoryJson) {
@@ -205,6 +211,23 @@ export function FileViewer({ filePath, fileName, reloadNonce = 0 }: FileViewerPr
                 {filePath}
               </p>
             </div>
+          </div>
+          <div className="flex items-center gap-2">
+            <label className="text-xs text-text-muted">Encoding:</label>
+            <select
+              value={fileEncoding}
+              onChange={(e) => setFileEncoding(e.target.value)}
+              className="rounded border border-border bg-bg px-2 py-1 text-xs text-text"
+            >
+              <option value="auto">Auto Detect</option>
+              <option value="utf-8">UTF-8</option>
+              <option value="gbk">GBK</option>
+              <option value="gb2312">GB2312</option>
+              <option value="big5">Big5</option>
+              <option value="shift_jis">Shift_JIS</option>
+              <option value="euc_kr">EUC-KR</option>
+              <option value="iso-8859-1">ISO-8859-1</option>
+            </select>
           </div>
           {isMarkdown && !loading ? (
             <div className="flex flex-shrink-0 items-center gap-2 self-stretch">

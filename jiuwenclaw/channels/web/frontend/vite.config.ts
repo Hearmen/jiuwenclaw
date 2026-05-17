@@ -41,6 +41,45 @@ function resolveProjectRootDir(): string {
   return repoRoot
 }
 
+const FILE_CONTENT_ENCODING_ALIASES: Record<string, string> = {
+  utf8: 'utf-8',
+  'utf_8': 'utf-8',
+  gb2312: 'gb18030',
+  gbk: 'gb18030',
+  'shift-jis': 'shift_jis',
+  sjis: 'shift_jis',
+  euc_kr: 'euc-kr',
+  latin1: 'iso-8859-1',
+}
+
+function normalizeFileContentEncoding(encoding: string): string {
+  const key = encoding.trim().toLowerCase()
+  return FILE_CONTENT_ENCODING_ALIASES[key] ?? key
+}
+
+function decodeFileContent(raw: Buffer, requestedEncoding: string): { content: string; encoding: string } {
+  const normalizedEncoding = normalizeFileContentEncoding(requestedEncoding || 'utf-8')
+  if (normalizedEncoding !== 'auto') {
+    return {
+      content: new TextDecoder(normalizedEncoding, { fatal: true }).decode(raw),
+      encoding: normalizedEncoding,
+    }
+  }
+
+  const candidates = ['utf-8', 'gb18030', 'big5', 'shift_jis', 'euc-kr', 'iso-8859-1']
+  for (const candidate of candidates) {
+    try {
+      return {
+        content: new TextDecoder(candidate, { fatal: true }).decode(raw),
+        encoding: candidate,
+      }
+    } catch {
+      /* try next encoding */
+    }
+  }
+  throw new Error('Unable to decode file with any known encoding')
+}
+
 /** WS proxy 中常见的、可安全忽略的 socket 错误码（跨平台） */
 const WS_PROXY_IGNORABLE_CODES = new Set([
   'EPIPE',          // 对端已关闭
@@ -374,6 +413,7 @@ function devFileContentApi(): Plugin {
         if (req.method === 'GET') {
           const url = new URL(req.url || '/file-api/file-content', 'http://localhost')
           const filePath = url.searchParams.get('path')
+          const requestedEncoding = url.searchParams.get('encoding') || 'utf-8'
           if (!filePath) {
             res.statusCode = 400
             res.setHeader('content-type', 'application/json; charset=utf-8')
@@ -398,9 +438,10 @@ function devFileContentApi(): Plugin {
                     cwd: path.dirname(path.dirname(generateAgentFoldersScriptPath)),
                   })
                   if (runResult.status === 0 && fs.existsSync(fullPath)) {
-                    const content = fs.readFileSync(fullPath, 'utf-8')
+                    const { content, encoding } = decodeFileContent(fs.readFileSync(fullPath), requestedEncoding)
                     res.statusCode = 200
                     res.setHeader('content-type', 'text/plain; charset=utf-8')
+                    res.setHeader('X-Original-Encoding', encoding)
                     res.end(content)
                     return
                   }
@@ -414,9 +455,10 @@ function devFileContentApi(): Plugin {
               return
             }
 
-            const content = fs.readFileSync(fullPath, 'utf-8')
+            const { content, encoding } = decodeFileContent(fs.readFileSync(fullPath), requestedEncoding)
             res.statusCode = 200
             res.setHeader('content-type', 'text/plain; charset=utf-8')
+            res.setHeader('X-Original-Encoding', encoding)
             res.end(content)
           } catch (error) {
             res.statusCode = 500
