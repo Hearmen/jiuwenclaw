@@ -52,6 +52,21 @@ _TEAM_CREATE_KINDS = {
     RunActionKind.CREATE.value,
     RunActionKind.NEW_TEAM_IN_SESSION.value,
 }
+_HIDE_DM_PREFIX = "/hide_dm"
+
+
+def _extract_hide_dm_directive(query: str) -> tuple[str, bool]:
+    """Strip a leading ``/hide_dm`` directive from the first team query.
+
+    Returns the cleaned query and whether the directive was present.
+    """
+    stripped = query.lstrip()
+    if not stripped.startswith(_HIDE_DM_PREFIX):
+        return query, False
+    remainder = stripped[len(_HIDE_DM_PREFIX):]
+    if remainder and not remainder[0].isspace():
+        return query, False
+    return remainder.lstrip(), True
 
 
 def sync_team_identity_metadata(
@@ -96,6 +111,7 @@ async def ensure_monitor_for_active_runtime(
     channel_id: str | None,
     session_id: str,
     team_name: str,
+    hide_dm: bool = False,
 ) -> None:
     """Attach TeamMonitorHandler using the public Runner team monitor accessor."""
     tm = get_team_manager(channel_id)
@@ -103,7 +119,11 @@ async def ensure_monitor_for_active_runtime(
     if existing is not None and existing.is_running:
         return
 
-    monitor = await Runner.get_agent_team_monitor(team_name=team_name, session_id=session_id)
+    monitor = await Runner.get_agent_team_monitor(
+        team_name=team_name,
+        session_id=session_id,
+        hide_dm=hide_dm,
+    )
     if monitor is None:
         logger.warning(
             "[TeamHelpers] active team monitor unavailable: channel_id=%s session_id=%s team_name=%s",
@@ -537,6 +557,17 @@ async def process_team_message_stream(
     is_first_request = not team_manager.has_stream_task(session_id)
     request_queue: asyncio.Queue | None = None
 
+    hide_dm = False
+    if is_first_request:
+        query, hide_dm = _extract_hide_dm_directive(str(query or ""))
+        if hide_dm:
+            logger.info(
+                "[TeamHelpers] hide_dm directive captured for first team request: "
+                "channel_id=%s session_id=%s",
+                _resolve_channel_id(channel_id),
+                session_id,
+            )
+
     slash_result = await _handle_team_slash_command(
         channel_id,
         session_id,
@@ -654,6 +685,7 @@ async def process_team_message_stream(
                     session_id,
                     team_spec,
                     query,
+                    hide_dm=hide_dm,
                 )
             )
             team_manager.register_stream_task(session_id, stream_task)
@@ -767,6 +799,7 @@ async def _consume_stream_with_query(
     session_id: str,
     team_spec: Any,
     initial_query: str,
+    hide_dm: bool = False,
 ) -> None:
     """Consume the team stream in the background and broadcast parsed events."""
     received_chunks = 0
@@ -807,6 +840,7 @@ async def _consume_stream_with_query(
                         channel_id,
                         session_id,
                         ready_team_name,
+                        hide_dm=hide_dm,
                     )
                     ensure_team_evolution_watcher(
                         channel_id,

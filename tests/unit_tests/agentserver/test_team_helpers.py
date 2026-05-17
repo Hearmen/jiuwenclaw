@@ -10,6 +10,7 @@ from types import SimpleNamespace
 import pytest
 from openjiuwen.agent_teams.schema.team import TeamRole
 
+from jiuwenclaw.agents.harness.team import TeamMonitorHandler
 from jiuwenclaw.server.runtime.agent_adapter import team_helpers
 
 
@@ -945,7 +946,7 @@ async def test_consume_stream_with_query_broadcasts_only_leader_team_outputs(mon
         run_agent_team_streaming = staticmethod(_fake_stream)
 
         @staticmethod
-        async def get_agent_team_monitor(team_name: str, session_id: str):
+        async def get_agent_team_monitor(team_name: str, session_id: str, hide_dm: bool = False):
             return None
 
     class _FakeManager:
@@ -997,6 +998,99 @@ async def test_consume_stream_with_query_broadcasts_only_leader_team_outputs(mon
         "chat.final",
     ]
     assert broadcasted[1]["content"] == "leader answer"
+
+
+def test_extract_hide_dm_directive_strips_prefix_and_flags():
+    cleaned, hide_dm = team_helpers._extract_hide_dm_directive(  # pylint: disable=protected-access
+        "/hide_dm please summarize"
+    )
+    assert hide_dm is True
+    assert cleaned == "please summarize"
+
+
+def test_extract_hide_dm_directive_ignores_non_prefix():
+    cleaned, hide_dm = team_helpers._extract_hide_dm_directive(  # pylint: disable=protected-access
+        "/hide_dmsomething else"
+    )
+    assert hide_dm is False
+    assert cleaned == "/hide_dmsomething else"
+
+
+def test_extract_hide_dm_directive_handles_bare_directive():
+    cleaned, hide_dm = team_helpers._extract_hide_dm_directive("/hide_dm")  # pylint: disable=protected-access
+    assert hide_dm is True
+    assert cleaned == ""
+
+
+@pytest.mark.anyio
+async def test_consume_stream_with_query_propagates_hide_dm_to_monitor(monkeypatch):
+    captured: dict[str, object] = {}
+
+    async def _fake_stream(**kwargs):
+        yield SimpleNamespace(
+            type="team.runtime_ready",
+            payload={
+                "event_type": "team.runtime_ready",
+                "team_name": "demo-team",
+                "activation_kind": "create",
+            },
+            role=TeamRole.LEADER,
+        )
+
+    class _FakeRunner:
+        run_agent_team_streaming = staticmethod(_fake_stream)
+
+        @staticmethod
+        async def get_agent_team_monitor(team_name: str, session_id: str, hide_dm: bool = False):
+            captured["team_name"] = team_name
+            captured["session_id"] = session_id
+            captured["hide_dm"] = hide_dm
+            return None
+
+    class _FakeManager:
+        @staticmethod
+        def commit_runtime_ready(session_id: str, team_name: str) -> None:
+            pass
+
+        @staticmethod
+        def clear_pending_runtime(session_id: str) -> None:
+            pass
+
+        @staticmethod
+        def pop_stream_task(session_id: str) -> None:
+            pass
+
+        @staticmethod
+        def get_monitor(session_id: str):
+            return None
+
+        @staticmethod
+        async def attach_distributed_hooks_for_runner_runtime(
+            team_name: str,
+            session_id: str,
+            channel_id: str,
+        ) -> None:
+            pass
+
+    monkeypatch.setattr(team_helpers, "Runner", _FakeRunner)
+    monkeypatch.setattr(team_helpers, "get_team_manager", lambda channel_id: _FakeManager())
+    monkeypatch.setattr(team_helpers, "_broadcast_event", lambda *args, **kwargs: None)
+    monkeypatch.setattr(team_helpers, "get_session_metadata", lambda session_id: {})
+    monkeypatch.setattr(team_helpers, "update_session_metadata", lambda **kwargs: None)
+
+    await team_helpers._consume_stream_with_query(  # pylint: disable=protected-access
+        "web",
+        "sess-hide-dm",
+        SimpleNamespace(team_name="demo-team"),
+        "hello",
+        hide_dm=True,
+    )
+
+    assert captured == {
+        "team_name": "demo-team",
+        "session_id": "sess-hide-dm",
+        "hide_dm": True,
+    }
 
 
 @pytest.mark.anyio
