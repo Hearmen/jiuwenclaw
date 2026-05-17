@@ -612,7 +612,12 @@ async def test_consume_stream_with_query_launches_watcher_after_runtime_ready(mo
         lambda **kwargs: calls.append(f"sync:{kwargs['session_id']}:{kwargs['ready_team_name']}"),
     )
 
-    async def _fake_monitor(channel_id, session_id, team_name):
+    async def _fake_monitor(
+        channel_id: str | None,
+        session_id: str,
+        team_name: str,
+        hide_dm: bool = False,
+    ) -> None:
         calls.append(f"monitor:{session_id}:{team_name}")
 
     monkeypatch.setattr(team_helpers, "ensure_monitor_for_active_runtime", _fake_monitor)
