@@ -775,12 +775,16 @@ select {
 
   .chat-bubble.assistant {
     border-color: transparent;
-    background: var(--secondary);
+    background: var(--bg-muted);
+  }
+
+  .chat-bubble.assistant.markdown {
+    padding: 0 14px;
   }
 
   :root[data-theme="light"] .chat-bubble.assistant {
     border-color: var(--border);
-    background: var(--bg-muted);
+    background: #ffffff;
   }
 
   .chat-bubble.streaming {
@@ -827,6 +831,34 @@ select {
     color: var(--chat-text);
     line-height: 1.5;
     white-space: pre-wrap;
+  }
+
+  .chat-bubble.assistant.markdown .chat-text {
+    @apply prose prose-sm max-w-none;
+    --tw-prose-body: var(--chat-text);
+    --tw-prose-headings: var(--text-strong);
+    --tw-prose-lead: var(--muted);
+    --tw-prose-links: var(--accent);
+    --tw-prose-bold: var(--text-strong);
+    --tw-prose-counters: var(--muted);
+    --tw-prose-bullets: var(--muted);
+    --tw-prose-hr: var(--border);
+    --tw-prose-quotes: var(--chat-text);
+    --tw-prose-quote-borders: var(--border);
+    --tw-prose-captions: var(--muted);
+    --tw-prose-code: var(--chat-text);
+    --tw-prose-pre-code: var(--chat-text);
+    --tw-prose-pre-bg: var(--secondary);
+    --tw-prose-th-borders: var(--border);
+    --tw-prose-td-borders: var(--border);
+    white-space: normal;
+  }
+
+  .chat-bubble.assistant.streaming .chat-text {
+    @apply prose-sm max-w-none;
+    color: var(--chat-text);
+    font-size: 0.875rem;
+    line-height: 1.7142857;
   }
 
   /* Chat input task queue */
@@ -897,80 +929,6 @@ select {
     color: var(--danger);
   }
 
-  .chat-text :where(p) {
-    margin: 0.5em 0;
-  }
-
-  .chat-text :where(p:first-child) {
-    margin-top: 0;
-  }
-
-  .chat-text :where(p:last-child) {
-    margin-bottom: 0;
-  }
-
-  .chat-text :where(ul, ol) {
-    margin: 0.5em 0;
-    padding-left: 1.25em;
-  }
-
-  .chat-text :where(li) {
-    margin: 0.2em 0;
-  }
-
-  .chat-text :where(h1, h2, h3, h4, h5, h6) {
-    margin: 0.8em 0 0.4em;
-    font-weight: 600;
-    line-height: 1.35;
-  }
-
-  .chat-text :where(h1) { font-size: 1.15em; }
-  .chat-text :where(h2) { font-size: 1.1em; }
-  .chat-text :where(h3, h4, h5, h6) { font-size: 1em; }
-
-  .chat-text :where(blockquote) {
-    margin: 0.75em 0;
-    padding-left: 0.75em;
-    border-left: 3px solid var(--border);
-    color: var(--muted);
-  }
-
-  .chat-text :where(a) {
-    color: var(--accent);
-    text-decoration: underline;
-    text-underline-offset: 2px;
-  }
-
-  .chat-text :where(pre) {
-    margin-top: 0.75em;
-    padding: 10px 12px;
-    border-radius: var(--radius-md);
-    border: 1px solid var(--border);
-    background: var(--secondary);
-    overflow: auto;
-  }
-
-  :root[data-theme="light"] .chat-text :where(pre) {
-    background: var(--bg-muted);
-  }
-
-  .chat-text :where(pre code) {
-    font-size: 12px;
-    white-space: pre;
-  }
-
-  .chat-text :where(code) {
-    font-family: var(--mono);
-    font-size: 0.9em;
-  }
-
-  .chat-text :where(:not(pre) > code) {
-    padding: 0.15em 0.35em;
-    border-radius: var(--radius-sm);
-    border: 1px solid var(--border);
-    background: var(--secondary);
-  }
-
   /* Chat compose wrapper */
   .chat-compose {
     width: var(--chat-content-width);
@@ -980,7 +938,7 @@ select {
 
   .chat-panel-shell {
     --chat-page-max-width: 920px;
-    --chat-page-gutter: clamp(16px, 4vw, 56px);
+    --chat-page-gutter: clamp(12px, 3vw, 40px);
     --chat-content-width: min(
       var(--chat-page-max-width),
       calc(100% - (var(--chat-page-gutter) * 2))
@@ -1003,18 +961,7 @@ select {
     justify-content: center;
   }
 
-  @media (min-width: 1280px) {
-    .chat-panel-shell {
-      --chat-page-max-width: 860px;
-      --chat-page-gutter: clamp(48px, 12vw, 240px);
-    }
-  }
-
   @media (max-width: 640px) {
-    .chat-panel-shell {
-      --chat-page-gutter: 12px;
-    }
-
     .chat-scroll {
       padding-top: 12px;
     }
@@ -1217,15 +1164,6 @@ select {
     background: transparent;
   }
 
-  .team-event-group-list::-webkit-scrollbar {
-    width: 4px;
-  }
-
-  .team-event-group-list::-webkit-scrollbar-thumb {
-    background: var(--border-strong);
-    border-radius: var(--radius-full);
-  }
-
   .team-event-group-row {
     display: grid;
     grid-template-columns: 26px minmax(0, 1fr);
@@ -1373,27 +1311,12 @@ select {
 
   .tool-tree__list {
     display: block;
-    width: max-content;
+    width: 100%;
     max-width: 100%;
     max-height: 220px;
     overflow-y: auto;
     padding-left: 0;
     padding-right: 6px;
-    scrollbar-width: thin;
-    scrollbar-color: var(--border-strong) transparent;
-  }
-
-  .tool-tree__list::-webkit-scrollbar {
-    width: 4px;
-  }
-
-  .tool-tree__list::-webkit-scrollbar-thumb {
-    background: var(--border-strong);
-    border-radius: var(--radius-full);
-  }
-
-  .tool-tree__list::-webkit-scrollbar-track {
-    background: transparent;
   }
 
   .tool-tree__latest {

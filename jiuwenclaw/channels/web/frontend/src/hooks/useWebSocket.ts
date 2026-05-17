@@ -725,7 +725,11 @@ export function useWebSocket(options: UseWebSocketOptions): UseWebSocketReturn {
         // 定时任务等广播的 session_id 为空/null，若仍走 currentStreamId 会写到错误气泡甚至“无可见更新”。
         const streamId = currentStreamId;
         if (streamId && payloadSessionId) {
-          updateMessage(streamId, { ...(content ? { content } : {}), isStreaming: false });
+          updateMessage(streamId, {
+            ...(content ? { content } : {}),
+            isStreaming: false,
+            timestamp: new Date().toISOString(),
+          });
           stopStreaming();
           if (content && !content.includes('MEDIA:')) {
             handleTtsPlayback(streamId, content);
@@ -836,13 +840,11 @@ export function useWebSocket(options: UseWebSocketOptions): UseWebSocketReturn {
         if (!shouldHandleSessionEvent(payload)) return;
         if (shouldDropDuplicatedEvent('chat.tool_call', payload)) return;
         clearThinkingForVisibleOutput();
-        const { currentStreamId, currentStreamContent } = useChatStore.getState();
-        if (currentStreamId && currentStreamContent) {
-          updateMessage(currentStreamId, { isStreaming: false });
-          stopStreaming();
-          handleTtsPlayback(currentStreamId, currentStreamContent);
-        }
         addToolCall(normalizeToolCallPayload(payload));
+        const { currentStreamId } = useChatStore.getState();
+        if (currentStreamId) {
+          updateMessage(currentStreamId, { timestamp: new Date().toISOString() });
+        }
       }),
       webClient.on('chat.tool_result', ({ payload }) => {
         if (!shouldHandleSessionEvent(payload)) return;

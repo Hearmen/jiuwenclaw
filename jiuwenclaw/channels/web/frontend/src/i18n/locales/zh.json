@@ -1014,6 +1014,7 @@
   },
   "fileViewer": {
     "chatPreview": "对话预览",
+    "chatPreviewHint": "仅展示部分数据",
     "historyPreviewEmpty": "按与历史恢复相同的规则过滤后，没有可展示的消息（或文件为空）。可关闭预览查看原始 JSON。",
     "edit": "编辑",
     "unknownError": "未知错误",

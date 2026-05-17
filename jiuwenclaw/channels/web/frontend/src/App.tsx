@@ -4,7 +4,7 @@
  * 应用主布局，整合所有组件
  */
 
-import { useState, useCallback, useEffect, useRef, Component, ReactNode } from 'react';
+import { useState, useCallback, useEffect, useRef, Component, ReactNode, useMemo } from 'react';
 import { ChatPanel } from './components/ChatPanel';
 import { SessionSidebar } from './components/SessionSidebar';
 import { SkillPanel } from './components/SkillPanel';
@@ -209,7 +209,7 @@ function AppContent() {
 
   useEffect(() => () => disposeInFlightHistoryHandles(), [disposeInFlightHistoryHandles]);
 
-  const { setCurrentSession, setSessions, setAvailableModels, setMode, mode, heartbeatMessage, heartbeatUpdatedAt } = useSessionStore();
+  const { setCurrentSession, setSessions, setAvailableModels, setMode, mode, heartbeatMessage, heartbeatUpdatedAt, teamTaskEvents, teamMembers } = useSessionStore();
   const {
     clearMessages,
     clearSubtasks,
@@ -222,8 +222,19 @@ function AppContent() {
     setThinking,
     setPaused,
   } = useChatStore();
-  const { clearTodos } = useTodoStore();
-  const { reset: resetHarnessStore } = useHarnessStore();
+  const { todos, clearTodos } = useTodoStore();
+  const { extensionReady, reset: resetHarnessStore } = useHarnessStore();
+
+  const toolPanelHasContent = useMemo(() => {
+    switch (mode) {
+      case 'auto_harness':
+        return Boolean(extensionReady?.runtimePath);
+      case 'team':
+        return teamTaskEvents.length > 0 || teamMembers.length > 0;
+      default:
+        return todos.length > 0;
+    }
+  }, [mode, todos.length, teamTaskEvents.length, teamMembers.length, extensionReady?.runtimePath]);
 
   // WebSocket 连接 - provider 由后端配置决定 - provider 由后端配置决定，前端默认不在 URL query 传递
   const {
@@ -1118,15 +1129,30 @@ function AppContent() {
                   />
                 </div>
 
+                {/* StatusBar - 仅在有右侧面板内容时显示 */}
+                {toolPanelHasContent && (
+                  <StatusBar
+                    onCancel={mode === 'team' ? undefined : handleCancel}
+                    teamMode={mode === 'team'}
+                  />
+                )}
+              </div>
+
+              {/* Tool Panel - 仅在有内容时显示 */}
+              {toolPanelHasContent && (
+                <ToolPanel />
+              )}
+            </div>
+
+            {/* StatusBar - 当没有右侧面板时，单独显示在底部 */}
+            {!toolPanelHasContent && (
+              <div className="card">
                 <StatusBar
                   onCancel={mode === 'team' ? undefined : handleCancel}
                   teamMode={mode === 'team'}
                 />
               </div>
-
-              {/* Tool Panel */}
-              {<ToolPanel />}
-            </div>
+            )}
           </>
         )}
         {activeNav === 'agents' && (

@@ -426,7 +426,7 @@
 }
 
 .chat-welcome__heading {
-  font-size: 32px;
+  font-size: 24px;
   font-weight: 600;
   color: var(--text-strong);
   line-height: 48px;
@@ -525,40 +525,6 @@
 :root[data-theme="light"] .chat-suggestion-card:hover {
   background: rgba(96, 165, 250, 0.08);
   box-shadow: 0 4px 16px rgba(96, 165, 250, 0.1);
-}
-
-@media (min-width: 1440px) {
-  .chat-welcome__logo {
-    width: 72px;
-    height: 72px;
-  }
-
-  .chat-welcome__heading {
-    font-size: 1.5rem;
-  }
-
-  .chat-welcome__subtext {
-    max-width: 460px;
-  }
-
-  .chat-suggestions {
-    max-width: 560px;
-  }
-}
-
-@media (min-width: 1920px) {
-  .chat-welcome__logo {
-    width: 80px;
-    height: 80px;
-  }
-
-  .chat-welcome__heading {
-    font-size: 1.65rem;
-  }
-
-  .chat-suggestions {
-    max-width: 640px;
-  }
 }
 
 /* ===========================

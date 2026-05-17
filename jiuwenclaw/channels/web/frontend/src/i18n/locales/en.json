@@ -1014,6 +1014,7 @@
   },
   "fileViewer": {
     "chatPreview": "Chat preview",
+    "chatPreviewHint": "Only partial data is shown",
     "historyPreviewEmpty": "No messages to show after the same filtering as history restore (or the file is empty). Turn off preview to see raw JSON.",
     "edit": "Edit",
     "unknownError": "Unknown error",

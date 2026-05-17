@@ -1783,7 +1783,7 @@ function TeamItemSection({
                     onChange={(e) => updateLeader(field, e.target.value)}
                     className="flex-1 rounded border border-border bg-bg px-2 py-1 text-text text-xs"
                   >
-                    <option value="">-- Select Agent --</option>
+                    <option value="" disabled>-- Select Agent --</option>
                     {agents.map((agent) => {
                       const refs = getAgentTeamReferences(agent.name);
                       const isReferenced = refs.length > 0;
@@ -1837,7 +1837,7 @@ function TeamItemSection({
                     onChange={(e) => updateTeammate(field, e.target.value)}
                     className="flex-1 rounded border border-border bg-bg px-2 py-1 text-text text-xs"
                   >
-                    <option value="">-- Select Agent --</option>
+                    <option value="" disabled>-- Select Agent --</option>
                     {agents.map((agent) => {
                       const refs = getAgentTeamReferences(agent.name);
                       const isReferenced = refs.length > 0;
@@ -1913,7 +1913,7 @@ function TeamItemSection({
                               onChange={(e) => updateMember(idx, field, e.target.value)}
                               className="flex-1 rounded border border-border bg-bg px-2 py-1 text-text text-xs"
                             >
-                              <option value="">-- Select Agent --</option>
+                              <option value="" disabled>-- Select Agent --</option>
                               {agents.map((agent) => {
                                 const refs = getAgentTeamReferences(agent.name);
                                 const isReferenced = refs.length > 0;
@@ -1956,7 +1956,7 @@ function TeamItemSection({
                         onChange={(e) => updateNewMember(field, e.target.value)}
                         className="flex-1 rounded border border-border bg-bg px-2 py-1 text-text text-xs"
                       >
-                        <option value="">-- Select Agent --</option>
+                        <option value="" disabled>-- Select Agent --</option>
                         {agents.map((agent) => {
                           const refs = getAgentTeamReferences(agent.name);
                           const isReferenced = refs.length > 0;
@@ -2517,15 +2517,28 @@ export function ConfigPanel({
   const hasAgentsTeamsValidationError = useMemo(() => {
     for (const agent of draftAgents) {
       if (!agent.name.trim()) return true;
+      if (!agent.model.provider.trim()) return true;
+      if (!agent.model.api_base.trim()) return true;
+      if (!agent.model.api_key.trim()) return true;
       if (!agent.model.model.trim()) return true;
     }
     for (const team of draftTeams) {
       if (!team.team_name.trim()) return true;
+      if (!team.lifecycle?.trim()) return true;
+      if (!team.teammate_mode?.trim()) return true;
+      if (!team.spawn_mode?.trim()) return true;
+      if (!team.leader?.member_name?.trim()) return true;
+      if (!team.leader?.display_name?.trim()) return true;
+      if (!team.leader?.persona?.trim()) return true;
+      if (!team.leader?.agent_key?.trim()) return true;
+      if (!team.teammate?.agent_key?.trim()) return true;
       for (const member of team.predefined_members || []) {
         if (!member.member_name.trim()) return true;
         if (!/^[a-zA-Z0-9_]+$/.test(member.member_name)) return true;
+        if (!member.display_name?.trim()) return true;
+        if (!member.persona?.trim()) return true;
+        if (!member.agent_key?.trim()) return true;
       }
-      if (team.leader?.member_name && !/^[a-zA-Z0-9_]+$/.test(team.leader.member_name)) return true;
     }
     return false;
   }, [draftAgents, draftTeams]);
