@@ -253,6 +253,9 @@ class AgentWebSocketServer:
 
         # Reset harness package state to native on service startup
         reset_harness_packages_state()
+        from jiuwenclaw.server.runtime.agent_adapter.interface_deep import ensure_persistent_checkpointer
+
+        await ensure_persistent_checkpointer()
 
         try:
             from websockets.legacy.server import serve as legacy_serve
@@ -1010,11 +1013,37 @@ class AgentWebSocketServer:
 
         return sorted(set(matched_session_ids))
 
+    async def _ensure_persistent_checkpointer_response(
+        self,
+        request: AgentRequest,
+    ) -> AgentResponse | None:
+        """Return an error response when persistent checkpoint storage is unavailable."""
+        try:
+            from jiuwenclaw.server.runtime.agent_adapter.interface_deep import ensure_persistent_checkpointer
+
+            await ensure_persistent_checkpointer()
+            return None
+        except Exception as exc:
+            logger.exception(
+                "[AgentWebSocketServer] persistent checkpointer unavailable: request_id=%s error=%s",
+                request.request_id,
+                exc,
+            )
+            return AgentResponse(
+                request_id=request.request_id,
+                channel_id=request.channel_id,
+                ok=False,
+                payload={
+                    "error": "persistent checkpointer is unavailable",
+                    "code": "CHECKPOINT_UNAVAILABLE",
+                },
+                metadata=request.metadata,
+            )
+
     async def _handle_team_delete(self, ws: Any, request: AgentRequest, send_lock: asyncio.Lock) -> None:
         """Delete a team and all team sessions that persist that team."""
         from openjiuwen.core.runner import Runner
         from jiuwenclaw.agents.harness.team import (
-            get_all_team_managers,
             stop_team_session_runtime_across_managers,
         )
 
@@ -1042,62 +1071,58 @@ class AgentWebSocketServer:
                 metadata=request.metadata,
             )
         else:
-            team_session_ids = await self._find_team_session_ids(team_name)
-            if not team_session_ids:
-                resp = AgentResponse(
-                    request_id=request.request_id,
-                    channel_id=request.channel_id,
-                    ok=False,
-                    payload={"error": "team sessions not found", "code": "NOT_FOUND"},
-                    metadata=request.metadata,
-                )
+            checkpoint_resp = await self._ensure_persistent_checkpointer_response(request)
+            if checkpoint_resp is not None:
+                resp = checkpoint_resp
             else:
-                for team_session_id in team_session_ids:
-                    await stop_team_session_runtime_across_managers(
-                        team_session_id,
-                        reason="team.delete: ",
+                team_session_ids = await self._find_team_session_ids(team_name)
+                if not team_session_ids:
+                    resp = AgentResponse(
+                        request_id=request.request_id,
+                        channel_id=request.channel_id,
+                        ok=False,
+                        payload={"error": "team sessions not found", "code": "NOT_FOUND"},
+                        metadata=request.metadata,
+                    )
+                else:
+                    for team_session_id in team_session_ids:
+                        await stop_team_session_runtime_across_managers(
+                            team_session_id,
+                            reason="team.delete: ",
+                        )
+
+                    await Runner.delete_agent_team(
+                        team_name=team_name,
+                        session_ids=team_session_ids,
+                        force=True,
                     )
 
-                await Runner.delete_agent_team(
-                    team_name=team_name,
-                    session_ids=team_session_ids,
-                    force=True,
-                )
-
-                for team_manager in get_all_team_managers():
                     for team_session_id in team_session_ids:
-                        task = team_manager.pop_stream_task(team_session_id)
-                        if task is not None and not task.done():
-                            task.cancel()
-                        team_manager.clear_active_runtime(team_session_id)
-                        team_manager.clear_pending_runtime(team_session_id)
+                        session_dir = get_agent_sessions_dir() / team_session_id
+                        if session_dir.exists():
+                            try:
+                                shutil.rmtree(session_dir)
+                            except Exception as exc:
+                                logger.warning(
+                                    "[AgentWebSocketServer] failed to delete local team session dir: "
+                                    "session_id=%s error=%s",
+                                    team_session_id,
+                                    exc,
+                                )
+                                continue
+                        remove_session_metadata_cache(team_session_id)
 
-                for team_session_id in team_session_ids:
-                    session_dir = get_agent_sessions_dir() / team_session_id
-                    if session_dir.exists():
-                        try:
-                            shutil.rmtree(session_dir)
-                        except Exception as exc:
-                            logger.warning(
-                                "[AgentWebSocketServer] failed to delete local team session dir: "
-                                "session_id=%s error=%s",
-                                team_session_id,
-                                exc,
-                            )
-                            continue
-                    remove_session_metadata_cache(team_session_id)
-
-                resp = AgentResponse(
-                    request_id=request.request_id,
-                    channel_id=request.channel_id,
-                    ok=True,
-                    payload={
-                        "team_name": team_name,
-                        "session_ids": team_session_ids,
-                        "deleted": True,
-                    },
-                    metadata=request.metadata,
-                )
+                    resp = AgentResponse(
+                        request_id=request.request_id,
+                        channel_id=request.channel_id,
+                        ok=True,
+                        payload={
+                            "team_name": team_name,
+                            "session_ids": team_session_ids,
+                            "deleted": True,
+                        },
+                        metadata=request.metadata,
+                    )
 
         wire = encode_agent_response_for_wire(resp, response_id=request.request_id)
         async with send_lock:
@@ -1138,45 +1163,49 @@ class AgentWebSocketServer:
                     metadata=request.metadata,
                 )
             else:
-                metadata = get_session_metadata(target)
-                mode = str(metadata.get("mode") or "").strip().lower()
-                channel_id = str(metadata.get("channel_id") or request.channel_id or "").strip() or None
-                try:
-                    if mode == "team":
-                        team_manager = get_team_manager(channel_id)
-                        deleted = await team_manager.delete_session_runtime(
+                checkpoint_resp = await self._ensure_persistent_checkpointer_response(request)
+                if checkpoint_resp is not None:
+                    resp = checkpoint_resp
+                else:
+                    metadata = get_session_metadata(target)
+                    mode = str(metadata.get("mode") or "").strip().lower()
+                    channel_id = str(metadata.get("channel_id") or request.channel_id or "").strip() or None
+                    try:
+                        if mode == "team":
+                            team_manager = get_team_manager(channel_id)
+                            deleted = await team_manager.delete_session_runtime(
+                                target,
+                                reason="session.delete: ",
+                            )
+                        else:
+                            await Runner.release(target)
+                            deleted = True
+                    except Exception as exc:
+                        logger.warning(
+                            "[AgentWebSocketServer] session.delete runtime cleanup failed: session_id=%s error=%s",
                             target,
-                            reason="session.delete: ",
+                            exc,
+                        )
+                        deleted = False
+
+                    if not deleted:
+                        resp = AgentResponse(
+                            request_id=request.request_id,
+                            channel_id=request.channel_id,
+                            ok=False,
+                            payload={"error": "session runtime cleanup failed", "code": "DELETE_FAILED"},
+                            metadata=request.metadata,
                         )
                     else:
-                        await Runner.release(target)
-                        deleted = True
-                except Exception as exc:
-                    logger.warning(
-                        "[AgentWebSocketServer] session.delete runtime cleanup failed: session_id=%s error=%s",
-                        target,
-                        exc,
-                    )
-                    deleted = False
-
-                if not deleted:
-                    resp = AgentResponse(
-                        request_id=request.request_id,
-                        channel_id=request.channel_id,
-                        ok=False,
-                        payload={"error": "session runtime cleanup failed", "code": "DELETE_FAILED"},
-                        metadata=request.metadata,
-                    )
-                else:
-                    shutil.rmtree(session_dir)
-                    remove_session_metadata_cache(target)
-                    resp = AgentResponse(
-                        request_id=request.request_id,
-                        channel_id=request.channel_id,
-                        ok=True,
-                        payload={"session_id": target},
-                        metadata=request.metadata,
-                    )
+                        shutil.rmtree(session_dir)
+                        remove_session_metadata_cache(target)
+                        resp = AgentResponse(
+                            request_id=request.request_id,
+                            channel_id=request.channel_id,
+                            ok=True,
+                            payload={"session_id": target},
+                            metadata=request.metadata,
+                        )
 
         wire = encode_agent_response_for_wire(resp, response_id=request.request_id)
         async with send_lock:

@@ -234,6 +234,9 @@ _CRON_TOOL_MODE: ContextVar[str | None] = ContextVar(
 
 logger = logging.getLogger(__name__)
 
+_PERSISTENT_CHECKPOINTER_LOCK = asyncio.Lock()
+_PERSISTENT_CHECKPOINTER_READY = False
+
 _ACP_BLOCKED_DEFAULT_TOOL_NAMES = frozenset(
     {
         "read_file",
@@ -353,6 +356,40 @@ def _build_context_processor_rail(config: dict[str, Any]) -> ContextProcessorRai
     except Exception as exc:
         logger.warning("[JiuWenClawDeepAdapter] ContextProcessorRail create failed: %s", exc)
         return None
+
+
+async def ensure_persistent_checkpointer() -> None:
+    """Ensure the process-wide default checkpointer uses sqlite persistence."""
+    global _PERSISTENT_CHECKPOINTER_READY
+
+    if _PERSISTENT_CHECKPOINTER_READY:
+        return
+
+    async with _PERSISTENT_CHECKPOINTER_LOCK:
+        if _PERSISTENT_CHECKPOINTER_READY:
+            return
+
+        try:
+            PersistenceCheckpointerProvider()
+            checkpoint_path = get_checkpoint_dir()
+            checkpointer = await CheckpointerFactory.create(
+                CheckpointerConfig(
+                    type="persistence",
+                    conf={"db_type": "sqlite", "db_path": f"{checkpoint_path}/checkpoint"},
+                ),
+            )
+            CheckpointerFactory.set_default_checkpointer(checkpointer)
+            _PERSISTENT_CHECKPOINTER_READY = True
+            logger.info(
+                "[JiuWenClawDeepAdapter] persistent checkpointer ready: %s",
+                checkpoint_path / "checkpoint",
+            )
+        except Exception as exc:
+            logger.error(
+                "[JiuWenClawDeepAdapter] fail to setup checkpoint due to: %s",
+                exc,
+            )
+            raise RuntimeError("persistent checkpointer initialization failed") from exc
 
 
 _MODE_DISPLAY_MAP: dict[str, dict[str, str]] = {
@@ -1302,19 +1339,8 @@ class JiuWenClawDeepAdapter:
             self._prioritize_paid_search_tool_card()
 
     @staticmethod
-    async def set_checkpoint():
-        try:
-            PersistenceCheckpointerProvider()
-            checkpoint_path = get_checkpoint_dir()
-            checkpointer = await CheckpointerFactory.create(
-                CheckpointerConfig(
-                    type="persistence",
-                    conf={"db_type": "sqlite", "db_path": f"{checkpoint_path}/checkpoint"},
-                )
-            )
-            CheckpointerFactory.set_default_checkpointer(checkpointer)
-        except Exception as e:
-            logger.error("[JiuWenClawDeepAdapter] fail to setup checkpoint due to: %s", e)
+    async def set_checkpoint() -> None:
+        await ensure_persistent_checkpointer()
 
     @staticmethod
     def _build_model_from_entry(mcc: dict, mco: dict) -> Model:

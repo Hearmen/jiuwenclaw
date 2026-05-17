@@ -5,6 +5,7 @@ from __future__ import annotations
 from types import SimpleNamespace
 
 import pytest
+from openjiuwen.agent_teams.monitor.models import MonitorEvent, MonitorEventType
 
 from jiuwenclaw.agents.harness.team.monitor_handler import TeamMonitorHandler
 
@@ -20,10 +21,26 @@ class _FakeMember:
 
 
 class _FakeMonitor:
-    def __init__(self, members: list[_FakeMember], leader_member_name: str | None):
+    def __init__(
+        self,
+        members: list[_FakeMember],
+        leader_member_name: str | None,
+        events: list[MonitorEvent] | None = None,
+    ):
         self.team_id = "team-1"
         self._members = members
         self._leader_member_name = leader_member_name
+        self._events = events or []
+
+    async def start(self) -> None:
+        pass
+
+    async def stop(self) -> None:
+        pass
+
+    async def events(self):
+        for event in self._events:
+            yield event
 
     async def get_members(self) -> list[_FakeMember]:
         return list(self._members)
@@ -91,3 +108,39 @@ async def test_get_team_snapshot_keeps_members_when_team_info_unavailable() -> N
         ],
         "team_id": "team-1",
     }
+
+
+@pytest.mark.anyio
+async def test_convert_event_includes_session_id() -> None:
+    event = MonitorEvent(
+        event_type=MonitorEventType.TASK_CREATED,
+        team_name="team-1",
+        timestamp=123,
+        task_id="task-1",
+        status="created",
+    )
+    handler = TeamMonitorHandler(
+        _FakeMonitor(
+            members=[],
+            leader_member_name=None,
+            events=[event],
+        ),
+        "sess-monitor",
+    )
+
+    await handler.start()
+    try:
+        converted = await anext(handler.events())
+
+        assert converted == {
+            "event_type": "team.task",
+            "session_id": "sess-monitor",
+            "event": {
+                "type": "team.task.created",
+                "team_id": "team-1",
+                "task_id": "task-1",
+                "status": "created",
+            },
+        }
+    finally:
+        await handler.stop()

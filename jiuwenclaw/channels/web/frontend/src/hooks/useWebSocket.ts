@@ -1088,6 +1088,7 @@ export function useWebSocket(options: UseWebSocketOptions): UseWebSocketReturn {
         });
       }),
       webClient.on('team.message', ({ payload }) => {
+        if (!shouldHandleSessionEvent(payload)) return;
         if (shouldDropDuplicatedEvent('team.message', payload)) {
           return;
         }
@@ -1100,6 +1101,7 @@ export function useWebSocket(options: UseWebSocketOptions): UseWebSocketReturn {
         });
       }),
       webClient.on('team.task', ({ payload }) => {
+        if (!shouldHandleSessionEvent(payload)) return;
         if (shouldDropDuplicatedEvent('team.task', payload)) {
           return;
         }
@@ -1119,6 +1121,7 @@ export function useWebSocket(options: UseWebSocketOptions): UseWebSocketReturn {
         }
       }),
       webClient.on('team.member', ({ payload }) => {
+        if (!shouldHandleSessionEvent(payload)) return;
         if (shouldDropDuplicatedEvent('team.member', payload)) {
           return;
         }

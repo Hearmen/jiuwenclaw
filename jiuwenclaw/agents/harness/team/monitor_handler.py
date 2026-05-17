@@ -301,6 +301,7 @@ class TeamMonitorHandler:
 
         return {
             "event_type": event_category.value,
+            "session_id": self._session_id,
             "event": event_data,
         }
 
