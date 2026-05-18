@@ -9,7 +9,7 @@
 import React, { useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useHarnessStore, useSessionStore, useChatStore } from '../../stores';
-import type { ExtensionProgressStatus } from '../../stores/harnessStore';
+import type { ExtensionProgressInfo, ExtensionProgressStatus } from '../../stores/harnessStore';
 import clsx from 'clsx';
 
 interface StageStatusIconProps {
@@ -177,6 +177,38 @@ function statusLabel(status: ExtensionProgressStatus): string {
   return '未开始';
 }
 
+function resolveActivateDisplayStatus(
+  rows: ExtensionProgressInfo[],
+  stageStatus: 'pending' | 'running' | 'success' | 'failed' | 'timeout',
+): ExtensionProgressStatus {
+  const merged = rows.find((row) => row.extensionName === 'merged_extensions');
+  if (merged) return merged.activateStatus;
+  if (rows.length === 1) return rows[0].activateStatus;
+  if (rows.length === 0) {
+    if (stageStatus === 'running') return 'running';
+    if (stageStatus === 'success') return 'success';
+    if (stageStatus === 'failed') return 'failed';
+    if (stageStatus === 'timeout') return 'timeout';
+    return 'pending';
+  }
+
+  // Multi-row fallback: pick the worst status.
+  const priority: ExtensionProgressStatus[] = [
+    'failed',
+    'timeout',
+    'rejected',
+    'running',
+    'waiting',
+    'pending',
+    'skipped',
+    'success',
+  ];
+  for (const item of priority) {
+    if (rows.some((row) => row.activateStatus === item)) return item;
+  }
+  return 'pending';
+}
+
 function parseNamedList(messages: string[], prefix: string): string[] {
   const values: string[] = [];
   for (const message of messages) {
@@ -333,16 +365,20 @@ export function HarnessProgressBar() {
                   ))}
                 </div>
               ) : null;
+              const activateDisplayStatus = resolveActivateDisplayStatus(
+                extensionRows,
+                stageInfo.status,
+              );
               const activateRows = stageInfo.stage === 'activate' ? (
                 <div className="harness-extension-list">
-                  {extensionRows.map((ext) => (
-                    <div key={ext.extensionName} className="harness-extension-row">
-                      <div className="harness-extension-name" title={ext.extensionName}>{ext.extensionName}</div>
-                      <div className="harness-extension-flow">
-                        <span><ExtensionStatusIcon status={ext.activateStatus} />{statusLabel(ext.activateStatus)}</span>
-                      </div>
+                  <div className="harness-extension-row">
+                    <div className="harness-extension-flow">
+                      <span>
+                        <ExtensionStatusIcon status={activateDisplayStatus} />
+                        {statusLabel(activateDisplayStatus)}
+                      </span>
                     </div>
-                  ))}
+                  </div>
                 </div>
               ) : null;
               return (
