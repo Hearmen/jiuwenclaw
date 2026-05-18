@@ -2532,12 +2532,14 @@ export function ConfigPanel({
       if (!team.leader?.persona?.trim()) return true;
       if (!team.leader?.agent_key?.trim()) return true;
       if (!team.teammate?.agent_key?.trim()) return true;
+      const leaderName = team.leader?.member_name?.trim().toLowerCase() || '';
       for (const member of team.predefined_members || []) {
         if (!member.member_name.trim()) return true;
         if (!/^[a-zA-Z0-9_]+$/.test(member.member_name)) return true;
         if (!member.display_name?.trim()) return true;
         if (!member.persona?.trim()) return true;
         if (!member.agent_key?.trim()) return true;
+        if (member.member_name.trim().toLowerCase() === leaderName) return true;
       }
     }
     return false;
