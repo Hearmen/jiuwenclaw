@@ -298,6 +298,7 @@ class CliHandlersBindParams:
     message_handler: Any = None
     on_config_saved: Any = None
     path: str = "/tui"
+    cron_controller: Any = None
 
 
 @dataclass
@@ -307,6 +308,7 @@ class CliRouteBindParams:
     on_config_saved: Any = None
     path: str = "/tui"
     channel_id: str = "tui"
+    cron_controller: Any = None
 
 
 _CLI_CONFIG_SET_ENV_MAP = {
@@ -549,6 +551,7 @@ def register_cli_handlers(bind: CliHandlersBindParams) -> None:
     agent_client = bind.agent_client
     on_config_saved = bind.on_config_saved
     path = bind.path
+    cron_controller_ref = bind.cron_controller
 
     async def _config_get(ws, req_id, params, session_id):
         payload = {
@@ -1689,6 +1692,187 @@ def register_cli_handlers(bind: CliHandlersBindParams) -> None:
     channel.register_local_handler(path, "memory.toggle", _memory_toggle)
     channel.register_local_handler(path, "memory.open", _memory_open)
 
+    # ── Cron RPC handlers ────────────────────────────────────────────
+
+    def _get_cron():
+        """Resolve cron_controller from ref dict or direct instance."""
+        if isinstance(cron_controller_ref, dict):
+            return cron_controller_ref.get("value")
+        return cron_controller_ref
+
+    async def _cron_job_list(ws, req_id, params, session_id):
+        cc = _get_cron()
+        if cc is None:
+            await channel.send_response(ws, req_id, ok=False, error="cron not available", code="INTERNAL_ERROR")
+            return
+        try:
+            jobs = await cc.list_jobs()
+            await channel.send_response(ws, req_id, ok=True, payload={"jobs": jobs})
+        except Exception as exc:
+            logger.warning("[cron.job.list] %s", exc)
+            await channel.send_response(ws, req_id, ok=False, error=str(exc), code="INTERNAL_ERROR")
+
+    async def _cron_job_get(ws, req_id, params, session_id):
+        cc = _get_cron()
+        if cc is None:
+            await channel.send_response(ws, req_id, ok=False, error="cron not available", code="INTERNAL_ERROR")
+            return
+        if not isinstance(params, dict):
+            await channel.send_response(ws, req_id, ok=False, error="params must be object", code="BAD_REQUEST")
+            return
+        job_id = str(params.get("id") or "").strip()
+        if not job_id:
+            await channel.send_response(ws, req_id, ok=False, error="id is required", code="BAD_REQUEST")
+            return
+        try:
+            job = await cc.get_job(job_id)
+            if job is None:
+                await channel.send_response(ws, req_id, ok=False, error="job not found", code="NOT_FOUND")
+                return
+            await channel.send_response(ws, req_id, ok=True, payload={"job": job})
+        except Exception as exc:
+            logger.warning("[cron.job.get] %s", exc)
+            await channel.send_response(ws, req_id, ok=False, error=str(exc), code="INTERNAL_ERROR")
+
+    async def _cron_job_create(ws, req_id, params, session_id):
+        cc = _get_cron()
+        if cc is None:
+            await channel.send_response(ws, req_id, ok=False, error="cron not available", code="INTERNAL_ERROR")
+            return
+        if not isinstance(params, dict):
+            await channel.send_response(ws, req_id, ok=False, error="params must be object", code="BAD_REQUEST")
+            return
+        try:
+            job = await cc.create_job(params)
+            await channel.send_response(ws, req_id, ok=True, payload={"job": job})
+        except Exception as exc:
+            logger.warning("[cron.job.create] %s", exc)
+            await channel.send_response(ws, req_id, ok=False, error=str(exc), code="BAD_REQUEST")
+
+    async def _cron_job_update(ws, req_id, params, session_id):
+        cc = _get_cron()
+        if cc is None:
+            await channel.send_response(ws, req_id, ok=False, error="cron not available", code="INTERNAL_ERROR")
+            return
+        if not isinstance(params, dict):
+            await channel.send_response(ws, req_id, ok=False, error="params must be object", code="BAD_REQUEST")
+            return
+        job_id = str(params.get("id") or "").strip()
+        patch = params.get("patch") or {}
+        if not job_id:
+            await channel.send_response(ws, req_id, ok=False, error="id is required", code="BAD_REQUEST")
+            return
+        if not isinstance(patch, dict):
+            await channel.send_response(ws, req_id, ok=False, error="patch must be object", code="BAD_REQUEST")
+            return
+        try:
+            job = await cc.update_job(job_id, patch)
+            await channel.send_response(ws, req_id, ok=True, payload={"job": job})
+        except KeyError:
+            await channel.send_response(ws, req_id, ok=False, error="job not found", code="NOT_FOUND")
+        except Exception as exc:
+            logger.warning("[cron.job.update] %s", exc)
+            await channel.send_response(ws, req_id, ok=False, error=str(exc), code="BAD_REQUEST")
+
+    async def _cron_job_delete(ws, req_id, params, session_id):
+        cc = _get_cron()
+        if cc is None:
+            await channel.send_response(ws, req_id, ok=False, error="cron not available", code="INTERNAL_ERROR")
+            return
+        if not isinstance(params, dict):
+            await channel.send_response(ws, req_id, ok=False, error="params must be object", code="BAD_REQUEST")
+            return
+        job_id = str(params.get("id") or "").strip()
+        if not job_id:
+            await channel.send_response(ws, req_id, ok=False, error="id is required", code="BAD_REQUEST")
+            return
+        try:
+            deleted = await cc.delete_job(job_id)
+            if not deleted:
+                await channel.send_response(ws, req_id, ok=False, error="job not found", code="NOT_FOUND")
+                return
+            await channel.send_response(ws, req_id, ok=True, payload={"deleted": True})
+        except Exception as exc:
+            logger.warning("[cron.job.delete] %s", exc)
+            await channel.send_response(ws, req_id, ok=False, error=str(exc), code="INTERNAL_ERROR")
+
+    async def _cron_job_toggle(ws, req_id, params, session_id):
+        cc = _get_cron()
+        if cc is None:
+            await channel.send_response(ws, req_id, ok=False, error="cron not available", code="INTERNAL_ERROR")
+            return
+        if not isinstance(params, dict):
+            await channel.send_response(ws, req_id, ok=False, error="params must be object", code="BAD_REQUEST")
+            return
+        job_id = str(params.get("id") or "").strip()
+        enabled = params.get("enabled", None)
+        if not job_id:
+            await channel.send_response(ws, req_id, ok=False, error="id is required", code="BAD_REQUEST")
+            return
+        if enabled is None:
+            await channel.send_response(ws, req_id, ok=False, error="enabled is required", code="BAD_REQUEST")
+            return
+        try:
+            job = await cc.toggle_job(job_id, bool(enabled))
+            await channel.send_response(ws, req_id, ok=True, payload={"job": job})
+        except KeyError:
+            await channel.send_response(ws, req_id, ok=False, error="job not found", code="NOT_FOUND")
+        except Exception as exc:
+            logger.warning("[cron.job.toggle] %s", exc)
+            await channel.send_response(ws, req_id, ok=False, error=str(exc), code="INTERNAL_ERROR")
+
+    async def _cron_job_preview(ws, req_id, params, session_id):
+        cc = _get_cron()
+        if cc is None:
+            await channel.send_response(ws, req_id, ok=False, error="cron not available", code="INTERNAL_ERROR")
+            return
+        if not isinstance(params, dict):
+            await channel.send_response(ws, req_id, ok=False, error="params must be object", code="BAD_REQUEST")
+            return
+        job_id = str(params.get("id") or "").strip()
+        count = params.get("count", 5)
+        if not job_id:
+            await channel.send_response(ws, req_id, ok=False, error="id is required", code="BAD_REQUEST")
+            return
+        try:
+            next_runs = await cc.preview_job(job_id, int(count) if count is not None else 5)
+            await channel.send_response(ws, req_id, ok=True, payload={"next": next_runs})
+        except KeyError:
+            await channel.send_response(ws, req_id, ok=False, error="job not found", code="NOT_FOUND")
+        except Exception as exc:
+            logger.warning("[cron.job.preview] %s", exc)
+            await channel.send_response(ws, req_id, ok=False, error=str(exc), code="BAD_REQUEST")
+
+    async def _cron_job_run_now(ws, req_id, params, session_id):
+        cc = _get_cron()
+        if cc is None:
+            await channel.send_response(ws, req_id, ok=False, error="cron not available", code="INTERNAL_ERROR")
+            return
+        if not isinstance(params, dict):
+            await channel.send_response(ws, req_id, ok=False, error="params must be object", code="BAD_REQUEST")
+            return
+        job_id = str(params.get("id") or "").strip()
+        if not job_id:
+            await channel.send_response(ws, req_id, ok=False, error="id is required", code="BAD_REQUEST")
+            return
+        try:
+            run_id = await cc.run_now(job_id)
+            await channel.send_response(ws, req_id, ok=True, payload={"run_id": run_id})
+        except KeyError:
+            await channel.send_response(ws, req_id, ok=False, error="job not found", code="NOT_FOUND")
+        except Exception as exc:
+            logger.warning("[cron.job.run_now] %s", exc)
+            await channel.send_response(ws, req_id, ok=False, error=str(exc), code="INTERNAL_ERROR")
+
+    channel.register_local_handler(path, "cron.job.list", _cron_job_list)
+    channel.register_local_handler(path, "cron.job.get", _cron_job_get)
+    channel.register_local_handler(path, "cron.job.create", _cron_job_create)
+    channel.register_local_handler(path, "cron.job.update", _cron_job_update)
+    channel.register_local_handler(path, "cron.job.delete", _cron_job_delete)
+    channel.register_local_handler(path, "cron.job.toggle", _cron_job_toggle)
+    channel.register_local_handler(path, "cron.job.preview", _cron_job_preview)
+    channel.register_local_handler(path, "cron.job.run_now", _cron_job_run_now)
+
 
 def build_cli_route_binding(bind: CliRouteBindParams) -> GatewayRouteBinding:
     def _install(channel: Any) -> None:
@@ -1699,6 +1883,7 @@ def build_cli_route_binding(bind: CliRouteBindParams) -> GatewayRouteBinding:
                 message_handler=bind.message_handler,
                 on_config_saved=bind.on_config_saved,
                 path=bind.path,
+                cron_controller=bind.cron_controller,
             )
         )
 

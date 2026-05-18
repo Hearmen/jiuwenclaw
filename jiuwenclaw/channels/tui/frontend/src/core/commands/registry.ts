@@ -6,6 +6,7 @@ import { createColorCommand } from "./builtins/color.js";
 import { createCompactCommand } from "./builtins/compact.js";
 import { createConfigCommand } from "./builtins/config.js";
 import { createContextCommand } from "./builtins/context.js";
+import { createCronCommand } from "./builtins/cron.js";
 import { createCopyCommand } from "./builtins/copy.js";
 import { createRecapCommand } from "./builtins/recap.js";
 import { createDiffCommand } from "./builtins/diff.js";
@@ -48,6 +49,7 @@ export function createBuiltinCommands(): SlashCommand[] {
     createCompactCommand(),
     createConfigCommand(),
     createContextCommand(),
+    createCronCommand(),
     createRecapCommand(),
     createCopyCommand(),
     createDiffCommand(),

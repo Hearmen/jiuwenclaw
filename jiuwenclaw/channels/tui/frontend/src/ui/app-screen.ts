@@ -2765,17 +2765,88 @@ export class AppScreen implements Component, Focusable {
     }
 
     const parsed = parseSlashCommand(text, this.commands.getAll());
-    if (!parsed.command || parsed.args.trim()) {
+    if (!parsed.command) {
       return null;
     }
 
-    const usage = parsed.command.usage?.trim() ?? "";
-    if (!usage.startsWith("/")) {
+    const args = parsed.args.trim();
+
+    // No args → show top-level usage hint (existing behavior)
+    if (!args) {
+      const usage = parsed.command.usage?.trim() ?? "";
+      if (!usage.startsWith("/")) {
+        return null;
+      }
+      const suffix = usage.replace(/^\/[^\s]+/, "").trim();
+      return suffix || null;
+    }
+
+    // Args present → check if they match a sub-command name
+    const subCommands = parsed.command.subCommands;
+    if (!subCommands?.length) {
+      // No sub-commands defined; if the command has an argGuide, show it
+      // only when the user hasn't started filling in key=value args yet.
+      const argGuide = parsed.command.argGuide;
+      if (argGuide && !args.includes("=")) {
+        return argGuide;
+      }
       return null;
     }
 
-    const suffix = usage.replace(/^\/[^\s]+/, "").trim();
-    return suffix || null;
+    const argTokens = args.split(/\s+/);
+    const firstArg = argTokens[0]?.toLowerCase();
+
+    // Find matching sub-command
+    const matchedSub = subCommands.find(
+      (sub) => sub.name.toLowerCase() === firstArg
+        || sub.altNames?.some((alt) => alt.toLowerCase() === firstArg),
+    );
+
+    if (!matchedSub) {
+      // Partial match or no match
+      const partialMatch = firstArg
+        ? subCommands.filter((sub) => sub.name.toLowerCase().startsWith(firstArg))
+        : subCommands;
+      if (partialMatch.length === 1) {
+        // Unique partial match — show its argGuide directly
+        const unique = partialMatch[0];
+        if (unique.argGuide) {
+          return unique.argGuide;
+        }
+        const subUsage = unique.usage?.trim() ?? "";
+        if (subUsage.startsWith("/")) {
+          return subUsage.replace(/^\/[^\s]+/, "").trim() || null;
+        }
+        return unique.name;
+      }
+      if (partialMatch.length > 1 && partialMatch.length <= 6) {
+        return partialMatch.map((sub) => sub.name).join(" | ");
+      }
+      return null;
+    }
+
+    // Sub-command matched, check remaining args after the sub-command name
+    const remainingArgs = argTokens.slice(1).join(" ").trim();
+
+    if (!remainingArgs) {
+      // User typed just "/cron add" — show argGuide or usage hint
+      if (matchedSub.argGuide) {
+        return matchedSub.argGuide;
+      }
+      const subUsage = matchedSub.usage?.trim() ?? "";
+      if (subUsage.startsWith("/")) {
+        const suffix = subUsage.replace(/^\/[^\s]+/, "").trim();
+        return suffix || null;
+      }
+      return matchedSub.description || null;
+    }
+
+    // User is typing key=value args after sub-command
+    if (matchedSub.argGuide && !remainingArgs.includes("=")) {
+      return matchedSub.argGuide;
+    }
+
+    return null;
   }
 
   /**

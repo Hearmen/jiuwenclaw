@@ -997,6 +997,7 @@ async def _run(
                 on_config_saved=_on_config_saved,
                 path="/tui",
                 channel_id="tui",
+                cron_controller=cron_controller,
             )
         ),
     ]

@@ -50,6 +50,7 @@
 | `/branch` | 从当前对话点创建分支会话（见下文） |
 | `/rewind` | 回退对话到指定轮次之前（见下文） |
 | `/memory` | 记忆管理（见下文） |
+| `/cron` | 定时任务管理（见下文） |
 
 ---
 
@@ -289,6 +290,45 @@
   - `/memory status` — 查看详细状态
   - `/memory toggle memory_enabled` — 切换记忆总开关
   - `/memory open` — 查看记忆目录路径
+
+### `/cron`（定时任务管理）
+
+管理定时任务（Cron Job），通过 RPC 调用后端 `CronController`，与 Web 端共用同一套后端逻辑和数据存储。
+
+- 别名：`/crontab`
+- 子命令：
+
+| 命令 | 说明 |
+|---|---|
+| `/cron` 或 `/cron list` | 列出所有定时任务 |
+| `/cron add name=<名称> cron_expr=<表达式> description=<描述> [其他参数]` | 新增定时任务 |
+| `/cron update <job_id> key=value ...` | 更新指定任务的部分字段 |
+| `/cron delete <job_id>` | 删除指定任务 |
+| `/cron toggle <job_id> on|off` | 启用或禁用指定任务 |
+| `/cron run <job_id>` | 立即执行指定任务 |
+| `/cron preview <job_id>` | 预览任务接下来几次执行时间 |
+
+- `add` 参数：
+
+| 参数 | 必填 | 说明 |
+|---|---|---|
+| `name` | 是 | 任务名称 |
+| `cron_expr` | 是 | Cron 表达式（7 字段 Quartz 格式：秒 分 时 日 月 周 年） |
+| `description` | 是 | 任务描述，即 Agent 执行时收到的输入指令 |
+| `targets` | 否 | 推送渠道，默认 `web`；可选：`web`、`feishu`、`whatsapp`、`wecom`、`xiaoyi`、`wechat` 或 `feishu_enterprise:<app_id>` |
+| `timezone` | 否 | IANA 时区，默认 `Asia/Shanghai` |
+| `mode` | 否 | 执行模式：`agent`（默认）或 `plan` |
+| `wake_offset_seconds` | 否 | 提前唤醒秒数，默认 300 |
+| `delete_after_run` | 否 | 执行一次后自动删除，默认 false |
+
+- `add` 示例：
+  - `/cron add name=每分钟测试 cron_expr="0 * * * * * *" description="告诉我现在几点了" targets=web`
+  - `/cron add name=晨报 cron_expr="0 0 9 * * * *" description="生成今日晨报摘要" targets=web mode=plan`
+  - `/cron add name=提醒 cron_expr="0 0 14 15 5 * *" description="别忘了开会" targets=web delete_after_run=true`
+
+- `update` 用法：只需传入要修改的字段，如 `/cron update <id> name=新名称 enabled=false`
+- `list` 显示内容：序号、完整 job ID、名称、cron 表达式、启用状态、描述摘要
+- `preview` 显示内容：每次执行计划的唤醒时间和推送时间
 
 ### `/skills`（技能管理）
 

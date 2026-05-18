@@ -50,6 +50,7 @@ Identified by Gateway and forwarded to AgentServer and other backend capabilitie
 | `/branch` | Create a branch session from current conversation point (see below) |
 | `/rewind` | Rewind conversation to before a specific turn (see below) |
 | `/memory` | Memory management (see below) |
+| `/cron` | Scheduled task (cron job) management (see below) |
 
 ---
 
@@ -267,6 +268,45 @@ Manages directories AI can access for file read, edit, and execute operations.
   - `/memory status` — View detailed status
   - `/memory toggle memory_enabled` — Toggle the master memory switch
   - `/memory open` — View memory directory paths
+
+### `/cron` (Scheduled Task Management)
+
+Manage cron jobs via RPC calls to the backend `CronController`, sharing the same backend logic and data store with the Web UI.
+
+- Alias: `/crontab`
+- Subcommands:
+
+| Command | Description |
+|---|---|
+| `/cron` or `/cron list` | List all cron jobs |
+| `/cron add name=<name> cron_expr=<expression> description=<desc> [other params]` | Create a new cron job |
+| `/cron update <job_id> key=value ...` | Update specific fields of a job |
+| `/cron delete <job_id>` | Delete a job |
+| `/cron toggle <job_id> on|off` | Enable or disable a job |
+| `/cron run <job_id>` | Run a job immediately |
+| `/cron preview <job_id>` | Preview upcoming execution times for a job |
+
+- `add` parameters:
+
+| Parameter | Required | Description |
+|---|---|---|
+| `name` | Yes | Job name |
+| `cron_expr` | Yes | Cron expression (7-field Quartz format: sec min hour day month dow year) |
+| `description` | Yes | Job description — the input prompt the Agent receives when executing |
+| `targets` | No | Push channel, default `web`; options: `web`, `feishu`, `whatsapp`, `wecom`, `xiaoyi`, `wechat`, or `feishu_enterprise:<app_id>` |
+| `timezone` | No | IANA timezone, default `Asia/Shanghai` |
+| `mode` | No | Execution mode: `agent` (default) or `plan` |
+| `wake_offset_seconds` | No | Wake-up offset in seconds, default 300 |
+| `delete_after_run` | No | Auto-delete after one run, default false |
+
+- `add` examples:
+  - `/cron add name=minute-test cron_expr="0 * * * * * *" description="Tell me the current time" targets=web`
+  - `/cron add name=morning-brief cron_expr="0 0 9 * * * *" description="Generate today's morning briefing" targets=web mode=plan`
+  - `/cron add name=reminder cron_expr="0 0 14 15 5 * *" description="Don't forget the meeting" targets=web delete_after_run=true`
+
+- `update` usage: Only pass the fields you want to change, e.g., `/cron update <id> name=new-name enabled=false`
+- `list` display: sequence number, full job ID, name, cron expression, enabled status, description snippet
+- `preview` display: wake_at and push_at timestamps for each upcoming execution
 
 ### `/skills` (Skills Management)
 

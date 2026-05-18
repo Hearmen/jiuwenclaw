@@ -98,6 +98,13 @@ export interface SlashCommand {
   description: string;
   usage?: string;
   example?: string;
+  /**
+   * Inline hint shown after the cursor when the user has typed this command
+   * (or sub-command) with no further arguments.  For commands that accept
+   * key=value fields, this should list the available keys with brief labels,
+   * e.g.  "name=任务名 cron_expr=\"时间\" description=\"让Agent做什么\""
+   */
+  argGuide?: string;
   hidden?: boolean;
   isSafeConcurrent?: boolean;
   kind: CommandKind;
