@@ -69,6 +69,7 @@ RAIL_WHITELIST = frozenset({
     "HeartbeatRail",
     "AvatarPromptRail",
     "FileSystemRail",
+    "SysOperationRail",
     "TeamSkillEvolutionRail",
     "TeamSkillCreateRail",
     "SkillEvolutionRail",
@@ -114,6 +115,12 @@ TOOL_WHITELIST = frozenset({
     "xiaoyi_collection",
     "image_reading",
     "xiaoyi_gui_agent",
+    "web_free_search",
+    "web_fetch_webpage",
+    "web_paid_search",
+    "skill_toolkit",
+    "enter_worktree",
+    "exit_worktree",
 })
 
 
