@@ -127,48 +127,129 @@ export function createExportCommand(): SlashCommand {
     example: "/export my-chat.txt",
     kind: CommandKind.BUILT_IN,
     takesArgs: true,
-    action: (ctx, args) => {
+    action: async (ctx, args) => {
       const content = renderEntriesToPlainText(ctx.entries);
       const arg = args.trim();
 
-      if (!arg) {
-        if (!copyToClipboard(content)) {
-          ctx.addItem(
-            addError(ctx.sessionId, "Clipboard unavailable — specify a filename to export to file"),
-          );
-          return;
+      // Direct export when filename is provided — skip dialog
+      if (arg) {
+        const filename = arg.endsWith(".txt") ? arg : arg.replace(/\.[^.]+$/, "") + ".txt";
+        const workspaceDir = ctx.getWorkspaceDir() || process.cwd();
+        const filepath = join(workspaceDir, filename);
+
+        try {
+          writeFileSync(filepath, content, { encoding: "utf-8" });
+          ctx.addItem(addInfo(ctx.sessionId, `Conversation exported to: ${filepath}`, "e"));
+        } catch (error) {
+          const message = error instanceof Error ? error.message : "Unknown error";
+          ctx.addItem(addError(ctx.sessionId, `Failed to export: ${message}`));
         }
-        ctx.addItem(addInfo(ctx.sessionId, "Conversation exported to clipboard", "e"));
         return;
       }
 
-      const filename = arg.endsWith(".txt") ? arg : arg.replace(/\.[^.]+$/, "") + ".txt";
-      const workspaceDir = ctx.getWorkspaceDir() || process.cwd();
-      const filepath = join(workspaceDir, filename);
-
-      try {
-        writeFileSync(filepath, content, { encoding: "utf-8" });
-        ctx.addItem(addInfo(ctx.sessionId, `Conversation exported to: ${filepath}`, "e"));
-      } catch (error) {
-        const message = error instanceof Error ? error.message : "Unknown error";
-        ctx.addItem(addError(ctx.sessionId, `Failed to export: ${message}`));
-      }
-    },
-    completion: (ctx, partial) => {
+      // No args — show interactive dialog (two-step: method → filename)
       const firstPrompt = extractFirstPrompt(ctx.entries);
       const timestamp = formatTimestamp(new Date());
-      const defaults: string[] = [];
+      const sanitized = firstPrompt ? sanitizeFilename(firstPrompt) : "";
+      const defaultFilename = sanitized
+        ? `${timestamp}-${sanitized}.txt`
+        : `conversation-${timestamp}.txt`;
+      const workspaceDir = ctx.getWorkspaceDir() || process.cwd();
+      const defaultFilepath = join(workspaceDir, defaultFilename);
 
-      if (firstPrompt) {
-        const sanitized = sanitizeFilename(firstPrompt);
-        defaults.push(`${timestamp}-${sanitized}.txt`);
-      }
-      defaults.push(`conversation-${timestamp}.txt`);
+      // Step 1: select export method
+      try {
+        const [methodAnswer] = await ctx.askQuestions(
+          [
+            {
+              header: "Export",
+              question: "How would you like to export the conversation?",
+              options: [
+                {
+                  label: "Copy to clipboard",
+                  description: "Copy the conversation content to your clipboard",
+                },
+                {
+                  label: "Save to file",
+                  description: `Save to ${defaultFilepath}`,
+                },
+              ],
+            },
+          ],
+          "command_export_method",
+        );
 
-      if (partial) {
-        return defaults.filter((d) => d.startsWith(partial));
+        const method = methodAnswer?.selected_options?.[0];
+        if (!method) {
+          ctx.addItem(addInfo(ctx.sessionId, "Export cancelled", "e"));
+          return;
+        }
+
+        if (method === "Copy to clipboard") {
+          if (!copyToClipboard(content)) {
+            ctx.addItem(
+              addError(ctx.sessionId, "Clipboard unavailable — try saving to file instead"),
+            );
+            return;
+          }
+          ctx.addItem(addInfo(ctx.sessionId, "Conversation copied to clipboard", "e"));
+          return;
+        }
+
+        // Step 2: select/edit filename
+        const [filenameAnswer] = await ctx.askQuestions(
+          [
+            {
+              header: "Filename",
+              question: `Enter filename (default: ${defaultFilename}):`,
+              options: [
+                {
+                  label: defaultFilename,
+                  description: `Save as ${defaultFilepath}`,
+                },
+                {
+                  label: "Other",
+                  description: "Enter a custom filename",
+                },
+              ],
+            },
+          ],
+          "command_export_filename",
+        );
+
+        if (!filenameAnswer?.selected_options?.[0]) {
+          ctx.addItem(addInfo(ctx.sessionId, "Export cancelled", "e"));
+          return;
+        }
+
+        let chosenFilename: string;
+        if (filenameAnswer.selected_options[0] === "Other" && filenameAnswer.custom_input) {
+          chosenFilename = filenameAnswer.custom_input.trim();
+        } else {
+          chosenFilename = filenameAnswer.selected_options[0];
+        }
+
+        chosenFilename = chosenFilename.endsWith(".txt")
+          ? chosenFilename
+          : chosenFilename.replace(/\.[^.]+$/, "") + ".txt";
+        const chosenFilepath = join(workspaceDir, chosenFilename);
+
+        try {
+          writeFileSync(chosenFilepath, content, { encoding: "utf-8" });
+          ctx.addItem(addInfo(ctx.sessionId, `Conversation exported to: ${chosenFilepath}`, "e"));
+        } catch (error) {
+          const message = error instanceof Error ? error.message : "Unknown error";
+          ctx.addItem(addError(ctx.sessionId, `Failed to export: ${message}`));
+        }
+      } catch (err) {
+        ctx.addItem(
+          addInfo(
+            ctx.sessionId,
+            `Export cancelled: ${err instanceof Error ? err.message : String(err)}`,
+            "e",
+          ),
+        );
       }
-      return defaults;
     },
   };
 }
