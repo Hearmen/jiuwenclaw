@@ -141,21 +141,21 @@ export function InputArea({
     };
   }, []);
 
-  // useEffect(() => {
-  //   if (!isModeMenuOpen) return;
+  useEffect(() => {
+    if (!isModeMenuOpen) return;
 
-  //   const handlePointerDown = (event: PointerEvent) => {
-  //     if (!modeMenuRef.current?.contains(event.target as Node)) {
-  //       setIsModeMenuOpen(false);
-  //     }
-  //   };
+    const handlePointerDown = (event: PointerEvent) => {
+      if (!modeMenuRef.current?.contains(event.target as Node)) {
+        setIsModeMenuOpen(false);
+      }
+    };
 
-  //   document.addEventListener('pointerdown', handlePointerDown);
+    document.addEventListener('pointerdown', handlePointerDown);
 
-  //   return () => {
-  //     document.removeEventListener('pointerdown', handlePointerDown);
-  //   };
-  // }, [isModeMenuOpen]);
+    return () => {
+      document.removeEventListener('pointerdown', handlePointerDown);
+    };
+  }, [isModeMenuOpen]);
 
   const handleSubmit = useCallback(() => {
     const trimmed = (inputValue + pendingVoiceText).trim();
