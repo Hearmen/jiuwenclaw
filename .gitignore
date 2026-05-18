@@ -74,8 +74,8 @@ jiuwenclaw/agentserver/tools/browser-move/screenshots
 jiuwenclaw/workspace/.whatsapp-auth/
 jiuwenclaw/resources/agent/workspace/
 jiuwenclaw/resources/tui/bin/
-packages/jiuwenclaw-tui/jiuwenclaw_tui/resources/tui/bin/
-packages/jiuwenclaw-tui/jiuwenclaw_tui/resources/tui-bin/
+packages/jiuwenswarm-tui/jiuwenswarm_tui/resources/tui/bin/
+packages/jiuwenswarm-tui/jiuwenswarm_tui/resources/tui-bin/
 
 .crossnote/
 .trae/

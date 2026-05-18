@@ -34,9 +34,7 @@ type SupportedChannelId =
   | 'dingtalk'
   | 'telegram'
   | 'discord'
-  | 'whatsapp'
-  | 'wecom'
-  | 'wechat';
+  | 'whatsapp';
 
 const ADAPTING_CHANNEL_IDS = new Set<SupportedChannelId>([]);
 
@@ -274,8 +272,6 @@ const SUPPORTED_CHANNELS: Array<{ channel_id: SupportedChannelId; logo_src: stri
   { channel_id: 'telegram', logo_src: '/telegram.webp' },
   { channel_id: 'discord', logo_src: '/discord.webp' },
   { channel_id: 'whatsapp', logo_src: '/whatsapp.png' },
-  { channel_id: 'wecom', logo_src: '/wecom.webp' },
-  { channel_id: 'wechat', logo_src: '/wechat.png' },
 ];
 
 
@@ -982,11 +978,11 @@ export function ChannelsPanel({ isConnected }: ChannelsPanelProps) {
     if (activeChannelId === 'whatsapp') {
       void fetchWhatsAppConfig();
     }
-    if (activeChannelId === 'wecom') {
+    if ((activeChannelId as string) === 'wecom') {
       void fetchWecomConfig();
       return;
     }
-    if (activeChannelId === 'wechat') {
+    if ((activeChannelId as string) === 'wechat') {
       void fetchWechatConfig();
     }
   }, [
@@ -2603,12 +2599,12 @@ export function ChannelsPanel({ isConnected }: ChannelsPanelProps) {
                   </div>
                 ) : null}
 
-                {activeChannelId === 'wechat' ? (
+                {(activeChannelId as string) === 'wechat' ? (
                   <div className="w-full h-full rounded-xl border border-border bg-card/70 backdrop-blur-sm overflow-hidden shadow-sm flex flex-col">
                     <div className="px-4 py-3 bg-secondary/30 border-b border-border">
                       <div className="flex items-center justify-between gap-4">
                         <div className="flex items-center gap-3">
-                          <ChannelHeaderLogo channelId="wechat" label={getChannelLabel(t, 'wechat')} />
+                          <ChannelHeaderLogo channelId={'wechat' as SupportedChannelId} label={getChannelLabel(t, 'wechat' as SupportedChannelId)} />
                           <div>
                             <h4 className="text-sm font-medium text-text">{t('channels.config.wechatTitle')}</h4>
                             <p className="text-xs text-text-muted mt-1">{t('channels.config.wechatSubtitle')}</p>
@@ -2769,12 +2765,12 @@ export function ChannelsPanel({ isConnected }: ChannelsPanelProps) {
                   </div>
                 ) : null}
 
-                {activeChannelId === 'wecom' ? (
+                {(activeChannelId as string) === 'wecom' ? (
                   <div className="w-full h-full rounded-xl border border-border bg-card/70 backdrop-blur-sm overflow-hidden shadow-sm flex flex-col">
                     <div className="px-4 py-3 bg-secondary/30 border-b border-border">
                       <div className="flex items-center justify-between gap-4">
                         <div className="flex items-center gap-3">
-                          <ChannelHeaderLogo channelId="wecom" label={getChannelLabel(t, 'wecom')} />
+                          <ChannelHeaderLogo channelId={'wecom' as SupportedChannelId} label={getChannelLabel(t, 'wecom' as SupportedChannelId)} />
                           <div>
                             <h4 className="text-sm font-medium text-text">{t('channels.config.wecomTitle')}</h4>
                             <p className="text-xs text-text-muted mt-1">{t('channels.config.wecomSubtitle')}</p>
