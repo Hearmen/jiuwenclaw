@@ -119,14 +119,17 @@ def _is_child_mode() -> bool:
 def _write_child_error(exc: BaseException) -> None:
     """将子进程的未捕获异常写入日志文件。"""
     try:
-        log_dir = Path(os.environ.get("JIUWENCLAW_DATA_DIR", Path.home() / ".jiuwenswarm")) / "logs"
+        log_dir = Path(os.environ.get("JIUWENSARM_DATA_DIR", Path.home() / ".jiuwenswarm")) / "logs"
         log_dir.mkdir(parents=True, exist_ok=True)
-        log_file = log_dir / "child_error.log"
-        with open(log_file, "a", encoding="utf-8") as f:
+        log_file = log_dir / "jiuwenswarm_exe_error.log"
+        with open(log_file, "a", encoding="utf-8", errors="replace") as f:
             f.write(f"{'=' * 60}\n")
             f.write(f"argv: {sys.argv}\n")
-            f.write(f"error: {type(exc).__name__}: {exc}\n")
-            f.write(traceback.format_exc())
+            # 异常消息可能包含特殊字符，用 replace 处理编码问题
+            error_msg = f"{type(exc).__name__}: {exc}"
+            f.write(f"error: {error_msg}\n")
+            tb = traceback.format_exc()
+            f.write(tb)
             f.write(f"{'=' * 60}\n\n")
     except Exception:
         pass
@@ -147,6 +150,8 @@ def main() -> None:
     except BaseException as exc:
         if is_child:
             _write_child_error(exc)
+            # 子进程异常：写入日志后静默退出，不弹窗
+            raise SystemExit(1) from exc
         raise
 
 
