@@ -72,7 +72,8 @@ export function buildWelcomeLines(
   width: number,
   connectionStatus: ConnectionStatus,
   modelInfo: { provider: string; model: string; version: string } = { provider: "", model: "", version: "" },
-  mode: string = ""
+  mode: string = "",
+  memoryWarnings: { path: string; kind: string; char_count: number; threshold: number; message: string }[] = [],
 ): string[] {
   const artWidth = Math.max(...ART_TITLE_RAW.map((line) => visibleWidth(line)));
   const hint = connectionHint(connectionStatus);
@@ -115,6 +116,9 @@ export function buildWelcomeLines(
       centerLine(cmdBottom, width),
       ...(hint ? [centerLine(chalk.hex("#FFFFFF")(hint), width)] : []),
       ...(rgTip ? [centerLine(chalk.hex("#FFD700")(rgTip), width)] : []),
+      ...(memoryWarnings.length > 0
+        ? memoryWarnings.map((w) => centerLine(chalk.hex("#FFD700")(`Warning: ${w.message}`), width))
+        : []),
     ];
   }
 
@@ -135,5 +139,8 @@ export function buildWelcomeLines(
     padToWidth(chalk.hex("#FFFFFF")("└────────────────────────────────────────────────────────────┘"), width),
     ...(hint ? [padToWidth(chalk.hex("#FFFFFF")(hint), width)] : []),
     ...(rgTip ? [padToWidth(chalk.hex("#FFD700")(rgTip), width)] : []),
+    ...(memoryWarnings.length > 0
+      ? memoryWarnings.map((w) => padToWidth(chalk.hex("#FFD700")(`Warning: ${w.message}`), width))
+      : []),
   ];
 }

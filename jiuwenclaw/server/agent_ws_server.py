@@ -2198,6 +2198,37 @@ class AgentWebSocketServer:
                     settings_sources.append(f"env:JIUWENCLAW_CONFIG_DIR={config_dir}")
                 settings_sources.append(config_path)
 
+                # Memory diagnostics — use the actual workspace dir (trusted_dir or cwd),
+                # same as ProjectMemoryRail, so we detect JIUWENCLAW.md where /init creates it.
+                params = request.params or {}
+                workspace_dir = str(params.get("cwd", "") or os.getcwd())
+                trusted_dirs = params.get("trusted_dirs")
+                if isinstance(trusted_dirs, list) and trusted_dirs:
+                    workspace_dir = str(trusted_dirs[0])
+                try:
+                    from jiuwenclaw.agents.harness.common.rails.project_memory import (
+                        clear_project_memory_cache,
+                        discover_and_load_memory_files,
+                        get_large_memory_files,
+                    )
+                    clear_project_memory_cache(workspace_dir)
+                    project_files = discover_and_load_memory_files(
+                        workspace=workspace_dir, target_path=workspace_dir,
+                    )
+                    memory_warnings = get_large_memory_files(project_files)
+                    logger.info(
+                        "[AgentWebSocketServer] memory diagnostics: "
+                        "workspace_dir=%s, files=%d, warnings=%d",
+                        workspace_dir, len(project_files), len(memory_warnings),
+                    )
+                except Exception as exc:
+                    logger.warning(
+                        "[AgentWebSocketServer] memory diagnostics failed: "
+                        "workspace_dir=%s, error=%s",
+                        workspace_dir, exc,
+                    )
+                    memory_warnings = []
+
                 resp = AgentResponse(
                     request_id=request.request_id,
                     channel_id=request.channel_id,
@@ -2213,6 +2244,7 @@ class AgentWebSocketServer:
                         "mcp_servers": mcp_summary,
                         "config_path": config_path,
                         "settings_sources": settings_sources,
+                        "memory_warnings": memory_warnings,
                     },
                 )
         except Exception as e:  # noqa: BLE001

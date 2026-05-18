@@ -106,6 +106,7 @@ export interface AppSnapshot {
   modelInfo: { provider: string; model: string; version: string };
   sessionTitle: string;
   statusLineText: string | null;
+  memoryWarnings: { path: string; kind: string; char_count: number; threshold: number; message: string }[];
 }
 
 export class CliPiAppState {
@@ -165,6 +166,8 @@ export class CliPiAppState {
     model: "",
     version: "",
   };
+  private memoryWarnings: { path: string; kind: string; char_count: number; threshold: number; message: string }[] = [];
+  private memoryRefreshTimer: ReturnType<typeof setInterval> | null = null;
   /** 当 closeUi 中 cancelBeforeExit 调 cancel({showNotice:false}) 时置 true，抑制 chat.interrupt_result 的 UI 通知。 */
   private suppressInterruptResult = false;
   /** 本地中断请求标志，cancel() 调用时立即置 true，用于 long-running 命令的中断检测。 */
@@ -324,14 +327,16 @@ export class CliPiAppState {
     this.unlistenFrames?.();
     this.unlistenFrames = null;
     this.stopStatusLinePoll();
+    this.stopMemoryRefresh();
     this.wsClient.disconnect();
   }
 
   private async fetchModelInfo(): Promise<void> {
     try {
-      const [configPayload, modelsPayload] = await Promise.allSettled([
+      const [configPayload, modelsPayload, memoryPayload] = await Promise.allSettled([
         this.request("config.get", {}),
         this.request("models.list", {}),
+        this.request<Record<string, unknown>>("memory.status", { detailed: true }),
       ]);
       const config =
         configPayload.status === "fulfilled" && configPayload.value && typeof configPayload.value === "object"
@@ -349,9 +354,45 @@ export class CliPiAppState {
         model: activeModelName || String(config.model ?? ""),
         version: String(config.app_version ?? ""),
       };
+
+      const memoryResult =
+        memoryPayload.status === "fulfilled" && memoryPayload.value && typeof memoryPayload.value === "object"
+          ? (memoryPayload.value as Record<string, unknown>)
+          : {};
+      const largeFiles = Array.isArray(memoryResult.large_files)
+        ? (memoryResult.large_files as { path: string; kind: string; char_count: number; threshold: number; message: string }[])
+        : [];
+      this.memoryWarnings = largeFiles;
+
+      this.startMemoryRefresh();
       this.emitChange();
     } catch {
       // ignore error, use defaults
+    }
+  }
+
+  private startMemoryRefresh(): void {
+    this.stopMemoryRefresh();
+    this.memoryRefreshTimer = setInterval(async () => {
+      try {
+        const memoryResult = await this.request<Record<string, unknown>>(
+          "memory.status", { detailed: true }, 10_000,
+        );
+        const largeFiles = Array.isArray(memoryResult.large_files)
+          ? (memoryResult.large_files as { path: string; kind: string; char_count: number; threshold: number; message: string }[])
+          : [];
+        this.memoryWarnings = largeFiles;
+        this.emitChange();
+      } catch {
+        // ignore — next interval will retry
+      }
+    }, 30_000);
+  }
+
+  private stopMemoryRefresh(): void {
+    if (this.memoryRefreshTimer) {
+      clearInterval(this.memoryRefreshTimer);
+      this.memoryRefreshTimer = null;
     }
   }
 
@@ -420,6 +461,7 @@ export class CliPiAppState {
       modelInfo: this.modelInfo,
       sessionTitle: this.sessionTitle,
       statusLineText: this.statusLineText,
+      memoryWarnings: [...this.memoryWarnings],
     };
   }
 

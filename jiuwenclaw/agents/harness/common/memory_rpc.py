@@ -18,7 +18,9 @@ from jiuwenclaw.agents.harness.common.memory.external_memory_config import (
     get_external_memory_config,
 )
 from jiuwenclaw.agents.harness.common.rails.project_memory import (
+    clear_project_memory_cache,
     discover_and_load_memory_files,
+    get_large_memory_files,
 )
 from jiuwenclaw.common.config import get_config
 
@@ -288,16 +290,26 @@ async def handle_memory_status(
 
         project_dir = params.get("project_dir")
         discover_workspace = project_dir or workspace
+        clear_project_memory_cache(discover_workspace)
         project_files = discover_and_load_memory_files(
             workspace=discover_workspace,
             target_path=discover_workspace,
         )
         total_chars = sum(len(f.content) for f in project_files)
+        large_files = get_large_memory_files(project_files)
+        logger.info(
+            "[memory_rpc] memory.status detailed: workspace=%s project_dir=%s "
+            "discover_workspace=%s files=%d large_files=%d",
+            workspace, project_dir, discover_workspace,
+            len(project_files), len(large_files),
+        )
         result["project_memory"] = {
             "files_count": len(project_files),
             "total_chars": total_chars,
             "max_chars": 60_000,
+            "threshold": 40_000,
         }
+        result["large_files"] = large_files
         if project_dir:
             result["project_memory"]["project_dir"] = project_dir
 

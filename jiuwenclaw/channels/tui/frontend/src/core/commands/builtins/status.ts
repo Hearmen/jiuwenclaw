@@ -3,6 +3,14 @@ import { CommandKind, type SlashCommand } from "../types.js";
 import type { SessionUsageSummary } from "../../../app-state.js";
 import type { ConfigItemSchema } from "./config.js";
 
+export type MemoryWarning = {
+  path: string;
+  kind: string;
+  char_count: number;
+  threshold: number;
+  message: string;
+};
+
 export type StatusPayload = {
   version: string;
   session_id: string;
@@ -14,6 +22,7 @@ export type StatusPayload = {
   mcp_servers: { name: string; enabled: boolean; transport: string }[];
   config_path: string;
   settings_sources: string[];
+  memory_warnings: MemoryWarning[];
 };
 
 function showOverview(ctx: import("../types.js").CommandContext, payload: StatusPayload): void {
@@ -70,6 +79,17 @@ function showOverview(ctx: import("../types.js").CommandContext, payload: Status
       ],
     }),
   );
+
+  const warnings = payload.memory_warnings ?? [];
+  if (warnings.length > 0) {
+    ctx.addItem(
+      addInfo(ctx.sessionId, "Memory warnings", "w", {
+        view: "kv",
+        title: "Status — Memory Warnings",
+        items: warnings.map((w) => ({ label: w.kind, value: w.message })),
+      }),
+    );
+  }
 }
 
 function showUsage(ctx: import("../types.js").CommandContext, summary: SessionUsageSummary): void {

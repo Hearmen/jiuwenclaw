@@ -87,6 +87,7 @@ MANAGED_MEMORY_GLOBS: tuple[str, ...] = (
 
 ADDITIONAL_DIRECTORIES_ENV = "JIUWENCLAW_ADDITIONAL_DIRECTORIES"
 DEFAULT_MAX_CHARS = 60_000
+MAX_MEMORY_CHARACTER_COUNT = 40_000
 
 # Priority: smaller = applied first (later = semantically override).
 PRIORITY: dict[str, int] = {
@@ -364,6 +365,26 @@ def merge_memory_content(
         )
         merged += "\n\n<!-- project memory truncated (> max_chars) -->"
     return merged
+
+
+def get_large_memory_files(
+    files: Iterable[LoadedMemoryFile],
+    *,
+    threshold: int = MAX_MEMORY_CHARACTER_COUNT,
+) -> list[dict[str, Any]]:
+    """Return warning dicts for memory files exceeding per-file character threshold."""
+    warnings: list[dict[str, Any]] = []
+    for f in files:
+        char_count = len(f.content)
+        if char_count > threshold:
+            warnings.append({
+                "path": f.path,
+                "kind": f.kind,
+                "char_count": char_count,
+                "threshold": threshold,
+                "message": f"Large {_short(f.path)} ({char_count} chars > {threshold}) will impact performance",
+            })
+    return warnings
 
 
 # ---------------------------------------------------------------------------
@@ -935,5 +956,7 @@ __all__ = [
     "clear_project_memory_cache",
     "discover_and_load_memory_files",
     "find_project_root",
+    "get_large_memory_files",
+    "MAX_MEMORY_CHARACTER_COUNT",
     "merge_memory_content",
 ]

@@ -2374,7 +2374,7 @@ export class AppScreen implements Component, Focusable {
           ? this.buildUsageTabItems()
           : this.buildConfigTabItems(configPayload);
 
-    const list = new SelectList(items, Math.min(Math.max(items.length, 1), 10), selectListTheme, {
+    const list = new SelectList(items, tab === "status" ? items.length : Math.min(Math.max(items.length, 1), 10), selectListTheme, {
       minPrimaryColumnWidth: 20,
       maxPrimaryColumnWidth: 50,
     });
@@ -2422,6 +2422,11 @@ export class AppScreen implements Component, Focusable {
       items.push({ value: "__display__", label: `config_source: ${s}`, description: "" });
     }
     items.push({ value: "__display__", label: `config_path: ${payload.config_path || "unknown"}`, description: "" });
+
+    const warnings = payload.memory_warnings ?? [];
+    for (const w of warnings) {
+      items.push({ value: "__display__", label: `⚠ memory: ${w.message}`, description: "" });
+    }
 
     return items;
   }
