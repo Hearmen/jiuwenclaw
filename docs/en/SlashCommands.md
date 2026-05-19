@@ -27,6 +27,10 @@ Executed locally in the terminal UI, not through Gateway control pipeline.
 | `/status` | Show jiuwenswarm status overview, usage, config (see below) |
 | `/statusline` | Configure the TUI footer status bar with a custom command (see below) |
 | `/permissions` | Manage tool permissions (`allow`/`ask`/`deny`) |
+| `/evolve` | Trigger skill self-evolution for one skill (see below) |
+| `/evolve_list` | Show one skill's evolution records (see below) |
+| `/evolve_simplify` | Simplify and consolidate one skill's evolution records (see below) |
+| `/evolve_rebuild` | Rebuild `SKILL.md` from archives and evolution records (see below) |
 
 > Note: `/mode` controlled switching logic is primarily on Gateway side, see "`/mode` and `/switch`" below.
 
@@ -195,6 +199,39 @@ Manages directories AI can access for file read, edit, and execute operations.
 - Config and effect:
   - Changes are written to `config.yaml` under `mcp.servers`;
   - After write, Agent config reload is triggered, and runtime MCP server bindings are synced accordingly.
+
+### `/evolve*` (Skill Self-Evolution)
+
+These commands are registered and parsed by the TUI, then forwarded as slash text through the normal chat channel. The actual evolution logic runs on the Agent / Team backend:
+
+- Agent mode: handled by `SkillEvolutionRail`; only `agent.plan` is supported.
+- Team mode: handled by `TeamSkillEvolutionRail` for team skill evolution.
+- Code mode and `agent.fast` do not support these commands.
+
+#### Subcommands
+
+| Command | Description |
+|---|---|
+| `/evolve <skill_name> [user_query]` | Trigger evolution for one skill. `agent.plan` scans the current conversation for tool failures and user corrections; Team mode requires `user_query`. |
+| `/evolve_list <skill_name> [--sort score]` | Show one skill's evolution records with count, average score, usage/feedback stats, section, and content preview. |
+| `/evolve_simplify <skill_name> [user_intent]` | Generate an approval-gated cleanup plan to merge duplicates, split long records, or remove low-value records. Trailing text is passed to the backend as intent. |
+| `/evolve_rebuild <skill_name> [user_intent]` | Generate a rebuild follow-up prompt and continue as a normal Agent / Team task to rebuild `SKILL.md`. |
+
+#### Approval Flow
+
+- `/evolve` and `/evolve_simplify` do not silently write changes; the backend pushes a confirmation question and the TUI waits for approval.
+- Accepting persists/solidifies the generated records; rejecting discards this generation.
+- Accepted Team skill evolution syncs the team skill directory.
+- While evolution or approval is pending, supplemental user input is queued and sent after evolution completes.
+
+#### Examples
+
+```bash
+/evolve pptx improve export error handling
+/evolve_list pptx --sort score
+/evolve_simplify pptx merge duplicate export-failure records
+/evolve_rebuild pptx strengthen Troubleshooting and Examples
+```
 
 ### `/branch` (Branch Session)
 

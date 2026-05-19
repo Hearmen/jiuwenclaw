@@ -27,6 +27,10 @@
 | `/status` | 查看 jiuwenswarm 运行状态概览、用量统计、配置编辑（见下文） |
 | `/statusline` | 配置 TUI 底部状态栏的自定义命令（见下文） |
 | `/permissions` | 管理工具权限（`allow`/`ask`/`deny`） |
+| `/evolve` | Skill 自演进入口：触发 Skill 演进（见下文） |
+| `/evolve_list` | 查看某个 Skill 的演进经验库（见下文） |
+| `/evolve_simplify` | 整理、合并某个 Skill 的演进经验（见下文） |
+| `/evolve_rebuild` | 基于归档与演进记录重建 `SKILL.md`（见下文） |
 
 > 说明：`/mode` 的受控切换逻辑以 Gateway 侧行为为主，详见下文「`/mode` 与 `/switch`」。
 
@@ -217,6 +221,39 @@
   - `publish` 走 TeamSkills Hub 原生发布接口 `POST /api/v1/plugins`；
   - `delete` 走 TeamSkills Hub 原生删除接口 `DELETE /api/v1/plugins/{skill_id}/versions/{version}`；
   - `--token` 与 `--system-token` 互斥，且必须二选一。
+
+### `/evolve*`（Skill 自演进）
+
+这组命令由 TUI 本地注册并解析，随后通过普通聊天通道把 slash 文本转发给后端。实际演进逻辑在 Agent / Team 侧完成：
+
+- Agent 模式：由 `SkillEvolutionRail` 处理，仅 `agent.plan` 可用。
+- Team 模式：由 `TeamSkillEvolutionRail` 处理，用于团队技能演进。
+- Code 模式与 `agent.fast` 不支持这组命令。
+
+#### 子命令
+
+| 命令 | 说明 |
+|---|---|
+| `/evolve <skill_name> [user_query]` | 为指定 Skill 触发演进。`agent.plan` 会扫描当前会话中的工具失败、用户纠错等信号；Team 模式必须提供 `user_query`。 |
+| `/evolve_list <skill_name> [--sort score]` | 按分数查看某个 Skill 的演进经验，展示记录数、平均分、使用/反馈统计、section 与内容预览。 |
+| `/evolve_simplify <skill_name> [user_intent]` | 生成经验库整理方案，用于合并重复经验、拆分过长经验或清理低价值经验；尾随文本会作为整理意图传入后端。 |
+| `/evolve_rebuild <skill_name> [user_intent]` | 生成重建 `SKILL.md` 的 follow-up prompt，并继续作为一次普通 Agent / Team 任务执行。 |
+
+#### 审批流程
+
+- `/evolve` 和 `/evolve_simplify` 不会直接落盘覆盖内容；后端会推送确认问题，TUI 进入等待确认状态。
+- 接收后，后端接受本次演进记录并写入/固化；拒绝后丢弃本次生成内容。
+- Team 技能演进接收后会同步团队技能目录。
+- 演进或审批未完成时，用户补充的新输入会先排队，等待演进完成后再继续发送。
+
+#### 示例
+
+```bash
+/evolve pptx 修复导出失败时的错误处理
+/evolve_list pptx --sort score
+/evolve_simplify pptx 合并重复的导出失败经验
+/evolve_rebuild pptx 强化 Troubleshooting 和 Examples
+```
 
 ### `/branch`（分支会话）
 
@@ -625,5 +662,3 @@
 | `/btw`         | 提问      |
 | `/export`      | 导出相关文件  |
 | `/permissions` | 权限管理    |
-
-

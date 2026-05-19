@@ -66,10 +66,10 @@
 | `/config` | `/settings`, `/setting` | 查看/设置后端配置 | `/config`、`/config get`、`/config set key value` | 全部 |
 | `/context` | - | 查看上下文窗口占用与 Token 用量明细 | `/context` | 全部 |
 | `/diff` | - | 查看本会话按轮次的文件改动 | `/diff` | 全部 |
-| `/evolve` | - | 触发技能演进或列出待处理（转发为聊天内容） | `/evolve`、`/evolve list` | 全部 |
-| `/evolve_list` | - | 列出某技能的演进条目 | `/evolve_list myskill --sort score` | 全部 |
-| `/evolve_rebuild` | - | 从归档重建 SKILL.md | `/evolve_rebuild myskill` | 全部 |
-| `/evolve_simplify` | - | 简化演进经验 | `/evolve_simplify myskill --dry-run` | 全部 |
+| `/evolve` | - | 触发技能演进 | `/evolve myskill 修正错误处理` | `agent.plan` / `team`（见下） |
+| `/evolve_list` | - | 列出某技能的演进条目 | `/evolve_list myskill --sort score` | `agent.plan` / `team` |
+| `/evolve_rebuild` | - | 从归档与演进记录重建 SKILL.md | `/evolve_rebuild myskill 强化错误处理` | `agent.plan` / `team` |
+| `/evolve_simplify` | - | 整理、合并某技能的演进经验 | `/evolve_simplify myskill 合并重复经验` | `agent.plan` / `team` |
 | `/init` | - | 在 **Code 模式** 下初始化 `JIUWENCLAW.md` / `JIUWENCLAW.local.md` | `/init` | **仅 `code.*`** |
 | `/mcp` | - | 管理 MCP 服务 | `/mcp list`、`/mcp add ...` | 全部 |
 | `/mode` | - | 切换或查看模式 | `/mode`、`/mode code` | 全部 |
@@ -162,6 +162,30 @@
 
 - **`/skills`**：默认等价 `list`；子命令含 `install`、`uninstall`、`marketplace`、`use` 等；部分长操作有 120s 超时（见 `skills.ts`）。
 - **`/teamskills`**：无子命令时打印用法提示；支持 `init`、`validate`、`pack`、`info`、`search`、`list`、`install`、`uninstall`、`config`、`publish`、`delete`（见 `teamskills.ts` 与 Slash命令表）。
+
+#### `/evolve*`（Skill 自演进）
+
+这组命令在 TUI 本地注册（`evolve.ts`），但业务逻辑不在前端执行：TUI 只做必要参数校验，然后通过 `sendMessage(...)` 把原始 slash 文本发给后端。后端在 Agent / Team 流程中拦截并调用 SkillEvolutionRail / TeamSkillEvolutionRail。
+
+| 命令 | 用途 | 行为要点 |
+|------|------|----------|
+| `/evolve <skill_name> [user_query]` | 为单个 Skill 生成演进记录 | `agent.plan` 下会先扫描当前会话中的工具失败和用户纠错信号；若没有信号且未给 `user_query`，返回“未发现明确演进信号”。Team 模式必须提供 `<user_query>`。 |
+| `/evolve_list <skill_name> [--sort score]` | 查看某 Skill 的经验库 | 展示记录数、平均分、使用/反馈统计、目标 section 与内容预览；当前实现按 score 获取记录。 |
+| `/evolve_simplify <skill_name> [user_intent]` | 智能整理经验库 | 生成可审批的整理方案，用于合并、拆分或清理演进经验。尾随文本会作为整理意图传给后端，不是独立 CLI flag。 |
+| `/evolve_rebuild <skill_name> [user_intent]` | 重建 SKILL.md | 由后端生成 follow-up prompt，并继续作为普通 Agent / Team 任务执行，用归档历史与演进记录重建 Skill 文档。 |
+
+适用条件：
+
+- `agent.plan`：用于单 Agent Skill 自演进；其它 Agent / Code 子模式不处理这组命令。
+- `team`：使用团队技能演进 rail；`/evolve <skill_name> <user_query>`、`/evolve_list`、`/evolve_simplify`、`/evolve_rebuild` 可用。
+
+审批与状态：
+
+- `/evolve` 和 `/evolve_simplify` 生成变更后不会静默写入，会推送 `chat.ask_user_question`，TUI 进入确认态，用户确认后才由后端接受或丢弃记录。
+- Team 技能演进确认后会同步团队技能；拒绝则丢弃本次生成内容。
+- 后端推送 `chat.evolution_status` 时，TUI 会把演进状态标记为 running / idle；演进或审批未完成时补充输入会先排队，等待演进完成后再发送。
+
+更多机制说明见 [Skill 自演进](Skill自演进.md)。
 
 #### `/plan`
 
