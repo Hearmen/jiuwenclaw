@@ -4,11 +4,12 @@ import {
   parseTeamEventMessage,
   ParsedTeamEvent,
 } from './teamEventUtils';
-import { formatMemberName, TeamMemberAvatar } from './MessageItem';
+import { formatMemberName, MarkdownMessageBody, TeamMemberAvatar } from './MessageItem';
 import teamIcon from '../../assets/team.svg';
 
 interface TeamEventGroupDisplayProps {
   messages: Message[];
+  showAvatar?: boolean;
 }
 
 function isTeamLeaderDisplayName(member: string) {
@@ -57,14 +58,20 @@ function TeamEventRow({
               @所有人
             </span>
           )}
-          <span>{event.content}</span>
+          <MarkdownMessageBody
+            content={event.content}
+            className="team-message-markdown team-message-markdown--inline"
+          />
         </div>
       </div>
     </div>
   );
 }
 
-export function TeamEventGroupDisplay({ messages }: TeamEventGroupDisplayProps) {
+export function TeamEventGroupDisplay({
+  messages,
+  showAvatar = true,
+}: TeamEventGroupDisplayProps) {
   const events = useMemo(
     () => messages
       .map(parseTeamEventMessage)
@@ -83,7 +90,9 @@ export function TeamEventGroupDisplay({ messages }: TeamEventGroupDisplayProps) 
 
   return (
     <div className="team-event-group-shell animate-rise" data-testid="team-event-group">
-      <div className="team-event-group-shell__spacer" aria-hidden="true" />
+      <div className="team-event-group-shell__spacer">
+        {showAvatar ? <TeamMemberAvatar member="team_leader" /> : null}
+      </div>
       <div className="team-event-group">
         <div className="team-event-group-summary">
           <div className="team-event-group-summary__main">

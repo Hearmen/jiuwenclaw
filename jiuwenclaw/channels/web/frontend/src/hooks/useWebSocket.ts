@@ -100,6 +100,23 @@ function normalizeAgentMode(rawMode: unknown): AgentMode {
 
 const EVENT_DEDUP_WINDOW_MS = 1500;
 
+function normalizeEventTimestampIso(value: unknown): string {
+  if (typeof value === 'number' && Number.isFinite(value)) {
+    const millis = value > 1_000_000_000_000 ? value : value * 1000;
+    const date = new Date(millis);
+    if (!Number.isNaN(date.getTime())) {
+      return date.toISOString();
+    }
+  }
+  if (typeof value === 'string') {
+    const parsed = Date.parse(value);
+    if (!Number.isNaN(parsed)) {
+      return new Date(parsed).toISOString();
+    }
+  }
+  return new Date().toISOString();
+}
+
 function stringifyPayloadForDedup(payload: Record<string, unknown>): string {
   try {
     const serialized = JSON.stringify(payload);
@@ -304,6 +321,33 @@ export function useWebSocket(options: UseWebSocketOptions): UseWebSocketReturn {
     []
   );
 
+  const findActiveTeamLeaderMessage = useCallback(() => {
+    const { messages } = useChatStore.getState();
+    let latestUserIndex = -1;
+    for (let i = messages.length - 1; i >= 0; i -= 1) {
+      if (messages[i].role === 'user') {
+        latestUserIndex = i;
+        break;
+      }
+    }
+    for (let i = messages.length - 1; i > latestUserIndex; i -= 1) {
+      const msg = messages[i];
+      if (msg.id.startsWith('team-leader-') && msg.isStreaming) {
+        return msg;
+      }
+    }
+    return undefined;
+  }, []);
+
+  const closeActiveTeamLeaderMessages = useCallback(() => {
+    const { messages } = useChatStore.getState();
+    for (const msg of messages) {
+      if (msg.id.startsWith('team-leader-') && msg.isStreaming) {
+        updateMessage(msg.id, { isStreaming: false });
+      }
+    }
+  }, [updateMessage]);
+
   // 发送聊天消息
   const sendMessage = useCallback(
     async (content: string, sessionId: string) => {
@@ -376,6 +420,9 @@ export function useWebSocket(options: UseWebSocketOptions): UseWebSocketReturn {
       if (intent === 'supplement' && newInput) {
         userInputVersionRef.current += 1;
         stopAllTts();
+        if (useSessionStore.getState().mode === 'team') {
+          closeActiveTeamLeaderMessages();
+        }
         addMessage({
           id: `user-${Date.now()}`,
           role: 'user',
@@ -404,7 +451,7 @@ export function useWebSocket(options: UseWebSocketOptions): UseWebSocketReturn {
         onErrorRef.current?.(webError.message || i18n.t('network.interruptFailed'));
       }
     },
-    [addMessage, request, setConnectionStats]
+    [addMessage, closeActiveTeamLeaderMessages, request, setConnectionStats]
   );
 
   // 暂停 - 显式暂停当前任务
@@ -643,11 +690,7 @@ export function useWebSocket(options: UseWebSocketOptions): UseWebSocketReturn {
         // team 模式下，累积 chat.delta 内容
         if (currentMode === 'team' && content) {
           clearThinkingForVisibleOutput();
-          const { messages } = useChatStore.getState();
-          const existingMsg = messages.find(m =>
-            m.id.startsWith('team-leader-') &&
-            (m as { isStreaming?: boolean }).isStreaming === true
-          );
+          const existingMsg = findActiveTeamLeaderMessage();
 
           if (existingMsg) {
             const existingContent = existingMsg.content || '';
@@ -694,18 +737,14 @@ export function useWebSocket(options: UseWebSocketOptions): UseWebSocketReturn {
         // team 模式下，将 chat.final 作为 team_leader 消息处理
         if (currentMode === 'team' && content) {
           clearThinkingForVisibleOutput();
-          const { messages } = useChatStore.getState();
-          const existingMsg = messages.find(m =>
-            m.id.startsWith('team-leader-') &&
-            (m as { isStreaming?: boolean }).isStreaming === true
-          );
+          const existingMsg = findActiveTeamLeaderMessage();
           const timestamp = payload.timestamp || Date.now();
 
           if (existingMsg) {
             updateMessage(existingMsg.id, {
               content: `team.leader:${JSON.stringify({ content, timestamp })}`,
               isStreaming: false,
-              timestamp: new Date().toISOString(),
+              timestamp: normalizeEventTimestampIso(payload.timestamp),
             });
             return;
           }
@@ -728,7 +767,6 @@ export function useWebSocket(options: UseWebSocketOptions): UseWebSocketReturn {
           updateMessage(streamId, {
             ...(content ? { content } : {}),
             isStreaming: false,
-            timestamp: new Date().toISOString(),
           });
           stopStreaming();
           if (content && !content.includes('MEDIA:')) {
@@ -834,17 +872,44 @@ export function useWebSocket(options: UseWebSocketOptions): UseWebSocketReturn {
         if (!shouldHandleSessionEvent(payload)) return;
         const files = (payload.files ?? []) as FileDownloadItem[];
         if (!files.length) return;
+        if (useSessionStore.getState().mode === 'team') {
+          const target = findActiveTeamLeaderMessage();
+          if (target) {
+            updateMessage(target.id, {
+              fileItems: [...(target.fileItems || []), ...files],
+            });
+          } else {
+            addMessage({
+              id: `team-leader-${Date.now()}`,
+              role: 'system',
+              content: '',
+              timestamp: new Date().toISOString(),
+              isStreaming: true,
+              fileItems: files,
+            });
+          }
+          return;
+        }
         addFileItems(files);
       }),
       webClient.on('chat.tool_call', ({ payload }) => {
         if (!shouldHandleSessionEvent(payload)) return;
         if (shouldDropDuplicatedEvent('chat.tool_call', payload)) return;
         clearThinkingForVisibleOutput();
-        addToolCall(normalizeToolCallPayload(payload));
-        const { currentStreamId } = useChatStore.getState();
-        if (currentStreamId) {
-          updateMessage(currentStreamId, { timestamp: new Date().toISOString() });
-        }
+        const toolCall = normalizeToolCallPayload(payload);
+        const { currentStreamId, messages } = useChatStore.getState();
+        const currentStreamMessage =
+          useSessionStore.getState().mode === 'team'
+            ? findActiveTeamLeaderMessage()
+            : currentStreamId
+              ? messages.find((msg) => msg.id === currentStreamId)
+              : undefined;
+        addToolCall(
+          toolCall,
+          currentStreamMessage?.timestamp
+            ? { startedAt: currentStreamMessage.timestamp }
+            : undefined
+        );
       }),
       webClient.on('chat.tool_result', ({ payload }) => {
         if (!shouldHandleSessionEvent(payload)) return;
@@ -1348,6 +1413,7 @@ export function useWebSocket(options: UseWebSocketOptions): UseWebSocketReturn {
     setContextCompressionStats,
     setHeartbeatStatus,
     clearThinkingForVisibleOutput,
+    findActiveTeamLeaderMessage,
     updateSession,
     shouldHandleSessionEvent,
     shouldDropDuplicatedEvent,

@@ -330,12 +330,9 @@ function parseHistoryTimelineEntry(
   return null;
 }
 
-/** 工作区 history.json 预览：最多展示条数（按消息时间取最近） */
-export const HISTORY_FILE_PREVIEW_MAX_MESSAGES = 20;
-
 /**
  * 将磁盘上的 history.json 解析结果（通常为记录数组）转为与历史恢复相同的筛选规则下的消息列表，
- * 并按时间升序仅保留时间上最近的 {@link HISTORY_FILE_PREVIEW_MAX_MESSAGES} 条用户/助手消息。
+ * 并按时间升序返回全部可展示的用户/助手消息。
  */
 export function parseHistoryJsonFileToPreviewMessages(
   parsed: unknown,
@@ -356,10 +353,15 @@ export function parseHistoryJsonFileToPreviewMessages(
     }
   }
 
-  const sorted = [...messages].sort(
-    (a, b) => Date.parse(a.timestamp) - Date.parse(b.timestamp)
-  );
-  return sorted.slice(-HISTORY_FILE_PREVIEW_MAX_MESSAGES);
+  return messages.sort((a, b) => Date.parse(a.timestamp) - Date.parse(b.timestamp));
+}
+
+export function parseHistoryJsonFilePreviewMode(parsed: unknown): 'team' | null {
+  if (!Array.isArray(parsed)) {
+    return null;
+  }
+
+  return parsed.some((item) => isRecord(item) && isTeamModeRecord(item)) ? 'team' : null;
 }
 
 function isHistoryBatchEnd(payload: Record<string, unknown>): boolean {

@@ -1,8 +1,11 @@
-import { useState, useEffect, useMemo } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import ReactMarkdown from 'react-markdown';
-import { parseHistoryJsonFileToPreviewMessages } from '../../features/historyRestore';
-import { MessageItem } from '../ChatPanel/MessageItem';
+import {
+  parseHistoryJsonFilePreviewMode,
+  parseHistoryJsonFileToPreviewMessages,
+} from '../../features/historyRestore';
+import { ChatTimelineList } from '../ChatPanel/MessageList';
 import '../ChatPanel/ChatPanel.css';
 
 interface FileViewerProps {
@@ -35,6 +38,48 @@ function sessionIdFromAgentPath(filePath: string): string {
   return m ? m[0] : 'file';
 }
 
+function VirtualizedTextViewer({ text }: { text: string }) {
+  const lineHeight = 20;
+  const overscan = 8;
+  const [scrollTop, setScrollTop] = useState(0);
+  const [viewportHeight, setViewportHeight] = useState(0);
+
+  const lines = useMemo(() => (text || ' ').split(/\r\n|\n|\r/), [text]);
+  const totalHeight = Math.max(lines.length * lineHeight, lineHeight);
+  const visibleCount = Math.max(1, Math.ceil(viewportHeight / lineHeight) + overscan * 2);
+  const startIndex = Math.max(0, Math.floor(scrollTop / lineHeight) - overscan);
+  const endIndex = Math.min(lines.length, startIndex + visibleCount);
+  const visibleLines = lines.slice(startIndex, endIndex);
+
+  const measure = useCallback((node: HTMLDivElement | null) => {
+    if (!node) {
+      return;
+    }
+    setViewportHeight(node.clientHeight);
+  }, []);
+
+  return (
+    <div
+      ref={measure}
+      className="w-full h-full min-h-[280px] overflow-auto rounded-lg border border-border bg-card p-3 text-sm text-text mono"
+      onScroll={(event) => setScrollTop(event.currentTarget.scrollTop)}
+    >
+      <div style={{ height: totalHeight, position: 'relative' }}>
+        <pre
+          className="absolute left-0 m-0 min-w-full whitespace-pre"
+          style={{
+            top: startIndex * lineHeight,
+            lineHeight: `${lineHeight}px`,
+            width: 'max-content',
+          }}
+        >
+          {visibleLines.join('\n')}
+        </pre>
+      </div>
+    </div>
+  );
+}
+
 export function FileViewer({ filePath, fileName, reloadNonce = 0 }: FileViewerProps) {
   const { t } = useTranslation();
   const [content, setContent] = useState<string>('');
@@ -54,49 +99,50 @@ export function FileViewer({ filePath, fileName, reloadNonce = 0 }: FileViewerPr
   const fileNotFound = Boolean(error && error.includes('HTTP 404'));
   const [historyChatPreview, setHistoryChatPreview] = useState(true);
 
-  /** 任意 .json 单次 parse，避免预览/格式化重复 JSON.parse */
-  const jsonDerived = useMemo(() => {
+  const jsonParseResult = useMemo(() => {
     if (!isJson || !content.trim()) {
       return {
-        historyMessages: [] as ReturnType<typeof parseHistoryJsonFileToPreviewMessages>,
-        historyInvalid: false,
-        todoItems: [] as TodoPreviewItem[],
-        todoInvalid: false,
-        formatted: content,
+        parsed: null as unknown,
+        invalid: false,
       };
     }
     try {
       const parsed: unknown = JSON.parse(content);
-      const formatted = JSON.stringify(parsed, null, 2);
-      if (!isHistoryJson && !isTodoJson) {
-        return { historyMessages: [], historyInvalid: false, todoItems: [], todoInvalid: false, formatted };
-      }
-      if (isTodoJson) {
-        if (!Array.isArray(parsed)) {
-          return { historyMessages: [], historyInvalid: false, todoItems: [], todoInvalid: true, formatted };
-        }
-        return {
-          historyMessages: [],
-          historyInvalid: false,
-          todoItems: parseTodoJsonFileToPreview(parsed),
-          todoInvalid: false,
-          formatted,
-        };
-      }
-      if (!Array.isArray(parsed)) {
-        return { historyMessages: [], historyInvalid: true, todoItems: [], todoInvalid: false, formatted };
-      }
-      return {
-        historyMessages: parseHistoryJsonFileToPreviewMessages(parsed, sessionIdFromAgentPath(filePath)),
-        historyInvalid: false,
-        todoItems: [],
-        todoInvalid: false,
-        formatted,
-      };
+      return { parsed, invalid: false };
     } catch {
-      return { historyMessages: [], historyInvalid: true, todoItems: [], todoInvalid: true, formatted: content };
+      return { parsed: null as unknown, invalid: true };
     }
-  }, [isJson, isHistoryJson, isTodoJson, content, filePath]);
+  }, [isJson, content]);
+
+  const historyMessages = useMemo(() => {
+    if (!isHistoryJson || !historyChatPreview || !Array.isArray(jsonParseResult.parsed)) {
+      return [] as ReturnType<typeof parseHistoryJsonFileToPreviewMessages>;
+    }
+    return parseHistoryJsonFileToPreviewMessages(jsonParseResult.parsed, sessionIdFromAgentPath(filePath));
+  }, [isHistoryJson, historyChatPreview, jsonParseResult.parsed, filePath]);
+
+  const historyPreviewMode = useMemo(() => {
+    if (!isHistoryJson || !Array.isArray(jsonParseResult.parsed)) {
+      return null;
+    }
+    return parseHistoryJsonFilePreviewMode(jsonParseResult.parsed);
+  }, [isHistoryJson, jsonParseResult.parsed]);
+
+  const todoItems = useMemo(() => {
+    if (!isTodoJson || !Array.isArray(jsonParseResult.parsed)) {
+      return [] as TodoPreviewItem[];
+    }
+    return parseTodoJsonFileToPreview(jsonParseResult.parsed);
+  }, [isTodoJson, jsonParseResult.parsed]);
+
+  const formattedJson = useMemo(() => {
+    if (!isJson || isHistoryJson || jsonParseResult.invalid || jsonParseResult.parsed === null) {
+      return content;
+    }
+    return JSON.stringify(jsonParseResult.parsed, null, 2);
+  }, [isJson, isHistoryJson, jsonParseResult.invalid, jsonParseResult.parsed, content]);
+
+  const historyInvalid = isHistoryJson && jsonParseResult.invalid;
 
   useEffect(() => {
     if (!filePath) return;
@@ -328,13 +374,13 @@ export function FileViewer({ filePath, fileName, reloadNonce = 0 }: FileViewerPr
             </article>
           )
         ) : isJson ? (
-          isTodoJson && jsonDerived.todoItems.length > 0 ? (
+          isTodoJson && todoItems.length > 0 ? (
             <div className="w-full min-h-[280px] rounded-lg border border-border bg-card p-4 space-y-4">
               {(() => {
-                const inProgress = jsonDerived.todoItems.filter((i) => i.status === 'in_progress');
-                const pending = jsonDerived.todoItems.filter((i) => i.status === 'pending');
-                const completed = jsonDerived.todoItems.filter((i) => i.status === 'completed');
-                const cancelled = jsonDerived.todoItems.filter((i) => i.status === 'cancelled');
+                const inProgress = todoItems.filter((i) => i.status === 'in_progress');
+                const pending = todoItems.filter((i) => i.status === 'pending');
+                const completed = todoItems.filter((i) => i.status === 'completed');
+                const cancelled = todoItems.filter((i) => i.status === 'cancelled');
 
                 const renderGroup = (title: string, items: TodoPreviewItem[], colorClass: string, icon: string) => (
                   items.length > 0 ? (
@@ -367,25 +413,22 @@ export function FileViewer({ filePath, fileName, reloadNonce = 0 }: FileViewerPr
               })()}
             </div>
           ) : isHistoryJson && historyChatPreview ? (
-            jsonDerived.historyInvalid ? (
-              <pre className="w-full h-full min-h-[280px] overflow-auto rounded-lg border border-border bg-card p-3 text-sm text-text mono whitespace-pre-wrap break-all">
-                {jsonDerived.formatted || ' '}
-              </pre>
-            ) : jsonDerived.historyMessages.length === 0 ? (
+            historyInvalid ? (
+              <VirtualizedTextViewer text={content} />
+            ) : historyMessages.length === 0 ? (
               <div className="h-full min-h-[280px] flex items-center justify-center rounded-lg border border-border bg-card px-4 text-sm text-text-muted text-center">
                 {t('fileViewer.historyPreviewEmpty')}
               </div>
             ) : (
-              <div className="w-full min-h-[280px] rounded-lg border border-border bg-card p-3">
-                {jsonDerived.historyMessages.map((message) => (
-                  <MessageItem key={message.id} message={message} />
-                ))}
+              <div className="w-full min-h-[280px] rounded-lg border border-border bg-card p-3 chat-content">
+                <ChatTimelineList
+                  messages={historyMessages}
+                  mode={historyPreviewMode ?? undefined}
+                />
               </div>
             )
           ) : (
-            <pre className="w-full h-full min-h-[280px] overflow-auto rounded-lg border border-border bg-card p-3 text-sm text-text mono whitespace-pre-wrap break-all">
-              {jsonDerived.formatted || ' '}
-            </pre>
+            <VirtualizedTextViewer text={isHistoryJson ? content : formattedJson} />
           )
         ) : (
           <div className="h-full flex items-center justify-center text-text-muted text-sm">

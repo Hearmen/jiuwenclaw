@@ -112,15 +112,17 @@ export function formatMemberName(member?: string) {
   return member || 'Unknown';
 }
 
-function MarkdownMessageBody({
+export function MarkdownMessageBody({
   content,
+  className,
   testId,
 }: {
   content: string;
+  className?: string;
   testId?: string;
 }) {
   return (
-    <div className="chat-text" data-testid={testId}>
+    <div className={clsx('chat-text chat-markdown', className)} data-testid={testId}>
       <ReactMarkdown
         remarkPlugins={[remarkGfm]}
         components={{
@@ -171,19 +173,25 @@ function TeamLeaderPlainTextMessage({
   member = 'team_leader',
   content,
   showAvatar = true,
+  fileItems,
 }: {
   member?: string;
   content: string;
   showAvatar?: boolean;
+  fileItems?: FileDownloadItem[];
 }) {
   return (
     <TeamMemberMessageFrame
       member={member}
       showAvatar={showAvatar}
     >
-      <div className="team-member-message__plain">
-        {content}
-      </div>
+      {fileItems && fileItems.length > 0 && (
+        <FileDownloadList files={fileItems} className="w-full md:w-1/2" />
+      )}
+      <MarkdownMessageBody
+        content={content}
+        className="team-member-message__plain"
+      />
     </TeamMemberMessageFrame>
   );
 }
@@ -452,7 +460,10 @@ export function MessageItem({
 	                       @所有人
 	                     </span>
 	                   )}
-	                   <span>{event.content}</span>
+	                   <MarkdownMessageBody
+	                     content={event.content}
+	                     className="team-message-markdown team-message-markdown--inline"
+	                   />
 	                 </div>
 	               </div>
 	             </TeamMemberMessageFrame>
@@ -487,6 +498,7 @@ export function MessageItem({
 	           member="team_leader"
 	           content={messageContent || (isStreaming ? '正在接收中...' : '')}
 	           showAvatar={showAvatar}
+	           fileItems={fileItems}
 	         />
 	       );
 	     }
@@ -669,7 +681,13 @@ function getFileTypeConfig(mimeType: string | undefined, name: string) {
   return { label: 'FILE', bg: 'bg-[#6b7280]', icon: '��' };
 }
 
-function FileDownloadList({ files }: { files: FileDownloadItem[] }) {
+function FileDownloadList({
+  files,
+  className,
+}: {
+  files: FileDownloadItem[];
+  className?: string;
+}) {
   const handleDownload = (file: FileDownloadItem) => {
     const link = document.createElement('a');
     link.href = file.download_url;
@@ -680,7 +698,7 @@ function FileDownloadList({ files }: { files: FileDownloadItem[] }) {
   };
 
   return (
-    <div className="mt-2 space-y-2">
+    <div className={clsx('mt-2 space-y-2', className)}>
       {files.map((file, index) => {
         const typeConfig = getFileTypeConfig(file.mime_type, file.name);
         const ext = getFileExtension(file.name);

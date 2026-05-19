@@ -833,7 +833,7 @@ select {
     white-space: pre-wrap;
   }
 
-  .chat-bubble.assistant.markdown .chat-text {
+  .chat-markdown {
     @apply prose prose-sm max-w-none;
     --tw-prose-body: var(--chat-text);
     --tw-prose-headings: var(--text-strong);
@@ -988,7 +988,7 @@ select {
 
   /* ====== Team Timeline Messages ====== */
   .team-member-message {
-    width: min(95%, 820px);
+    width: min(95%, 920px);
     margin: 12px auto;
     display: grid;
     grid-template-columns: 36px minmax(0, 1fr);
@@ -1039,6 +1039,37 @@ select {
     word-break: break-word;
   }
 
+  .team-member-message__plain.chat-markdown {
+    white-space: normal;
+  }
+
+  .team-message-markdown {
+    color: var(--text);
+    font-size: inherit;
+    line-height: inherit;
+    --tw-prose-body: var(--text);
+    --tw-prose-bold: var(--text-strong);
+    --tw-prose-code: var(--text);
+    --tw-prose-links: var(--accent);
+  }
+
+  .team-message-markdown > :first-child {
+    margin-top: 0;
+  }
+
+  .team-message-markdown > :last-child {
+    margin-bottom: 0;
+  }
+
+  .team-message-markdown--inline {
+    display: inline;
+  }
+
+  .team-message-markdown--inline > p:first-child {
+    display: inline;
+    margin: 0;
+  }
+
   /* ====== Team Event Group Cards ====== */
   .team-event-group {
     margin: 8px auto;
@@ -1050,7 +1081,7 @@ select {
   }
 
   .team-event-group-shell {
-    width: min(95%, 820px);
+    width: min(95%, 920px);
     margin: 8px auto;
     display: grid;
     grid-template-columns: 36px minmax(0, 1fr);
@@ -1240,7 +1271,7 @@ select {
   }
 
   .tool-group-frame--team {
-    width: min(95%, 820px);
+    width: min(95%, 920px);
     margin: 12px auto;
     display: grid;
     grid-template-columns: 36px minmax(0, 1fr);

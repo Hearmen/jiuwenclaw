@@ -16,6 +16,12 @@ interface MessageListProps {
   messages: Message[];
 }
 
+interface ChatTimelineListProps {
+  messages: Message[];
+  executions?: ToolExecution[];
+  mode?: string;
+}
+
 type TimelineItem =
   | {
       type: 'message';
@@ -48,6 +54,7 @@ type RenderItem =
   | {
       type: 'teamEventGroup';
       key: string;
+      showAvatar: boolean;
       messages: Message[];
     };
 
@@ -67,6 +74,10 @@ function compareTimelineItems(a: TimelineItem, b: TimelineItem): number {
   const bTsValid = Number.isFinite(b.timestampMs);
   if (aTsValid && bTsValid && a.timestampMs !== b.timestampMs) {
     return a.timestampMs - b.timestampMs;
+  }
+  if (a.type !== b.type) {
+    if (a.type === 'toolExecution') return -1;
+    if (b.type === 'toolExecution') return 1;
   }
   if (aTsValid !== bTsValid) {
     return aTsValid ? -1 : 1;
@@ -131,6 +142,7 @@ function buildRenderItems(items: TimelineItem[], isTeamMode: boolean): RenderIte
       renderItems.push({
         type: 'teamEventGroup',
         key: `team-event-group-${currentSegment.teamMessages[0].key}`,
+        showAvatar: true,
         messages: currentSegment.teamMessages.map((item) => item.message),
       });
       currentSegment.teamMessages = [];
@@ -212,6 +224,7 @@ function buildRenderItems(items: TimelineItem[], isTeamMode: boolean): RenderIte
     }
 
     if (renderItem.type === 'teamEventGroup') {
+      renderItem.showAvatar = !clusterBlockActive;
       clusterBlockActive = true;
       continue;
     }
@@ -229,17 +242,12 @@ function buildRenderItems(items: TimelineItem[], isTeamMode: boolean): RenderIte
   return renderItems;
 }
 
-export function MessageList({ messages }: MessageListProps) {
-  const { toolExecutions, toolExecutionOrder } = useChatStore();
-  const { mode } = useSessionStore();
+export function ChatTimelineList({
+  messages,
+  executions = [],
+  mode = 'default',
+}: ChatTimelineListProps) {
   const isTeamMode = mode === 'team';
-  const executions = useMemo(
-    () => toolExecutionOrder
-      .map((toolCallId) => toolExecutions.get(toolCallId))
-      .filter((item): item is NonNullable<typeof item> => !!item),
-    [toolExecutions, toolExecutionOrder]
-  );
-
   const renderItems = useMemo(
     () => buildRenderItems(buildTimelineItems(messages, executions), isTeamMode),
     [messages, executions, isTeamMode]
@@ -275,9 +283,23 @@ export function MessageList({ messages }: MessageListProps) {
           <TeamEventGroupDisplay
             key={item.key}
             messages={item.messages}
+            showAvatar={item.showAvatar}
           />
         );
       })}
     </div>
   );
+}
+
+export function MessageList({ messages }: MessageListProps) {
+  const { toolExecutions, toolExecutionOrder } = useChatStore();
+  const { mode } = useSessionStore();
+  const executions = useMemo(
+    () => toolExecutionOrder
+      .map((toolCallId) => toolExecutions.get(toolCallId))
+      .filter((item): item is NonNullable<typeof item> => !!item),
+    [toolExecutions, toolExecutionOrder]
+  );
+
+  return <ChatTimelineList messages={messages} executions={executions} mode={mode} />;
 }

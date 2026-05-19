@@ -584,9 +584,10 @@ export const useChatStore = create<ChatState>((set, get) => ({
 
   addFileItems: (files) => {
     const { currentStreamId, messages } = get();
-    let targetId =
+    const lastMessage = messages[messages.length - 1];
+    const targetId =
       currentStreamId ??
-      [...messages].reverse().find((msg) => msg.role === 'assistant')?.id;
+      (lastMessage?.role === 'assistant' ? lastMessage.id : null);
     if (!targetId) {
       const msgId = `file-${Date.now()}`;
       set((state) => ({
