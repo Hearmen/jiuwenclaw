@@ -70,13 +70,15 @@ export interface CommandContext {
   expandToolGroups: (scope: "last" | "all") => void;
   sessionTitle: string;
   setSessionTitle: (title: string) => void;
-  // Trusted directories management (global, not session-specific)
+  // Trusted directories management (project-scoped)
   getTrustedDirs: () => string[];
   validateDirPath: (path: string) => "valid" | "not_found" | "invalid" | "no_access";
   addTrustedDir: (path: string) => "added" | "exists" | "not_found" | "invalid" | "no_access";
   setTrustedDir: (path: string) => "set" | "not_found" | "invalid" | "no_access";
   removeTrustedDir: (path: string) => boolean;
   clearTrustedDirs: () => void;
+  setCurrentProjectDir: (dir: string) => void;
+  getCurrentProjectDir: () => string;
   // Workspace directory (current working directory)
   getWorkspaceDir: () => string | undefined;
   setInput?: (text: string) => void;

@@ -30,7 +30,13 @@ def temp_home() -> Generator[Path, None, None]:
 
 
 @pytest.fixture
-def clean_environment(temp_home: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def interactive_mode(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Force _is_interactive() to return True so tests hit the interactive branch."""
+    monkeypatch.setattr("jiuwenclaw.common.utils._is_interactive", lambda: True)
+
+
+@pytest.fixture
+def clean_environment(temp_home: Path, monkeypatch: pytest.MonkeyPatch, interactive_mode: None) -> None:
     """Set up a clean environment for testing initialization."""
     # Override HOME to use temporary directory
     monkeypatch.setenv("HOME", str(temp_home))
@@ -97,7 +103,11 @@ class TestPromptPreferredLanguage:
         assert result == "zh"
 
     @staticmethod
-    def test_prompt_select_english(monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture):
+    def test_prompt_select_english(
+        monkeypatch: pytest.MonkeyPatch,
+        interactive_mode: None,
+        capsys: pytest.CaptureFixture,
+    ):
         """Test prompt_preferred_language with English selection."""
         from jiuwenclaw.common.utils import prompt_preferred_language
 
@@ -117,7 +127,7 @@ class TestPromptPreferredLanguage:
         assert result == "zh"
 
     @staticmethod
-    def test_prompt_select_en_alias(monkeypatch: pytest.MonkeyPatch):
+    def test_prompt_select_en_alias(monkeypatch: pytest.MonkeyPatch, interactive_mode: None):
         """Test prompt_preferred_language with 'en' alias."""
         from jiuwenclaw.common.utils import prompt_preferred_language
 
@@ -126,7 +136,7 @@ class TestPromptPreferredLanguage:
         assert result == "en"
 
     @staticmethod
-    def test_prompt_cancel_with_no(monkeypatch: pytest.MonkeyPatch):
+    def test_prompt_cancel_with_no(monkeypatch: pytest.MonkeyPatch, interactive_mode: None):
         """Test prompt_preferred_language cancellation with 'no'."""
         from jiuwenclaw.common.utils import prompt_preferred_language
 
@@ -135,7 +145,7 @@ class TestPromptPreferredLanguage:
         assert result is None
 
     @staticmethod
-    def test_prompt_cancel_with_n(monkeypatch: pytest.MonkeyPatch):
+    def test_prompt_cancel_with_n(monkeypatch: pytest.MonkeyPatch, interactive_mode: None):
         """Test prompt_preferred_language cancellation with 'n'."""
         from jiuwenclaw.common.utils import prompt_preferred_language
 
@@ -144,7 +154,7 @@ class TestPromptPreferredLanguage:
         assert result is None
 
     @staticmethod
-    def test_prompt_cancel_with_q(monkeypatch: pytest.MonkeyPatch):
+    def test_prompt_cancel_with_q(monkeypatch: pytest.MonkeyPatch, interactive_mode: None):
         """Test prompt_preferred_language cancellation with 'q'."""
         from jiuwenclaw.common.utils import prompt_preferred_language
 
@@ -153,7 +163,11 @@ class TestPromptPreferredLanguage:
         assert result is None
 
     @staticmethod
-    def test_prompt_invalid_input_returns_none(monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture):
+    def test_prompt_invalid_input_returns_none(
+        monkeypatch: pytest.MonkeyPatch,
+        interactive_mode: None,
+        capsys: pytest.CaptureFixture,
+    ):
         """Test prompt_preferred_language with invalid input."""
         from jiuwenclaw.common.utils import prompt_preferred_language
 

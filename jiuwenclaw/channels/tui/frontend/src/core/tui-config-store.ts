@@ -16,7 +16,12 @@ export interface StatusLineSetting {
 export interface TuiConfig {
   theme?: ThemeName;
   accentColor?: AccentColorName;
-  trustedDirs?: string[];
+  /**
+   * Project-scoped trusted directories.
+   * Key = normalized project cwd path, value = list of trusted dir paths for that project.
+   * Legacy flat array (string[]) is migrated on first load.
+   */
+  trustedDirs?: Record<string, string[]> | string[];
   statusLine?: StatusLineSetting;
 }
 

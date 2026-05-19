@@ -54,6 +54,8 @@ import {
   setTrustedDir,
   removeTrustedDir,
   clearTrustedDirs,
+  setCurrentProjectDir,
+  getCurrentProjectDir,
 } from "./core/tui-trusted-dirs-store.js";
 import { loadTuiConfig, type StatusLineSetting } from "./core/tui-config-store.js";
 import { execFile } from "node:child_process";
@@ -535,6 +537,8 @@ export class CliPiAppState {
       setTrustedDir: setTrustedDir,
       removeTrustedDir: removeTrustedDir,
       clearTrustedDirs: clearTrustedDirs,
+      setCurrentProjectDir: setCurrentProjectDir,
+      getCurrentProjectDir: getCurrentProjectDir,
       getWorkspaceDir: () => getTrustedDirs()[0] || process.cwd(),
       enterConfigEditor: undefined, // AppScreen injects the real handler when executing slash commands.
       setInput: this._setInputRef ?? undefined,

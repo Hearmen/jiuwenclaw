@@ -43,7 +43,7 @@ import type { ConfigItemSchema } from "../core/commands/builtins/config.js";
 import type { McpListItem, McpListPayload } from "../core/commands/builtins/mcp.js";
 import { buildModeAutocompleteItems } from "../core/commands/builtins/mode.js";
 import { isTeamMode } from "../core/modes.js";
-import { addTrustedDir, getTrustedDirs, isTrustedDir } from "../core/tui-trusted-dirs-store.js";
+import { addTrustedDir, getTrustedDirs, isTrustedDir, setCurrentProjectDir } from "../core/tui-trusted-dirs-store.js";
 import { handleAppScreenKeyInput } from "./keymap.js";
 import { buildAppScreenLines } from "./screen-layout.js";
 import {
@@ -549,6 +549,8 @@ export class AppScreen implements Component, Focusable {
       this.editor.setText(text);
     });
     this.state.getInputValueRef(() => this.editor.getText());
+    // Initialize project scope from the user's actual cwd
+    setCurrentProjectDir(process.cwd());
     // Initialize startup prompt for workspace trust
     this.initStartupPrompt();
   }

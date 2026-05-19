@@ -12,7 +12,13 @@ function showAllTrustedPaths(ctx: CommandContext): void {
     value: "~/.jiuwenswarm/agent/workspace",
   });
 
-  // Show trusted directories
+  // Show current project scope (always resolved absolute path)
+  items.push({
+    label: "project scope",
+    value: ctx.getCurrentProjectDir(),
+  });
+
+  // Show trusted directories for this project only
   if (trustedDirs.length > 0) {
     trustedDirs.forEach((dir, index) => {
       items.push({
@@ -28,39 +34,12 @@ function showAllTrustedPaths(ctx: CommandContext): void {
   }
 
   ctx.addItem(
-    addInfo(ctx.sessionId, "Trusted paths for file operations", "c", {
+    addInfo(ctx.sessionId, "Trusted paths for current project", "c", {
       view: "kv",
       title: "Trusted Paths",
       items,
     }),
   );
-}
-
-/**
- * Ask user for Yes/No confirmation.
- * @returns true if user selected Yes, false if No or cancelled
- */
-async function askYesNo(
-  ctx: CommandContext,
-  header: string,
-  question: string,
-  yesLabel: string,
-  noLabel: string,
-): Promise<boolean> {
-  const answers = await ctx.askQuestions(
-    [
-      {
-        header,
-        question,
-        options: [{ label: yesLabel }, { label: noLabel }],
-      },
-    ],
-    "local_command",
-  );
-  const answer = answers[0];
-  if (!answer) return false;
-  const selected = answer.selected_options[0] ?? "";
-  return selected === yesLabel;
 }
 
 export function createWorkspaceCommand(): SlashCommand {
@@ -128,65 +107,56 @@ export function createWorkspaceCommand(): SlashCommand {
       },
       {
         name: "set",
-        description: "Reset trusted dirs and set a single path",
+        description: "Switch project scope to a new directory",
         usage: "/workspace set <path>",
         kind: CommandKind.BUILT_IN,
         takesArgs: true,
         action: async (ctx, args) => {
-          const directoryPath = args.trim();
-          if (!directoryPath) {
+          const rawPath = args.trim();
+          if (!rawPath) {
             ctx.addItem(addError(ctx.sessionId, "usage: /workspace set <path>"));
             return;
           }
 
           // Validate path without modifying state
-          const result = ctx.validateDirPath(directoryPath);
+          const result = ctx.validateDirPath(rawPath);
           if (result === "not_found") {
-            ctx.addItem(addError(ctx.sessionId, `Path does not exist: ${directoryPath}`));
+            ctx.addItem(addError(ctx.sessionId, `Path does not exist: ${rawPath}`));
             return;
           }
           if (result === "invalid") {
-            ctx.addItem(addError(ctx.sessionId, `Path is not a directory: ${directoryPath}`));
+            ctx.addItem(addError(ctx.sessionId, `Path is not a directory: ${rawPath}`));
             return;
           }
           if (result === "no_access") {
-            ctx.addItem(addError(ctx.sessionId, `Permission denied: cannot access directory ${directoryPath}`));
+            ctx.addItem(addError(ctx.sessionId, `Permission denied: cannot access directory ${rawPath}`));
             return;
           }
 
-          // If trusted dirs already has content, ask for confirmation
-          const currentDirs = ctx.getTrustedDirs();
-          if (currentDirs.length > 0) {
-            const confirmed = await askYesNo(
-              ctx,
-              "Confirm Reset",
-              `This will clear all existing trusted directories and set "${directoryPath}" as the only trusted path.\nCurrent trusted dirs will be removed: ${currentDirs.join(", ")}`,
-              "Yes, reset and set",
-              "No, keep current",
-            );
-            if (!confirmed) {
-              ctx.addItem(addInfo(ctx.sessionId, "Operation cancelled. Current trusted dirs unchanged.", "c"));
-              return;
-            }
-          }
-
-          // Execute the set operation
-          ctx.setTrustedDir(directoryPath);
+          // Switch project scope to the new directory (absolute path)
+          ctx.setCurrentProjectDir(rawPath);
+          // Add the new directory itself as a trusted dir for this project
+          ctx.addTrustedDir(rawPath);
           // Sync to server-side permissions
           try {
             ctx.sendEventOnly("command.add_dir", {
-              path: directoryPath,
+              path: ctx.getCurrentProjectDir(),
               remember: true
             });
           } catch (error) {
-            // Ignore sync errors, still set locally
             console.warn("Failed to sync trusted directory to server:", error);
           }
+
+          const projectDir = ctx.getCurrentProjectDir();
+          const finalDirs = ctx.getTrustedDirs();
           ctx.addItem(
-            addInfo(ctx.sessionId, `Trusted directory set: ${directoryPath}`, "c", {
+            addInfo(ctx.sessionId, `Project scope switched: ${projectDir}`, "c", {
               view: "kv",
               title: "Set Trusted Dir",
-              items: [{ label: "path", value: directoryPath }],
+              items: [
+                { label: "project scope", value: projectDir },
+                ...finalDirs.map((dir, i) => ({ label: `trusted[${i}]`, value: dir })),
+              ],
             }),
           );
         },

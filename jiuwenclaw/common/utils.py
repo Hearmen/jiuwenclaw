@@ -384,8 +384,21 @@ def _resolve_preferred_language(
     return "zh"
 
 
+def _is_interactive() -> bool:
+    """Check if stdin is connected to a terminal (interactive mode)."""
+    try:
+        return sys.stdin.isatty()
+    except Exception:
+        return False
+
+
 def prompt_preferred_language() -> Optional[Literal["zh", "en"]]:
-    """交互询问语言偏好。仅接受明确选项；空输入、不在列表或取消用语 → 返回 None（调用方应终止 init）。"""
+    """交互询问语言偏好。仅接受明确选项；空输入、不在列表或取消用语 → 返回 None（调用方应终止 init）。
+    非交互环境（stdin非TTY）默认返回 'zh'。
+    """
+    if not _is_interactive():
+        print("[jiuwenclaw-init] Non-interactive mode: using default language 'zh'")
+        return "zh"
     print()
     print("[jiuwenswarm-init] ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
     print("[jiuwenswarm-init]  请选择默认语言 / Choose your default language")
@@ -953,13 +966,16 @@ def init_user_workspace(
             )
             print("[jiuwenswarm-init] WARNING: This will delete all historical configuration and memory information.")
             print("[jiuwenswarm-init] This action cannot be undone.")
-            confirmation = input(
-                "[jiuwenswarm-init] Do you want to confirm reinitialization? (yes/no): "
-            ).strip().lower()
+            if _is_interactive():
+                confirmation = input(
+                    "[jiuwenswarm-init] Do you want to confirm reinitialization? (yes/no): "
+                ).strip().lower()
 
-            if confirmation not in ("yes", "y"):
-                print("[jiuwenswarm-init] Initialization cancelled. Exiting.")
-                return "cancelled"
+                if confirmation not in ("yes", "y"):
+                    print("[jiuwenswarm-init] Initialization cancelled. Exiting.")
+                    return "cancelled"
+            else:
+                print("[jiuwenswarm-init] Non-interactive mode: proceeding with reinitialization.")
 
             # Close all log handlers to release file locks before deleting
             _close_log_handlers()
@@ -978,11 +994,14 @@ def init_user_workspace(
                 "existing files will be preserved and merged with template."
             )
             print("[jiuwenswarm-init] This action cannot be undone.")
-            confirmation = input("[jiuwenswarm-init] Do you want to continue? (yes/no): ").strip().lower()
+            if _is_interactive():
+                confirmation = input("[jiuwenswarm-init] Do you want to continue? (yes/no): ").strip().lower()
 
-            if confirmation not in ("yes", "y"):
-                print("[jiuwenswarm-init] Initialization cancelled. Exiting.")
-                return "cancelled"
+                if confirmation not in ("yes", "y"):
+                    print("[jiuwenswarm-init] Initialization cancelled. Exiting.")
+                    return "cancelled"
+            else:
+                print("[jiuwenswarm-init] Non-interactive mode: proceeding with merge initialization.")
 
     lang = prompt_preferred_language()
     if lang is None:
