@@ -1107,7 +1107,6 @@
     "title": "应用更新",
     "subtitle": "检查新版本并在 Windows 上下载静默安装包。",
     "configTitle": "更新源配置",
-    "configSubtitle": "支持直接切换到本地测试地址，例如 http://127.0.0.1:8000/latest.json",
     "checkNow": "检查更新",
     "checking": "检查中...",
     "downloadAndInstall": "下载更新",
@@ -1145,10 +1144,8 @@
     },
     "fields": {
       "enabled": "启用更新",
-      "timeoutSeconds": "超时秒数",
-      "releaseApiUrl": "更新地址",
-      "assetPattern": "安装包命名规则",
-      "sha256Pattern": "校验文件命名规则"
+      "releaseApiType": "更新源",
+      "releaseApiUrl": "更新地址"
     }
   },
   "version": "版本 {{version}}",

@@ -750,7 +750,7 @@ async def _run(
     from jiuwenclaw.extensions.manager import ExtensionManager
     from jiuwenclaw.extensions.registry import ExtensionRegistry
     from jiuwenclaw.common.schema.message import Message
-    from jiuwenclaw.common.updater import WindowsUpdaterService
+    from jiuwenclaw.common.updater import UpdaterService
     from openjiuwen.core.runner import Runner
 
     def _do_restart() -> None:
@@ -862,7 +862,7 @@ async def _run(
 
     initial_channels_conf: dict = channels_cfg if isinstance(channels_cfg, dict) else {}
     channel_manager = ChannelManager(message_handler, config=initial_channels_conf)
-    updater_service = WindowsUpdaterService()
+    updater_service = UpdaterService()
 
     async def _on_config_saved(
             updated_env_keys: set[str] | None = None,

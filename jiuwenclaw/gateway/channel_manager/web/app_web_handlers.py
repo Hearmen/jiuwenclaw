@@ -39,7 +39,7 @@ from jiuwenclaw.common.config import (
     update_memory_forbidden_description_in_config,
     update_updater_in_config,
 )
-from jiuwenclaw.common.updater import WindowsUpdaterService
+from jiuwenclaw.common.updater import UpdaterService
 from jiuwenclaw.common.utils import (
     get_agent_sessions_dir,
     get_env_file,
@@ -379,7 +379,7 @@ class WebHandlersBindParams:
     on_config_saved: Any = None
     heartbeat_service: Any = None
     cron_controller: Any = None
-    updater_service: WindowsUpdaterService | None = None
+    updater_service: UpdaterService | None = None
 
 
 def _register_web_handlers(bind: WebHandlersBindParams) -> None:
@@ -981,22 +981,22 @@ def _register_web_handlers(bind: WebHandlersBindParams) -> None:
         await channel.send_response(ws, req_id, ok=True, payload={"channels": channels})
 
     async def _updater_get_status(ws, req_id, params, session_id):
-        service = updater_service or WindowsUpdaterService()
+        service = updater_service or UpdaterService()
         await channel.send_response(ws, req_id, ok=True, payload=service.get_status())
 
     async def _updater_check(ws, req_id, params, session_id):
-        service = updater_service or WindowsUpdaterService()
+        service = updater_service or UpdaterService()
         manual = bool((params or {}).get("manual", False)) if isinstance(params, dict) else False
         payload = await asyncio.to_thread(service.check, manual)
         await channel.send_response(ws, req_id, ok=True, payload=payload)
 
     async def _updater_download(ws, req_id, params, session_id):
-        service = updater_service or WindowsUpdaterService()
+        service = updater_service or UpdaterService()
         payload = service.start_download()
         await channel.send_response(ws, req_id, ok=True, payload=payload)
 
     async def _updater_get_conf(ws, req_id, params, session_id):
-        service = updater_service or WindowsUpdaterService()
+        service = updater_service or UpdaterService()
         await channel.send_response(ws, req_id, ok=True, payload=service.get_runtime_config())
 
     async def _updater_set_conf(ws, req_id, params, session_id):
@@ -1007,7 +1007,12 @@ def _register_web_handlers(bind: WebHandlersBindParams) -> None:
         updates: dict[str, Any] = {}
         if "enabled" in params:
             updates["enabled"] = bool(params.get("enabled"))
-        for key in ("repo_owner", "repo_name", "release_api_url", "asset_name_pattern", "sha256_name_pattern"):
+        for key in ("repo_owner", "repo_name", "release_api_url", "asset_name_pattern",
+                "sha256_name_pattern", "release_api_type", "pypi_mirror"):
+            if key in params:
+                updates[key] = str(params.get(key) or "").strip()
+        for plat in ("windows", "macos", "linux"):
+            key = f"asset_name_pattern_{plat}"
             if key in params:
                 updates[key] = str(params.get(key) or "").strip()
         if "timeout_seconds" in params:
@@ -1026,7 +1031,7 @@ def _register_web_handlers(bind: WebHandlersBindParams) -> None:
                                         error=str(exc), code="INTERNAL_ERROR")
             return
 
-        service = updater_service or WindowsUpdaterService()
+        service = updater_service or UpdaterService()
         await channel.send_response(ws, req_id, ok=True, payload=service.get_runtime_config())
 
     async def _session_list(ws, req_id, params, session_id):

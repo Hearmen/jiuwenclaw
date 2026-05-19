@@ -624,12 +624,17 @@ browser:
 
 updater:
   enabled: true
+  # 桌面端版本检查源类型：gitcode / github
+  desktop_release_api_type: "gitcode"
   repo_owner: openJiuwen
-  repo_name: jiuwenclaw
+  repo_name: jiuwenswarm 
   release_api_url: ""
-  asset_name_pattern: "JiuwenSwarm-setup-{version}.exe"
+  asset_name_pattern_windows: "JiuwenSwarm-setup-{version}.exe"
+  asset_name_pattern_macos: "JiuwenSwarm-{version}.dmg"
+  asset_name_pattern_linux: "JiuwenSwarm-{version}.tar.gz"
   sha256_name_pattern: "JiuwenSwarm-setup-{version}.exe.sha256"
   timeout_seconds: 20
+  pypi_mirror: "https://mirrors.aliyun.com/pypi"
 
 extensions:
   # 扩展包搜索目录（字符串），用 ';' 分割多个目录：

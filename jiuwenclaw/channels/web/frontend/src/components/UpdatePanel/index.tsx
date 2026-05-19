@@ -11,6 +11,7 @@ interface UpdateStatusPayload {
   latest_version?: unknown;
   state?: unknown;
   has_update?: unknown;
+  matched_asset?: unknown;
   release_notes?: unknown;
   published_at?: unknown;
   downloaded_path?: unknown;
@@ -22,10 +23,8 @@ interface UpdateStatusPayload {
 
 interface UpdaterConfigPayload {
   enabled?: unknown;
+  release_api_type?: unknown;
   release_api_url?: unknown;
-  asset_name_pattern?: unknown;
-  sha256_name_pattern?: unknown;
-  timeout_seconds?: unknown;
 }
 
 function normalizeString(value: unknown): string {
@@ -156,9 +155,6 @@ export function UpdatePanel({ isConnected, request }: UpdatePanelProps) {
       const payload = await request<UpdaterConfigPayload>('updater.set_conf', {
         enabled: normalizeBoolean(config.enabled),
         release_api_url: normalizeString(config.release_api_url),
-        asset_name_pattern: normalizeString(config.asset_name_pattern),
-        sha256_name_pattern: normalizeString(config.sha256_name_pattern),
-        timeout_seconds: normalizeNumber(config.timeout_seconds),
       });
       setConfig(payload);
     } catch (saveError) {
@@ -243,6 +239,9 @@ export function UpdatePanel({ isConnected, request }: UpdatePanelProps) {
           <div className="rounded-xl border border-border bg-panel-strong/70 px-4 py-3">
             <div className="text-xs uppercase tracking-wide text-text-muted">{t('updatePanel.latestVersion')}</div>
             <div className="mt-2 font-semibold text-text">{hasUpdate ? latestVersion : '-'}</div>
+            {hasUpdate && normalizeString(status?.matched_asset) && (
+              <div className="mt-1 text-xs font-mono text-text-muted">{normalizeString(status?.matched_asset)}</div>
+            )}
           </div>
           <div className="rounded-xl border border-border bg-panel-strong/70 px-4 py-3">
             <div className="text-xs uppercase tracking-wide text-text-muted">{t('updatePanel.state')}</div>
@@ -283,7 +282,6 @@ export function UpdatePanel({ isConnected, request }: UpdatePanelProps) {
           <div className="flex items-center justify-between gap-4">
             <div>
               <div className="text-sm font-semibold text-text">{t('updatePanel.configTitle')}</div>
-              <p className="mt-1 text-sm text-text-muted">{t('updatePanel.configSubtitle')}</p>
             </div>
             <button onClick={() => void handleSaveConfig()} className="btn secondary" disabled={savingConfig || !config}>
               {savingConfig ? t('common.saving') : t('common.save')}
@@ -304,12 +302,10 @@ export function UpdatePanel({ isConnected, request }: UpdatePanelProps) {
             </label>
 
             <label className="card !p-4">
-              <div className="text-xs uppercase tracking-wide text-text-muted">{t('updatePanel.fields.timeoutSeconds')}</div>
-              <input
-                className="input mt-3"
-                value={String(normalizeNumber(config?.timeout_seconds) || 20)}
-                onChange={(event) => handleConfigChange('timeout_seconds', event.target.value)}
-              />
+              <div className="text-xs uppercase tracking-wide text-text-muted">{t('updatePanel.fields.releaseApiType')}</div>
+              <div className="mt-3 text-sm font-mono text-text">
+                {normalizeString(config?.release_api_type) || 'gitcode'}
+              </div>
             </label>
 
             <label className="card !p-4 md:col-span-2">
@@ -317,26 +313,7 @@ export function UpdatePanel({ isConnected, request }: UpdatePanelProps) {
               <input
                 className="input mt-3 w-full"
                 value={normalizeString(config?.release_api_url)}
-                onChange={(event) => handleConfigChange('release_api_url', event.target.value)}
-                placeholder="http://127.0.0.1:8000/latest.json"
-              />
-            </label>
-
-            <label className="card !p-4">
-              <div className="text-xs uppercase tracking-wide text-text-muted">{t('updatePanel.fields.assetPattern')}</div>
-              <input
-                className="input mt-3 w-full"
-                value={normalizeString(config?.asset_name_pattern)}
-                onChange={(event) => handleConfigChange('asset_name_pattern', event.target.value)}
-              />
-            </label>
-
-            <label className="card !p-4">
-              <div className="text-xs uppercase tracking-wide text-text-muted">{t('updatePanel.fields.sha256Pattern')}</div>
-              <input
-                className="input mt-3 w-full"
-                value={normalizeString(config?.sha256_name_pattern)}
-                onChange={(event) => handleConfigChange('sha256_name_pattern', event.target.value)}
+                disabled
               />
             </label>
           </div>

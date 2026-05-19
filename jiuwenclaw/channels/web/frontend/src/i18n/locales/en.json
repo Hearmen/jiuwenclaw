@@ -1107,7 +1107,6 @@
     "title": "App Updates",
     "subtitle": "Check for new versions and download the silent Windows installer.",
     "configTitle": "Update Source Config",
-    "configSubtitle": "You can switch to a local test endpoint such as http://127.0.0.1:8000/latest.json.",
     "checkNow": "Check for updates",
     "checking": "Checking...",
     "downloadAndInstall": "Download update",
@@ -1145,10 +1144,8 @@
     },
     "fields": {
       "enabled": "Enable updater",
-      "timeoutSeconds": "Timeout seconds",
-      "releaseApiUrl": "Release API URL",
-      "assetPattern": "Installer asset pattern",
-      "sha256Pattern": "SHA256 asset pattern"
+      "releaseApiType": "Update source",
+      "releaseApiUrl": "Release API URL"
     }
   },
   "version": "Version {{version}}",
