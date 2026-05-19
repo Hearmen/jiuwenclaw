@@ -410,8 +410,11 @@ function recordTimestampIso(record: Record<string, unknown>): string {
 }
 
 function buildEventPayloadForRecord(record: Record<string, unknown>): Record<string, unknown> {
+  // 历史记录中 tool_call/tool_result 可能直接在 record 顶层，也可能在 event_payload 里
   const eventPayload = asRecord(record.event_payload);
   const base = eventPayload ? { ...eventPayload } : {};
+
+  // 复制顶层字段（如果有）
   if (typeof record.content === "string" && typeof base.content !== "string") {
     base.content = record.content;
   }
@@ -420,6 +423,23 @@ function buildEventPayloadForRecord(record: Record<string, unknown>): Record<str
   }
   if (typeof record.session_id === "string" && typeof base.session_id !== "string") {
     base.session_id = record.session_id;
+  }
+  // 关键：历史记录中 tool_call 和 tool_result 直接在 record 顶层
+  if (record.tool_call && typeof record.tool_call === "object" && !base.tool_call) {
+    base.tool_call = record.tool_call;
+  }
+  if (record.tool_result && typeof record.tool_result === "object" && !base.tool_result) {
+    base.tool_result = record.tool_result;
+  }
+  // tool_name / tool_call_id 也可能在顶层（tool_result 场景）
+  if (typeof record.tool_name === "string" && typeof base.tool_name !== "string") {
+    base.tool_name = record.tool_name;
+  }
+  if (typeof record.tool_call_id === "string" && typeof base.tool_call_id !== "string") {
+    base.tool_call_id = record.tool_call_id;
+  }
+  if (typeof record.result === "string" && typeof base.result !== "string") {
+    base.result = record.result;
   }
   return base;
 }
@@ -757,4 +777,156 @@ export function stringifyJson(value: JsonValue): string {
   } catch {
     return String(value);
   }
+}
+
+/**
+ * 合并历史恢复产生的分散 tool_group 条目。
+ *
+ * 历史消息中 `chat.tool_call` 和 `chat.tool_result` 分别解析为独立的 tool_group 条目，
+ * 需要按 callId 将它们合并为一个完整的工具调用（call 提供 arguments，result 提供 status/result）。
+ *
+ * 处理情况：
+ * - call + result：合并，result 信息覆盖 call
+ * - 只有 call：保持 running 状态（可能被中断）
+ * - 只有 result：保持独立（孤儿结果）
+ */
+export function coalesceToolGroupEntries(entries: HistoryItem[]): HistoryItem[] {
+  // 收集所有 tool_group 条目及其位置
+  const toolGroupIndices: number[] = [];
+  const toolGroups: Extract<HistoryItem, { kind: "tool_group" }>[] = [];
+
+  for (let i = 0; i < entries.length; i++) {
+    const entry = entries[i];
+    if (entry.kind === "tool_group") {
+      toolGroupIndices.push(i);
+      toolGroups.push(entry);
+    }
+  }
+
+  if (toolGroups.length === 0) {
+    return entries;
+  }
+
+  // 按 callId 分组收集工具信息
+  const toolsByCallId = new Map<
+    string,
+    {
+      calls: { tool: ToolCallDisplay; entryIndex: number }[];
+      results: { tool: ToolCallDisplay; entryIndex: number }[];
+    }
+  >();
+
+  for (let entryIndex = 0; entryIndex < toolGroups.length; entryIndex++) {
+    const group = toolGroups[entryIndex];
+    for (const tool of group.tools) {
+      const callId = tool.callId;
+      if (!callId) continue;
+
+      let bucket = toolsByCallId.get(callId);
+      if (!bucket) {
+        bucket = { calls: [], results: [] };
+        toolsByCallId.set(callId, bucket);
+      }
+
+      // running 状态无 result 表示是 call，否则是 result
+      if (tool.status === "running" && !tool.result) {
+        bucket.calls.push({ tool, entryIndex });
+      } else {
+        bucket.results.push({ tool, entryIndex });
+      }
+    }
+  }
+
+  // 构建合并后的工具映射（entryIndex -> merged tools）
+  const mergedToolsByEntryIndex = new Map<number, (ToolCallDisplay | null)[]>();
+  const usedCallIds = new Set<string>();
+
+  for (const [callId, bucket] of toolsByCallId) {
+    if (usedCallIds.has(callId)) continue;
+    usedCallIds.add(callId);
+
+    // 取最早的 call 和最早的 result 进行合并
+    const earliestCall = bucket.calls.sort((a, b) => a.entryIndex - b.entryIndex)[0];
+    const earliestResult = bucket.results.sort((a, b) => a.entryIndex - b.entryIndex)[0];
+
+    if (earliestCall && earliestResult) {
+      // 合并：call 提供 arguments，result 提供其他信息
+      // 注意：result 通常有 tool_name，call 可能没有 name，所以优先使用 result 的 name
+      const effectiveName = earliestResult.tool.name !== "unknown"
+        ? earliestResult.tool.name
+        : earliestCall.tool.name;
+      const mergedTool: ToolCallDisplay = {
+        ...earliestResult.tool,
+        callId,
+        name: effectiveName,
+        arguments: earliestCall.tool.arguments ?? earliestResult.tool.arguments,
+        description: earliestCall.tool.description ?? earliestResult.tool.description,
+        formattedArgs: earliestCall.tool.formattedArgs ?? earliestResult.tool.formattedArgs,
+      };
+      // 将合并结果放入最早条目的位置
+      addToMergedTools(mergedToolsByEntryIndex, earliestCall.entryIndex, mergedTool);
+      // result 条目位置标记为空（后续将被移除）
+      if (earliestResult.entryIndex !== earliestCall.entryIndex) {
+        addToMergedTools(mergedToolsByEntryIndex, earliestResult.entryIndex, null);
+      }
+    } else if (earliestCall) {
+      // 只有 call，保持 running 状态
+      addToMergedTools(mergedToolsByEntryIndex, earliestCall.entryIndex, earliestCall.tool);
+    } else if (earliestResult) {
+      // 只有 result（孤儿），保持独立
+      addToMergedTools(mergedToolsByEntryIndex, earliestResult.entryIndex, earliestResult.tool);
+    }
+  }
+
+  // 重建条目列表
+  const result: HistoryItem[] = [];
+  for (let i = 0; i < entries.length; i++) {
+    const entry = entries[i];
+    if (entry.kind !== "tool_group") {
+      result.push(entry);
+      continue;
+    }
+
+    const toolGroupIndex = toolGroupIndices.indexOf(i);
+    if (toolGroupIndex === -1) {
+      result.push(entry);
+      continue;
+    }
+
+    const mergedTools = mergedToolsByEntryIndex.get(toolGroupIndex);
+    if (!mergedTools) {
+      // 未参与合并的工具组，保持原样
+      result.push(entry);
+      continue;
+    }
+
+    // 过滤掉 null（已被合并移除）
+    const validTools = mergedTools.filter((t): t is ToolCallDisplay => t !== null);
+    if (validTools.length === 0) {
+      // 整个条目已被合并移除，跳过
+      continue;
+    }
+
+    // 用合并后的工具重建条目
+    const originalGroup = toolGroups[toolGroupIndex];
+    result.push({
+      ...originalGroup,
+      tools: validTools,
+    });
+  }
+
+  return result;
+}
+
+function addToMergedTools(
+  map: Map<number, (ToolCallDisplay | null)[]>,
+  entryIndex: number,
+  tool: ToolCallDisplay | null,
+): void {
+  let arr = map.get(entryIndex);
+  if (!arr) {
+    arr = [];
+    map.set(entryIndex, arr);
+  }
+  arr.push(tool);
 }

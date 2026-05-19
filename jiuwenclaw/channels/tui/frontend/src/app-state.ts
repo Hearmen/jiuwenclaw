@@ -9,6 +9,7 @@ import {
 import {
   applyToolResult,
   coalesceAssistantHistoryEntries,
+  coalesceToolGroupEntries,
   createToolCallDisplay,
   mergeHistoryMessagesForRestore,
   parseHistoryFrame,
@@ -1110,18 +1111,20 @@ readonly request = async <T = Record<string, unknown>>(
       .map((item) => item.entry);
 
     const restored = coalesceAssistantHistoryEntries(ordered);
+    // 合并分散的 tool_group 条目（chat.tool_call + chat.tool_result）
+    const restoredWithTools = coalesceToolGroupEntries(restored);
 
     // Merge: keep existing frontend entries that aren't in the restored set,
     // so that live entries accumulated during streaming aren't lost on reconnection.
     const restoredById = new Map<string, HistoryItem>();
-    for (const entry of restored) {
+    for (const entry of restoredWithTools) {
       restoredById.set(entry.id, entry);
     }
 
     // Build merged set: restored entries + frontend-only entries (not in restored).
     // For entries present in both, prefer the restored version (server-authoritative).
     const merged: HistoryItem[] = [];
-    for (const entry of restored) {
+    for (const entry of restoredWithTools) {
       merged.push(entry);
     }
     for (const entry of this.entries) {
