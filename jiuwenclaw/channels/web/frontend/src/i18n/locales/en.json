@@ -694,6 +694,7 @@
     },
     "targets": {
       "web": "Web (web)",
+      "tui": "Terminal (tui)",
       "xiaoyi": "Xiaoyi (xiaoyi)",
       "feishu": "Lark (feishu)",
       "whatsapp": "WhatsApp (whatsapp)",

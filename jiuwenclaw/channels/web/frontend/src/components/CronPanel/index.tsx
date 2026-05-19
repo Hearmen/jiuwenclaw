@@ -300,6 +300,7 @@ export default function CronPanel({ sessionId }: CronPanelProps) {
   // 目标选项 - 动态根据启用状态
   const targetOptions = useMemo(() => [
     { value: 'web', label: t('cron.targets.web'), disabled: !enabledChannels.has('web') },
+    { value: 'tui', label: t('cron.targets.tui'), disabled: !enabledChannels.has('tui') },
     { value: 'xiaoyi', label: t('cron.targets.xiaoyi'), disabled: !enabledChannels.has('xiaoyi') },
     { value: 'feishu', label: t('cron.targets.feishu'), disabled: !enabledChannels.has('feishu') },
     { value: 'whatsapp', label: t('cron.targets.whatsapp'), disabled: !enabledChannels.has('whatsapp') },

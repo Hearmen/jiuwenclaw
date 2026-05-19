@@ -694,6 +694,7 @@
     },
     "targets": {
       "web": "网页 (web)",
+      "tui": "终端 (tui)",
       "xiaoyi": "小艺 (xiaoyi)",
       "feishu": "飞书 (feishu)",
       "whatsapp": "WhatsApp (whatsapp)",

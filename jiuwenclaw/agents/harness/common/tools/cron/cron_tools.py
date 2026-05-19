@@ -9,6 +9,7 @@ from typing import Any
 from zoneinfo import ZoneInfo
 
 from openjiuwen.core.foundation.tool import LocalFunction, Tool, ToolCard
+from jiuwenclaw.gateway.cron.cron_expr import normalize_cron_expr
 from jiuwenclaw.gateway.cron.store import CronJobStore
 from jiuwenclaw.gateway.cron.scheduler import _cron_next_push_dt, CronSchedulerService
 from jiuwenclaw.gateway.cron.models import (
@@ -182,7 +183,9 @@ class CronTools:
             return CronTargetChannel.WHATSAPP.value
         if channel.startswith("wechat"):
             return CronTargetChannel.WECHAT.value
-        
+        if channel.startswith("tui"):
+            return CronTargetChannel.TUI.value
+
         return CronTargetChannel.WEB.value
 
     def _resolve_channel_id(self) -> str:
@@ -228,6 +231,7 @@ class CronTools:
         normalized = dict(params or {})
         normalized.pop("session_id", None)
         normalized["targets"] = self._normalize_targets_param(normalized.get("targets"))
+        normalized["cron_expr"] = normalize_cron_expr(str(normalized.get("cron_expr") or "").strip())
         targets_str = normalized["targets"]
         logger.info(
             "[CronTools] create_job: route(channel=%s session=%s request=%s) input.targets=%s normalized.targets=%s",
@@ -269,6 +273,8 @@ class CronTools:
     async def update_job(self, job_id: str, patch: dict[str, Any]) -> Any:
         normalized_patch = dict(patch or {})
         normalized_patch.pop("session_id", None)
+        if "cron_expr" in normalized_patch:
+            normalized_patch["cron_expr"] = normalize_cron_expr(str(normalized_patch["cron_expr"]).strip())
         if "targets" in normalized_patch:
             normalized_patch["targets"] = self._normalize_targets_param(normalized_patch.get("targets"))
             t = str(normalized_patch.get("targets") or "").strip()

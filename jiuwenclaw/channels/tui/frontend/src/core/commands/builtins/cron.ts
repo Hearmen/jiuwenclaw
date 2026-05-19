@@ -21,7 +21,7 @@ interface CronJobListPayload {
   jobs: CronJobPayload[];
 }
 
-const TARGET_CHANNELS = ["web", "feishu", "whatsapp", "wecom", "xiaoyi", "wechat"];
+const TARGET_CHANNELS = ["tui", "web", "feishu", "whatsapp", "wecom", "xiaoyi", "wechat"];
 const MODES = ["agent", "plan"];
 
 export function createCronCommand(): SlashCommand {
@@ -32,7 +32,7 @@ export function createCronCommand(): SlashCommand {
     usage: "/cron [list|add|update|delete|toggle|run|preview]",
     example:
       '/cron list\n' +
-      '/cron add name=晨报 cron_expr="0 0 9 * * * *" description="生成简短的中文健康打卡提醒" targets=web\n' +
+      '/cron add name=晨报 cron_expr="0 9 * * *" description="生成简短的中文健康打卡提醒" targets=tui\n' +
       '/cron update <id> description="新的任务内容"\n' +
       "/cron delete <id>\n" +
       "/cron toggle <id> on|off\n" +
@@ -54,7 +54,7 @@ export function createCronCommand(): SlashCommand {
         name: "add",
         description: "创建定时任务",
         usage: "/cron add name=... cron_expr=\"...\" description=\"...\"",
-        argGuide: "name=任务名 cron_expr=\"时间表达式\" description=\"让Agent做什么\" targets=web",
+        argGuide: "name=任务名 cron_expr=\"时间表达式(5字段或7字段)\" description=\"让Agent做什么\" targets=tui",
         kind: CommandKind.BUILT_IN,
         takesArgs: true,
         action: async (ctx, args) => _handleAdd(ctx, `add ${args}`),
@@ -207,13 +207,13 @@ async function _handleAdd(ctx: CommandContext, raw: string): Promise<void> {
     ctx.addItem(
       addError(
         ctx.sessionId,
-        `缺少必填字段: ${missing.join(", ")}。必填: name(任务名)、cron_expr(时间)、description(让Agent做什么)。示例: /cron add name=晨报 cron_expr="0 0 9 * * *" description="生成健康打卡提醒" targets=web`,
+        `缺少必填字段: ${missing.join(", ")}。必填: name(任务名)、cron_expr(时间)、description(让Agent做什么)。示例: /cron add name=晨报 cron_expr="0 9 * * *" description="生成健康打卡提醒" targets=tui`,
       ),
     );
     return;
   }
 
-  if (!kvPairs.targets) kvPairs.targets = "web";
+  if (!kvPairs.targets) kvPairs.targets = "tui";
   if (!kvPairs.timezone) kvPairs.timezone = "Asia/Shanghai";
   if (!kvPairs.mode) kvPairs.mode = "agent";
 

@@ -9,6 +9,7 @@ class CronTargetChannel(str, Enum):
     """推送频道枚举。"""
 
     WEB = "web"
+    TUI = "tui"
     FEISHU = "feishu"
     WHATSAPP = "whatsapp"
     WECOM = "wecom"

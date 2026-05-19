@@ -76,6 +76,18 @@ logger = logging.getLogger("jiuwenclaw.gateway")
 _PROMPT_IDLE_FINALIZE_SECONDS = 3.0
 
 
+def _build_event_frame(msg) -> dict[str, Any]:
+    event_name = "chat.final"
+    if msg.event_type is not None:
+        event_name = msg.event_type.value
+    if isinstance(msg.payload, dict):
+        payload = {**msg.payload}
+        payload.setdefault("session_id", msg.session_id)
+    else:
+        payload = {"session_id": msg.session_id, "content": str(msg.payload or "")}
+    return {"type": "event", "event": event_name, "payload": payload}
+
+
 def _normalize_gateway_message(msg):
     from jiuwenclaw.common.schema.message import Message, ReqMethod
 
@@ -257,6 +269,12 @@ class GatewayServer:
             return None
         return channel, scope
 
+    def _find_channel_clients(self, channel_id: str) -> list[Any]:
+        return [
+            client_ws for key, client_ws in self._session_to_client.items()
+            if isinstance(key, tuple) and key[0] == channel_id and not getattr(client_ws, "closed", False)
+        ]
+
     def on_message(self, callback) -> None:
         self._on_message_cb = callback
 
@@ -405,6 +423,28 @@ class GatewayServer:
                 if ws is None:
                     ws = self._session_to_client.get(session_key[1])
         if ws is None or bool(getattr(ws, "closed", False)):
+            if ws is None:
+                channel_id = getattr(msg, "channel_id", None)
+                if channel_id and channel_id != "acp" and msg.type != "res":
+                    clients = self._find_channel_clients(channel_id)
+                    if clients:
+                        frame = _build_event_frame(msg)
+                        data = json.dumps(frame, ensure_ascii=False)
+                        logger.info(
+                            "[GatewayServer] broadcast fallback: channel_id=%s clients=%d id=%s",
+                            channel_id, len(clients), getattr(msg, "id", None),
+                        )
+                        await asyncio.gather(
+                            *[c.send(data) for c in clients],
+                            return_exceptions=True,
+                        )
+                        return
+                logger.warning(
+                    "[GatewayServer] message dropped: no WebSocket client found for channel_id=%s session_id=%s id=%s",
+                    getattr(msg, "channel_id", None),
+                    getattr(msg, "session_id", None),
+                    getattr(msg, "id", None),
+                )
             return
 
         if getattr(msg, "channel_id", None) == "acp":
