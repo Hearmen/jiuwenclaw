@@ -111,6 +111,10 @@ from jiuwenclaw.agents.harness.common.rails.interrupt.interrupt_helpers import (
     build_permission_rail,
     convert_interactions_to_ask_user_question,
 )
+from jiuwenclaw.agents.harness.common.tools.todo_compat import (
+    CompatibleTodoModifyTool,
+    install_todo_modify_compat_patch,
+)
 from jiuwenclaw.agents.harness.common.prompt.prompt_builder import build_identity_prompt
 from jiuwenclaw.agents.harness.common.rails import (
     JiuClawStreamEventRail,
@@ -211,6 +215,8 @@ from jiuwenclaw.common.utils import (
 
 load_dotenv(dotenv_path=get_env_file(), override=True)
 reset_free_search_runtime_flags()
+TodoModifyTool = CompatibleTodoModifyTool
+install_todo_modify_compat_patch()
 
 _react_config = get_config().get("react", {})
 _sandbox_config = get_config().get("sandbox", {})

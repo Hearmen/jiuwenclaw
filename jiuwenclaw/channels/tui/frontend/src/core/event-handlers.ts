@@ -145,12 +145,7 @@ function _handleSwitchModeToolResult(
   const existingMode = delegate.getMode();
   let newMode: ClientMode | null = null;
   if (existingMode.startsWith("code.")) {
-    newMode =
-      subMode === "plan"
-        ? "code.plan"
-        : subMode === "team"
-          ? "code.team"
-          : "code.normal";
+    newMode = subMode === "plan" ? "code.plan" : subMode === "team" ? "code.team" : "code.normal";
   } else if (existingMode.startsWith("agent.")) {
     newMode = subMode === "plan" ? "agent.plan" : "agent.fast";
   }
@@ -608,22 +603,40 @@ function handleSubtaskUpdate(
   return true;
 }
 
+function normalizeTodoStatus(status: unknown): TodoItem["status"] | null {
+  if (status === "deleted" || status === "cancelled" || status === "canceled") {
+    return null;
+  }
+  if (status === "in_progress" || status === "completed") {
+    return status;
+  }
+  return "pending";
+}
+
+function isTodoPayloadItem(item: unknown): item is Record<string, unknown> {
+  return Boolean(item && typeof item === "object" && !Array.isArray(item));
+}
+
 function handleTodoUpdated(delegate: AppEventDelegate, payload: Record<string, unknown>): boolean {
   const todos = Array.isArray(payload.todos) ? payload.todos : [];
   delegate.setTodos(
     todos
-      .filter((item): item is TodoItem => Boolean(item && typeof item === "object"))
-      .map((item) => ({
-        id: typeof item.id === "string" ? item.id : "",
-        content: typeof item.content === "string" ? item.content : "",
-        activeForm: typeof item.activeForm === "string" ? item.activeForm : "",
-        status: (item.status === "in_progress" || item.status === "completed"
-          ? item.status
-          : "pending") as TodoItem["status"],
-        createdAt: typeof item.createdAt === "string" ? item.createdAt : new Date().toISOString(),
-        updatedAt: typeof item.updatedAt === "string" ? item.updatedAt : new Date().toISOString(),
-      }))
-      .filter((item) => item.id.length > 0),
+      .filter(isTodoPayloadItem)
+      .map((item): TodoItem | null => {
+        const status = normalizeTodoStatus(item.status);
+        if (status === null) {
+          return null;
+        }
+        return {
+          id: typeof item.id === "string" ? item.id : "",
+          content: typeof item.content === "string" ? item.content : "",
+          activeForm: typeof item.activeForm === "string" ? item.activeForm : "",
+          status,
+          createdAt: typeof item.createdAt === "string" ? item.createdAt : new Date().toISOString(),
+          updatedAt: typeof item.updatedAt === "string" ? item.updatedAt : new Date().toISOString(),
+        };
+      })
+      .filter((item): item is TodoItem => item !== null && item.id.length > 0),
   );
   return true;
 }

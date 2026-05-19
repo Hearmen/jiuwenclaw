@@ -127,6 +127,7 @@ class MessageHandler(ABC):
         self._stream_sessions: dict[str, str | None] = {}  # request_id -> session_id
         self._stream_metadata: dict[str, dict[str, Any] | None] = {}  # request_id -> request metadata
         self._stream_modes: dict[str, str] = {}  # request_id -> mode
+        self._stream_emits_processing_status: dict[str, bool] = {}  # request_id -> emits chat.processing_status
         self._pending_evolution_approval: dict[str, str] = {}  # session_id -> approval_request_id
         self._queued_supplement_input: dict[str, dict[str, Any]] = {}  # session_id -> queued supplement payload
         self._session_evolution_in_progress: set[str] = set()
@@ -1704,6 +1705,12 @@ class MessageHandler(ABC):
             ReqMethod.CHAT_ANSWER,
         )
 
+    @staticmethod
+    def _should_emit_processing_status_for_stream(msg: "Message") -> bool:
+        from jiuwenclaw.common.schema.message import ReqMethod
+
+        return msg.req_method == ReqMethod.CHAT_SEND
+
     async def _trigger_before_chat_request_hook(self, msg: "Message") -> None:
         if not self._should_trigger_before_chat_request_hook(msg):
             return
@@ -2254,15 +2261,23 @@ class MessageHandler(ABC):
                     if env.is_stream:
                         # 流式处理：启动后台任务，支持多任务并发
                         # 通知前端新任务开始处理
-                        await self._send_processing_status(
-                            stream_rid, msg.session_id, msg.channel_id, is_processing=True,
-                        )
+                        emit_processing_status = self._should_emit_processing_status_for_stream(msg)
+                        if emit_processing_status:
+                            await self._send_processing_status(
+                                stream_rid, msg.session_id, msg.channel_id, is_processing=True,
+                            )
                         task = asyncio.create_task(
-                            self.process_stream(env, msg.session_id, msg.metadata)
+                            self.process_stream(
+                                env,
+                                msg.session_id,
+                                msg.metadata,
+                                emit_processing_status=emit_processing_status,
+                            )
                         )
                         self._stream_tasks[stream_rid] = task
                         self._stream_sessions[stream_rid] = msg.session_id
                         self._stream_metadata[stream_rid] = msg.metadata
+                        self._stream_emits_processing_status[stream_rid] = emit_processing_status
                         self._stream_modes[stream_rid] = (
                             msg.params.get("mode", "plan") if isinstance(msg.params, dict) else "plan"
                         )
@@ -2301,6 +2316,8 @@ class MessageHandler(ABC):
         env: "E2AEnvelope",
         session_id: str | None,
         request_metadata: dict[str, Any] | None,
+        *,
+        emit_processing_status: bool = True,
     ) -> None:
         """处理流式请求，逐个 chunk 写入 robot_messages.
 
@@ -2358,6 +2375,7 @@ class MessageHandler(ABC):
             self._stream_tasks.pop(rid, None)
             self._stream_sessions.pop(rid, None)
             self._stream_metadata.pop(rid, None)
+            self._stream_emits_processing_status.pop(rid, None)
             self._stream_modes.pop(rid, None)
             if session_id is not None and session_id not in self._stream_sessions.values():
                 # Fallback cleanup when stream exits unexpectedly without evolution end signal.
@@ -2368,10 +2386,12 @@ class MessageHandler(ABC):
             )
             # 该 session 流式任务正常结束后，通知前端处理完成
             # 只有当 AgentServer 没有发送过 processing_status=false 时才发送
-            if not cancelled and not has_processing_status_false:
+            if emit_processing_status and not cancelled and not has_processing_status_false:
                 # 检查该 session_id 是否还有活跃任务
                 session_has_active_tasks = any(
-                    sid == session_id for sid in self._stream_sessions.values()
+                    sid == session_id
+                    and self._stream_emits_processing_status.get(active_rid, True)
+                    for active_rid, sid in self._stream_sessions.items()
                 )
                 if not session_has_active_tasks:
                     await self._send_processing_status(
@@ -2599,6 +2619,7 @@ class MessageHandler(ABC):
         self._stream_tasks.clear()
         self._stream_sessions.clear()
         self._stream_metadata.clear()
+        self._stream_emits_processing_status.clear()
         self._stream_modes.clear()
         self._session_evolution_in_progress.clear()
         self._pending_evolution_approval.clear()
