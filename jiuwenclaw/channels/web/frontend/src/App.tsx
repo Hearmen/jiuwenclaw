@@ -40,7 +40,6 @@ import { webRequest } from './services/webClient';
 import { AgentMode, UserAnswer, ModelEntry } from './types';
 import { useSessionStore, useChatStore, useTodoStore, useHarnessStore } from './stores';
 import { useTranslation } from 'react-i18next';
-import i18n from './i18n';
 import './App.css';
 
 type MainNavKey = 'chat' | 'skills' | 'agents' | 'teams' | 'sessions' | 'heartbeat' | 'cron' | 'channels' | 'extensions' | 'configpanel' | 'logspanel' | 'browserpanel' | 'updatepanel';
@@ -133,7 +132,7 @@ function storeSessionId(sessionId: string | null) {
 }
 
 function AppContent() {
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
   // 优先使用存储的会话 ID，避免每次刷新创建新会话
   const [sessionId, setSessionId] = useState<string>(() => {
     const stored = getStoredSessionId();
@@ -392,7 +391,18 @@ function AppContent() {
       'config.set',
       updates
     );
-    setServerConfig(updates);
+    setServerConfig((prev) => {
+      if (!prev) return updates;
+      const next: Record<string, unknown> = { ...prev, ...updates };
+      // 保留 memory_forbidden_description 的双语字典结构
+      if (typeof prev.memory_forbidden_description === 'object' && prev.memory_forbidden_description !== null
+          && !Array.isArray(prev.memory_forbidden_description) && updates.memory_forbidden_description !== undefined) {
+        const prevDict = prev.memory_forbidden_description as Record<string, string>;
+        const lang = i18n.language || 'zh';
+        next.memory_forbidden_description = { ...prevDict, [lang]: updates.memory_forbidden_description };
+      }
+      return next;
+    });
     setConfigError(null);
     setRestartModalOpen(true);
     setRestartSuccess(false);

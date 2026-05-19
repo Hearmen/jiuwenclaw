@@ -494,8 +494,7 @@ def _register_web_handlers(bind: WebHandlersBindParams) -> None:
             memory_cfg = (raw.get("memory") or {}).get("forbidden_memory_definition") or {}
             payload["memory_forbidden_enabled"] = "true" if memory_cfg.get("enabled", False) else "false"
             memory_desc = memory_cfg.get("description") or {}
-            preferred_lang = raw.get("preferred_language", "zh")
-            payload["memory_forbidden_description"] = memory_desc.get(preferred_lang, memory_desc.get("zh", ""))
+            payload["memory_forbidden_description"] = memory_desc
             if not payload.get("free_search_ddg_enabled"):
                 payload["free_search_ddg_enabled"] = "false"
             if not payload.get("free_search_bing_enabled"):

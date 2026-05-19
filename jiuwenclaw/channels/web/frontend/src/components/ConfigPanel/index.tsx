@@ -2155,7 +2155,7 @@ export function ConfigPanel({
   onModelsRefresh,
   onAgentsTeamsSave,
 }: ConfigPanelProps) {
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
   const isProcessing = useChatStore((s) => s.isProcessing);
   const { availableModels: storeAvailableModels, mode } = useSessionStore();
   const [draftValues, setDraftValues] = useState<Record<string, string>>(() => {
@@ -2305,10 +2305,15 @@ export function ConfigPanel({
     if (!config) return {};
     const next: Record<string, string> = {};
     for (const [key, value] of Object.entries(config)) {
-      next[key] = normalizeConfigValue(value);
+      if (key === 'memory_forbidden_description' && typeof value === 'object' && value !== null && !Array.isArray(value)) {
+        const dict = value as Record<string, string>;
+        next[key] = dict[i18n.language] || dict['zh'] || '';
+      } else {
+        next[key] = normalizeConfigValue(value);
+      }
     }
     return next;
-  }, [config]);
+  }, [config, i18n.language]);
 
   useEffect(() => {
     setDraftValues(normalizedConfig);
