@@ -24,7 +24,7 @@ Executed locally in the terminal UI, not through Gateway control pipeline.
 | `/workspace` | Manage trusted directories (see below) |
 | `/teamskills` | TeamSkills Hub publish/delete (`publish`/`delete`) |
 | `/export` | Export current conversation to file or clipboard (see below) |
-| `/status` | Show jiuwenclaw status overview, usage, config (see below) |
+| `/status` | Show jiuwenswarm status overview, usage, config (see below) |
 | `/statusline` | Configure the TUI footer status bar with a custom command (see below) |
 | `/permissions` | Manage tool permissions (`allow`/`ask`/`deny`) |
 
@@ -72,7 +72,7 @@ Manages directories AI can access for file read, edit, and execute operations.
 
 #### Concepts
 
-- **System default workspace**: Fixed path `~/.jiuwenclaw/agent/jiuwenclaw_workspace`, always available
+- **System default workspace**: Fixed path `~/.jiuwenswarm/agent/jiuwenswarm_workspace`, always available
 - **Trusted directories (`trusted_dirs`)**: User-authorized accessible directories, managed by TUI, passed to backend Agent
 
 #### Control Logic
@@ -332,7 +332,7 @@ Manage skills lifecycle: listing, installing, uninstalling, and marketplace sour
 - **Marketplace source**: A remote repository (typically a Git URL) that hosts available skills. Each source has a name, URL, and enabled/disabled state.
 - **Spec**: The install identifier format `<skill>@<marketplace>` used when installing from a marketplace; for builtin skills, omit `@` and the system auto-detects as `@builtin`.
 - **Local install**: Use `/skills install <path>` to install from a local directory (must contain `SKILL.md`) or remote archive URL; paths/URLs are auto-detected and routed to the local import flow.
-- **Install location**: The directory where a skill is stored after installation (`~/.jiuwenclaw/agent/jiuwenclaw_workspace/skills/`).
+- **Install location**: The directory where a skill is stored after installation (`~/.jiuwenswarm/agent/jiuwenswarm_workspace/skills/`).
 - **Source tag**: Each skill in the list is tagged with its source: `[builtin]` = builtin, `[local]` = imported, `[project]` or marketplace name = other.
 
 #### Grouped List Display
@@ -429,7 +429,7 @@ Timestamp format: `YYYY-MM-DD-HHmmss`.
 
 ### `/status` (Show Status)
 
-Display jiuwenclaw runtime status: overview, usage statistics, or config editor.
+Display jiuwenswarm runtime status: overview, usage statistics, or config editor.
 
 #### Usage
 
@@ -517,7 +517,7 @@ The command receives the following JSON data on each execution:
 | `mode` | Current mode (`agent.plan` / `agent.fast` / `code.plan` / `code.normal` / `team`) |
 | `model` | Current model name |
 | `provider` | Model provider |
-| `version` | jiuwenclaw version |
+| `version` | jiuwenswarm version |
 | `connection` | Connection status (`idle` / `connecting` / `connected` / `reconnecting` / `auth_failed`) |
 | `theme` | Current theme name |
 | `accent_color` | Current accent color name |
@@ -589,7 +589,7 @@ Use the following template to write commands. `input=$(cat)` reads JSON into a v
 - **Timeout protection**: Individual executions timeout after 3 seconds; no impact on subsequent polls.
 - **Output limit**: Command output over 10KB is truncated; display width auto-fits the TUI terminal width.
 - **Failure silence**: Command execution failures don't show errors; previous successful output is kept or the bar hides.
-- **Persistence**: Configuration is saved in `~/.jiuwenclaw-tui/config.json` under the `statusLine` field; restored on TUI restart.
+- **Persistence**: Configuration is saved in `~/.jiuwenswarm-tui/config.json` under the `statusLine` field; restored on TUI restart.
 - **Alias**: `/sl`
 - **Windows adaptation**: The system automatically replaces `$(cat)` with reading from a temp file; the user's command format remains unchanged. Git Bash's `usr\bin` must be in the system PATH.
 

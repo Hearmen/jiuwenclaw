@@ -24,7 +24,7 @@
 | `/workspace` | 管理可信目录（见下文） |
 | `/teamskills` | TeamSkills 管理（`init/validate/pack/info/search/list/install/uninstall/config/publish/delete`） |
 | `/export` | 导出当前会话到文件或剪贴板（见下文） |
-| `/status` | 查看 jiuwenclaw 运行状态概览、用量统计、配置编辑（见下文） |
+| `/status` | 查看 jiuwenswarm 运行状态概览、用量统计、配置编辑（见下文） |
 | `/statusline` | 配置 TUI 底部状态栏的自定义命令（见下文） |
 | `/permissions` | 管理工具权限（`allow`/`ask`/`deny`） |
 
@@ -72,7 +72,7 @@
 
 #### 概念说明
 
-- **系统默认工作空间（workspace）**：固定路径 `~/.jiuwenclaw/agent/jiuwenclaw_workspace`，始终可用
+- **系统默认工作空间（workspace）**：固定路径 `~/.jiuwenswarm/agent/jiuwenswarm_workspace`，始终可用
 - **可信目录（trusted_dirs）**：用户授权的可访问目录，由 TUI 管理，传递给后端 Agent
 
 #### 控制逻辑
@@ -81,7 +81,7 @@
    - 选择「信任」：将当前目录添加为可信目录
    - 选择「不信任」：仅使用默认工作空间
 
-2. **会话级管理**：可信目录会持久化到./jiuwenclaw-tui/config.json文件里
+2. **会话级管理**：可信目录会持久化到./jiuwenswarm-tui/config.json文件里
 
 3. **后端传递**：TUI 通过请求参数 `trusted_dirs` 传递可信目录列表，Agent 据此限制文件操作范围
 
@@ -354,7 +354,7 @@
 - **市场源（Marketplace source）**：托管可用技能的远程仓库（通常为 Git URL），每个源包含名称、URL 和启用/禁用状态。
 - **规格标识（Spec）**：从市场源安装时使用的标识格式 `<技能名>@<市场源名>`；内置技能安装时可不带 `@`，自动识别为 `@builtin`。
 - **本地安装（Local install）**：通过 `/skills install <path>` 将本地目录（需包含 `SKILL.md`）或远程归档 URL 安装为自定义技能；路径/URL 会自动识别并走本地导入流程。
-- **安装位置（Install location）**：技能安装后的存储目录（`~/.jiuwenclaw/agent/jiuwenclaw_workspace/skills/`）。
+- **安装位置（Install location）**：技能安装后的存储目录（`~/.jiuwenswarm/agent/jiuwenswarm_workspace/skills/`）。
 - **来源标签（Source tag）**：列表中每项技能标注来源，`[builtin]` 表示内置、`[local]` 表示本地导入、`[project]` 或市场源名表示其他来源。
 
 #### 列表分组展示
@@ -446,7 +446,7 @@
 
 ### `/status`（查看运行状态）
 
-显示 jiuwenclaw 运行状态概览、用量统计或配置编辑界面。
+显示 jiuwenswarm 运行状态概览、用量统计或配置编辑界面。
 
 #### 子命令
 
@@ -528,7 +528,7 @@
 | `mode` | 当前模式（`agent.plan` / `agent.fast` / `code.plan` / `code.normal` / `team`） |
 | `model` | 当前模型名称 |
 | `provider` | 模型提供商 |
-| `version` | jiuwenclaw 版本号 |
+| `version` | jiuwenswarm 版本号 |
 | `connection` | 连接状态（`idle` / `connecting` / `connected` / `reconnecting` / `auth_failed`） |
 | `theme` | 当前主题名 |
 | `accent_color` | 当前强调色名 |
@@ -600,7 +600,7 @@
 - **超时保护**：单次执行超时 3 秒后自动终止，不影响后续轮询。
 - **输出限制**：命令输出超过 10KB 时截断；显示宽度自动适配 TUI 终端宽度。
 - **故障静默**：命令执行失败时不显示错误，保持上一次成功输出或隐藏状态栏。
-- **持久化**：配置保存在 `~/.jiuwenclaw-tui/config.json` 的 `statusLine` 字段，重启 TUI 后自动恢复。
+- **持久化**：配置保存在 `~/.jiuwenswarm-tui/config.json` 的 `statusLine` 字段，重启 TUI 后自动恢复。
 - **别名**：`/sl`
 - **Windows 适配**：系统自动将 `$(cat)` 替换为读取临时文件，用户命令格式不变；需确保 Git Bash 的 `usr\bin` 在系统 PATH 中。
 

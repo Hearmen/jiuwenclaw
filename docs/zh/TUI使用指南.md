@@ -1,7 +1,7 @@
-# JiuwenClaw TUI 使用指南
+# JiuwenSwarm TUI 使用指南
 
-> 本文档面向 **JiuwenClaw 终端界面（`jiuwenclaw-tui` / `jiuwenclaw-cli`）** 用户，结构与 [Claude Code CLI 参考](https://code.claude.com/docs/zh-CN/cli-reference) 类似：先列 **CLI 启动参数**，再列 **Slash 命令**，接着是 **工具参考** 与 **交互模式**，并对 **Code 模式** 做重点说明。  
-> 行为以仓库代码为准：`jiuwenclaw/cli/src/index.ts`、`jiuwenclaw/cli/src/core/commands/registry.ts` 及各 `builtins/*.ts`。
+> 本文档面向 **JiuwenSwarm 终端界面（`jiuwenswarm-tui` / `jiuwenswarm-cli`）** 用户，结构与 [Claude Code CLI 参考](https://code.claude.com/docs/zh-CN/cli-reference) 类似：先列 **CLI 启动参数**，再列 **Slash 命令**，接着是 **工具参考** 与 **交互模式**，并对 **Code 模式** 做重点说明。  
+> 行为以仓库代码为准：`jiuwenswarm/cli/src/index.ts`、`jiuwenswarm/cli/src/core/commands/registry.ts` 及各 `builtins/*.ts`。
 
 ---
 
@@ -18,21 +18,21 @@
 
 | 方式 | 说明 |
 |------|------|
-| `jiuwenclaw-tui` | 通过 `jiuwenclaw-tui` PyPI 包启动时，由包装器拉起对应平台的二进制（见 `packages/jiuwenclaw-tui`）。 |
-| `jiuwenclaw-cli` | 源码/开发路径下，在 `jiuwenclaw/cli` 执行 `npm run dev` 或 `npm run start` 后使用 `jiuwenclaw-cli`（见 `package.json` 的 `bin`）。 |
+| `jiuwenswarm-tui` | 通过 `jiuwenswarm-tui` PyPI 包启动时，由包装器拉起对应平台的二进制（见 `packages/jiuwenswarm-tui`）。 |
+| `jiuwenswarm-cli` | 源码/开发路径下，在 `jiuwenswarm/cli` 执行 `npm run dev` 或 `npm run start` 后使用 `jiuwenswarm-cli`（见 `package.json` 的 `bin`）。 |
 
-以下 **命令行标志** 由 `jiuwenclaw/cli/src/index.ts` 中的 `parseArgs` 定义：
+以下 **命令行标志** 由 `jiuwenswarm/cli/src/index.ts` 中的 `parseArgs` 定义：
 
 | 标志 | 说明 | 默认值 | 示例 |
 |------|------|--------|------|
-| `--url <url>` | Gateway 的 CLI WebSocket 地址 | `ws://127.0.0.1:19001/tui` | `jiuwenclaw-cli --url ws://192.168.1.10:19001/tui` |
-| `--session <id>` | 启动时恢复指定会话 ID | 无 | `jiuwenclaw-cli --session abc-123` |
-| `--token <token>` | 鉴权令牌（若 Gateway 需要） | 空字符串 | `jiuwenclaw-cli --token YOUR_TOKEN` |
-| `-h`, `--help` | 打印帮助并退出 | - | `jiuwenclaw-cli -h` |
+| `--url <url>` | Gateway 的 CLI WebSocket 地址 | `ws://127.0.0.1:19001/tui` | `jiuwenswarm-cli --url ws://192.168.1.10:19001/tui` |
+| `--session <id>` | 启动时恢复指定会话 ID | 无 | `jiuwenswarm-cli --session abc-123` |
+| `--token <token>` | 鉴权令牌（若 Gateway 需要） | 空字符串 | `jiuwenswarm-cli --token YOUR_TOKEN` |
+| `-h`, `--help` | 打印帮助并退出 | - | `jiuwenswarm-cli -h` |
 
 ### 启动后界面
 
-- **欢迎区**：ASCII 标题、版本、当前 Provider / Model / Mode；窄终端下为精简布局（`jiuwenclaw/cli/src/ui/welcome.ts`）。
+- **欢迎区**：ASCII 标题、版本、当前 Provider / Model / Mode；窄终端下为精简布局（`jiuwenswarm/cli/src/ui/welcome.ts`）。
 - **连接提示**：未连上后端时会提示检查 Gateway 或 `--url`；鉴权失败时提示检查 `--token`。
 - **ripgrep 提示**：若本机未安装 `rg`，会提示安装以优化文件搜索。
 
@@ -49,7 +49,7 @@
 
 当前 **已注册** 的顶层命令来自 `createBuiltinCommands()`（`registry.ts`），按名称排序如下表。
 
-> **与文档 [Slash命令表.md](Slash命令表.md) 的差异**：`jiuwenclaw/cli/src/core/commands/builtins/` 下另有 **`switch.ts`（`/switch`）**、**`cancel.ts`（`/cancel`）**、**`new.ts`（`/new` 独立建会话）**、**`sessions.ts`（会话列表 RPC）** 等实现，但 **当前 `registry.ts` 未注册**这些顶层命令，输入后会得到 `Unknown command`。中断任务请优先使用 **`Ctrl+C`**（第一次中断，连按两次退出）。Gateway 侧受控指令仍以 `jiuwenclaw/gateway/slash_command.py` 与 Slash命令表为准。
+> **与文档 [Slash命令表.md](Slash命令表.md) 的差异**：`jiuwenswarm/cli/src/core/commands/builtins/` 下另有 **`switch.ts`（`/switch`）**、**`cancel.ts`（`/cancel`）**、**`new.ts`（`/new` 独立建会话）**、**`sessions.ts`（会话列表 RPC）** 等实现，但 **当前 `registry.ts` 未注册**这些顶层命令，输入后会得到 `Unknown command`。中断任务请优先使用 **`Ctrl+C`**（第一次中断，连按两次退出）。Gateway 侧受控指令仍以 `jiuwenswarm/gateway/slash_command.py` 与 Slash命令表为准。
 
 ### 命令总表
 
@@ -107,7 +107,7 @@
 
 #### `/workspace`（可信目录）
 
-- 系统默认工作空间：`~/.jiuwenclaw/agent/jiuwenclaw_workspace`（始终可用）。
+- 系统默认工作空间：`~/.jiuwenswarm/agent/jiuwenswarm_workspace`（始终可用）。
 - `add`：默认路径为当前工作目录；成功后会 `command.add_dir` 同步到服务端并 `remember: true`。
 - `set`：重置为单个可信目录；若已有列表会二次确认。
 - 详见 [Slash命令表.md](Slash命令表.md) 的 `/workspace` 小节。
@@ -370,9 +370,9 @@
 
 | 问题 | 建议 |
 |------|------|
-| `jiuwenclaw-cli requires an interactive TTY` | 在真实终端中运行，勿用管道代替 |
+| `jiuwenswarm-cli requires an interactive TTY` | 在真实终端中运行，勿用管道代替 |
 | `Authentication failed` | 检查 `--token` |
-| `Backend unavailable` | 启动 `jiuwenclaw-gateway` 或修正 `--url` |
+| `Backend unavailable` | 启动 `jiuwenswarm-gateway` 或修正 `--url` |
 | `Unknown command: /xxx` | 该构建未注册该命令；用 `/help` 查看当前可用列表，或对照本文「命令总表」与 `registry.ts` |
 | `/copy` 失败 | 当前系统无剪贴板集成；Linux 需常见剪贴板工具 |
 

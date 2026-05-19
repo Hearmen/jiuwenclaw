@@ -33,7 +33,7 @@ English: [Distributed Team](../en/DistributedTeam.md)
 | `team.runtime.role` | 本进程是 `leader` 还是 `teammate` |
 | `team.runtime.member_name` | teammate 侧默认身份；被 bootstrap 后会接管为 leader 动态请求的成员名 |
 | `team.transport.type` | `pyzmq` |
-| `react.a2x_registry` | teammate 启动时注册空闲节点；leader 组队时从注册中心预约空闲 teammate。**注册中心不是 jiuwenclaw 内置组件**，须从上游 [agent-protocol（feature/Agentregistry）](https://gitcode.com/openJiuwen/agent-protocol/tree/feature/Agentregistry) 单独拉取并按该仓说明独立部署 |
+| `react.a2x_registry` | teammate 启动时注册空闲节点；leader 组队时从注册中心预约空闲 teammate。**注册中心不是 jiuwenswarm 内置组件**，须从上游 [agent-protocol（feature/Agentregistry）](https://gitcode.com/openJiuwen/agent-protocol/tree/feature/Agentregistry) 单独拉取并按该仓说明独立部署 |
 | `team.transport.params` | 本进程的 `direct_addr` / `bootstrap_direct_addr`、`pubsub_*` 等；leader 不需要预置 teammate 的 `known_peers` |
 | `team.predefined_members` | 兼容旧静态成员声明；当前 blank teammate 联调不要求 leader 配置该项 |
 | `team.storage` | 多进程场景下 `connection_string` 需指向 **各方可见的同一 DB**（当前推荐 PostgreSQL） |
@@ -137,8 +137,8 @@ team:
 
 仓库内分角色模板已经是**完整 `config.yaml`**，包含基础 agent/model 配置、A2X 注册中心配置、顶层 `team` 运行时标记，以及 `modes.team.jiuwen_team` 的实际 TeamAgentSpec 配置。部署时可以直接复制为各自工作区下的配置文件，不需要再和默认 `config.yaml` 手工合并。
 
-- `jiuwenclaw/resources/config.team.distributed.leader.yaml`
-- `jiuwenclaw/resources/config.team.distributed.teammate.yaml`
+- `jiuwenswarm/resources/config.team.distributed.leader.yaml`
+- `jiuwenswarm/resources/config.team.distributed.teammate.yaml`
 
 用法（建议）：
 
@@ -190,7 +190,7 @@ cp "<REPO_ROOT>/jiuwenclaw/resources/config.team.distributed.teammate.yaml" \
 team:
   workspace:
     enabled: true
-    root_path: ${JIUWEN_TEAM_WORKSPACE_ROOT:-/tmp/jiuwenclaw/shared_workspace/jiuwen_team}
+    root_path: ${JIUWEN_TEAM_WORKSPACE_ROOT:-/tmp/jiuwenswarm/shared_workspace/jiuwen_team}
     version_control: false
 ```
 
@@ -243,7 +243,7 @@ winget install -e --id PostgreSQL.PostgreSQL.16
 
 注册中心进程与 Leader/Teammate **分离部署**：请从上游代码仓拉取并在独立环境中运行。
 
-参考 [agent-protocol 的 Agent Team 快速启动说明](https://gitcode.com/openJiuwen/agent-protocol/blob/feature/Agentregistry/README_forAgentTeam.md)。`0.1.6` 起默认安装就是 Agent Team 精简版，只包含 SDK、FastAPI、uvicorn 等轻量依赖；注册中心服务端无需预置数据，也不需要配置 LLM。teammate 注册、leader 查询/预约、reservation lease 都由 `jiuwenclaw` 客户端逻辑完成。
+参考 [agent-protocol 的 Agent Team 快速启动说明](https://gitcode.com/openJiuwen/agent-protocol/blob/feature/Agentregistry/README_forAgentTeam.md)。`0.1.6` 起默认安装就是 Agent Team 精简版，只包含 SDK、FastAPI、uvicorn 等轻量依赖；注册中心服务端无需预置数据，也不需要配置 LLM。teammate 注册、leader 查询/预约、reservation lease 都由 `jiuwenswarm` 客户端逻辑完成。
 
 安装（要求 Python >= 3.10）：
 
@@ -303,7 +303,7 @@ GIT_COMMITTER_EMAIL="teambot@example.com" \
 AGENT_SERVER_PORT=28192 \
 GATEWAY_PORT=29101 \
 WEB_PORT=29100 \
-uv run python -m jiuwenclaw.app
+uv run python -m jiuwenswarm.app
 ```
 
 Leader 不需要配置 teammate 的静态 endpoint；`spawn_member` 时会从注册中心 `reserve_blank_agents` 取得空闲 teammate。
@@ -311,7 +311,7 @@ Leader 不需要配置 teammate 的静态 endpoint；`spawn_member` 时会从注
 ### 6.4 Web 前端（可选）
 
 ```bash
-cd "<REPO_ROOT>/jiuwenclaw/channels/web/frontend"
+cd "<REPO_ROOT>/jiuwenswarm/channels/web/frontend"
 VITE_API_BASE="http://localhost:29100" \
 VITE_WS_BASE="ws://localhost:29100" \
 npm run dev -- --host 0.0.0.0 --port 5173
