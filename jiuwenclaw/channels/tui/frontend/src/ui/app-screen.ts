@@ -512,6 +512,8 @@ export class AppScreen implements Component, Focusable {
   private composerAttachments: FileAttachment[] = [];
   /** FileViewer state for viewing large content (e.g., formatted logs) */
   private fileViewerState: FileViewerState | null = null;
+  /** Previous session title for terminal window title sync. */
+  private previousSessionTitle: string = "";
 
   constructor(
     private readonly tui: TUI,
@@ -539,6 +541,8 @@ export class AppScreen implements Component, Focusable {
     this.unsubscribe = this.state.onChange(() => {
       this.handleStateChange();
     });
+    // Set initial terminal window title
+    this.tui.terminal.setTitle("jiuwenswarm");
     // Inject editor refs into app-state so tryAutoRestoreAfterCancel can
     // check input emptiness and populate the input field after auto-restore.
     this.state.setInputRef((text: string) => {
@@ -1343,6 +1347,14 @@ export class AppScreen implements Component, Focusable {
     }
     this.syncTeamPanelSelection(snapshot);
     this.syncAnimationLoop(snapshot);
+    // Sync terminal window title with session title when it changes
+    if (snapshot.sessionTitle !== this.previousSessionTitle) {
+      this.previousSessionTitle = snapshot.sessionTitle;
+      // Truncate to 30 chars for terminal window title (same as status bar)
+      const rawTitle = snapshot.sessionTitle || "jiuwenswarm";
+      const displayTitle = rawTitle.length > 30 ? rawTitle.slice(0, 30) + "..." : rawTitle;
+      this.tui.terminal.setTitle(displayTitle);
+    }
     this.tui.requestRender();
   }
 
@@ -1469,6 +1481,18 @@ export class AppScreen implements Component, Focusable {
     this.state.updateSession(nextSessionId);
     this.state.clearEntries();
     await this.state.restoreHistory(nextSessionId);
+    // 异步获取被恢复会话的标题并更新终端窗口标题
+    void (async () => {
+      try {
+        const meta = await this.state.request<{ session_id: string; title: string }>(
+          "session.rename",
+          { session_id: nextSessionId },
+        );
+        this.state.setSessionTitle(meta.title || "");
+      } catch {
+        this.state.setSessionTitle("");
+      }
+    })();
     this.tui.requestRender();
   }
 
