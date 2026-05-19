@@ -7,7 +7,7 @@ from unittest.mock import patch
 
 from openjiuwen.core.foundation.tool import ToolCard
 
-from jiuwenclaw.agents.harness.team.team_runtime_inheritance import (
+from jiuwenswarm.agents.harness.team.team_runtime_inheritance import (
     MemberInfo,
     RuntimeInfo,
     TeamWorkspaceInfo,
@@ -173,7 +173,7 @@ def test_build_member_rails_accepts_team_workspace_info(tmp_path):
     )
 
     with patch(
-            "jiuwenclaw.agents.harness.team.team_runtime_inheritance.FileTrajectoryStore",
+            "jiuwenswarm.agents.harness.team.team_runtime_inheritance.FileTrajectoryStore",
             return_value=object(),
     ):
         rails = build_member_rails(
@@ -200,11 +200,11 @@ def test_build_member_rails_keeps_team_skill_evolution_rail_when_auto_scan_disab
 
     monkeypatch.delenv("EVOLUTION_AUTO_SCAN", raising=False)
     monkeypatch.setattr(
-        "jiuwenclaw.agents.harness.team.team_runtime_inheritance.TeamSkillEvolutionRail",
+        "jiuwenswarm.agents.harness.team.team_runtime_inheritance.TeamSkillEvolutionRail",
         _FakeTeamSkillEvolutionRail,
     )
     monkeypatch.setattr(
-        "jiuwenclaw.agents.harness.team.team_runtime_inheritance.build_evolution_llm",
+        "jiuwenswarm.agents.harness.team.team_runtime_inheritance.build_evolution_llm",
         lambda config=None: (object(), "model"),
     )
 
@@ -230,11 +230,11 @@ def test_build_member_rails_creates_team_skill_evolution_rail_when_evolution_dis
 
     monkeypatch.delenv("EVOLUTION_AUTO_SCAN", raising=False)
     monkeypatch.setattr(
-        "jiuwenclaw.agents.harness.team.team_runtime_inheritance.TeamSkillEvolutionRail",
+        "jiuwenswarm.agents.harness.team.team_runtime_inheritance.TeamSkillEvolutionRail",
         _FakeTeamSkillEvolutionRail,
     )
     monkeypatch.setattr(
-        "jiuwenclaw.agents.harness.team.team_runtime_inheritance.build_evolution_llm",
+        "jiuwenswarm.agents.harness.team.team_runtime_inheritance.build_evolution_llm",
         lambda config=None: (object(), "model"),
     )
 
@@ -260,11 +260,11 @@ def test_build_member_rails_reads_react_evolution_auto_scan(
 
     monkeypatch.delenv("EVOLUTION_AUTO_SCAN", raising=False)
     monkeypatch.setattr(
-        "jiuwenclaw.agents.harness.team.team_runtime_inheritance.TeamSkillEvolutionRail",
+        "jiuwenswarm.agents.harness.team.team_runtime_inheritance.TeamSkillEvolutionRail",
         _FakeTeamSkillEvolutionRail,
     )
     monkeypatch.setattr(
-        "jiuwenclaw.agents.harness.team.team_runtime_inheritance.build_evolution_llm",
+        "jiuwenswarm.agents.harness.team.team_runtime_inheritance.build_evolution_llm",
         lambda config=None: (object(), "model"),
     )
 
@@ -286,11 +286,11 @@ def test_build_member_rails_env_auto_scan_overrides_config(tmp_path, monkeypatch
 
     monkeypatch.setenv("EVOLUTION_AUTO_SCAN", "false")
     monkeypatch.setattr(
-        "jiuwenclaw.agents.harness.team.team_runtime_inheritance.TeamSkillEvolutionRail",
+        "jiuwenswarm.agents.harness.team.team_runtime_inheritance.TeamSkillEvolutionRail",
         _FakeTeamSkillRail,
     )
     monkeypatch.setattr(
-        "jiuwenclaw.agents.harness.team.team_runtime_inheritance.build_evolution_llm",
+        "jiuwenswarm.agents.harness.team.team_runtime_inheritance.build_evolution_llm",
         lambda config=None: (object(), "model"),
     )
 
@@ -316,11 +316,11 @@ def test_build_member_rails_keeps_member_skill_evolution_when_auto_scan_disabled
 
     monkeypatch.delenv("EVOLUTION_AUTO_SCAN", raising=False)
     monkeypatch.setattr(
-        "jiuwenclaw.agents.harness.team.team_runtime_inheritance.SkillEvolutionRail",
+        "jiuwenswarm.agents.harness.team.team_runtime_inheritance.SkillEvolutionRail",
         _FakeSkillEvolutionRail,
     )
     monkeypatch.setattr(
-        "jiuwenclaw.agents.harness.team.team_runtime_inheritance.build_evolution_llm",
+        "jiuwenswarm.agents.harness.team.team_runtime_inheritance.build_evolution_llm",
         lambda config=None: (object(), "model"),
     )
 
@@ -347,7 +347,7 @@ def test_build_member_rails_keeps_team_skill_create_when_auto_scan_disabled(
 
     monkeypatch.delenv("SKILL_CREATE", raising=False)
     monkeypatch.setattr(
-        "jiuwenclaw.agents.harness.team.team_runtime_inheritance.TeamSkillCreateRail",
+        "jiuwenswarm.agents.harness.team.team_runtime_inheritance.TeamSkillCreateRail",
         _FakeTeamSkillCreateRail,
     )
 
@@ -371,7 +371,7 @@ def test_build_member_rails_reads_react_evolution_skill_create(
 
     monkeypatch.delenv("SKILL_CREATE", raising=False)
     monkeypatch.setattr(
-        "jiuwenclaw.agents.harness.team.team_runtime_inheritance.TeamSkillCreateRail",
+        "jiuwenswarm.agents.harness.team.team_runtime_inheritance.TeamSkillCreateRail",
         _FakeTeamSkillCreateRail,
     )
 
@@ -392,7 +392,7 @@ def test_build_member_rails_env_skill_create_overrides_config(tmp_path, monkeypa
 
     monkeypatch.setenv("SKILL_CREATE", "false")
     monkeypatch.setattr(
-        "jiuwenclaw.agents.harness.team.team_runtime_inheritance.TeamSkillCreateRail",
+        "jiuwenswarm.agents.harness.team.team_runtime_inheritance.TeamSkillCreateRail",
         _FakeTeamSkillCreateRail,
     )
 

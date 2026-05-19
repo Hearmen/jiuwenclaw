@@ -145,7 +145,7 @@ If lock conflict occurs during startup:
 | Variable | Description |
 |----------|-------------|
 | `JIUWENSWARM_DATA_DIR` | Override data root directory (affects instances.yaml location) |
-| `JIUWENCLAW_CONFIG_DIR` | Override configuration directory |
+| `JIUWENSWARM_CONFIG_DIR` | Override configuration directory |
 
 Use `--dotenv` at startup to specify instance-specific config:
 

@@ -16,15 +16,15 @@ printf 'Project root: %s\n\n' "$PROJECT_ROOT"
 printf '[1/4] Install Python dependencies (uv sync --extra dev)...\n'
 uv sync --extra dev
 
-printf '\n[2/4] Build frontend (jiuwenclaw/channels/web/frontend)...\n'
-rm -rf "$PROJECT_ROOT/jiuwenclaw/web/dist"
-pushd "$PROJECT_ROOT/jiuwenclaw/channels/web/frontend" >/dev/null
+printf '\n[2/4] Build frontend (jiuwenswarm/channels/web/frontend)...\n'
+rm -rf "$PROJECT_ROOT/jiuwenswarm/web/dist"
+pushd "$PROJECT_ROOT/jiuwenswarm/channels/web/frontend" >/dev/null
 npm install
 npm run build
 popd >/dev/null
 
 printf '\n[3/4] Build macOS app bundle with PyInstaller...\n'
-uv run pyinstaller scripts/jiuwenclaw.spec --noconfirm
+uv run pyinstaller scripts/jiuwenswarm.spec --noconfirm
 
 if [[ ! -d "$APP_PATH" ]]; then
   printf 'Error: app bundle not found: %s\n' "$APP_PATH" >&2

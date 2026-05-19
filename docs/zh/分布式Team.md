@@ -2,7 +2,7 @@
 
 本文面向 **开发与联调**：说明分布式 Team（`team.runtime.mode=distributed` + `pyzmq`）在现有 AgentServer / TeamManager 中的配置入口、代码落点，以及如何在本机或双目录起 leader/teammate 做闭环验证。不要求单独的运行时二进制；业务入口仍为统一 AgentServer。
 
-配置主文件一般位于用户工作区的 `config/config.yaml`（默认 `~/.jiuwenswarm/config/config.yaml`）。多实例或本地跨进程联调时，推荐通过 `JIUWENSWARM_DATA_DIR` 隔离不同进程的工作区；也可通过 `JIUWENCLAW_CONFIG_DIR` 直接覆盖配置目录（与 [配置说明](配置信息.md) 一致）。
+配置主文件一般位于用户工作区的 `config/config.yaml`（默认 `~/.jiuwenswarm/config/config.yaml`）。多实例或本地跨进程联调时，推荐通过 `JIUWENSWARM_DATA_DIR` 隔离不同进程的工作区；也可通过 `JIUWENSWARM_CONFIG_DIR` 直接覆盖配置目录（与 [配置说明](配置信息.md) 一致）。
 
 English: [Distributed Team](../en/DistributedTeam.md)
 
@@ -15,9 +15,9 @@ English: [Distributed Team](../en/DistributedTeam.md)
 | **模式开关** | `team.runtime.mode`: `local \| distributed` |
 | **进程角色** | `team.runtime.role`: `leader \| teammate` |
 | **传输** | `team.transport.type`: `inprocess \| pyzmq`；分布式联调通常用 `pyzmq` |
-| **入口类** | `TeamManager`（`jiuwenclaw/agents/harness/team/team_manager.py`）：构建 `TeamAgentSpec` 前会做 transport/身份字段归一化 |
-| **配置装载** | `load_team_spec_dict()`（`jiuwenclaw/agents/harness/team/config_loader.py`）：leader / `predefined_members` 的 name 与 display_name 兼容 |
-| **样例** | 仓库内 `jiuwenclaw/resources/config.team.distributed.leader.yaml` / `config.team.distributed.teammate.yaml`（当前分角色模板） |
+| **入口类** | `TeamManager`（`jiuwenswarm/agents/harness/team/team_manager.py`）：构建 `TeamAgentSpec` 前会做 transport/身份字段归一化 |
+| **配置装载** | `load_team_spec_dict()`（`jiuwenswarm/agents/harness/team/config_loader.py`）：leader / `predefined_members` 的 name 与 display_name 兼容 |
+| **样例** | 仓库内 `jiuwenswarm/resources/config.team.distributed.leader.yaml` / `config.team.distributed.teammate.yaml`（当前分角色模板） |
 
 **会话语义**：与原 Team 一致倾向 **单活 session**——新建 session 的 Team 前会清理其它 session 的 Team 资源；分布式下不在本文档引入多 session 并发路由层。
 
@@ -156,12 +156,12 @@ team:
 ```bash
 # leader
 mkdir -p "<LEADER_DATA_DIR>/config"
-cp "<REPO_ROOT>/jiuwenclaw/resources/config.team.distributed.leader.yaml" \
+cp "<REPO_ROOT>/jiuwenswarm/resources/config.team.distributed.leader.yaml" \
   "<LEADER_DATA_DIR>/config/config.yaml"
 
 # teammate
 mkdir -p "<TEAMMATE_DATA_DIR>/config"
-cp "<REPO_ROOT>/jiuwenclaw/resources/config.team.distributed.teammate.yaml" \
+cp "<REPO_ROOT>/jiuwenswarm/resources/config.team.distributed.teammate.yaml" \
   "<TEAMMATE_DATA_DIR>/config/config.yaml"
 ```
 
@@ -169,7 +169,7 @@ cp "<REPO_ROOT>/jiuwenclaw/resources/config.team.distributed.teammate.yaml" \
 
 ## 5. 本地双目录联调（推荐布局）
 
-用 **两个独立 `JIUWENSWARM_DATA_DIR`** 分别模拟 leader 与 teammate，避免配置、日志、工作区互相覆盖；也可以用两套 `JIUWENCLAW_CONFIG_DIR` 只隔离配置目录。
+用 **两个独立 `JIUWENSWARM_DATA_DIR`** 分别模拟 leader 与 teammate，避免配置、日志、工作区互相覆盖；也可以用两套 `JIUWENSWARM_CONFIG_DIR` 只隔离配置目录。
 
 下文用占位符：
 
@@ -216,7 +216,7 @@ NFS server/client 脚本、连通性检查、取消挂载：`scripts/nfs/README.
 ### 6.0 启动前准备
 
 分布式 Team 依赖 `pyzmq`、`asyncpg` 等额外组件。启动注册中心、teammate、leader 之前，先在
-`jiuwenclaw` 仓库根目录同步分布式依赖：
+`jiuwenswarm` 仓库根目录同步分布式依赖：
 
 ```bash
 uv sync --extra distribute
@@ -286,7 +286,7 @@ GIT_AUTHOR_EMAIL="teambot@example.com" \
 GIT_COMMITTER_NAME="teambot" \
 GIT_COMMITTER_EMAIL="teambot@example.com" \
 AGENT_SERVER_PORT=28193 \
-uv run python -m jiuwenclaw.server.app_agentserver
+uv run python -m jiuwenswarm.server.app_agentserver
 ```
 
 启动成功后，teammate 会把自己的 `bootstrap_direct_addr` 注册为 blank agent，例如 `endpoint=tcp://127.0.0.1:28610`。
@@ -335,7 +335,7 @@ Windows 本机联调时，可以在同一台机器上启动注册中心、teamma
   `MODEL_PROVIDER` 等环境变量注入。
 
 ```powershell
-cd D:\ACP\jiuwenclaw-Zeze\jiuwenclaw
+cd D:\ACP\jiuwenswarm-Zeze\jiuwenswarm
 
 $leaderHome = "$PWD\.local-distributed\leader"
 $teammateHome = "$PWD\.local-distributed\teammate"
@@ -343,9 +343,9 @@ $teammateHome = "$PWD\.local-distributed\teammate"
 New-Item -ItemType Directory -Force "$leaderHome\config" | Out-Null
 New-Item -ItemType Directory -Force "$teammateHome\config" | Out-Null
 
-Copy-Item ".\jiuwenclaw\resources\config.team.distributed.leader.yaml" `
+Copy-Item ".\jiuwenswarm\resources\config.team.distributed.leader.yaml" `
   "$leaderHome\config\config.yaml" -Force
-Copy-Item ".\jiuwenclaw\resources\config.team.distributed.teammate.yaml" `
+Copy-Item ".\jiuwenswarm\resources\config.team.distributed.teammate.yaml" `
   "$teammateHome\config\config.yaml" -Force
 ```
 
@@ -363,9 +363,9 @@ a2x-registry
 #### 6.5.3 启动 teammate
 
 ```powershell
-cd D:\ACP\jiuwenclaw-Zeze\jiuwenclaw
+cd D:\ACP\jiuwenswarm-Zeze\jiuwenswarm
 
-Remove-Item Env:JIUWENCLAW_DATA_DIR -ErrorAction SilentlyContinue
+Remove-Item Env:JIUWENSWARM_DATA_DIR -ErrorAction SilentlyContinue
 $env:JIUWENSWARM_DATA_DIR = "$PWD\.local-distributed\teammate"
 $env:JIUWEN_TEAM_WORKSPACE_ROOT = "$PWD\.local-distributed\shared_workspace\jiuwen_team"
 
@@ -375,15 +375,15 @@ $env:GIT_COMMITTER_NAME = "teambot"
 $env:GIT_COMMITTER_EMAIL = "teambot@example.com"
 $env:AGENT_SERVER_PORT = "28193"
 
-.\.venv\Scripts\python.exe -m jiuwenclaw.server.app_agentserver
+.\.venv\Scripts\python.exe -m jiuwenswarm.server.app_agentserver
 ```
 
 #### 6.5.4 启动 leader
 
 ```powershell
-cd D:\ACP\jiuwenclaw-Zeze\jiuwenclaw
+cd D:\ACP\jiuwenswarm-Zeze\jiuwenswarm
 
-Remove-Item Env:JIUWENCLAW_DATA_DIR -ErrorAction SilentlyContinue
+Remove-Item Env:JIUWENSWARM_DATA_DIR -ErrorAction SilentlyContinue
 $env:JIUWENSWARM_DATA_DIR = "$PWD\.local-distributed\leader"
 $env:JIUWEN_TEAM_WORKSPACE_ROOT = "$PWD\.local-distributed\shared_workspace\jiuwen_team"
 
@@ -395,16 +395,16 @@ $env:AGENT_SERVER_PORT = "28192"
 $env:GATEWAY_PORT = "29101"
 $env:WEB_PORT = "29100"
 
-.\.venv\Scripts\python.exe -m jiuwenclaw.app
+.\.venv\Scripts\python.exe -m jiuwenswarm.app
 ```
 
 #### 6.5.5 启动 leader 前端
 
 ```powershell
-cd D:\ACP\jiuwenclaw-Zeze\jiuwenclaw\jiuwenclaw\channels\web\frontend
+cd D:\ACP\jiuwenswarm-Zeze\jiuwenswarm\jiuwenswarm\channels\web\frontend
 
-Remove-Item Env:JIUWENCLAW_DATA_DIR -ErrorAction SilentlyContinue
-$env:JIUWENSWARM_DATA_DIR = "D:\ACP\jiuwenclaw-Zeze\jiuwenclaw\.local-distributed\leader"
+Remove-Item Env:JIUWENSWARM_DATA_DIR -ErrorAction SilentlyContinue
+$env:JIUWENSWARM_DATA_DIR = "D:\ACP\jiuwenswarm-Zeze\jiuwenswarm\.local-distributed\leader"
 
 $env:VITE_API_BASE = "http://127.0.0.1:29100"
 $env:VITE_WS_BASE = "ws://127.0.0.1:29100"
@@ -412,7 +412,7 @@ $env:VITE_WS_BASE = "ws://127.0.0.1:29100"
 npm run dev -- --host 0.0.0.0 --port 5173
 ```
 
-浏览器打开 `http://127.0.0.1:5173` 后，使用集群模式发起验证。若前端提示 `vite` 不存在，先在 `jiuwenclaw/channels/web/frontend` 目录执行 `npm install`。
+浏览器打开 `http://127.0.0.1:5173` 后，使用集群模式发起验证。若前端提示 `vite` 不存在，先在 `jiuwenswarm/channels/web/frontend` 目录执行 `npm install`。
 
 若 workspace 未配置 Git 用户信息，启动前建议带上 `GIT_AUTHOR_*`，否则涉及 git 的工具链可能报错。
 

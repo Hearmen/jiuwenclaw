@@ -57,7 +57,7 @@ sudo apt-get install -y bubblewrap iproute2 iptables nftables python3-pip python
 ## 从源码安装
 
 ```bash
-cd jiuwenclaw/jiuwenbox
+cd jiuwenswarm/jiuwenbox
 uv venv
 source .venv/bin/activate
 uv sync
@@ -82,7 +82,7 @@ sudo env \
 
 ```bash
 sudo env \
-  JIUWENBOX_POLICY_PATH="$(pwd)/configs/jiuwenclaw-policy.yaml" \
+  JIUWENBOX_POLICY_PATH="$(pwd)/configs/jiuwenswarm-policy.yaml" \
   ./.venv/bin/python -m uvicorn jiuwenbox.server.app:app --host 0.0.0.0 --port 9000 --log-level debug
 ```
 
@@ -103,7 +103,7 @@ JIUWENBOX_PORT=9000
 构建镜像：
 
 ```bash
-cd jiuwenclaw/jiuwenbox/scripts
+cd jiuwenswarm/jiuwenbox/scripts
 sudo ./build_docker.sh
 ```
 
@@ -398,9 +398,9 @@ network:
       - 22
 ```
 
-## 在 jiuwenclaw 中通过配置文件启用 jiuwenbox
+## 在 jiuwenswarm 中通过配置文件启用 jiuwenbox
 
-jiuwenclaw 通过 `config.yaml` 的 `sandbox` 段决定**是否启用沙箱、连接哪台 jiuwenbox、是否自己拉起 jiuwenbox 子进程、用哪个 policy**。一般用 TUI 的 `/sandbox` 命令操作时会自动落盘到这里，但也可以提前在 `config.yaml` 里手写。
+jiuwenswarm 通过 `config.yaml` 的 `sandbox` 段决定**是否启用沙箱、连接哪台 jiuwenbox、是否自己拉起 jiuwenbox 子进程、用哪个 policy**。一般用 TUI 的 `/sandbox` 命令操作时会自动落盘到这里，但也可以提前在 `config.yaml` 里手写。
 
 ### 配置 schema 与字段
 
@@ -430,8 +430,8 @@ sandbox:
 | 字段 | 取值 | 默认 | 说明 |
 | --- | --- | --- | --- |
 | `sandbox.url` | URL 字符串 | `http://127.0.0.1:8321` | jiuwenbox 管理 API 端点。TCP 用 `http://host:port`；UDS 用 `unix:///abs/socket/path`（与 `JIUWENBOX_LISTEN` 配置的形态一致） |
-| `sandbox.type` | 字符串 | `jiuwenbox` | sandbox provider 名。当前 jiuwenclaw 只接通了 `jiuwenbox` |
-| `sandbox.startup_mode` | `internal` / `external` | `internal` | `internal`：agent-server 启动时自动 spawn `jiuwenbox-server` 子进程并落盘最终生效的 `url`（端口被占用时自动换端口）；`external`：jiuwenclaw 完全不碰 jiuwenbox 进程，要求按本 README 顶部的方式提前自己启动 |
+| `sandbox.type` | 字符串 | `jiuwenbox` | sandbox provider 名。当前 jiuwenswarm 只接通了 `jiuwenbox` |
+| `sandbox.startup_mode` | `internal` / `external` | `internal` | `internal`：agent-server 启动时自动 spawn `jiuwenbox-server` 子进程并落盘最终生效的 `url`（端口被占用时自动换端口）；`external`：jiuwenswarm 完全不碰 jiuwenbox 进程，要求按本 README 顶部的方式提前自己启动 |
 | `sandbox.policy_file` | 文件名 / 路径 | `code-agent-policy.yaml` | 仅给文件名 → 自动定位到 `jiuwenbox/configs/<name>`；包含 `/` `\` 或 `~` 时按整路径解析。**仅在 `startup_mode=internal` 下生效**——`external` 模式下 policy 由用户自启动时的 `JIUWENBOX_DEFAULT_POLICY_PATH` 决定 |
 | `sandbox.preserve_file_sharing_mode` | `mount` / `copy` | `mount` | `mount`：intrinsic 文件 + `project_dir` 通过 bind mount 注入，`project_dir/config/config.yaml` 自动 deny_write；`copy`：沙箱启动后由 provider 把 intrinsic 文件上传进沙箱，不挂载 `project_dir`，无需 deny `config.yaml` |
 | `sandbox.enabled` | bool | `false` | 启用后 agent 在重建时会切到 sandbox provider；可用 `/sandbox enable` 触发 |
@@ -462,7 +462,7 @@ agent-server 启动时会：
 
 #### 方式 B: `startup_mode: external`（你自己启动 jiuwenbox-server）
 
-适合需要把 jiuwenbox 跑在独立机器、容器里，或者 jiuwenclaw 进程不便用 root 的场景。
+适合需要把 jiuwenbox 跑在独立机器、容器里，或者 jiuwenswarm 进程不便用 root 的场景。
 
 ```yaml
 sandbox:
@@ -477,7 +477,7 @@ sandbox:
 
 跨机时配置：
 
-- 把 `preserve_file_sharing_mode` 设为 `copy`，让 jiuwenclaw 在沙箱启动后把 intrinsic 文件（`AGENT.md` / `HEARTBEAT.md` / `IDENTITY.md` / `SOUL.md` / `USER.md` / `memory/daily_memory/`）上传进去，避免依赖宿主路径。
+- 把 `preserve_file_sharing_mode` 设为 `copy`，让 jiuwenswarm 在沙箱启动后把 intrinsic 文件（`AGENT.md` / `HEARTBEAT.md` / `IDENTITY.md` / `SOUL.md` / `USER.md` / `memory/daily_memory/`）上传进去，避免依赖宿主路径。
 - 在 jiuwenbox 主机的 policy 里允许这些 intrinsic 文件被沙箱内写入（参考仓库内 `jiuwenbox/configs/code-agent-policy.yaml`）。
 
 ## 推理隐私代理
@@ -561,7 +561,7 @@ inference_privacy_proxies:
 代理转发:    POST http://192.168.1.100:9000/v1/chat/completions    -H "Authorization: Bearer sk_sandbox_managed_custom_key"
 ```
 
-#### jiuwenclaw配置示例
+#### jiuwenswarm配置示例
 
 
 | 配置项    | 旧值                          | 新值                             |

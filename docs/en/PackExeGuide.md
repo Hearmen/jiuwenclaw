@@ -13,9 +13,9 @@ This guide explains how to build a desktop app with **uv**, **PyInstaller**, and
 
 | Path | Role |
 |------|------|
-| `scripts/jiuwenclaw.spec` | PyInstaller spec |
-| `scripts/jiuwenclaw_exe_entry.py` | Exe entry (desktop mode + subcommands) |
-| `jiuwenclaw/channels/desktop/desktop_app.py` | pywebview window and local server |
+| `scripts/jiuwenswarm.spec` | PyInstaller spec |
+| `scripts/jiuwenswarm_exe_entry.py` | Exe entry (desktop mode + subcommands) |
+| `jiuwenswarm/channels/desktop/desktop_app.py` | pywebview window and local server |
 | `scripts/build-exe.ps1` | One-shot build (PowerShell) |
 | `scripts/build-exe.bat` | One-shot build (batch) |
 | `scripts/build-macos.sh` | macOS `.app` + `.dmg` |
@@ -49,18 +49,18 @@ uv sync --extra dev
 #### 2. Build the web UI
 
 ```bash
-cd jiuwenclaw/channels/web/frontend
+cd jiuwenswarm/channels/web/frontend
 npm install
 npm run build
 cd ../..
 ```
 
-Static files land in `jiuwenclaw/channels/web/frontend/dist`.
+Static files land in `jiuwenswarm/channels/web/frontend/dist`.
 
 #### 3. PyInstaller
 
 ```bash
-uv run pyinstaller scripts/jiuwenclaw.spec
+uv run pyinstaller scripts/jiuwenswarm.spec
 ```
 
 Output: `dist/jiuwenswarm/`, main binary `dist/jiuwenswarm/jiuwenswarm.exe`.
@@ -93,7 +93,7 @@ Output: `dist/jiuwenswarm/`, main binary `dist/jiuwenswarm/jiuwenswarm.exe`.
 - Entry point: `dist/jiuwenswarm/jiuwenswarm.exe`.
 - Run `jiuwenswarm.exe init` from the installer finish page if needed.
 - User data lives under `%USERPROFILE%\.jiuwenswarm` — do not delete on uninstall by default.
-- Share one `.ico` between `jiuwenclaw.spec` and Inno Setup if you add an icon.
+- Share one `.ico` between `jiuwenswarm.spec` and Inno Setup if you add an icon.
 
 ### Subcommands
 
@@ -128,11 +128,11 @@ Produces `dist/JiuwenSwarm.app` and `dist/JiuwenSwarm-<version>.dmg`.
 
 ### Missing `web/dist`
 
-Run `cd jiuwenclaw/channels/web/frontend && npm run build`.
+Run `cd jiuwenswarm/channels/web/frontend && npm run build`.
 
 ### `ModuleNotFoundError` at runtime
 
-Add missing modules to `hiddenimports` in `scripts/jiuwenclaw.spec` and rebuild.
+Add missing modules to `hiddenimports` in `scripts/jiuwenswarm.spec` and rebuild.
 
 ### Large bundle
 

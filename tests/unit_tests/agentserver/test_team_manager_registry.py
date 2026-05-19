@@ -9,7 +9,7 @@ from pathlib import Path
 
 import pytest
 
-from jiuwenclaw.agents.harness.team.team_manager import (
+from jiuwenswarm.agents.harness.team.team_manager import (
     TeamManager,
     TeamRailMountContext,
     MemberInfo,
@@ -231,17 +231,17 @@ async def test_update_evolution_config_skill_create_enabled_mounts_missing_team_
     monkeypatch.delenv("EVOLUTION_AUTO_SCAN", raising=False)
     monkeypatch.delenv("SKILL_CREATE", raising=False)
     monkeypatch.setattr(
-        "jiuwenclaw.agents.harness.team.team_manager.get_config",
+        "jiuwenswarm.agents.harness.team.team_manager.get_config",
         lambda: {"evolution": {"skill_create": True}},
     )
     monkeypatch.setattr(
-        "jiuwenclaw.agents.harness.team.team_manager.build_member_rails",
+        "jiuwenswarm.agents.harness.team.team_manager.build_member_rails",
         lambda **kwargs: [_FakeTeamSkillCreateRail()]
         if kwargs["team_workspace"].config.get("evolution", {}).get("skill_create")
         else [],
     )
     monkeypatch.setattr(
-        "jiuwenclaw.agents.harness.team.team_manager.TeamSkillCreateRail",
+        "jiuwenswarm.agents.harness.team.team_manager.TeamSkillCreateRail",
         _FakeTeamSkillCreateRail,
     )
     await manager.update_evolution_config(
@@ -314,7 +314,7 @@ async def test_destroy_team_cleans_registered_evolution_rails(
     agent = _FakeAgent()
 
     monkeypatch.setattr(
-        "jiuwenclaw.agents.harness.team.team_manager.release_a2x_reservations_for_team",
+        "jiuwenswarm.agents.harness.team.team_manager.release_a2x_reservations_for_team",
         lambda team_agent: None,
     )
     manager.register_team_skill_rail("sess-1", rail)
@@ -538,11 +538,11 @@ async def test_delete_session_runtime_deletes_single_team_session_team(
 
     monkeypatch.setattr(TeamManager, "stop_session_runtime", fake_stop)
     monkeypatch.setattr(
-        "jiuwenclaw.agents.harness.team.team_manager.Runner.delete_agent_team",
+        "jiuwenswarm.agents.harness.team.team_manager.Runner.delete_agent_team",
         fake_delete_agent_team,
     )
     monkeypatch.setattr(
-        "jiuwenclaw.agents.harness.team.team_manager.get_session_metadata",
+        "jiuwenswarm.agents.harness.team.team_manager.get_session_metadata",
         lambda _session_id: {"team_name": "demo-team"},
     )
 
@@ -575,11 +575,11 @@ async def test_delete_session_runtime_uses_metadata_not_active_team_name(
 
     monkeypatch.setattr(TeamManager, "stop_session_runtime", fake_stop)
     monkeypatch.setattr(
-        "jiuwenclaw.agents.harness.team.team_manager.Runner.delete_agent_team",
+        "jiuwenswarm.agents.harness.team.team_manager.Runner.delete_agent_team",
         fake_delete_agent_team,
     )
     monkeypatch.setattr(
-        "jiuwenclaw.agents.harness.team.team_manager.get_session_metadata",
+        "jiuwenswarm.agents.harness.team.team_manager.get_session_metadata",
         lambda _session_id: {"team_name": "metadata-team"},
     )
 
@@ -605,7 +605,7 @@ async def test_stop_session_runtime_stops_runner_owned_team_runtime(
         return True
 
     monkeypatch.setattr(
-        "jiuwenclaw.agents.harness.team.team_manager.Runner.stop_agent_team",
+        "jiuwenswarm.agents.harness.team.team_manager.Runner.stop_agent_team",
         fake_stop_agent_team,
     )
 
@@ -634,11 +634,11 @@ async def test_pause_session_runtime_pauses_runner_owned_team_runtime(
         raise AssertionError("pause should not stop the Runner-owned team runtime")
 
     monkeypatch.setattr(
-        "jiuwenclaw.agents.harness.team.team_manager.Runner.pause_agent_team",
+        "jiuwenswarm.agents.harness.team.team_manager.Runner.pause_agent_team",
         fake_pause_agent_team,
     )
     monkeypatch.setattr(
-        "jiuwenclaw.agents.harness.team.team_manager.Runner.stop_agent_team",
+        "jiuwenswarm.agents.harness.team.team_manager.Runner.stop_agent_team",
         fake_stop_agent_team,
     )
 
@@ -668,7 +668,7 @@ async def test_interact_uses_runner_only_for_active_session(
         return True
 
     monkeypatch.setattr(
-        "jiuwenclaw.agents.harness.team.team_manager.Runner.interact_agent_team",
+        "jiuwenswarm.agents.harness.team.team_manager.Runner.interact_agent_team",
         fake_interact_agent_team,
     )
 
@@ -692,7 +692,7 @@ async def test_interact_returns_false_for_non_active_session(
         return True
 
     monkeypatch.setattr(
-        "jiuwenclaw.agents.harness.team.team_manager.Runner.interact_agent_team",
+        "jiuwenswarm.agents.harness.team.team_manager.Runner.interact_agent_team",
         fake_interact_agent_team,
     )
 
@@ -721,7 +721,7 @@ async def test_stop_session_runtime_ignores_local_team_cache_in_single_machine_m
         return True
 
     monkeypatch.setattr(
-        "jiuwenclaw.agents.harness.team.team_manager.Runner.stop_agent_team",
+        "jiuwenswarm.agents.harness.team.team_manager.Runner.stop_agent_team",
         fake_stop_agent_team,
     )
 
@@ -747,11 +747,11 @@ async def test_stop_session_runtime_uses_metadata_team_name_for_non_active_sessi
         return True
 
     monkeypatch.setattr(
-        "jiuwenclaw.agents.harness.team.team_manager.Runner.stop_agent_team",
+        "jiuwenswarm.agents.harness.team.team_manager.Runner.stop_agent_team",
         fake_stop_agent_team,
     )
     monkeypatch.setattr(
-        "jiuwenclaw.agents.harness.team.team_manager.get_session_metadata",
+        "jiuwenswarm.agents.harness.team.team_manager.get_session_metadata",
         lambda _session_id: {"team_name": "meta-team"},
     )
 
@@ -782,11 +782,11 @@ async def test_delete_session_runtime_uses_metadata_team_name(
 
     monkeypatch.setattr(TeamManager, "stop_session_runtime", fake_stop)
     monkeypatch.setattr(
-        "jiuwenclaw.agents.harness.team.team_manager.Runner.delete_agent_team",
+        "jiuwenswarm.agents.harness.team.team_manager.Runner.delete_agent_team",
         fake_delete_agent_team,
     )
     monkeypatch.setattr(
-        "jiuwenclaw.agents.harness.team.team_manager.get_session_metadata",
+        "jiuwenswarm.agents.harness.team.team_manager.get_session_metadata",
         lambda _session_id: {"team_name": "meta-team"},
     )
 
@@ -821,15 +821,15 @@ async def test_delete_session_runtime_falls_back_to_release_without_team_name(
 
     monkeypatch.setattr(TeamManager, "stop_session_runtime", fake_stop)
     monkeypatch.setattr(
-        "jiuwenclaw.agents.harness.team.team_manager.Runner.release",
+        "jiuwenswarm.agents.harness.team.team_manager.Runner.release",
         fake_release,
     )
     monkeypatch.setattr(
-        "jiuwenclaw.agents.harness.team.team_manager.Runner.delete_agent_team",
+        "jiuwenswarm.agents.harness.team.team_manager.Runner.delete_agent_team",
         fake_delete_agent_team,
     )
     monkeypatch.setattr(
-        "jiuwenclaw.agents.harness.team.team_manager.get_session_metadata",
+        "jiuwenswarm.agents.harness.team.team_manager.get_session_metadata",
         lambda _session_id: {},
     )
 
@@ -863,7 +863,7 @@ def test_resolve_session_team_name_returns_none_when_metadata_missing(
 ) -> None:
     manager = _TeamManagerHarness()
     monkeypatch.setattr(
-        "jiuwenclaw.agents.harness.team.team_manager.get_session_metadata",
+        "jiuwenswarm.agents.harness.team.team_manager.get_session_metadata",
         lambda _session_id: {},
     )
 

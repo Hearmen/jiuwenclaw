@@ -2,8 +2,9 @@ from types import SimpleNamespace
 
 import pytest
 
-from jiuwenclaw.common.schema.message import Message, ReqMethod
-from jiuwenclaw.gateway.message_handler.message_handler import MessageHandler
+from jiuwenswarm.common.schema import Message
+from jiuwenswarm.common.schema.message import ReqMethod
+from jiuwenswarm.gateway.message_handler.message_handler import MessageHandler
 
 
 class _FakeAgentClient:

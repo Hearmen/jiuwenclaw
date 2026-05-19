@@ -60,7 +60,7 @@ sudo apt-get install -y bubblewrap iproute2 iptables nftables python3-pip python
 ## Install From Source
 
 ```bash
-cd jiuwenclaw/jiuwenbox
+cd jiuwenswarm/jiuwenbox
 uv venv
 source .venv/bin/activate
 uv sync
@@ -87,7 +87,7 @@ arguments:
 
 ```bash
 sudo env \
-  JIUWENBOX_POLICY_PATH="$(pwd)/configs/jiuwenclaw-policy.yaml" \
+  JIUWENBOX_POLICY_PATH="$(pwd)/configs/jiuwenswarm-policy.yaml" \
   ./.venv/bin/python -m uvicorn jiuwenbox.server.app:app --host 0.0.0.0 --port 9000 --log-level debug
 ```
 
@@ -109,7 +109,7 @@ JIUWENBOX_PORT=9000
 Build the image:
 
 ```bash
-cd jiuwenclaw/jiuwenbox/scripts
+cd jiuwenswarm/jiuwenbox/scripts
 sudo ./build_docker.sh
 ```
 
@@ -417,9 +417,9 @@ network:
       - 22
 ```
 
-## Enabling jiuwenbox from jiuwenclaw's config file
+## Enabling jiuwenbox from jiuwenswarm's config file
 
-jiuwenclaw decides **whether the sandbox is on, which jiuwenbox to talk to, whether to spawn its own jiuwenbox subprocess, and which policy file to use** via the `sandbox` section of its `config.yaml`. The TUI's `/sandbox` command writes back to the same section, so you can also pre-populate it by hand.
+jiuwenswarm decides **whether the sandbox is on, which jiuwenbox to talk to, whether to spawn its own jiuwenbox subprocess, and which policy file to use** via the `sandbox` section of its `config.yaml`. The TUI's `/sandbox` command writes back to the same section, so you can also pre-populate it by hand.
 
 ### Configuration schema
 
@@ -449,7 +449,7 @@ Field reference:
 | Field | Values | Default | Notes |
 | --- | --- | --- | --- |
 | `sandbox.url` | URL string | `http://127.0.0.1:8321` | jiuwenbox management API endpoint. TCP: `http://host:port`; UDS: `unix:///abs/socket/path` (mirrors `JIUWENBOX_LISTEN`). |
-| `sandbox.type` | string | `jiuwenbox` | Sandbox provider name. Currently jiuwenclaw only wires up `jiuwenbox`. |
+| `sandbox.type` | string | `jiuwenbox` | Sandbox provider name. Currently jiuwenswarm only wires up `jiuwenbox`. |
 | `sandbox.startup_mode` | `internal` / `external` | `internal` | `internal`: agent-server spawns `jiuwenbox-server` at boot and persists the effective `url` (auto-picks a free port if the configured one is busy). `external`: agent-server never touches jiuwenbox; you must start it yourself per the top of this README. |
 | `sandbox.policy_file` | filename or path | `code-agent-policy.yaml` | Bare filename → resolved relative to `jiuwenbox/configs/`; otherwise expanded (`~`, `$VAR`) and used verbatim. **Only honored under `startup_mode=internal`**; in `external` mode the policy is chosen by whoever started jiuwenbox-server (via `JIUWENBOX_DEFAULT_POLICY_PATH`). |
 | `sandbox.preserve_file_sharing_mode` | `mount` / `copy` | `mount` | `mount`: intrinsic files and `project_dir` are bind-mounted, with `project_dir/config/config.yaml` auto-denied for write. `copy`: the provider uploads intrinsic files into the sandbox after start; `project_dir` is not mounted and `config.yaml` does not need a deny. |
@@ -481,7 +481,7 @@ At boot the agent-server will:
 
 #### Shape B: `startup_mode: external` (you start jiuwenbox-server yourself)
 
-Good when jiuwenbox lives on a different host / container, or when jiuwenclaw should never escalate to root. Example:
+Good when jiuwenbox lives on a different host / container, or when jiuwenswarm should never escalate to root. Example:
 
 ```yaml
 sandbox:
@@ -496,7 +496,7 @@ Under this mode agent-server **does not** try to spawn jiuwenbox, and `sandbox.p
 
 For cross-host setups:
 
-- Set `preserve_file_sharing_mode` to `copy` so jiuwenclaw uploads intrinsic files (`AGENT.md`, `HEARTBEAT.md`, `IDENTITY.md`, `SOUL.md`, `USER.md`, `memory/daily_memory/`) into the sandbox after startup, instead of relying on host paths.
+- Set `preserve_file_sharing_mode` to `copy` so jiuwenswarm uploads intrinsic files (`AGENT.md`, `HEARTBEAT.md`, `IDENTITY.md`, `SOUL.md`, `USER.md`, `memory/daily_memory/`) into the sandbox after startup, instead of relying on host paths.
 - On the jiuwenbox host, make sure the policy allows those intrinsic files to be writable inside the sandbox (the bundled `jiuwenbox/configs/code-agent-policy.yaml` already does).
 
 
@@ -574,7 +574,7 @@ Client request:  POST http://127.0.0.1:8322/custom/v1/chat/completions -H "Autho
 Proxy forwards:  POST http://192.168.1.100:9000/v1/chat/completions    -H "Authorization: Bearer sk_sandbox_managed_custom_key"
 ```
 
-#### jiuwenclaw Configuration Example
+#### jiuwenswarm Configuration Example
 
 | Config    | Old Value                     | New Value                          |
 | --------- | ----------------------------- | ---------------------------------- |

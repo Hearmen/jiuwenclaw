@@ -5,20 +5,20 @@ import types
 import pytest
 from openjiuwen.agent_teams.runtime import RunActionKind
 
-from jiuwenclaw.server import agent_ws_server as agent_ws_server_module
-from jiuwenclaw.server.runtime.agent_manager import ACP_DEFAULT_CAPABILITIES
-from jiuwenclaw.agents.harness.common.tools import acp_output_tools
-from jiuwenclaw.agents.harness.common.tools.acp_output_tools import AcpOutputRequest, get_acp_output_manager
-from jiuwenclaw.server.runtime.agent_adapter import interface_deep as interface_deep_module
-from jiuwenclaw.server.runtime.agent_adapter import team_helpers as team_helpers_module
-from jiuwenclaw.server.utils.stream_utils import parse_stream_chunk
-from jiuwenclaw.server.runtime.agent_adapter.interface_deep import (
+from jiuwenswarm.server import agent_ws_server as agent_ws_server_module
+from jiuwenswarm.server.runtime.agent_manager import ACP_DEFAULT_CAPABILITIES
+from jiuwenswarm.agents.harness.common.tools import acp_output_tools
+from jiuwenswarm.agents.harness.common.tools.acp_output_tools import AcpOutputRequest, get_acp_output_manager
+from jiuwenswarm.server.runtime.agent_adapter import interface_deep as interface_deep_module
+from jiuwenswarm.server.runtime.agent_adapter import team_helpers as team_helpers_module
+from jiuwenswarm.server.utils.stream_utils import parse_stream_chunk
+from jiuwenswarm.server.runtime.agent_adapter.interface_deep import (
     _build_context_assemble_rail,
     _build_context_processor_rail,
 )
-from jiuwenclaw.common.e2a.gateway_normalize import e2a_from_agent_fields
-from jiuwenclaw.common.schema.agent import AgentRequest
-from jiuwenclaw.common.schema.message import ReqMethod
+from jiuwenswarm.common.e2a.gateway_normalize import e2a_from_agent_fields
+from jiuwenswarm.common.schema.agent import AgentRequest
+from jiuwenswarm.common.schema.message import ReqMethod
 
 
 class FakeWebSocket:
@@ -433,7 +433,7 @@ async def test_handle_session_create_stops_old_team_runtime_for_team_mode(monkey
         fake_encode_agent_response_for_wire,
     )
     monkeypatch.setattr(
-        "jiuwenclaw.agents.harness.team.get_team_manager",
+        "jiuwenswarm.agents.harness.team.get_team_manager",
         lambda channel_id: fake_team_manager,
     )
 
@@ -473,7 +473,7 @@ async def test_handle_session_switch_stops_old_team_runtime_for_team_mode(monkey
         fake_encode_agent_response_for_wire,
     )
     monkeypatch.setattr(
-        "jiuwenclaw.agents.harness.team.get_team_manager",
+        "jiuwenswarm.agents.harness.team.get_team_manager",
         lambda channel_id: fake_team_manager,
     )
 
@@ -514,7 +514,7 @@ async def test_handle_session_switch_rejects_non_team_mode(monkeypatch):
         fake_encode_agent_response_for_wire,
     )
     monkeypatch.setattr(
-        "jiuwenclaw.agents.harness.team.get_team_manager",
+        "jiuwenswarm.agents.harness.team.get_team_manager",
         lambda channel_id: fake_team_manager,
     )
 
@@ -583,7 +583,7 @@ async def test_handle_team_delete_deletes_all_matching_team_sessions(monkeypatch
         fake_encode_agent_response_for_wire,
     )
     monkeypatch.setattr(
-        "jiuwenclaw.agents.harness.team.stop_team_session_runtime_across_managers",
+        "jiuwenswarm.agents.harness.team.stop_team_session_runtime_across_managers",
         lambda session_id, reason="": stop_calls.append(
             {"session_id": session_id, "reason": reason}
         ) or asyncio.sleep(0, result=True),
@@ -797,7 +797,7 @@ async def test_handle_session_delete_initializes_persistent_checkpointer(monkeyp
         lambda: sessions_root,
     )
     monkeypatch.setattr(
-        "jiuwenclaw.server.runtime.session.session_metadata.get_session_metadata",
+        "jiuwenswarm.server.runtime.session.session_metadata.get_session_metadata",
         lambda _session_id: {"mode": "agent.plan"},
     )
     monkeypatch.setattr(
@@ -915,7 +915,7 @@ async def test_find_team_session_ids_uses_metadata_team_name(monkeypatch, tmp_pa
         lambda: sessions_root,
     )
     monkeypatch.setattr(
-        "jiuwenclaw.server.runtime.session.session_metadata.get_session_metadata",
+        "jiuwenswarm.server.runtime.session.session_metadata.get_session_metadata",
         lambda session_id: metadata_map.get(session_id, {}),
     )
 

@@ -2,7 +2,7 @@
 
 This guide is for **development and integration testing**: how distributed Team (`team.runtime.mode=distributed` + `pyzmq`) maps to AgentServer / `TeamManager`, where config and code live, and how to run leader and teammate from two separate config roots for end-to-end verification. There is no separate runtime binary; the entry point remains the unified AgentServer.
 
-The main config file is usually `~/.jiuwenswarm/config/config.yaml`. Override the directory with `JIUWENCLAW_CONFIG_DIR` (same as [Configuration](Configuration.md)).
+The main config file is usually `~/.jiuwenswarm/config/config.yaml`. Override the directory with `JIUWENSWARM_CONFIG_DIR` (same as [Configuration](Configuration.md)).
 
 [中文版（Chinese）](../zh/分布式Team.md)
 
@@ -169,7 +169,7 @@ cp "<REPO_ROOT>/jiuwenswarm/resources/config.team.distributed.teammate.yaml" \
 
 ## 5. Two config directories (recommended layout)
 
-Use **two separate HOME trees** (or two `JIUWENCLAW_CONFIG_DIR` values) for leader and teammate so configs do not overwrite each other.
+Use **two separate HOME trees** (or two `JIUWENSWARM_CONFIG_DIR` values) for leader and teammate so configs do not overwrite each other.
 
 Placeholders:
 

@@ -60,30 +60,30 @@ test = [
 ]
 
 [project.scripts]
-jiuwenswarm-app = "jiuwenclaw.app:main"
-jiuwenswarm-agentserver = "jiuwenclaw.server.app_agentserver:main"
-jiuwenswarm-gateway = "jiuwenclaw.gateway.app_gateway:main"
-jiuwenswarm-web = "jiuwenclaw.channels.web.app_web:main"
-jiuwenswarm-start = "jiuwenclaw.start_services:main"
-jiuwenswarm-init = "jiuwenclaw.init_workspace:main"
-jiuwenswarm-desktop = "jiuwenclaw.channels.desktop.desktop_app:main"
-jiuwenswarm-tui = "jiuwenclaw.channels.acp.app_acp:main"
-jiuwenswarm-acp = "jiuwenclaw.gateway.channel_manager.protocol.acp.acp_connect:main"
+jiuwenswarm-app = "jiuwenswarm.app:main"
+jiuwenswarm-agentserver = "jiuwenswarm.server.app_agentserver:main"
+jiuwenswarm-gateway = "jiuwenswarm.gateway.app_gateway:main"
+jiuwenswarm-web = "jiuwenswarm.channels.web.app_web:main"
+jiuwenswarm-start = "jiuwenswarm.start_services:main"
+jiuwenswarm-init = "jiuwenswarm.init_workspace:main"
+jiuwenswarm-desktop = "jiuwenswarm.channels.desktop.desktop_app:main"
+jiuwenswarm-tui = "jiuwenswarm.channels.acp.app_acp:main"
+jiuwenswarm-acp = "jiuwenswarm.gateway.channel_manager.protocol.acp.acp_connect:main"
 
 [tool.setuptools]
-# 入口脚本现在是 jiuwenclaw 包内的一部分，不需要 py-modules
+# 入口脚本现在是 jiuwenswarm 包内的一部分，不需要 py-modules
 py-modules = []
 include-package-data = true
 
 [tool.setuptools.packages.find]
 where = ["."]
-include = ["jiuwenclaw*"]
-exclude = ["jiuwenclaw.cli*", "jiuwenclaw.web*"]
+include = ["jiuwenswarm*"]
+exclude = ["jiuwenswarm.cli*", "jiuwenswarm.web*"]
 namespaces = false
 
 [tool.setuptools.package-data]
 "*" = ["LICENSE"]
-jiuwenclaw = [
+jiuwenswarm = [
     "channels/web/frontend/dist/**/*",
     "channels/web/frontend/dist/*",
     # config / env 模板放在 resources 目录
@@ -93,7 +93,7 @@ jiuwenclaw = [
 ]
 
 [tool.setuptools.exclude-package-data]
-jiuwenclaw = ["channels/web/frontend/node_modules/**", "channels/web/frontend/node_modules/*"]
+jiuwenswarm = ["channels/web/frontend/node_modules/**", "channels/web/frontend/node_modules/*"]
 
 [tool.uv.sources]
 jiuwenswarm-tui = { path = "./packages/jiuwenswarm-tui" }

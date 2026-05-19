@@ -6,8 +6,8 @@ from types import SimpleNamespace
 
 import pytest
 
-from jiuwenclaw.server.runtime.agent_adapter import interface_deep as interface_deep_module
-from jiuwenclaw.server.runtime.agent_adapter.interface_deep import JiuWenClawDeepAdapter
+from jiuwenswarm.server.runtime.agent_adapter import interface_deep as interface_deep_module
+from jiuwenswarm.server.runtime.agent_adapter.interface_deep import JiuWenClawDeepAdapter
 
 
 class _FakeTransport:
@@ -98,7 +98,7 @@ async def test_normal_evolution_watcher_skips_status_when_auto_scan_disabled(mon
     adapter = _TestAdapter.build_with_rail(rail)
 
     monkeypatch.setattr(
-        "jiuwenclaw.server.gateway_push.WebSocketGatewayPushTransport",
+        "jiuwenswarm.server.gateway_push.WebSocketGatewayPushTransport",
         _FakeTransport,
     )
 
@@ -124,7 +124,7 @@ async def test_normal_evolution_watcher_uses_delivery_context_metadata(monkeypat
         return message
 
     monkeypatch.setattr(
-        "jiuwenclaw.server.gateway_push.WebSocketGatewayPushTransport",
+        "jiuwenswarm.server.gateway_push.WebSocketGatewayPushTransport",
         _FakeTransport,
     )
     monkeypatch.setattr(
@@ -153,7 +153,7 @@ async def test_normal_evolution_watcher_reads_outcome_status_from_metadata(monke
     )
 
     monkeypatch.setattr(
-        "jiuwenclaw.server.gateway_push.WebSocketGatewayPushTransport",
+        "jiuwenswarm.server.gateway_push.WebSocketGatewayPushTransport",
         _FakeTransport,
     )
 
@@ -179,7 +179,7 @@ async def test_normal_evolution_watcher_pushes_passive_progress_before_approval(
     adapter = _TestAdapter.build_with_rail(rail)
 
     monkeypatch.setattr(
-        "jiuwenclaw.server.gateway_push.WebSocketGatewayPushTransport",
+        "jiuwenswarm.server.gateway_push.WebSocketGatewayPushTransport",
         _FakeTransport,
     )
 
@@ -209,7 +209,7 @@ async def test_normal_evolution_watcher_times_out_after_idle_progress(monkeypatc
     adapter = _TestAdapter.build_with_rail(rail)
 
     monkeypatch.setattr(
-        "jiuwenclaw.server.gateway_push.WebSocketGatewayPushTransport",
+        "jiuwenswarm.server.gateway_push.WebSocketGatewayPushTransport",
         _FakeTransport,
     )
     monkeypatch.setattr(interface_deep_module, "TEAM_EVOLUTION_IDLE_SLEEP_SEC", 0.001)
@@ -235,7 +235,7 @@ async def test_normal_evolution_watcher_hides_timed_out_terminal_progress(monkey
     )
 
     monkeypatch.setattr(
-        "jiuwenclaw.server.gateway_push.WebSocketGatewayPushTransport",
+        "jiuwenswarm.server.gateway_push.WebSocketGatewayPushTransport",
         _FakeTransport,
     )
 
@@ -270,7 +270,7 @@ async def test_team_skill_evolve_approval_uses_record_api(monkeypatch):
         staticmethod(lambda request_id, channel_id=None: rail),
     )
     monkeypatch.setattr(
-        "jiuwenclaw.agents.harness.team.sync_team_skills_across_managers",
+        "jiuwenswarm.agents.harness.team.sync_team_skills_across_managers",
         lambda session_id: None,
     )
 
@@ -303,11 +303,11 @@ async def test_team_skill_evolve_approval_pushes_terminal_status(monkeypatch):
         staticmethod(lambda request_id, channel_id=None: _FakeTeamRail()),
     )
     monkeypatch.setattr(
-        "jiuwenclaw.agents.harness.team.sync_team_skills_across_managers",
+        "jiuwenswarm.agents.harness.team.sync_team_skills_across_managers",
         lambda session_id: None,
     )
     monkeypatch.setattr(
-        "jiuwenclaw.server.gateway_push.WebSocketGatewayPushTransport",
+        "jiuwenswarm.server.gateway_push.WebSocketGatewayPushTransport",
         _FakeTransport,
     )
 

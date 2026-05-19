@@ -6,7 +6,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from jiuwenclaw.server.runtime.agent_adapter import evolution_helpers
+from jiuwenswarm.server.runtime.agent_adapter import evolution_helpers
 
 
 def test_evolution_helpers_parse_approval_and_outcome_events():
