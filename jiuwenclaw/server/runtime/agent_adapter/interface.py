@@ -345,6 +345,16 @@ class JiuWenClaw:
         if run:
             inputs["run"] = run
 
+        # 处理 cron 字段：将 params.cron 转换为 run 结构
+        # scheduler 使用 params.cron 标识定时任务，需要转换为 run.kind="cron"
+        # cron 信息放到 RunContext.extra 中
+        cron = request.params.get("cron")
+        if cron:
+            inputs["run"] = {
+                "kind": "cron",
+                "context": {"extra": {"cron": cron}},
+            }
+
         # 返回原始 query（未经 build_user_prompt 包装）
         # Team 模式需要使用原始 query，而不是 JSON 包装后的 prompt
         return inputs, memory_mode, query
