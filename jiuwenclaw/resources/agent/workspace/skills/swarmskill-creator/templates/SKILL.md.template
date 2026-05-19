@@ -1,25 +1,34 @@
 ---
-name: <teamskill-name>
+name: <swarmskill-name>
 description: |
-  <One-line WHAT: this Teamskill does X via N-role pattern Y. e.g., "3-role adversarial PR review (Reviewer + Critic + Architect) that surfaces inter-role conflicts instead of papering over them">.
+  <One-line WHAT: this Swarm Skill does X via N-role pattern Y. e.g., "3-role adversarial PR review (Reviewer + Critic + Architect) that surfaces inter-role conflicts instead of papering over them">.
   Use when <one-line WHEN: the natural-language situation that should trigger — do NOT enumerate synonym phrases; semantic match handles variants>.
   Do NOT use for <one-line NOT: explicit non-cases that prevent over-firing on adjacent skills>.
 version: "0.1"
-kind: team-skill
+kind: swarm-skill
 roles:
   - id: <role-id-1>
+    kind: ai_agent                        # mandatory. Use `human_agent` if Stage 0.5 confirmed human participation.
     purpose: <≤150 chars HARD CAP: 1-line role responsibility — what this role does and why. Detail belongs in roles/<id>.md, not here>
     skills: [<dependent-skill-name>]      # populated from Stage 2 auto-matching; mirror in dependencies.yaml
     tools: [<tool-name>]                  # populated from Stage 2 auto-matching; mirror in dependencies.yaml
   - id: <role-id-2>
+    kind: ai_agent
     purpose: <...>
     skills: []                            # [] = Stage 2 auto-matching confirmed no skill matches for this role
     tools: []
   - id: <role-id-3>
+    kind: ai_agent
     purpose: <...>
+  # Example human role (omit if all-AI swarm):
+  # - id: <human-role-id>
+  #   kind: human_agent                   # human-in-the-loop; skills/tools usually empty
+  #   purpose: <≤150 chars: what input the human is asked to provide and when>
+  #   skills: []
+  #   tools: []
 ---
 
-# <Teamskill Display Name>
+# <Swarm Skill Display Name>
 
 <1-2 sentences: an in-context introduction for an Agent that has already triggered this skill. Different from `description` (which gates the trigger). State the team's pattern (parallel adversarial / sequential pipeline / mixed) and the single failure mode it solves.>
 

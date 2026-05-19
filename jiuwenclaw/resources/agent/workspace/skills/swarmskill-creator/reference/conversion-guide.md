@@ -1,4 +1,4 @@
-# Conversion Guide: Single-agent Skill → Teamskill
+# Conversion Guide: Single-agent Skill → Swarm Skill
 
 > Read this in **Stage 1b** when the user points at an existing single-agent skill and asks to convert it. After this stage, return to the main SKILL.md workflow at Stage 1a (pattern selection) onward.
 
@@ -35,11 +35,11 @@ Write a one-paragraph **conversion rationale** answering:
 
 If you cannot answer crisply, conversion is premature. Examples of crisp answers:
 
-- **`adversarial-reviewer` → `pr-review-team`**: "The single agent role-plays 3 personas serially, but its outputs converge because it cannot escape its own analytical priors. Independent parallel agents produce genuinely different findings."
+- **`adversarial-reviewer` → `pr-review-swarm`**: "The single agent role-plays 3 personas serially, but its outputs converge because it cannot escape its own analytical priors. Independent parallel agents produce genuinely different findings."
 - A multi-stage incident-response skill → team form: "The single agent skips the postmortem after mitigation succeeds, because the user's perceived crisis is over. Separating roles + gating mitigation→postmortem enforces the discipline."
 - A copywriting skill → team form: "The single agent collapses brief and copy into one pass, losing the audit trail and the discipline of editing without rewriting."
 
-This rationale becomes the Stage 0 justification and gets cited in the new Teamskill's SKILL.md `description` (use case) + workflow.md Overview.
+This rationale becomes the Stage 0 justification and gets cited in the new Swarm Skill's SKILL.md `description` (use case) + workflow.md Overview.
 
 ### Step 3: Decompose into roles
 
@@ -65,7 +65,7 @@ Use [pattern-selection.md](pattern-selection.md). For converted skills, the patt
 | Multi-step workflow with adversarial review at one step | C + A |
 | Multi-step workflow with parallel research at one step | C + B |
 
-### Step 5: Generate the new Teamskill via the standard pipeline
+### Step 5: Generate the new Swarm Skill via the standard pipeline
 
 Continue from main SKILL.md **Stage 2 onward** (Role design → Workflow → Bind → Dependencies → Templates → Validate).
 
@@ -82,13 +82,13 @@ When filling in templates, **port content from the source skill aggressively**:
 | Tool lists (`gh`, `grep`, `python`) | `roles[].tools` in SKILL.md frontmatter + `dependencies.yaml` `tools` segment |
 | Required Skills (cross-references) | `roles[].skills` in SKILL.md frontmatter + `dependencies.yaml` `skills` segment with `source: <URL>` if external |
 
-## Worked example: `adversarial-reviewer` → `pr-review-team`
+## Worked example: `adversarial-reviewer` → `pr-review-swarm`
 
 This is the canonical conversion. Walk through it as a template.
 
 ### Source structure
 
-A real public single-agent skill `adversarial-reviewer` (an engineering-team skill that runs 3 review personas serially inside a single SKILL.md):
+A real public single-agent skill `adversarial-reviewer` (an engineering-swarm skill that runs 3 review personas serially inside a single SKILL.md):
 
 ```
 ---
@@ -142,7 +142,7 @@ Priorities: ...
 
 ### Result
 
-`pr-review-team`. The conversion preserves all source content while adding:
+`pr-review-swarm`. The conversion preserves all source content while adding:
 
 - **True parallelism** (3 isolated agents instead of 1 serial agent)
 - **Anti-overlap boundaries** (each role's `**Forbidden**:` block names the other roles)
@@ -163,5 +163,5 @@ Before declaring a conversion done, verify:
 - [ ] **All source tools** declared in `roles[].tools` + `dependencies.yaml > tools`
 - [ ] **All source cross-referenced Skills** declared in `roles[].skills` + `dependencies.yaml > skills`
 - [ ] **`bind.md` Behavioral Constraints** explicitly state isolation rule (A-pattern teams)
-- [ ] **Validator passes** on the new Teamskill directory
-- [ ] **Optional: `MIGRATION.md`** at the root of the new Teamskill, documenting the source skill, the conversion rationale, and the team-vs-single delta (useful for the user to understand what they gained)
+- [ ] **Validator passes** on the new Swarm Skill directory
+- [ ] **Optional: `MIGRATION.md`** at the root of the new Swarm Skill, documenting the source skill, the conversion rationale, and the team-vs-single delta (useful for the user to understand what they gained)

@@ -1,6 +1,6 @@
 # Community Skill Search Guide
 
-How to find, evaluate, and install community skills for Teamskill roles. Read this file when executing the Post-generation community enrichment step.
+How to find, evaluate, and install community skills for Swarm Skill roles. Read this file when executing the Post-generation community enrichment step.
 
 ## 1. Keyword Derivation
 
@@ -75,7 +75,7 @@ When CLI + web search return no good matches, browse these human-curated lists:
 |---|---|---|
 | **awesome-agent-skills** | [github.com/heilcheng/awesome-agent-skills](https://github.com/heilcheng/awesome-agent-skills) | Cross-agent (Claude, Cursor, Copilot), tutorials + directories |
 | **awesome-claude-skills** | [github.com/ComposioHQ/awesome-claude-skills](https://github.com/ComposioHQ/awesome-claude-skills) | Claude ecosystem deep-dive |
-| **Antigravity awesome-skills** | [github.com/antigravity-ai/awesome-skills](https://github.com/antigravity-ai/awesome-skills) | 1200+ skills organized by **role bundles** (Web Wizard, Security Engineer, etc.) — particularly useful for Teamskill roles since the bundles map to role archetypes |
+| **Antigravity awesome-skills** | [github.com/antigravity-ai/awesome-skills](https://github.com/antigravity-ai/awesome-skills) | 1200+ skills organized by **role bundles** (Web Wizard, Security Engineer, etc.) — particularly useful for Swarm Skill roles since the bundles map to role archetypes |
 
 ### Search procedure (step by step)
 

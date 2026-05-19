@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """
-validate_teamskill.py — Compliance checker for Teamskills (v0.1 spec).
+validate_swarmskill.py — Compliance checker for Swarm Skills (v0.1 spec).
 
 Usage:
-    python validate_teamskill.py <path/to/teamskill-name/>
+    python validate_swarmskill.py <path/to/swarmskill-name/>
 
 Exit codes:
     0  = PASS (no errors; warnings may still print)
@@ -32,7 +32,7 @@ What this script does NOT catch (judgment calls — see reference/compliance-che
     - Whether mottos are mutually antagonistic (anti-convergence quality)
     - Whether Boundary lists really cover all sibling territories
     - Whether bind.md numbers actually match the workflow's needs
-    - Whether the Teamskill is even justified vs a single-agent skill (Stage 0)
+    - Whether the Swarm Skill is even justified vs a single-agent skill (Stage 0)
 """
 
 from __future__ import annotations
@@ -50,7 +50,7 @@ try:
     import yaml
 except ImportError:
     logger.info("[USAGE ERROR] PyYAML is required. Install with: pip install pyyaml")
-    sys.exit(2)
+    raise
 
 
 # ---------------------------------------------------------------------------
@@ -58,6 +58,7 @@ except ImportError:
 # ---------------------------------------------------------------------------
 
 class Report:
+
     def __init__(self) -> None:
         self.errors: list[str] = []
         self.warnings: list[str] = []
@@ -88,7 +89,6 @@ class Report:
                 len(self.errors),
                 len(self.warnings),
             )
-
 
 # ---------------------------------------------------------------------------
 # Frontmatter + section parsing helpers
@@ -164,16 +164,13 @@ def validate_skill_md(path: Path, report: Report) -> tuple[dict | None, list[str
         if field not in fm:
             report.err("SKILL.md", f"frontmatter missing required field `{field}`")
 
-    if fm.get("kind") != "team-skill":
-        report.err("SKILL.md", f"frontmatter `kind` must be `team-skill` (got: {fm.get('kind')!r})")
+    if fm.get("kind") != "swarm-skill":
+        report.err("SKILL.md", f"frontmatter `kind` must be `swarm-skill` (got: {fm.get('kind')!r})")
 
     # name == directory name
     dir_name = path.parent.name
     if fm.get("name") != dir_name:
-        report.err(
-            "SKILL.md",
-            f"frontmatter `name` ({fm.get('name')!r}) must equal directory name ({dir_name!r})",
-        )
+        report.err("SKILL.md", f"frontmatter `name` ({fm.get('name')!r}) must equal directory name ({dir_name!r})")
 
     # description discipline (the trigger blob the model reads BEFORE loading the body)
     desc = fm.get("description")
@@ -185,7 +182,7 @@ def validate_skill_md(path: Path, report: Report) -> tuple[dict | None, list[str
                 "SKILL.md",
                 f"description is {desc_chars} chars — HARD CAP is 500 (platform limit: 1024). "
                 "Strip synonym enumeration / scope thresholds / Stage-0 rationale; see "
-                "../teamskill-creator/SKILL.md Stage 5 for the discipline rules.",
+                "../swarmskill-creator/SKILL.md Stage 5 for the discipline rules.",
             )
         if len(desc_lines) > 4:
             report.warn(
@@ -214,6 +211,14 @@ def validate_skill_md(path: Path, report: Report) -> tuple[dict | None, list[str
                 report.err("SKILL.md", f"roles[{i}] missing required field `id`")
             else:
                 role_ids.append(role["id"])
+            if "kind" not in role:
+                report.err("SKILL.md", f"roles[{i}] (id={role.get('id')!r}) missing required field `kind`")
+            elif role["kind"] not in ("ai_agent", "human_agent"):
+                report.err(
+                    "SKILL.md",
+                    f"roles[{i}] (id={role.get('id')!r}) `kind` must be "
+                    f"`ai_agent` or `human_agent` (got: {role['kind']!r})"
+                )
             if "purpose" not in role:
                 report.err("SKILL.md", f"roles[{i}] (id={role.get('id')!r}) missing required field `purpose`")
             else:
@@ -226,12 +231,13 @@ def validate_skill_md(path: Path, report: Report) -> tuple[dict | None, list[str
                         f"chars — HARD CAP is 150. Move detail into roles/{role.get('id')}.md.",
                     )
 
-    # Check if all roles have empty skills and tools (suggests auto-matching was skipped)
+    # Check if all AI roles have empty skills and tools (suggests auto-matching was skipped).
+    # Human-agent roles are excluded — they legitimately have no skills/tools.
     if isinstance(roles, list) and roles:
-        all_empty = all(
+        ai_roles = [r for r in roles if isinstance(r, dict) and r.get("kind", "ai_agent") != "human_agent"]
+        all_empty = ai_roles and all(
             (not role.get("skills")) and (not role.get("tools"))
-            for role in roles
-            if isinstance(role, dict)
+            for role in ai_roles
         )
         if all_empty and len(role_ids) > 0:
             report.warn(
@@ -317,10 +323,7 @@ def validate_role_file(path: Path, role_id: str, report: Report) -> dict[str, li
         if not has_forbidden:
             report.err(file_label, "## Boundary missing `**Forbidden**` (or `**禁止**`) block")
         if not has_mandatory:
-            report.err(
-                file_label,
-                "## Boundary missing `**Mandatory**` (or `**必须**` / `**必做**`) block",
-            )
+            report.err(file_label, "## Boundary missing `**Mandatory**` (or `**必须**` / `**必做**`) block")
 
     # Inline Persona must be non-trivially long (sanity check — empty section is the
     # most common authoring error)
@@ -480,10 +483,7 @@ def check_orphan_role_files(roles_dir: Path, declared_role_ids: list[str], repor
     for f in roles_dir.glob("*.md"):
         role_id = f.stem
         if role_id not in declared_role_ids:
-            report.warn(
-                "roles/",
-                f"orphan file `roles/{f.name}` — not declared in SKILL.md frontmatter `roles[]`",
-            )
+            report.warn("roles/", f"orphan file `roles/{f.name}` — not declared in SKILL.md frontmatter `roles[]`")
 
 
 # ---------------------------------------------------------------------------
@@ -495,7 +495,7 @@ def validate(root: Path) -> int:
         logger.info("[USAGE ERROR] %s is not a directory", root)
         return 2
 
-    logger.info("Validating Teamskill: %s\n", root.resolve())
+    logger.info("Validating Swarmskill: %s\n", root.resolve())
 
     report = Report()
 

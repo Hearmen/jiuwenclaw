@@ -1,4 +1,4 @@
-# dependencies.yaml — Teamskill startup dependency check
+# dependencies.yaml — Swarm Skill startup dependency check
 #
 # Agent reads this file in SKILL.md Workflow Step 0 (pre-flight).
 # Each entry is checked. Results are reported to the user, who decides go/no-go.

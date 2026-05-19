@@ -34,7 +34,7 @@ Include retry loops (back-edges) if roles can be re-dispatched on failure.>
 
 <If Debate pattern, keep the following note (delete this instruction line, keep the content):>
 
-- **Inter-member communication preference** (Debate pattern): this Teamskill declares **who sees whose output at which phase** (visibility semantics). Frameworks SHOULD implement the highest-priority delivery mechanism they support: **(1) direct peer-to-peer exchange** (most efficient) > **(2) shared blackboard** > **(3) Leader-relay** (fallback). See [bind.md](bind.md) § Behavioral Constraints for phase-scoped visibility rules.
+- **Inter-member communication preference** (Debate pattern): this Swarm Skill declares **who sees whose output at which phase** (visibility semantics). Frameworks SHOULD implement the highest-priority delivery mechanism they support: **(1) direct peer-to-peer exchange** (most efficient) > **(2) shared blackboard** > **(3) Leader-relay** (fallback). See [bind.md](bind.md) § Behavioral Constraints for phase-scoped visibility rules.
 
 ## Detailed Steps
 

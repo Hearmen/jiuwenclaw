@@ -14,7 +14,7 @@
 
 **Identity test**: each role's 1-line motto should be **mutually antagonistic**. If two mottos could be spoken by the same person, the roles will converge.
 
-**Example mottos that work** (from `pr-review-team`):
+**Example mottos that work** (from `pr-review-swarm`):
 - Code reviewer: *"I am looking for what this code does well and how to ship it."*
 - Adversarial critic: *"I am trying to break this change before it reaches production."*
 - Architect: *"I care about whether this fits the system five years from now."*
@@ -25,7 +25,7 @@
 
 **Integration rule**: ≥2 roles agree → MUST-FIX. 1 role flags + others silent → SHOULD-FIX. Roles directly contradict → surface verbatim, **do not mediate**.
 
-**Examples**: `pr-review-team`, `paper-peer-review-team`, `contract-review-team` (buyer counsel vs seller counsel + neutral reviewer).
+**Examples**: `pr-review-swarm`, `paper-peer-review-swarm`, `contract-review-swarm` (buyer counsel vs seller counsel + neutral reviewer).
 
 ### B. Parallel decomposition
 
@@ -35,7 +35,7 @@
 
 **Disjointness test**: each role must have a non-overlapping "assignment" (an angle, a category, a region, a layer). If two roles could produce the same finding, the decomposition is broken.
 
-**Example assignments that work** (from `research-to-ppt-team`):
+**Example assignments that work** (from `research-to-ppt-swarm`):
 - Angle researcher #1: market dynamics
 - Angle researcher #2: technology landscape
 - Angle researcher #3: regulatory environment
@@ -46,7 +46,7 @@
 
 **Integration rule**: collect outputs by slice, deduplicate cross-slice findings, flag gaps where coverage is missing.
 
-**Examples**: pure-B is rare in practice; usually combined with A or C. See `systematic-debug-team` (B for parallel hypothesis generation across distinct theory classes).
+**Examples**: pure-B is rare in practice; usually combined with A or C. See `systematic-debug-swarm` (B for parallel hypothesis generation across distinct theory classes).
 
 ### C. Specialization pipeline
 
@@ -56,7 +56,7 @@
 
 **Boundary test**: each role must have an explicit `**Forbidden**: do NOT redo upstream work` clause. Without it, roles drift back into earlier stages.
 
-**Example stage chain** (from `marketing-copy-team`):
+**Example stage chain** (from `marketing-copy-swarm`):
 - Stage 1 brief-strategist → produces strategy brief (gate: brief approved)
 - Stage 2 copywriter → produces draft (gate: draft matches brief)
 - Stage 3 copy-editor → enhances draft (gate: no rewrites of brief or draft structure)
@@ -64,39 +64,39 @@
 
 **Gate rule**: a stage outputs a structured deliverable; the next stage refuses to start unless the gate passes; failed gates trigger explicit retry / kick-back paths declared in `bind.md` Failure Handling.
 
-**Examples**: `marketing-copy-team`, `incident-response-team`, `seo-growth-team`.
+**Examples**: `marketing-copy-swarm`, `incident-response-swarm`, `seo-growth-swarm`.
 
 ## Mixed patterns (when to combine)
 
-Most non-trivial Teamskills combine 2 patterns. The combinations and their use cases:
+Most non-trivial Swarm Skills combine 2 patterns. The combinations and their use cases:
 
 ### A + B (parallel adversarial)
 
 **Use when**: you need both adversarial breadth AND parallel coverage. Multiple parallel investigators with non-overlapping assignments + an adversarial reviewer at the end.
 
-**Example**: `systematic-debug-team` (3 parallel hypothesis-generators with forced theory-class diversity + 1 evidence collector + 1 adversarial root-cause-analyst + 1 fix-validator).
+**Example**: `systematic-debug-swarm` (3 parallel hypothesis-generators with forced theory-class diversity + 1 evidence collector + 1 adversarial root-cause-analyst + 1 fix-validator).
 
-**Example**: `security-audit-team` (3 parallel auditors: threat-modeler / vulnerability-scanner / dependency-auditor + 1 adversarial attack-chain-synthesizer who must connect their findings into exploit paths).
+**Example**: `security-audit-swarm` (3 parallel auditors: threat-modeler / vulnerability-scanner / dependency-auditor + 1 adversarial attack-chain-synthesizer who must connect their findings into exploit paths).
 
 ### B + C (parallel research → pipeline finalization)
 
 **Use when**: parallel breadth is needed early, then a sequential editorial pipeline finalizes the output.
 
-**Example**: `research-to-ppt-team` (2–4 parallel angle-researchers → 1 content-curator → 1 slide-designer).
+**Example**: `research-to-ppt-swarm` (2–4 parallel angle-researchers → 1 content-curator → 1 slide-designer).
 
 ### C + A (pipeline with adversarial gate)
 
 **Use when**: a sequential pipeline benefits from an adversarial reviewer at one or more gates.
 
-**Example**: `design-review-team` (analyst → critic → architect, where critic is the adversarial slot).
+**Example**: `design-review-swarm` (analyst → critic → architect, where critic is the adversarial slot).
 
-**Example**: `travel-planning-team` (planner-builder produces itinerary; budget-optimizer and experience-maximizer adversarially critique it; logistics-validator ratifies feasibility).
+**Example**: `travel-planning-swarm` (planner-builder produces itinerary; budget-optimizer and experience-maximizer adversarially critique it; logistics-validator ratifies feasibility).
 
 ### C + B + A (full stack)
 
 **Use when**: a hard quality gate at entry, then parallel multi-method analysis, then adversarial critique. Reserved for high-stakes analysis pipelines.
 
-**Example**: `data-analysis-team` (Stage 0: data-quality-auditor as hard gate → Stage 1: 3 parallel analysts (descriptive / inferential / causal) → Stage 2: 1 adversarial critique-reviewer).
+**Example**: `data-analysis-swarm` (Stage 0: data-quality-auditor as hard gate → Stage 1: 3 parallel analysts (descriptive / inferential / causal) → Stage 2: 1 adversarial critique-reviewer).
 
 ### Debate (B → Cross-exam → C)
 
@@ -108,9 +108,9 @@ Most non-trivial Teamskills combine 2 patterns. The combinations and their use c
 
 **Rounds**: Debate supports 1–N cross-exam rounds (each round = all roles receive prior round's outputs and produce structured responses). Round count is a **resource/quality tradeoff** — declare it in `bind.md`, not here. Most scenarios converge in 1–2 rounds.
 
-**Visibility semantics**: the Teamskill declares **who sees whose output at which phase**. How this is delivered is a **framework-level implementation choice**, not a Teamskill concern — but with a **recommended preference order**: (1) **direct peer-to-peer exchange** (most efficient, lowest information distortion); (2) shared blackboard / shared state; (3) Leader-relay (fallback when the framework does not support peer communication). Frameworks SHOULD implement the highest-priority mechanism they support.
+**Visibility semantics**: the Swarm Skill declares **who sees whose output at which phase**. How this is delivered is a **framework-level implementation choice**, not a Swarm Skill concern — but with a **recommended preference order**: (1) **direct peer-to-peer exchange** (most efficient, lowest information distortion); (2) shared blackboard / shared state; (3) Leader-relay (fallback when the framework does not support peer communication). Frameworks SHOULD implement the highest-priority mechanism they support.
 
-**Example**: `china-ecommerce-compare-debate-team` (3 platform experts produce isolated position papers → cross-exam with mutual visibility → value-synthesizer produces verdict with unresolved disputes preserved).
+**Example**: `china-ecommerce-compare-debate-swarm` (3 platform experts produce isolated position papers → cross-exam with mutual visibility → value-synthesizer produces verdict with unresolved disputes preserved).
 
 ## Decision tree
 
@@ -171,7 +171,7 @@ Combining A+B+C because "more is better". Result: 6 roles, 3 integration nodes, 
 
 **Fix**: only combine patterns when each one is independently justified by Stage 0. If C+B alone solves the problem, do not add A.
 
-## How to record the pattern in the Teamskill
+## How to record the pattern in the Swarm Skill
 
 The spec **does not have a `pattern: A/B/C` frontmatter field** — declaring the pattern as a string would duplicate what the mermaid diagram already expresses, and the diagram is more precise. Instead, the pattern is expressed implicitly through:
 

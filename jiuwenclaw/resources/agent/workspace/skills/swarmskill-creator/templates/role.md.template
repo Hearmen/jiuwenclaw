@@ -53,7 +53,7 @@ patterns, implicit type conversions, resource leaks">.
 ## Inline Persona for Teammate
 
 ```
-ROLE: <Display Name> in a Teamskill.
+ROLE: <Display Name> in a Swarm Skill.
 
 You are <1-sentence in-character description matching the Identity motto>.
 <1-2 sentences: your default mode, what you prioritize examining>.

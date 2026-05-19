@@ -22,12 +22,12 @@ Behavioral Constraints govern what Leader and the team-as-a-whole must / must no
   A-pattern: "Teammates MUST NOT see each other's output during their work — isolation is the value of adversarial review."
   C-pattern: "Each stage MUST NOT modify upstream stage outputs — only enhance / annotate."
   B-pattern: "Each parallel role works on its assigned slice ONLY — slices are dispatch-time fixed, not negotiated."
-  Debate-pattern: "Round 1 teammates are isolated (no cross-visibility). Round 2+ teammates receive prior-round outputs from all other roles (mutual visibility). The Teamskill declares who sees whose output at which phase; how it is delivered is a framework-level choice with recommended preference: (1) direct peer-to-peer exchange; (2) shared blackboard; (3) Leader-relay as fallback.">
+  Debate-pattern: "Round 1 teammates are isolated (no cross-visibility). Round 2+ teammates receive prior-round outputs from all other roles (mutual visibility). The Swarm Skill declares who sees whose output at which phase; how it is delivered is a framework-level choice with recommended preference: (1) direct peer-to-peer exchange; (2) shared blackboard; (3) Leader-relay as fallback.">
 - **Contradiction handling**: when roles disagree, Leader surfaces contradictions verbatim
   in the Final Report. Leader NEVER mediates / picks a winner / averages opinions.
   Resolution is the human user's call.
 - <Domain-specific behavioral rule, e.g., "no live-system testing without authorization"
-  for security-audit-team, "blameless language only" for incident-response-team, etc.>
+  for security-audit-swarm, "blameless language only" for incident-response-swarm, etc.>
 
 ## Failure Handling
 

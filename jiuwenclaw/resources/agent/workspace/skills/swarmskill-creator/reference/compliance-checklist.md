@@ -6,7 +6,7 @@
 
 The validator handles:
 - Five-file structure (SKILL.md / roles/ / workflow.md / bind.md / dependencies.yaml)
-- Frontmatter required fields (`name`, `description`, `version`, `kind: team-skill`, `roles[]`)
+- Frontmatter required fields (`name`, `description`, `version`, `kind: swarm-skill`, `roles[]`)
 - Each `roles[].id` has matching `roles/<id>.md`
 - Each role file has the 5 mandatory sections
 - Each Identity starts with `> *"..."*`
@@ -33,11 +33,11 @@ Before declaring two things "redundant", verify their **consumers and timing** a
 
 ### Test 2 — Registry / store concern?
 
-If the candidate field is about discovery, recommendation, download counts, tier, popularity → **registry concern, not Teamskill spec**. Examples: `tier`, `downloads`, `category` for browsing.
+If the candidate field is about discovery, recommendation, download counts, tier, popularity → **registry concern, not Swarm Skill spec**. Examples: `tier`, `downloads`, `category` for browsing.
 
 ### Test 3 — Runtime / framework concern?
 
-If the candidate field is about how the framework wires dependencies, dispatches teammates, or implements messaging → **framework concern, not Teamskill spec**. Examples: `teammate_mode`, `install_command`, message format. The Teamskill MAY declare a **preference order** for inter-member communication (e.g., direct peer-to-peer > shared blackboard > Leader-relay), but MUST NOT mandate a specific mechanism.
+If the candidate field is about how the framework wires dependencies, dispatches teammates, or implements messaging → **framework concern, not Swarm Skill spec**. Examples: `teammate_mode`, `install_command`, message format. The Swarm Skill MAY declare a **preference order** for inter-member communication (e.g., direct peer-to-peer > shared blackboard > Leader-relay), but MUST NOT mandate a specific mechanism.
 
 ### Test 4 — Tutorial / docs concern?
 
@@ -150,17 +150,17 @@ A description that omits "when not to use" causes the skill to over-trigger. A d
 
 ---
 
-## Part C: Cross-Teamskill consistency (only when publishing multiple together)
+## Part C: Cross-Swarm-Skill consistency (only when publishing multiple together)
 
-When publishing a batch of Teamskills as a coherent set:
+When publishing a batch of Swarm Skills as a coherent set:
 
-- [ ] Naming convention: all Teamskills end with `-team` suffix
+- [ ] Naming convention: all Swarm Skills end with `-swarm` suffix
 - [ ] Frontmatter `version` consistent across the batch
 - [ ] Description structure follows the same template ("Use when..." / "DO NOT use for..." / "Triggers...")
-- [ ] No two Teamskills overlap in trigger conditions (they would compete in the trigger system)
-- [ ] All Teamskills produce structurally similar Final Reports (tiered, schema-based) so users learn one mental model
+- [ ] No two Swarm Skills overlap in trigger conditions (they would compete in the trigger system)
+- [ ] All Swarm Skills produce structurally similar Final Reports (tiered, schema-based) so users learn one mental model
 
-Cross-Teamskill consistency is a usability concern, not a per-skill compliance rule.
+Cross-Swarm-Skill consistency is a usability concern, not a per-skill compliance rule.
 
 ---
 
@@ -169,7 +169,7 @@ Cross-Teamskill consistency is a usability concern, not a per-skill compliance r
 Once all above checks pass, write a 2-line sign-off in the conversation (not in any file):
 
 ```
-Teamskill: <name>
+Swarm Skill: <name>
 Pattern: <A | B | C | A+B | B+C | C+A | C+B+A | Debate>
 Roles: <count> (<list of role ids>)
 Validator: PASS
@@ -177,4 +177,4 @@ Manual checks: PASS (all responsibility-attribution and content-quality tests)
 Justification: <1-line Stage 0 reason this team beats single-agent>
 ```
 
-This forces a final articulation of the Teamskill's reason to exist.
+This forces a final articulation of the Swarm Skill's reason to exist.

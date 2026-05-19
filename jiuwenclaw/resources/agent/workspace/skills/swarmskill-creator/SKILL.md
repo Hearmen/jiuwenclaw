@@ -1,15 +1,15 @@
 ---
-name: teamskill-creator
+name: swarmskill-creator
 description: |
-  Creates, converts, or modifies Teamskills — the multi-role extension of the Skills standard (specialized roles + workflow + bind constraints).
+  Creates, converts, or modifies Swarm Skills — the multi-role extension of the Skills standard (specialized roles + workflow + bind constraints).
   Use when the user wants to author a multi-role agent team, convert a single-agent skill into one, or refactor an existing team.
   Do NOT use for single-agent Skills — use create-skill instead.
 version: "0.2"
 ---
 
-# Teamskill Creator
+# Swarm Skill Creator
 
-Authoring tool for Teamskills — the multi-role extension of the Anthropic Skills standard. Encodes the Teamskill spec into a repeatable workflow with templates, decision trees, and an automated validator.
+Authoring tool for Swarm Skills — the multi-role extension of the Anthropic Skills standard. Encodes the Swarm Skill spec into a repeatable workflow with templates, decision trees, and an automated validator.
 
 ## Workflow
 
@@ -17,23 +17,23 @@ This skill has **three modes**. Pick one based on the user's request, then follo
 
 | Mode | Trigger | Output |
 |---|---|---|
-| **CREATE** | User has a fresh need ("build a team for X") | New `<teamskill-name>/` directory with the full 5-file set |
-| **CONVERT** | User points at an existing single-agent skill | Transformed `<teamskill-name>/` directory + a delta report explaining what the team adds |
-| **MODIFY** | User edits an existing Teamskill (add/remove role, change workflow, adjust bind, fix validator errors) | Updated files in the existing `<teamskill-name>/` directory |
+| **CREATE** | User has a fresh need ("build a team for X") | New `<swarmskill-name>/` directory with the full 5-file set |
+| **CONVERT** | User points at an existing single-agent skill | Transformed `<swarmskill-name>/` directory + a delta report explaining what the team adds |
+| **MODIFY** | User edits an existing Swarm Skill (add/remove role, change workflow, adjust bind, fix validator errors) | Updated files in the existing `<swarmskill-name>/` directory |
 
 > **All three modes share Stages 2–6**. CONVERT differs only in Stage 1 (decomposition replaces fresh design). MODIFY skips Stage 0 and Stage 1 (justification and pattern are already settled — re-open them only if the change alters the pattern, e.g. adding a parallel role to a pipeline team), touches only the affected stages in 2–5, and **MUST run Stage 6 (validator) — this is the most-skipped, most-critical step in MODIFY mode**. See the [MODIFY impact matrix](#modify-impact-matrix) for which stages to re-run per change type.
 
-### Stage 0: Triage — is a Teamskill even justified?
+### Stage 0: Triage — is a Swarm Skill even justified?
 
-A Teamskill is **only justified** when at least one of these is true:
+A Swarm Skill is **only justified** when at least one of these is true:
 
 1. **Adversarial blind spot** — a single agent role-playing N personas produces converging outputs because it cannot escape its own analytical priors. Examples: PR review, security audit, design critique.
 2. **Parallel decomposition gain** — N independent sub-tasks can run concurrently and the integration is non-trivial. Examples: multi-angle research, multi-perspective due diligence.
 3. **Specialization pipeline with hard handoffs** — sequential stages with quality gates where blurring stage boundaries causes regressions. Examples: marketing copy (brief → draft → edit → audit), incident response (declare → triage → mitigate → postmortem).
 
-**If none apply → STOP. Recommend a single-agent skill instead.** Teamskills cost more tokens, more wall-clock, and more authoring overhead. Do not build one out of novelty.
+**If none apply → STOP. Recommend a single-agent skill instead.** Swarm Skills cost more tokens, more wall-clock, and more authoring overhead. Do not build one out of novelty.
 
-Ask the user: *"Which of these failure modes does a single agent hit on this task today?"* If they cannot answer, the Teamskill is premature.
+Ask the user: *"Which of these failure modes does a single agent hit on this task today?"* If they cannot answer, the Swarm Skill is premature.
 
 ### Stage 1a (CREATE only): Pattern selection
 
@@ -53,10 +53,10 @@ Read [reference/pattern-selection.md](reference/pattern-selection.md) before com
 
 Read the source SKILL.md and identify natural role boundaries. Use this checklist:
 
-1. **Find embedded personas** — does the skill ask one agent to "act as" multiple roles (e.g., "Persona 1: Saboteur / Persona 2: New Hire / Persona 3: Security Auditor")? Each embedded persona is a Teamskill role candidate.
+1. **Find embedded personas** — does the skill ask one agent to "act as" multiple roles (e.g., "Persona 1: Saboteur / Persona 2: New Hire / Persona 3: Security Auditor")? Each embedded persona is a Swarm Skill role candidate.
 2. **Find sequential stages with quality gates** — does the skill have phases like "first do X, then validate Y, then produce Z"? Each phase is a pipeline stage candidate.
 3. **Find checklists that branch by category** — a checklist like "[ ] security  [ ] performance  [ ] readability" is parallel-decomposition fuel.
-4. **Identify what's lost in single-agent form** — the answer becomes the Teamskill's "why" (the Stage 0 justification). If you cannot articulate this, the conversion is not worth it.
+4. **Identify what's lost in single-agent form** — the answer becomes the Swarm Skill's "why" (the Stage 0 justification). If you cannot articulate this, the conversion is not worth it.
 
 Full conversion methodology: [reference/conversion-guide.md](reference/conversion-guide.md).
 
@@ -69,7 +69,7 @@ Default role counts by pattern (soft heuristics, not hard limits — see [refere
 - **C. Specialization pipeline**: 3–5 stages
 - **Mixed (A+B / A+C)**: 4–6 roles total
 
-If you need more, prefer splitting into multiple sequential Teamskills over one mega-team.
+If you need more, prefer splitting into multiple sequential Swarm Skills over one mega-swarm.
 
 For each role, write 5 mandatory sections:
 
@@ -93,7 +93,7 @@ After all role files are written, automatically match each role with locally ava
    - **System prompt / context injection**: many frameworks inject an `available_skills` list at startup — this is the most reliable source.
    - **Workspace-level convention scan**: glob for `**/SKILL.md` under known skill directories.
    - **CLI query**: if the framework provides a skill listing command (e.g., `npx skills list -g`), use it.
-   - **Do NOT hardcode paths for a specific framework** — the Teamskill spec is framework-agnostic.
+   - **Do NOT hardcode paths for a specific framework** — the Swarm Skill spec is framework-agnostic.
 2. **Scan local tools** — probe CLI tools available in the current environment (e.g., `gh`, `python`, `rg`, `jq`, `curl`, `docker`). Use `where` (Windows) or `which` (Unix).
 3. **Match and assign** — for each role, read its `purpose`, `Success Criteria`, and `Boundary`. Evaluate whether any discovered skill/tool would materially help fulfil the role's purpose (a match = removing it would force the role into a significantly weaker operating mode). Assign matches to the correct field with `source: local` in `dependencies.yaml`.
 
@@ -131,7 +131,7 @@ The remaining two files. Write them last because they reference content produced
 **5b. `SKILL.md`** — use [templates/SKILL.md.template](templates/SKILL.md.template). This is the entry point that ties together all other files. Body MUST contain `## Workflow` + `## Roles` + `## Files`.
 
 **Naming rules** (enforced by the validator):
-- Directory name = `name` field in SKILL.md frontmatter (kebab-case, ends with `-team` by convention).
+- Directory name = `name` field in SKILL.md frontmatter (kebab-case, ends with `-swarm` by convention).
 - Each `roles/<id>.md` filename MUST equal the corresponding `roles[].id` in SKILL.md frontmatter.
 - All 5 files are mandatory (the validator fails on any missing file).
 
@@ -143,35 +143,35 @@ The remaining two files. Write them last because they reference content produced
 - NO Stage 0 justification rationale → that belongs in the body's intro paragraph.
 - Per-role `purpose:` field has a ≤150 char HARD CAP. Detail belongs in `roles/<id>.md`, not in SKILL.md frontmatter.
 
-**Calibration benchmark**: aim for **≤ 500 chars** (platform hard cap: 1024). Teamskills are inherently more complex than single-agent skills — multi-role composition, workflow scope, and trigger scenarios may need more words. Stay concise, but don't sacrifice clarity for arbitrary brevity.
+**Calibration benchmark**: aim for **≤ 500 chars** (platform hard cap: 1024). Swarm Skills are inherently more complex than single-agent skills — multi-role composition, workflow scope, and trigger scenarios may need more words. Stay concise, but don't sacrifice clarity for arbitrary brevity.
 
 ### Stage 6: Validate
 
 Run the automated validator:
 
 ```bash
-python scripts/validate_teamskill.py path/to/<teamskill-name>/
+python scripts/validate_swarmskill.py path/to/<swarmskill-name>/
 ```
 
 The validator checks:
 - **Structural**: 5 files present, role file names match `roles[].id`, no orphan role files
-- **Frontmatter**: `name` / `description` / `version` / `kind: team-skill` / `roles[]` present; each role has `id` + `purpose`; `name` == directory name
+- **Frontmatter**: `name` / `description` / `version` / `kind: swarm-skill` / `roles[]` present; each role has `id` + `purpose`; `name` == directory name
 - **Section presence**: SKILL.md body has `## Workflow` / `## Roles` / `## Files`; each `roles/*.md` has all 5 mandatory sections; `workflow.md` has `## Overview` / `## Detailed Steps` / `## Acceptance Criteria` (and at least one mermaid block); `bind.md` has all 3 mandatory sections
 - **Cross-file consistency**: every `roles[].skills` and `roles[].tools` in SKILL.md appears in `dependencies.yaml`; every `## Identity` in roles starts with a `> *"..."*` motto line
 - **Output discipline**: `## Inline Persona for Teammate` present in each role file; `dependencies.yaml` skills/tools segments present even if empty
 
 **Exit code 0 = compliant**. Non-zero exit prints the failing checks with file:line references.
 
-The manual checklist (for design-time judgment calls the script cannot automate, like "is this content really redundant?") lives in [reference/compliance-checklist.md](reference/compliance-checklist.md). Read it before declaring the Teamskill done.
+The manual checklist (for design-time judgment calls the script cannot automate, like "is this content really redundant?") lives in [reference/compliance-checklist.md](reference/compliance-checklist.md). Read it before declaring the Swarm Skill done.
 
 ### Post-generation: Creation Summary + Community Enrichment
 
-After Stage 6 passes, present a **creation summary** to the user. This is the natural point to assess capability coverage and offer community enrichment — the Teamskill is already complete and functional, so community search is a zero-risk enhancement.
+After Stage 6 passes, present a **creation summary** to the user. This is the natural point to assess capability coverage and offer community enrichment — the Swarm Skill is already complete and functional, so community search is a zero-risk enhancement.
 
 **Summary format:**
 
 ```
-Teamskill: <name>
+Swarm Skill: <name>
 Pattern: <A | B | C | Mixed>
 Roles: <count> (<list of role ids>)
 Validator: PASS
@@ -199,7 +199,7 @@ The default must be **recommend**, with the burden of proof on **not** recommend
 
 > **Anti-pattern: "通用即覆盖" (generic = covered)**
 >
-> In `ecommerce-compare-debate-team`, three platform shopper roles (`taobao-shopper`, `pinduoduo-shopper`, `jingdong-shopper`) each had `web-research` assigned. The agent concluded "already covered — no community search needed." This is wrong: `web-research` is general-purpose retrieval; it knows nothing about Taobao store tiers, PDD subsidy eligibility, or JD self-operated logistics. Community registries carry platform-specific shopping and buyer-agent skills that fill exactly this gap.
+> In `ecommerce-compare-debate-swarm`, three platform shopper roles (`taobao-shopper`, `pinduoduo-shopper`, `jingdong-shopper`) each had `web-research` assigned. The agent concluded "already covered — no community search needed." This is wrong: `web-research` is general-purpose retrieval; it knows nothing about Taobao store tiers, PDD subsidy eligibility, or JD self-operated logistics. Community registries carry platform-specific shopping and buyer-agent skills that fill exactly this gap.
 >
 > **Rule**: if a role's identity is tied to a specific platform or professional domain, a generic utility skill does NOT count as coverage — always recommend community search for domain-specific skills.
 
@@ -218,7 +218,7 @@ If one or more roles are marked "Recommend: Yes", ask:
 
 > *"The following roles have no domain-specific skills and could benefit from community skill enhancement:*
 > *[table: Role | Current skills (if any) | What domain-specific skill would help]*
-> *Shall I search community skill registries? The Teamskill is already complete — this is an optional enhancement. (Y/N)"*
+> *Shall I search community skill registries? The Swarm Skill is already complete — this is an optional enhancement. (Y/N)"*
 
 If user says **Yes**:
 
@@ -233,9 +233,9 @@ Read [reference/community-search.md](reference/community-search.md) and follow i
 4. **Role-skill fit test** — verify capability match and run the removal test: "would removing this skill significantly degrade the role's output?" (see §4).
 5. **Present enrichment summary** to the user with the standardized format (see §5) — full transparency on what was searched, found, selected, and rejected.
 6. Install approved skills, update `roles[].skills` in SKILL.md frontmatter + `dependencies.yaml` with `source: <community-url>`.
-7. Re-run `python scripts/validate_teamskill.py` to confirm consistency.
+7. Re-run `python scripts/validate_swarmskill.py` to confirm consistency.
 
-If user says **No** → done. The Teamskill is fully functional as-is.
+If user says **No** → done. The Swarm Skill is fully functional as-is.
 
 **Decision rules:**
 - **Default: recommend** — empty `skills: []` = recommend community search; **also recommend** when a role only has generic utility skills (e.g. `web-research`) but lacks domain-specific skills matching its identity. Burden of proof is on NOT recommending.
@@ -246,7 +246,7 @@ If user says **No** → done. The Teamskill is fully functional as-is.
 
 ## Roles
 
-This skill has no Teamskill roles itself — it is a **single-agent skill** that authors Teamskills. The agent loading this skill plays the author/architect role.
+This skill has no Swarm Skill roles itself — it is a **single-agent skill** that authors Swarm Skills. The agent loading this skill plays the author/architect role.
 
 ## Files
 
@@ -254,11 +254,11 @@ This skill has no Teamskill roles itself — it is a **single-agent skill** that
 |---|---|---|
 | [reference/pattern-selection.md](reference/pattern-selection.md) | A/B/C/Mixed pattern decision tree with worked examples | Stage 1a (before committing to a pattern) |
 | [reference/role-design.md](reference/role-design.md) | How to author the 5 mandatory role sections; gate design between stages; anti-convergence techniques | Stage 2 + Stage 3 |
-| [reference/conversion-guide.md](reference/conversion-guide.md) | Step-by-step methodology for converting a single-agent skill into a Teamskill, with a worked example | Stage 1b (CONVERT mode only) |
+| [reference/conversion-guide.md](reference/conversion-guide.md) | Step-by-step methodology for converting a single-agent skill into a Swarm Skill, with a worked example | Stage 1b (CONVERT mode only) |
 | [reference/compliance-checklist.md](reference/compliance-checklist.md) | Responsibility-attribution tests + manual-review checklist; explains what the validator can and cannot catch | Stage 6 (after the script passes) |
 | [reference/community-search.md](reference/community-search.md) | Multi-source search strategy (keyword derivation, quality gates, role-skill fit test) for finding community skills | Post-generation (community enrichment step) |
 | [templates/](templates/) | 5 file skeletons with placeholders and inline guidance comments | Stages 2–5 (each stage references its template) |
-| [scripts/validate_teamskill.py](scripts/validate_teamskill.py) | Automated structural + frontmatter + section + cross-file consistency checks | Stage 6 (run on every Teamskill before declaring done) |
+| [scripts/validate_swarmskill.py](scripts/validate_swarmskill.py) | Automated structural + frontmatter + section + cross-file consistency checks | Stage 6 (run on every Swarm Skill before declaring done) |
 
 ## Common pitfalls
 
@@ -282,7 +282,7 @@ For a CREATE request:
 2. Read [reference/pattern-selection.md](reference/pattern-selection.md) and pick A / B / C / mixed
 3. Write all `roles/<id>.md` files (motto, boundary, schema, inline persona) + auto-match local skills/tools
 4. Write `workflow.md` → `bind.md` → `dependencies.yaml` → `SKILL.md` (each using its template)
-5. Run `python scripts/validate_teamskill.py <teamskill-name>/` until exit 0
+5. Run `python scripts/validate_swarmskill.py <swarmskill-name>/` until exit 0
 6. Present creation summary with per-role capability coverage → recommend community search for roles lacking **domain-specific** skills (default: recommend; generic utility skills do NOT satisfy the threshold)
 7. Manual review with [reference/compliance-checklist.md](reference/compliance-checklist.md)
 
@@ -292,13 +292,13 @@ For a CONVERT request:
 2. Apply [reference/conversion-guide.md](reference/conversion-guide.md) decomposition checklist
 3. Articulate "what is lost in single-agent form" — this is the Stage 0 justification
 4. Continue from CREATE step 2 (pattern selection) onward
-5. Add a `MIGRATION.md` (optional) to the new Teamskill explaining the source skill, the decomposition rationale, and the team-vs-single delta
+5. Add a `MIGRATION.md` (optional) to the new Swarm Skill explaining the source skill, the decomposition rationale, and the team-vs-single delta
 
 For a MODIFY request:
 
 1. Identify the change type from the impact matrix below
 2. Re-run the indicated stages; apply edits honoring the section + structure rules (mottos, Forbidden+Mandatory, Inline Persona, gates, numeric bind constraints)
-3. Run `python scripts/validate_teamskill.py <teamskill-name>/` — **Stage 6 is mandatory regardless of edit size**
+3. Run `python scripts/validate_swarmskill.py <swarmskill-name>/` — **Stage 6 is mandatory regardless of edit size**
 
 #### MODIFY impact matrix
 

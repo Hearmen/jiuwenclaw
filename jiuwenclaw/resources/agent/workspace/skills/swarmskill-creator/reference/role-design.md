@@ -114,7 +114,7 @@ A role with only Forbidden tends to output empty findings. A role with only Mand
 
 ### Examples
 
-**A-pattern role** (`pr-review-team` adversarial-critic):
+**A-pattern role** (`pr-review-swarm` adversarial-critic):
 
 ```markdown
 **Forbidden**:
@@ -126,7 +126,7 @@ A role with only Forbidden tends to output empty findings. A role with only Mand
   If you found nothing, you didn't look hard enough — recheck error paths and edge cases.
 ```
 
-**C-pattern role** (`marketing-copy-team` copy-editor):
+**C-pattern role** (`marketing-copy-swarm` copy-editor):
 
 ```markdown
 **Forbidden**:
@@ -170,7 +170,7 @@ A role with only Forbidden tends to output empty findings. A role with only Mand
 ### Schema design rules
 
 1. Always include a **Verdict / Decision / Output** terminal section that uses an **enum**, not free text. The Leader uses this for routing/integration.
-2. Use **JSON** instead of Markdown if the output is consumed programmatically (rare for Teamskills — most consumers are LLMs reading Markdown).
+2. Use **JSON** instead of Markdown if the output is consumed programmatically (rare for Swarm Skills — most consumers are LLMs reading Markdown).
 3. Match the schema 1:1 with what `Inline Persona` tells the teammate to produce. Drift between the two = teammate output that doesn't match the schema = Leader integration failure.
 
 ---
@@ -179,7 +179,7 @@ A role with only Forbidden tends to output empty findings. A role with only Mand
 
 ### Why this section exists
 
-> Most adopting agents do NOT auto-load role files when dispatching teammates. The Leader must extract this section verbatim and inline it into the dispatch prompt. **Without this section, Teamskills do not run on the majority of adopting agents.**
+> Most adopting agents do NOT auto-load role files when dispatching teammates. The Leader must extract this section verbatim and inline it into the dispatch prompt. **Without this section, Swarm Skills do not run on the majority of adopting agents.**
 
 ### Format
 
@@ -187,7 +187,7 @@ A role with only Forbidden tends to output empty findings. A role with only Mand
 ## Inline Persona for Teammate
 
 \`\`\`
-ROLE: <Role Name> in a Teamskill.
+ROLE: <Role Name> in a Swarm Skill.
 
 [1-2 sentences: who you are, what your default mode is]
 
@@ -221,7 +221,7 @@ When 2+ roles in an A-pattern team risk producing similar outputs, apply these t
 
 ### Technique 1: Forced theory class assignment
 
-Each role is assigned a **fixed category** at dispatch time. Used in `systematic-debug-team`:
+Each role is assigned a **fixed category** at dispatch time. Used in `systematic-debug-swarm`:
 
 - Hypothesis-generator-1 → "Data/State theories only"
 - Hypothesis-generator-2 → "Concurrency/Timing theories only"
@@ -245,7 +245,7 @@ The methodology constrains the output shape, preventing convergence.
 
 ### Technique 4: Adversarial dispatch order (rare)
 
-For C-patterns with an adversarial gate, dispatch the adversary **after** seeing the prior stage's output, with explicit instruction to disagree. Used in `data-analysis-team` critique-reviewer: *"Your job is to find the analysis's failure modes, not to validate it."*
+For C-patterns with an adversarial gate, dispatch the adversary **after** seeing the prior stage's output, with explicit instruction to disagree. Used in `data-analysis-swarm` critique-reviewer: *"Your job is to find the analysis's failure modes, not to validate it."*
 
 ---
 
@@ -264,12 +264,12 @@ Every gate has 4 parts (declared in `workflow.md` Detailed Steps):
 
 ### Gate examples
 
-**Brief gate** (`marketing-copy-team`, between Stage 1 and Stage 2):
+**Brief gate** (`marketing-copy-swarm`, between Stage 1 and Stage 2):
 
 > **Pass criteria**: brief contains audience definition, value proposition, message hierarchy, CTA, success metrics. All 5 sections must be present and ≥3 sentences each.
 > **Fail action**: kick back to brief-strategist with the missing sections listed. Max 2 retries; on 3rd failure, surface to user with partial brief and ask how to proceed.
 
-**Data quality gate** (`data-analysis-team`, before Stage 1 starts):
+**Data quality gate** (`data-analysis-swarm`, before Stage 1 starts):
 
 > **Pass criteria**: Data Quality Score (DQS) ≥ 0.7 across completeness, consistency, validity. GO verdict from data-quality-auditor.
 > **Fail action** (NO-GO): halt the pipeline. Return DQS report to user with specific defects. Do not allow analysts to start.
