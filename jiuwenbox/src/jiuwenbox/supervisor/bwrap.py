@@ -7,15 +7,19 @@ the lifecycle of the sandboxed process.
 
 from __future__ import annotations
 
+import fnmatch
 import logging
 import posixpath
 import signal
+import stat as stat_module
 import subprocess
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import IO
 
 from jiuwenbox.logging_config import configure_logging
 from jiuwenbox.models.policy import (
+    BindRootEntries,
     CapabilityPolicy,
     FilesystemPolicy,
     NetworkPolicy,
@@ -139,6 +143,20 @@ class BwrapConfig:
 
         # read_only/read_write are also enforced by Landlock when available.
         # Only bind_mounts expose host paths in the sandbox.
+        #
+        # ``bind_root_entries`` is processed BEFORE ``bind_mounts`` on purpose:
+        # bind_root_entries is the "wildcard / generic" parent mount (e.g.
+        # ``host_root="/"`` expanded into every immediate child of the host
+        # rootfs), while ``bind_mounts`` are user-explicit per-path overrides
+        # (``/sandbox files allow|deny <path>`` lowered by jiuwenclaw's
+        # ``sysop_builder``). bwrap's later-overrides-earlier mount semantics
+        # means whichever entry we ``append`` last wins on conflicting paths;
+        # putting bind_root_entries first guarantees the explicit
+        # bind_mounts can selectively flip a child to rw (allow) or stack a
+        # rw + remount-ro pair on top (deny) without being clobbered by the
+        # wildcard parent re-binding the path back to ro afterwards.
+        for spec in fs.bind_root_entries:
+            BwrapConfig._apply_bind_root_entries(cfg, spec)
         for mount in fs.bind_mounts:
             if mount.mode == "ro":
                 cfg.ro_binds.append((mount.host_path, mount.sandbox_path))
@@ -146,6 +164,77 @@ class BwrapConfig:
                 cfg.rw_binds.append((mount.host_path, mount.sandbox_path))
         for device in fs.device:
             cfg.device_binds.append((device.host_path, device.sandbox_path))
+
+    @staticmethod
+    def _apply_bind_root_entries(cfg: BwrapConfig, spec: BindRootEntries) -> None:
+        """Expand one ``BindRootEntries`` spec into per-child bwrap binds.
+
+        Each immediate child of ``spec.host_root`` becomes its own
+        ``--ro-bind``/``--bind`` so the sandbox sees the same names at
+        ``spec.sandbox_path/<child>``. Hidden entries and excluded names are
+        filtered out; non-regular non-directory entries (sockets, fifos,
+        block/char devices, broken symlinks) are skipped to avoid bwrap
+        failures.
+        """
+        host_root_str = spec.host_root
+        host_root = Path(host_root_str)
+
+        if not host_root.exists():
+            logger.warning(
+                "bind_root_entries: host_root %r does not exist; skipping",
+                host_root_str,
+            )
+            return
+        if not host_root.is_dir():
+            logger.warning(
+                "bind_root_entries: host_root %r is not a directory; skipping",
+                host_root_str,
+            )
+            return
+
+        sandbox_root = spec.sandbox_path.rstrip("/") or "/"
+
+        try:
+            children = sorted(host_root.iterdir(), key=lambda p: p.name)
+        except OSError as exc:
+            logger.warning(
+                "bind_root_entries: cannot list %r: %s; skipping",
+                host_root_str,
+                exc,
+            )
+            return
+
+        for child in children:
+            name = child.name
+            if not spec.include_hidden and name.startswith("."):
+                continue
+            if any(fnmatch.fnmatch(name, pattern) for pattern in spec.exclude):
+                continue
+
+            try:
+                stat_result = child.stat()
+            except OSError as exc:
+                logger.warning(
+                    "bind_root_entries: skipping %r: %s",
+                    str(child),
+                    exc,
+                )
+                continue
+
+            mode_bits = stat_result.st_mode
+            if not (stat_module.S_ISDIR(mode_bits) or stat_module.S_ISREG(mode_bits)):
+                logger.debug(
+                    "bind_root_entries: skipping non-regular entry %r",
+                    str(child),
+                )
+                continue
+
+            target = f"{sandbox_root}/{name}" if sandbox_root != "/" else f"/{name}"
+            source = str(child)
+            if spec.mode == "ro":
+                cfg.ro_binds.append((source, target))
+            else:
+                cfg.rw_binds.append((source, target))
 
     @staticmethod
     def _apply_process(cfg: BwrapConfig, proc: ProcessPolicy) -> None:
