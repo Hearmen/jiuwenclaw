@@ -8,7 +8,7 @@ Typical uses:
     ``scripts/`` directory (same folder as ``SKILL.md``) — from repo root, e.g.::
 
       python3 \\
-        jiuwenclaw/resources/agent/workspace/skills/ \\
+        jiuwenswarm/resources/agent/workspace/skills/ \\
         ascend-moe-optimizer-auto-trace/scripts/bootstrap_trace_toolchain.py \\
         --build-dir umdk/build/cam/comm_operator
 

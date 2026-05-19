@@ -10,7 +10,7 @@ description: 代理执行 AKG 算子任务。先检查固定仓库与分支；�
 ## 硬规则
 
 - 本 skill 是 `akg` 目录下相关衍生 skill 的上位约束；若冲突，以本 skill 为准
-- 当前运行环境是 `jiuwenclaw`，没有 `question` 一类工具；如果必须向用户提问，直接输出问题并结束本轮执行
+- 当前运行环境是 `jiuwenswarm`，没有 `question` 一类工具；如果必须向用户提问，直接输出问题并结束本轮执行
 - `akg_cli` 已废弃；所有衍生 skill 中关于 `akg_cli` 的检查、判定、命令和使用说明都必须忽略
 - 需要安装 Python 依赖时，优先使用仓库内的 requirements 文件，通过 `pip install -r ...` 安装；不要逐个安装
 - `run_workflow.py` 不得后台执行；必须以前台方式运行，并设置足够长的超时时间

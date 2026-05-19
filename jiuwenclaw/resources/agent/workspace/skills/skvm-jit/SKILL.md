@@ -31,7 +31,7 @@ Do **not** run this skill when:
 
 The skill directory contains a `SKILL.md` file. You need the absolute path to pass as `--skill=<dir>` in Step 3.
 
-Each agent harness installs skills in well-known locations. Read `adapter-skill-paths.md` (sibling file in this skill's directory) and look up the section matching the harness you are currently running inside — it lists the search order for Claude Code, opencode, openclaw, hermes, jiuwenclaw, and bare-agent. Probe the listed paths in order and pick the first one that contains a `SKILL.md` for the skill name you are looking for.
+Each agent harness installs skills in well-known locations. Read `adapter-skill-paths.md` (sibling file in this skill's directory) and look up the section matching the harness you are currently running inside — it lists the search order for Claude Code, opencode, openclaw, hermes, jiuwenswarm, and bare-agent. Probe the listed paths in order and pick the first one that contains a `SKILL.md` for the skill name you are looking for.
 
 If none of the listed paths contains the skill, or the reference file marks your harness as "confirm with user", ask the user for the path — do not guess.
 
@@ -96,7 +96,7 @@ Required parameters:
 
 Optional:
 
-- `--target-adapter=<name>` — purely informational in log mode (default: `bare-agent`). Set it if the log came from a non-default adapter (e.g., openClaw, Hermes, jiuwenclaw) so the proposal is filed under the right harness folder.
+- `--target-adapter=<name>` — purely informational in log mode (default: `bare-agent`). Set it if the log came from a non-default adapter (e.g., openClaw, Hermes, jiuwenswarm) so the proposal is filed under the right harness folder.
 - `--failures=<path,...>` — structured failure-reasons JSON, one path per corresponding entry in `--logs`. Pass only when you already have a cleaner per-criterion breakdown than the report file itself; the count must match `--logs`. Skip it for single-report cases.
 
 **What NOT to pass in log mode** (the CLI will error if you do):

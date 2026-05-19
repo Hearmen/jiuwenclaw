@@ -39,7 +39,7 @@ skvm profile --list                                    # list cached profiles
 ```
 
 Notes:
-- Default adapter is `bare-agent`. Other valid adapters: `opencode`, `openclaw`, `hermes`, `jiuwenclaw`.
+- Default adapter is `bare-agent`. Other valid adapters: `opencode`, `openclaw`, `hermes`, `jiuwenswarm`.
 - Cache lives at `$SKVM_PROFILES_DIR` (default `.skvm/profiles/`).
 - Profiling is expensive — confirm with the user before running on several models, and prefer `--concurrency` over sequential runs.
 

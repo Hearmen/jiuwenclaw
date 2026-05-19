@@ -40,11 +40,11 @@ writes in discover mode, so it is the path opencode's own loader reads from.
 Source of truth: `src/adapters/hermes.ts` line 249 — `hermesHome/skills/<name>`.
 Hermes has no documented project-scoped location.
 
-## jiuwenclaw
+## jiuwenswarm
 
-Not supported. jiuwenclaw runs in inject-only mode: skill content is prepended
+Not supported. jiuwenswarm runs in inject-only mode: skill content is prepended
 to the prompt and has no persistent on-disk copy. `skvm-jit` cannot submit
-feedback for a jiuwenclaw run because there is no `--skill=<dir>` to pass.
+feedback for a jiuwenswarm run because there is no `--skill=<dir>` to pass.
 Tell the user and stop.
 
 ## bare-agent

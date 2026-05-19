@@ -1,11 +1,11 @@
 ---
 name: delayed-restart-app
-description: 安排延迟重启本 Agent 所在的服务（jiuwenclaw app）。执行后当前 Agent 进程会被终止并重新启动，当前会话会断开。用于用户要求重启、配置更新需生效、或服务异常需重载时。使用 bash 调用脚本。
+description: 安排延迟重启本 Agent 所在的服务（JiuwenSwarm app）。执行后当前 Agent 进程会被终止并重新启动，当前会话会断开。用于用户要求重启、配置更新需生效、或服务异常需重载时。使用 bash 调用脚本。
 ---
 
 # 重启本 Agent 所在的服务
 
-本 skill 会**重启 Agent 自身所在的服务进程**（jiuwenclaw app）。执行后 Agent 进程将被终止并重新拉起，当前会话会断开，新连接将连到新进程。
+本 skill 会**重启 Agent 自身所在的服务进程**（JiuwenSwarm app）。执行后 Agent 进程将被终止并重新拉起，当前会话会断开，新连接将连到新进程。
 
 当用户要求「重启服务」「重启 app」「重启 Agent」「配置已更新需重启」或类似需求时，使用 `bash` 执行本 skill 下的脚本。
 
@@ -23,7 +23,7 @@ python %USERPROFILE%\.jiuwenswarm\agent\skills\delayed-restart-app\launch_delaye
 
 （Unix/macOS 使用：`python ~/.jiuwenswarm/agent/workspace/skills/delayed-restart-app/launch_delayed_restart.py --pid <PID> --delay 5`）
 
-- `--pid`：必填，当前 jiuwenclaw app 进程的 PID（执行前需先获取，如从 config 或通过 `tasklist`/`pgrep` 等命令）
+- `--pid`：必填，当前 JiuwenSwarm app 进程的 PID（执行前需先获取，如从 config 或通过 `tasklist`/`pgrep` 等命令）
 - `--delay 5`：延迟 5 秒后重启（可改为 3、10 等）
 
 ## When to Use
