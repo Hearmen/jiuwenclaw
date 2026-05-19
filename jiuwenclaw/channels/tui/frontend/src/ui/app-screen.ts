@@ -1619,14 +1619,29 @@ export class AppScreen implements Component, Focusable {
       }
 
       const modelsMeta = payload.models ?? [];
+      // 与web端一致：同名模型通过编号区分（如 model_name #1, model_name #2）
+      // 后端 available_models 和 models 位置对齐，用索引匹配而非名称查找
+      const nameOccurrence: Record<string, number> = {};
+      const currentIdx = selectable.findIndex((m) => m === current);
       const items = selectable.map((m, i) => {
-        const isCurrent = m === current;
-        const meta = modelsMeta.find((x) => x.name === m);
-        const displayName = (meta?.model_name && meta.model_name !== m)
-          ? `${m} (${meta.model_name})`
-          : m;
+        const meta = modelsMeta[i];
+        const isCurrent = i === currentIdx;
+        const seq = (nameOccurrence[m] ?? 0) + 1;
+        nameOccurrence[m] = seq;
+        const sameNameTotal = selectable.filter((x) => x === m).length;
+        let displayName: string;
+        if (sameNameTotal > 1) {
+          displayName = meta?.model_name
+            ? `${meta.model_name} #${seq}`
+            : `${m} #${seq}`;
+        } else if (meta?.model_name && meta.model_name !== m) {
+          displayName = `${m} (${meta.model_name})`;
+        } else {
+          displayName = m;
+        }
+        const suffix = meta?.api_base && sameNameTotal > 1 ? ` [${meta.api_base}]` : "";
         return {
-          label: `${i + 1}. ${displayName}${isCurrent ? " (current)" : ""}`,
+          label: `${i + 1}. ${displayName}${suffix}${isCurrent ? " (current)" : ""}`,
           value: m,
         };
       });
@@ -1674,7 +1689,6 @@ export class AppScreen implements Component, Focusable {
       }>("command.model", { model: modelName });
       const nextModel = payload.current ?? modelName;
       this.state.setModel(nextModel);
-      this.state.clearEntries();
       this.state.addItem(
         addInfo(this.state.getSnapshot().sessionId, `Switched model to: ${nextModel}`, "m"),
       );

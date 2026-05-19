@@ -1220,13 +1220,16 @@ def migrate_config_from_template(
 
 # ---------- 模型配置管理 ----------
 def get_model_names() -> list[str]:
-    """获取可切换的模型名称列表（去重）。优先从 models.defaults 列表读取。"""
+    """获取可切换的模型名称列表。优先从 models.defaults 列表读取。
+
+    与web端一致：允许同名 model_name 多次出现（不同 api_key/api_base 即为不同配置）。
+    """
     data = get_config_raw()
     models = data.get("models", {})
     defaults_list = models.get("defaults")
     if isinstance(defaults_list, list) and defaults_list:
-        seen: set[str] = set()
         names: list[str] = []
+        name_count: dict[str, int] = {}
         for entry in defaults_list:
             if not isinstance(entry, dict):
                 continue
@@ -1235,8 +1238,9 @@ def get_model_names() -> list[str]:
             resolved_alias = resolve_env_vars(str(alias)) if alias else ""
             resolved_name = resolve_env_vars(str(model_name)) if model_name else ""
             display = resolved_alias or resolved_name
-            if display and display not in seen:
-                seen.add(display)
+            if display:
+                count = name_count.get(display, 0) + 1
+                name_count[display] = count
                 names.append(display)
         return names
     skip = {"default", "defaults"}

@@ -1337,42 +1337,55 @@ def register_cli_handlers(bind: CliHandlersBindParams) -> None:
             try:
                 # 统一使用 defaults 列表格式（旧格式自动迁移）
                 _raw_defs = ensure_defaults_list_in_config()
-                # 判断是新增还是更新：检查 defaults 列表中是否已有同名模型
-                _is_update = False
+                # 与web端一致：允许同名 model_name 多条目（不同 api_key/api_base 即为不同配置），
+                # 仅拒绝完全相同的配置重复添加（model_name + api_base + api_key 全部一致）
+                _is_duplicate = False
+                _effective_api_base = resolve_env_vars(str(client_cfg.get("api_base", "")))
+                _effective_api_key = resolve_env_vars(str(client_cfg.get("api_key", "")))
                 for _e in _raw_defs:
                     if not isinstance(_e, dict):
                         continue
                     _emn = resolve_env_vars(str((_e.get("model_client_config") or {}).get("model_name", "")))
+                    _eab = resolve_env_vars(str((_e.get("model_client_config") or {}).get("api_base", "")))
+                    _eak = resolve_env_vars(str((_e.get("model_client_config") or {}).get("api_key", "")))
                     _ea = resolve_env_vars(str(_e.get("alias", ""))) if _e.get("alias") else ""
-                    if _emn == effective_name or (_ea and _ea == effective_name):
-                        _is_update = True
+                    _same_config = _emn == effective_name and _eab == _effective_api_base and _eak == _effective_api_key
+                    _same_alias = _ea and _ea == effective_alias
+                    if _same_config or _same_alias:
+                        _is_duplicate = True
                         break
+                # 完全重复时拒绝添加
+                if _is_duplicate:
+                    await channel.send_response(
+                        ws, req_id, ok=False,
+                        error=f"Model '{effective_name}' with the same api_base and api_key already exists",
+                    )
+                    return
                 # 新增模型时校验四个必填字段
-                if not _is_update:
-                    _required = {
-                        "api_key": "api_key",
-                        "api_base": "api_base",
-                        "model_name": "model_name/model",
-                        "client_provider": "client_provider/provider",
-                    }
-                    _missing = []
-                    for field, display in _required.items():
-                        _val = resolve_env_vars(str(client_cfg.get(field, "")))
-                        if not _val:
-                            _missing.append(display)
-                    if _missing:
-                        _err_msg = (
-                            f"Failed to add model '{effective_name}'. "
-                            f"Required fields missing: {', '.join(_missing)}. "
-                            f"Usage: /model add <name> "
-                            f"api_base=xxx api_key=xxx "
-                            f"model=<name> provider=<provider>"
-                        )
-                        await channel.send_response(
-                            ws, req_id, ok=False,
-                            error=_err_msg,
-                        )
-                        return
+                _required = {
+                    "api_key": "api_key",
+                    "api_base": "api_base",
+                    "model_name": "model_name/model",
+                    "client_provider": "client_provider/provider",
+                }
+                _missing = []
+                for field, display in _required.items():
+                    _val = resolve_env_vars(str(client_cfg.get(field, "")))
+                    if not _val:
+                        _missing.append(display)
+                if _missing:
+                    _err_msg = (
+                        f"Failed to add model '{effective_name}'. "
+                        f"Required fields missing: {', '.join(_missing)}. "
+                        f"Usage: /model add <name> "
+                        f"api_base=xxx api_key=xxx "
+                        f"model=<name> provider=<provider>"
+                    )
+                    await channel.send_response(
+                        ws, req_id, ok=False,
+                        error=_err_msg,
+                    )
+                    return
                 # alias 唯一性校验（仅在 alias 非空时执行）
                 if effective_alias:
                     for _e in _raw_defs:
@@ -1449,6 +1462,7 @@ def register_cli_handlers(bind: CliHandlersBindParams) -> None:
                         "name": resolve_env_vars(str(e.get("alias", ""))) or
                                 resolve_env_vars(str((e.get("model_client_config") or {}).get("model_name", ""))),
                         "model_name": resolve_env_vars(str((e.get("model_client_config") or {}).get("model_name", ""))),
+                        "api_base": resolve_env_vars(str((e.get("model_client_config") or {}).get("api_base", ""))),
                     }
                     for e in _defs if isinstance(e, dict)
                 ]
