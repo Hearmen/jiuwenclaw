@@ -737,6 +737,15 @@ class AgentWebSocketServer:
             if request.req_method == ReqMethod.SESSION_DELETE:
                 await self._handle_session_delete(ws, request, send_lock)
                 return
+            if request.req_method == ReqMethod.SESSION_REWIND:
+                await self._handle_session_rewind_full(ws, request, send_lock)
+                return
+            if request.req_method == ReqMethod.SESSION_REWIND_AND_RESTORE:
+                await self._handle_session_rewind_full(ws, request, send_lock, restore_files=True)
+                return
+            if request.req_method == ReqMethod.SESSION_REWIND_CONTEXT:
+                await self._handle_session_rewind_context(ws, request, send_lock)
+                return
             if request.req_method == ReqMethod.TEAM_DELETE:
                 await self._handle_team_delete(ws, request, send_lock)
                 return
@@ -1469,6 +1478,218 @@ class AgentWebSocketServer:
                             payload={"session_id": target},
                             metadata=request.metadata,
                         )
+
+        wire = encode_agent_response_for_wire(resp, response_id=request.request_id)
+        async with send_lock:
+            await ws.send(json.dumps(wire, ensure_ascii=False))
+
+    def _resolve_rewind_agent(self, channel_id: str) -> tuple[Any, Any] | None:
+        """Return (deep_agent, react_agent) for the given channel, or None."""
+        agent = self._agent_manager.get_agent_nowait(
+            channel_id=channel_id or "default"
+        )
+        if agent is None:
+            return None
+        deep_agent = agent.get_instance()
+        if deep_agent is None:
+            return None
+        react_agent = deep_agent.react_agent
+        if react_agent is None:
+            return None
+        return (deep_agent, react_agent)
+
+    @staticmethod
+    def _send_error_response(ws: Any, request: AgentRequest,
+                              send_lock: asyncio.Lock, error: str,
+                              code: str | None = None) -> str:
+        """Send an error AgentResponse and return the wire JSON string."""
+        payload: dict[str, Any] = {"error": error}
+        if code:
+            payload["code"] = code
+        resp = AgentResponse(
+            request_id=request.request_id,
+            channel_id=request.channel_id,
+            ok=False,
+            payload=payload,
+            metadata=request.metadata,
+        )
+        return json.dumps(
+            encode_agent_response_for_wire(resp, response_id=request.request_id),
+            ensure_ascii=False,
+        )
+
+    async def _handle_session_rewind_full(
+        self, ws: Any, request: AgentRequest, send_lock: asyncio.Lock,
+        restore_files: bool = False,
+    ) -> None:
+        """Full rewind: truncate history.json + context_engine + update checkpointer."""
+        from jiuwenswarm.agents.harness.common.session_ops_service import (
+            rewind_session,
+            rewind_session_context,
+        )
+
+        params = request.params if isinstance(request.params, dict) else {}
+        target_sid = str(params.get("session_id") or request.session_id or "").strip()
+        turn_index = params.get("turn_index")
+
+        if not target_sid or turn_index is None:
+            wire = AgentWebSocketServer._send_error_response(
+                ws, request, send_lock,
+                "session_id and turn_index required", "BAD_REQUEST",
+            )
+            async with send_lock:
+                await ws.send(wire)
+            return
+
+        try:
+            turn_index = int(turn_index)
+        except (ValueError, TypeError):
+            wire = AgentWebSocketServer._send_error_response(
+                ws, request, send_lock,
+                "turn_index must be integer", "BAD_REQUEST",
+            )
+            async with send_lock:
+                await ws.send(wire)
+            return
+
+        try:
+            # Step 1: Optionally restore files first
+            restore_result: dict[str, Any] = {}
+            if restore_files:
+                from jiuwenswarm.agents.harness.common.session_ops_service import restore_session_files
+                restore_result = restore_session_files(session_id=target_sid, turn_index=turn_index)
+
+            # Step 2: Truncate history.json (local file operation)
+            rewind_result = rewind_session(session_id=target_sid, turn_index=turn_index)
+
+            # Step 3: Truncate context_engine in-place + persist to checkpointer
+            context_ok = False
+            pair = self._resolve_rewind_agent(request.channel_id or "default")
+            if pair is not None:
+                deep_agent, _react_agent = pair
+                try:
+                    context_ok = await rewind_session_context(
+                        deep_agent=deep_agent,
+                        session_id=target_sid,
+                        turn_index=turn_index,
+                    )
+                except Exception as exc:
+                    logger.warning(
+                        "[AgentWS] session.rewind context truncation failed: %s", exc,
+                    )
+
+            payload = {**rewind_result, "rewind_context": context_ok}
+            if restore_files:
+                payload["restored_files"] = restore_result.get("restored_files", [])
+                payload["deleted_files"] = restore_result.get("deleted_files", [])
+                payload["restore_errors"] = restore_result.get("errors", [])
+
+            resp = AgentResponse(
+                request_id=request.request_id,
+                channel_id=request.channel_id,
+                ok=True,
+                payload=payload,
+                metadata=request.metadata,
+            )
+        except ValueError as exc:
+            resp = AgentResponse(
+                request_id=request.request_id,
+                channel_id=request.channel_id,
+                ok=False,
+                payload={"error": str(exc), "code": "BAD_REQUEST"},
+                metadata=request.metadata,
+            )
+        except Exception as exc:
+            logger.exception("[AgentWS] session.rewind failed: %s", exc)
+            resp = AgentResponse(
+                request_id=request.request_id,
+                channel_id=request.channel_id,
+                ok=False,
+                payload={"error": str(exc)},
+                metadata=request.metadata,
+            )
+
+        wire = encode_agent_response_for_wire(resp, response_id=request.request_id)
+        async with send_lock:
+            await ws.send(json.dumps(wire, ensure_ascii=False))
+
+    async def _handle_session_rewind_context(
+        self, ws: Any, request: AgentRequest, send_lock: asyncio.Lock
+    ) -> None:
+        """Truncate history.json + in-memory context_engine for a session."""
+        from jiuwenswarm.agents.harness.common.session_ops_service import (
+            rewind_session,
+            rewind_session_context,
+        )
+
+        params = request.params if isinstance(request.params, dict) else {}
+        target_sid = str(params.get("session_id") or request.session_id or "").strip()
+        turn_index = params.get("turn_index")
+
+        if not target_sid or turn_index is None:
+            wire = AgentWebSocketServer._send_error_response(
+                ws, request, send_lock,
+                "session_id and turn_index required", "BAD_REQUEST",
+            )
+            async with send_lock:
+                await ws.send(wire)
+            return
+
+        try:
+            turn_index = int(turn_index)
+        except (ValueError, TypeError):
+            wire = AgentWebSocketServer._send_error_response(
+                ws, request, send_lock,
+                "turn_index must be integer", "BAD_REQUEST",
+            )
+            async with send_lock:
+                await ws.send(wire)
+            return
+
+        pair = self._resolve_rewind_agent(request.channel_id or "default")
+        if pair is None:
+            wire = AgentWebSocketServer._send_error_response(
+                ws, request, send_lock, "no agent instance available",
+            )
+            async with send_lock:
+                await ws.send(wire)
+            return
+        deep_agent, _react_agent = pair
+
+        try:
+            # Truncate history.json first so rewind_session_context reads the
+            # correct truncated state (the new implementation rebuilds context
+            # from history.json on disk).
+            rewind_result = rewind_session(session_id=target_sid, turn_index=turn_index)
+            context_ok = await rewind_session_context(
+                deep_agent=deep_agent,
+                session_id=target_sid,
+                turn_index=turn_index,
+            )
+            resp = AgentResponse(
+                request_id=request.request_id,
+                channel_id=request.channel_id,
+                ok=True,
+                payload={**rewind_result, "rewind_context": context_ok},
+                metadata=request.metadata,
+            )
+        except ValueError as exc:
+            resp = AgentResponse(
+                request_id=request.request_id,
+                channel_id=request.channel_id,
+                ok=False,
+                payload={"error": str(exc), "code": "BAD_REQUEST"},
+                metadata=request.metadata,
+            )
+        except Exception as exc:
+            logger.exception("[AgentWS] session.rewind_context failed: %s", exc)
+            resp = AgentResponse(
+                request_id=request.request_id,
+                channel_id=request.channel_id,
+                ok=False,
+                payload={"error": str(exc)},
+                metadata=request.metadata,
+            )
 
         wire = encode_agent_response_for_wire(resp, response_id=request.request_id)
         async with send_lock:

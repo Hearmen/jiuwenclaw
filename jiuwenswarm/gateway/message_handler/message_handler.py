@@ -980,6 +980,13 @@ class MessageHandler(ABC):
     ) -> None:
         """受控通道 /rewind N：回退当前会话到指定轮次并通知。"""
         from jiuwenswarm.agents.harness.common.session_ops_service import rewind_session
+        """受控通道 /rewind N：回退当前会话到指定轮次并通知。
+
+        优先转发到 AgentServer（原子性截断 history + context + checkpointer），
+        失败则 fallback 到本地仅截断 history.json。
+        """
+        from jiuwenswarm.common.e2a.gateway_normalize import e2a_from_agent_fields
+        from jiuwenswarm.common.schema.message import ReqMethod
 
         state = self._get_or_create_channel_state(msg)
         target_sid = state.session_id
@@ -993,6 +1000,44 @@ class MessageHandler(ABC):
         try:
             await self._cancel_agent_work_for_session(msg, target_sid)
 
+            # --- E2A-first: 转发到 AgentServer 原子性处理 ---
+            context_ok = False
+            try:
+                env = e2a_from_agent_fields(
+                    request_id=f"rewind-{int(time.time() * 1000):x}-{secrets.token_hex(3)}",
+                    channel_id=channel_id,
+                    session_id=target_sid,
+                    req_method=ReqMethod.SESSION_REWIND,
+                    params={"session_id": target_sid, "turn_index": turn_index},
+                    is_stream=False,
+                    timestamp=time.time(),
+                )
+                resp = await self._agent_client.send_request(env)
+                if resp.ok:
+                    pl = resp.payload if isinstance(resp.payload, dict) else {}
+                    preview = pl.get("content_preview", "")
+                    remaining = pl.get("remaining_records", 0)
+                    removed = pl.get("removed_records", 0)
+                    context_ok = pl.get("rewind_context", False)
+
+                    await self._send_channel_notice(
+                        user_infos, channel_id, reply_session_id,
+                        f"[收到 /rewind 指令] 已回退到第 {turn_index} 轮"
+                        f'（"{preview[:50]}"）'
+                        f"，删除 {removed} 条记录，剩余 {remaining} 条。",
+                    )
+                    logger.info(
+                        "[MessageHandler] /rewind 完成(E2A): session=%s turn=%s context=%s",
+                        target_sid, turn_index, context_ok,
+                    )
+                    return
+                # AgentServer returned error — fall through to local fallback
+                logger.warning("[MessageHandler] /rewind E2A failed: %s", resp.payload)
+            except Exception as e2a_exc:
+                logger.warning("[MessageHandler] /rewind E2A failed, fallback local: %s", e2a_exc)
+
+            # --- Fallback: 仅本地截断 history.json ---
+            from jiuwenswarm.agents.harness.common.session_ops_service import rewind_session
             result = rewind_session(session_id=target_sid, turn_index=turn_index)
             preview = result.get("content_preview", "")
             remaining = result.get("remaining_records", 0)
@@ -1002,7 +1047,8 @@ class MessageHandler(ABC):
                 user_infos, channel_id, reply_session_id,
                 f"[收到 /rewind 指令] 已回退到第 {turn_index} 轮"
                 f'（"{preview[:50]}"）'
-                f"，删除 {removed} 条记录，剩余 {remaining} 条。",
+                f"，删除 {removed} 条记录，剩余 {remaining} 条。"
+                f"（注意：上下文未同步截断）",
             )
             logger.info(
                 "[MessageHandler] /rewind 完成: session=%s turn=%s remaining=%s removed=%s",

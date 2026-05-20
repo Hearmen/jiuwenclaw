@@ -313,6 +313,18 @@ class CliRouteBindParams:
     cron_controller: Any = None
 
 
+@dataclass
+class ForwardRewindE2AParams:
+    """Parameters for forwarding rewind request to AgentServer via E2A."""
+
+    ws: Any
+    req_id: str
+    target_sid: str
+    turn_index: int
+    req_method: Any
+    error_label: str
+
+
 _CLI_CONFIG_SET_ENV_MAP = {
     "model_provider": "MODEL_PROVIDER",
     "model": "MODEL_NAME",
@@ -1038,8 +1050,53 @@ def register_cli_handlers(bind: CliHandlersBindParams) -> None:
         shutil.rmtree(session_dir)
         await channel.send_response(ws, req_id, ok=True, payload={"session_id": target})
 
+    async def _forward_rewind_e2a(params: ForwardRewindE2AParams) -> bool:
+        """Try to forward a rewind request to AgentServer via E2A.
+
+        Returns True if the request was fully handled (success or error response
+        sent to the client).  Returns False if E2A is unavailable and the caller
+        should fall back to local-only processing.
+        """
+        from jiuwenswarm.common.e2a.gateway_normalize import e2a_from_agent_fields
+
+        real_client = (
+            agent_client.get("value")
+            if isinstance(agent_client, dict)
+            else agent_client
+        )
+        if real_client is None:
+            return False
+
+        try:
+            env = e2a_from_agent_fields(
+                request_id=params.req_id,
+                channel_id="tui",
+                session_id=params.target_sid,
+                req_method=params.req_method,
+                params={"session_id": params.target_sid, "turn_index": params.turn_index},
+                is_stream=False,
+                timestamp=time.time(),
+            )
+            resp = await real_client.send_request(env)
+            if resp.ok:
+                pl = resp.payload if isinstance(resp.payload, dict) else {}
+                await channel.send_response(params.ws, params.req_id, ok=True, payload=pl)
+                return True
+            pl = resp.payload if isinstance(resp.payload, dict) else {}
+            err = pl.get("error", params.error_label)
+            code = pl.get("code") or None
+            if isinstance(code, str) and not code.strip():
+                code = None
+            await channel.send_response(params.ws, params.req_id, ok=False, error=str(err), code=code)
+            return True
+        except Exception as e:
+            logger.warning("[cli %s] forward to agent failed, fallback local: %s", params.error_label, e)
+            return False
+
     async def _session_rewind(ws, req_id, params, session_id):
         from jiuwenswarm.agents.harness.common.session_ops_service import rewind_session
+        """session.rewind: 优先转发到 AgentServer（同时截断 history + context），失败则 fallback 本地仅截断 history."""
+        from jiuwenswarm.common.schema.message import ReqMethod
 
         if not isinstance(params, dict):
             await channel.send_response(
@@ -1065,6 +1122,22 @@ def register_cli_handlers(bind: CliHandlersBindParams) -> None:
                 ws, req_id, ok=False, error="turn_index must be an integer", code="BAD_REQUEST"
             )
             return
+
+        # 优先通过 E2A 转发到 AgentServer（同时处理 history + context 截断）
+        if await _forward_rewind_e2a(
+            ForwardRewindE2AParams(
+                ws=ws,
+                req_id=req_id,
+                target_sid=target_sid,
+                turn_index=turn_index,
+                req_method=ReqMethod.SESSION_REWIND,
+                error_label="session.rewind failed",
+            )
+        ):
+            return
+
+        # Fallback: 仅本地截断 history.json（不含 context 截断）
+        from jiuwenswarm.agents.harness.common.session_ops_service import rewind_session
         try:
             result = rewind_session(session_id=target_sid, turn_index=turn_index)
             await channel.send_response(ws, req_id, ok=True, payload=result)
@@ -1096,6 +1169,8 @@ def register_cli_handlers(bind: CliHandlersBindParams) -> None:
             restore_session_files,
             rewind_session,
         )
+        """session.rewind_and_restore: 优先转发到 AgentServer（history + context + 文件恢复），失败则 fallback 本地."""
+        from jiuwenswarm.common.schema.message import ReqMethod
 
         if not isinstance(params, dict):
             await channel.send_response(
@@ -1121,6 +1196,25 @@ def register_cli_handlers(bind: CliHandlersBindParams) -> None:
                 ws, req_id, ok=False, error="turn_index must be an integer", code="BAD_REQUEST"
             )
             return
+
+        # 优先通过 E2A 转发到 AgentServer
+        if await _forward_rewind_e2a(
+            ForwardRewindE2AParams(
+                ws=ws,
+                req_id=req_id,
+                target_sid=target_sid,
+                turn_index=turn_index,
+                req_method=ReqMethod.SESSION_REWIND_AND_RESTORE,
+                error_label="session.rewind_and_restore failed",
+            )
+        ):
+            return
+
+        # Fallback: 仅本地操作
+        from jiuwenswarm.agents.harness.common.session_ops_service import (
+            restore_session_files,
+            rewind_session,
+        )
         try:
             restore_result = restore_session_files(session_id=target_sid, turn_index=turn_index)
             rewind_result = rewind_session(session_id=target_sid, turn_index=turn_index)

@@ -1336,7 +1336,8 @@ export class AppScreen implements Component, Focusable {
       this.editor.setText("");
       this.syncQuestionList(snapshot);
     } else if (questionId && this.activeQuestionId) {
-      this.syncQuestionList(snapshot);
+      // Same question still active — preserve existing questionList to keep cursor position
+      // syncQuestionList recreates SelectList from scratch, losing the transient selectedIndex
     } else if (!questionId && this.activeQuestionId) {
       this.activeQuestionId = null;
       this.activeQuestionIndex = 0;
