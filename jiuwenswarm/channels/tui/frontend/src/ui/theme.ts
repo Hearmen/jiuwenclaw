@@ -30,10 +30,10 @@ function highlightCodeBlock(code: string): string[] {
   return lines.map((line) => highlightLine(line));
 }
 
-export type ThemeName = "system" | "dark" | "light";
+export type ThemeName = "default" | "dark" | "light";
 export type AccentColorName = "default" | "blue" | "green" | "pink" | "purple" | "red" | "yellow";
 
-const THEME_OPTIONS: readonly ThemeName[] = ["system", "dark", "light"] as const;
+const THEME_OPTIONS: readonly ThemeName[] = ["default", "dark", "light"] as const;
 const ACCENT_OPTIONS: readonly AccentColorName[] = [
   "default",
   "blue",
@@ -148,7 +148,7 @@ const ACCENT_COLORS: Record<Exclude<AccentColorName, "default">, string> = {
 };
 
 const _initConfig = loadTuiConfig();
-let currentThemeName: ThemeName = _initConfig.theme ?? "system";
+let currentThemeName: ThemeName = _initConfig.theme ?? "default";
 let currentAccentColor: AccentColorName = _initConfig.accentColor ?? "default";
 
 function detectSystemTheme(): "light" | "dark" {
@@ -184,7 +184,7 @@ function detectSystemTheme(): "light" | "dark" {
 }
 
 function getResolvedThemeName(): "light" | "dark" {
-  return currentThemeName === "system" ? detectSystemTheme() : currentThemeName;
+  return currentThemeName === "default" ? detectSystemTheme() : currentThemeName;
 }
 
 function getThemeDefinition(): ThemeDefinition {

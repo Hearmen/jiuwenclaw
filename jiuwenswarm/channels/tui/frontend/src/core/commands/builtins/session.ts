@@ -8,6 +8,7 @@ export function createSessionCommand(): SlashCommand {
     description: "Show remote session URL and QR code",
     usage: "/session",
     example: "/remote",
+    hidden: true,
     kind: CommandKind.BUILT_IN,
     action: async (ctx) => {
       try {

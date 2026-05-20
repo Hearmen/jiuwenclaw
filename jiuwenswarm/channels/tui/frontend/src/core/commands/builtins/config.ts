@@ -1,5 +1,6 @@
 import { addError, addInfo, extractObject, formatValue } from "../helpers.js";
 import { CommandKind, type CommandContext, type SlashCommand } from "../types.js";
+import type { ThemeName } from "../../../ui/theme.js";
 
 const COMPLETION_SCHEMA_TTL_MS = 30_000;
 let cachedSchemaKeys: string[] | null = null;
@@ -15,6 +16,35 @@ export interface ConfigItemSchema {
   sensitive?: boolean;
   description?: string;
   source: "env" | "yaml";
+}
+
+const FRONTEND_SCHEMA_KEYS = new Set(["theme"]);
+
+const FRONTEND_SCHEMAS: ConfigItemSchema[] = [
+  {
+    key: "theme",
+    label: "主题",
+    group: "Theme",
+    type: "select",
+    options: ["dark", "light"],
+    default: "default",
+    source: "yaml",
+  },
+];
+
+function getFrontendSchema(key: string): ConfigItemSchema | undefined {
+  return FRONTEND_SCHEMAS.find((s) => s.key === key);
+}
+
+function getFrontendValue(ctx: CommandContext, key: string): string {
+  if (key === "theme") return ctx.themeName;
+  return "";
+}
+
+function applyFrontendConfig(ctx: CommandContext, key: string, value: string): void {
+  if (key === "theme") {
+    ctx.setThemeName(value as ThemeName);
+  }
 }
 
 function flattenConfigEntries(
@@ -182,6 +212,17 @@ async function showConfigOverview(ctx: CommandContext): Promise<void> {
     }
   }
 
+  // Theme section (frontend-only, not from backend schema)
+  items.push({ label: "── Theme ──", description: "" });
+  for (const schema of FRONTEND_SCHEMAS) {
+    const currentValue = getFrontendValue(ctx, schema.key);
+    items.push({
+      label: schema.key,
+      value: currentValue,
+      description: schema.description ?? schema.label,
+    });
+  }
+
   ctx.addItem(
     addInfo(ctx.sessionId, "Configuration", "c", {
       view: "kv",
@@ -208,16 +249,16 @@ export function createConfigCommand(): SlashCommand {
       const subCommands = ["get", "set", "list", "edit", "reset"];
       const now = Date.now();
       if (cachedSchemaKeys && now - cachedSchemaAt < COMPLETION_SCHEMA_TTL_MS) {
-        return [...subCommands, ...cachedSchemaKeys];
+        return [...subCommands, ...cachedSchemaKeys, ...FRONTEND_SCHEMA_KEYS];
       }
       try {
         const payload = await ctx.request<{ schema?: ConfigItemSchema[] }>("config.get", {});
         const configKeys = (payload.schema ?? []).map((item) => item.key);
         cachedSchemaKeys = configKeys;
         cachedSchemaAt = now;
-        return [...subCommands, ...configKeys];
+        return [...subCommands, ...configKeys, ...FRONTEND_SCHEMA_KEYS];
       } catch {
-        return [...subCommands];
+        return [...subCommands, ...FRONTEND_SCHEMA_KEYS];
       }
     },
     subCommands: [
@@ -229,6 +270,17 @@ export function createConfigCommand(): SlashCommand {
         takesArgs: true,
         action: async (ctx, args) => {
           const key = args.trim();
+          // Handle frontend-only config keys
+          if (key && FRONTEND_SCHEMA_KEYS.has(key)) {
+            ctx.addItem(
+              addInfo(ctx.sessionId, `Config: ${key}`, "c", {
+                view: "kv",
+                title: `Config · ${key}`,
+                items: [{ label: key, value: getFrontendValue(ctx, key) }],
+              }),
+            );
+            return;
+          }
           let payload: unknown;
           try {
             payload = await ctx.request("config.get", key ? { key } : {});
@@ -251,6 +303,44 @@ export function createConfigCommand(): SlashCommand {
           const value = valueParts.join(" ");
           if (!key) {
             ctx.addItem(addError(ctx.sessionId, "usage: /config set <key> <value>"));
+            return;
+          }
+          // Handle frontend-only config keys
+          const frontendSchema = getFrontendSchema(key);
+          if (frontendSchema) {
+            if (frontendSchema.type === "select" && frontendSchema.options) {
+              if (!value) {
+                ctx.addItem(
+                  addError(ctx.sessionId, `Interactive selection not available. Options: ${frontendSchema.options.join(", ")}`),
+                );
+                return;
+              }
+              if (!frontendSchema.options.includes(value)) {
+                ctx.addItem(
+                  addError(
+                    ctx.sessionId,
+                    `Invalid value "${value}" for ${key}. Options: ${frontendSchema.options.join(", ")}`,
+                  ),
+                );
+                return;
+              }
+            }
+            if (!value) {
+              ctx.addItem(addError(ctx.sessionId, "usage: /config set <key> <value>"));
+              return;
+            }
+            applyFrontendConfig(ctx, key, value);
+            ctx.addItem(
+              addInfo(ctx.sessionId, `Config ${key} updated (applied)`, "c", {
+                view: "kv",
+                title: "Config Updated",
+                items: [
+                  { label: "key", value: key },
+                  { label: "value", value },
+                  { label: "applied", value: "true" },
+                ],
+              }),
+            );
             return;
           }
           let configPayload: Record<string, unknown> & { schema?: ConfigItemSchema[] };
@@ -343,6 +433,15 @@ export function createConfigCommand(): SlashCommand {
               });
             }
           }
+          // Append frontend-only items
+          items.push({ label: "── Theme ──", description: "" });
+          for (const schema of FRONTEND_SCHEMAS) {
+            items.push({
+              label: schema.key,
+              value: getFrontendValue(ctx, schema.key),
+              description: schema.description ?? schema.label,
+            });
+          }
           ctx.addItem(addInfo(ctx.sessionId, "All config items", "c", { view: "kv", title: "Config Items", items }));
         },
       },
@@ -364,7 +463,17 @@ export function createConfigCommand(): SlashCommand {
             return;
           }
           if (ctx.enterConfigEditor) {
-            ctx.enterConfigEditor(undefined, payload);
+            // Inject frontend-only schemas into payload for the editor
+            const mergedPayload: Record<string, unknown> & { schema?: ConfigItemSchema[] } = {
+              ...payload,
+              schema: [...(payload.schema ?? []), ...FRONTEND_SCHEMAS],
+            };
+            for (const schema of FRONTEND_SCHEMAS) {
+              if (mergedPayload[schema.key] === undefined) {
+                mergedPayload[schema.key] = getFrontendValue(ctx, schema.key);
+              }
+            }
+            ctx.enterConfigEditor(undefined, mergedPayload);
           } else {
             ctx.addItem(addError(ctx.sessionId, "Interactive editor not available in this mode"));
           }
@@ -380,6 +489,24 @@ export function createConfigCommand(): SlashCommand {
           const key = args.trim();
           if (!key) {
             ctx.addItem(addError(ctx.sessionId, "usage: /config reset <key>"));
+            return;
+          }
+          // Handle frontend-only config keys
+          const frontendSchema = getFrontendSchema(key);
+          if (frontendSchema) {
+            const defaultValue = frontendSchema.default ?? "";
+            applyFrontendConfig(ctx, key, defaultValue);
+            ctx.addItem(
+              addInfo(ctx.sessionId, `Config ${key} reset to ${defaultValue} (applied)`, "c", {
+                view: "kv",
+                title: "Config Reset",
+                items: [
+                  { label: "key", value: key },
+                  { label: "value", value: defaultValue },
+                  { label: "applied", value: "true" },
+                ],
+              }),
+            );
             return;
           }
           let configPayload: Record<string, unknown> & { schema?: ConfigItemSchema[] };
@@ -410,6 +537,17 @@ export function createConfigCommand(): SlashCommand {
         return;
       }
       const key = args.trim();
+      // Handle frontend-only config keys
+      if (FRONTEND_SCHEMA_KEYS.has(key)) {
+        ctx.addItem(
+          addInfo(ctx.sessionId, `Config: ${key}`, "c", {
+            view: "kv",
+            title: `Config · ${key}`,
+            items: [{ label: key, value: getFrontendValue(ctx, key) }],
+          }),
+        );
+        return;
+      }
       let payload: unknown;
       try {
         payload = await ctx.request("config.get", key ? { key } : {});

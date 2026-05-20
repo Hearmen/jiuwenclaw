@@ -77,7 +77,6 @@
 | `/plan` | - | 进入当前模式族的 plan 子模式，或发送规划请求 | `/plan`、`/plan open`、`/plan 迁移步骤` | 非 `team` |
 | `/rename` | - | 查看/重命名/清空当前会话标题 | `/rename`、`/rename 标题`、`/rename clear` | 全部 |
 | `/resume` | `/continue` | 列出或恢复历史会话；无参 `/resume` 与 `/continue` 在 TUI 中可打开交互列表（见下） | `/resume list`、`/resume <id>` | 全部 |
-| `/session` | `/remote`, `/sessions` | 查看远程会话 URL、二维码等（`/sessions` 为别名，与 `/session` 相同） | `/session` | 全部 |
 | `/skills` | - | 技能与市场源管理 | `/skills`、`/skills install ...` | 全部 |
 | `/teamskills` | - | TeamSkills Hub（初始化、校验、打包、搜索、安装等） | `/teamskills list` | 全部 |
 | `/model` | - | 查看/新增/切换模型 | `/model`、`/model add name k=v` | 全部 |

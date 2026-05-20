@@ -52,7 +52,7 @@ import {
   teamWorkingStartedAtMs,
 } from "./components/team-shared.js";
 import { padToWidth } from "./rendering/text.js";
-import { editorTheme, palette, selectListTheme } from "./theme.js";
+import { editorTheme, palette, selectListTheme, setCurrentThemeName } from "./theme.js";
 
 const END_CURSOR = "\x1b[7m \x1b[0m";
 const PERMISSION_TOOL_RE = /工具\s+`([^`]+)`\s+需要授权/;
@@ -2339,6 +2339,23 @@ export class AppScreen implements Component, Focusable {
     schema: ConfigItemSchema,
     currentValues: Record<string, string>,
   ): Promise<void> {
+    // Handle frontend-only config keys
+    if (key === "theme") {
+      this.state.setThemeName(value as import("./theme.js").ThemeName);
+      currentValues[key] = value;
+      this.state.addItem(addInfo(this.state.getSnapshot().sessionId, `✓ ${key}: ${value} (applied)`, "c"));
+      if (this.statusViewState) {
+        this.statusViewState.phase = "tab_view";
+        this.statusViewState.tab = "config";
+        this.rebuildStatusViewTabList();
+        this.configEditorState = null;
+        this.tui.requestRender();
+      } else {
+        this.configEditorState = null;
+        this.tui.requestRender();
+      }
+      return;
+    }
     try {
       const result = await this.state.request<{
         updated: string[];
