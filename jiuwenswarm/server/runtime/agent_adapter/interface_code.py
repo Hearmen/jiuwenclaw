@@ -56,6 +56,7 @@ from jiuwenswarm.agents.harness.common.rails import (
 )
 from jiuwenswarm.agents.harness.common.memory.config import get_memory_mode
 from jiuwenswarm.agents.harness.common.tools import SkillToolkit
+from jiuwenswarm.agents.harness.common.tools.acp_chat import acp_chat
 from jiuwenswarm.common.config import get_config
 from jiuwenswarm.common.utils import get_agent_workspace_dir
 
@@ -86,6 +87,7 @@ _TOOL_BUILD_NAMES: dict[str, str] = {
     "web_paid_search": "_build_paid_search_tool",
     "user_todos": "_build_user_todos_tool",
     "skill_toolkit": "_build_skill_toolkit",
+    "acp_chat": "_build_acp_chat_tool",
 }
 
 
@@ -889,6 +891,14 @@ class JiuwenClawCodeAdapter(JiuWenClawDeepAdapter):
         except Exception as exc:
             logger.warning("[JiuwenClawCodeAdapter] skill_toolkit build failed: %s", exc)
             return None
+
+    def _build_acp_chat_tool(self, agent_id: str) -> Any | None:
+        """Register acp_chat when at least one external ACP profile is configured."""
+        acp_cfg = get_config().get("acp_agents")
+        if not isinstance(acp_cfg, dict) or not acp_cfg:
+            logger.info("[JiuwenClawCodeAdapter] acp_chat skipped: no acp_agents configured")
+            return None
+        return acp_chat
 
     def merge_member_mcp_configs(self, agent: Any, config_base: dict[str, Any]) -> int:
         """Merge enabled code-mode MCP configs into a team member agent."""

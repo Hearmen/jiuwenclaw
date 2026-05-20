@@ -158,6 +158,7 @@ from jiuwenswarm.agents.harness.common.tools import SendFileToolkit, SkillToolki
 from jiuwenswarm.agents.harness.common.tools.wiki_tools import wiki_ingest, wiki_query, wiki_lint
 from jiuwenswarm.agents.harness.common.tools.acp_output_tools import get_tools as get_acp_output_tools
 from jiuwenswarm.agents.harness.common.tools.multi_session_toolkits import MultiSessionToolkit
+from jiuwenswarm.agents.harness.common.tools.acp_chat import acp_chat
 from jiuwenswarm.agents.harness.common.tools.xiaoyi_phone_tools import (
     get_user_location,
     create_note,
@@ -2335,6 +2336,17 @@ class JiuWenClawDeepAdapter:
             )
         except Exception as exc:
             logger.warning("[JiuWenClawDeepAdapter] skill tools registration failed: %s", exc)
+
+        # acp_chat: forward prompts to external stdio ACP agents (see acp_agents in config.yaml)
+        try:
+            acp_cfg = get_config().get("acp_agents")
+            if isinstance(acp_cfg, dict) and acp_cfg:
+                if not Runner.resource_mgr.get_tool(acp_chat.card.id):
+                    Runner.resource_mgr.add_tool(acp_chat)
+                tool_cards.append(acp_chat.card)
+                logger.info("[JiuWenClawDeepAdapter] acp_chat tool registered")
+        except Exception as exc:
+            logger.warning("[JiuWenClawDeepAdapter] acp_chat registration failed: %s", exc)
 
         return tool_cards
 
