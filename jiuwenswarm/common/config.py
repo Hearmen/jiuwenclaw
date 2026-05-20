@@ -912,11 +912,6 @@ def _build_modes_team_mapping(front_payload: dict[str, Any]) -> dict[str, Any]:
         teammate_agent_spec: dict[str, Any] | None = None
         if teammate_raw is not None:
             teammate_raw = _require_dict(teammate_raw, f"team[{team_index}].teammate")
-            transformed_team["teammate"] = {
-                key: teammate_raw[key]
-                for key in ("member_name", "display_name", "persona", "prompt_hint")
-                if key in teammate_raw
-            }
             teammate_agent_spec = _resolve_front_team_agent_spec(
                 agents_raw,
                 teammate_raw.get("agent_key"),

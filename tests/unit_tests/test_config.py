@@ -271,11 +271,9 @@ modes:
         assert "*id" not in saved_text
         raw = yaml.safe_load(saved_text)
         saved = raw["modes"]["team"]["alpha_team"]
-        assert saved["teammate"] == {
-            "member_name": "alpha_team_teammate",
-            "display_name": "alpha_team teammate",
-            "persona": "Handle analysis and execution",
-        }
+        # teammate 字段（与 agents 同级）已废弃，不再写入 config.yaml
+        assert "teammate" not in saved
+        # agents.teammate 仍保留
         assert saved["agents"]["teammate"]["skills"] == ["coding"]
         assert saved["agents"]["teammate"] is not saved["agents"]["coder"]
 
