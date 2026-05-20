@@ -11,20 +11,12 @@ export function createRenameCommand(): SlashCommand {
   return {
     name: "rename",
     description: "Rename the current session title",
-    usage: "/rename [new title | clear]",
+    usage: "/rename [new title]",
     example: "/rename My Debug Session",
     kind: CommandKind.BUILT_IN,
     takesArgs: true,
-    completion: (_ctx, partial) => {
-      const suggestions: string[] = [];
-      if ("clear".startsWith(partial.toLowerCase())) {
-        suggestions.push("clear");
-      }
-      return suggestions;
-    },
     action: async (ctx, args) => {
       const value = args.trim();
-      const isClear = value.toLowerCase() === "clear";
       try {
         if (value === "") {
           const payload = await ctx.request<{ session_id: string; title: string }>(
@@ -39,25 +31,6 @@ export function createRenameCommand(): SlashCommand {
               items: [
                 { label: "session", value: ctx.sessionId },
                 { label: "title", value: currentTitle },
-              ],
-            }),
-          );
-          ctx.setSessionTitle(payload.title || "");
-          return;
-        }
-
-        if (isClear) {
-          const payload = await ctx.request<RenamePayload>(
-            "session.rename",
-            { title: "" },
-          );
-          ctx.addItem(
-            addInfo(ctx.sessionId, "Session title cleared", "r", {
-              view: "kv",
-              title: "Rename",
-              items: [
-                { label: "session", value: payload.session_id },
-                { label: "title", value: payload.title || "(untitled)" },
               ],
             }),
           );
