@@ -212,12 +212,11 @@ export function SkillPanel({ sessionId, onNavigateToConfig }: SkillPanelProps) {
   }, [skills, search]);
 
   const visibleSkills = useMemo(() => {
-    return [...filteredSkills].sort((a, b) => {
-      const aInstalled = installedSkillMap.has(a.name) ? 1 : 0;
-      const bInstalled = installedSkillMap.has(b.name) ? 1 : 0;
-      if (aInstalled !== bInstalled) {
-        return bInstalled - aInstalled;
-      }
+    // 只显示已安装的技能（需手动安装后才会显示）
+    const installed = filteredSkills.filter((skill) =>
+      installedSkillMap.has(skill.name)
+    );
+    return [...installed].sort((a, b) => {
       const aSkillNet = a.source === "skillnet" ? 1 : 0;
       const bSkillNet = b.source === "skillnet" ? 1 : 0;
       if (aSkillNet !== bSkillNet) {
