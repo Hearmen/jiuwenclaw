@@ -266,8 +266,8 @@ def _parse_typed_chunk(chunk: Any, _has_streamed_content: bool) -> dict[str, Any
             return {
                 "event_type": "context.compressed",
                 "rate": payload.get("rate", 0),
-                "before_compressed": payload.get("before_compressed"),
-                "after_compressed": payload.get("after_compressed"),
+                "before_compressed": payload.get("before_compressed") or 0,
+                "after_compressed": payload.get("after_compressed") or 0,
             }
 
     if isinstance(payload, dict):

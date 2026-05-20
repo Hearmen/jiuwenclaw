@@ -4834,8 +4834,8 @@ class JiuWenClawDeepAdapter:
                         return {
                             "event_type": "context.compressed",
                             "rate": payload.get("rate", 0),
-                            "before_compressed": payload.get("before_compressed"),
-                            "after_compressed": payload.get("after_compressed"),
+                            "before_compressed": payload.get("before_compressed") or 0,
+                            "after_compressed": payload.get("after_compressed") or 0,
                         }
                     return {"event_type": "context.compressed", "rate": 0}
 
