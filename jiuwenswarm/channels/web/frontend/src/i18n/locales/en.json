@@ -673,7 +673,8 @@
     "deleteConfirm": "Are you sure you want to delete this task?",
     "status": {
       "enabled": "Enabled",
-      "disabled": "Disabled"
+      "disabled": "Disabled",
+      "expired": "Expired"
     },
     "columns": {
       "name": "Task Name",
@@ -721,6 +722,8 @@
       "toggleFailed": "Failed to update task status",
       "previewFailed": "Failed to preview next runs",
       "runNowFailed": "Failed to trigger the task immediately",
+      "expiredCannotRunNow": "Task has expired and cannot be run",
+      "expiredCannotEnable": "Task has expired and cannot be enabled",
       "loadDetailFailed": "Failed to load task details",
       "nameRequired": "Task name is required",
       "cronRequired": "Cron expression is required",

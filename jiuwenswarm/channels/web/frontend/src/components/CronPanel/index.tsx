@@ -339,6 +339,15 @@ export default function CronPanel({ sessionId }: CronPanelProps) {
     return () => window.clearTimeout(timer);
   }, [success]);
 
+  // 错误消息自动消失
+  useEffect(() => {
+    if (!error) return;
+    const timer = window.setTimeout(() => {
+      setError(null);
+    }, 2000);
+    return () => window.clearTimeout(timer);
+  }, [error]);
+
   // 创建任务
   const handleCreateJob = async () => {
     if (!newJob.name) {
@@ -383,7 +392,12 @@ export default function CronPanel({ sessionId }: CronPanelProps) {
   };
 
   // 切换任务状态
-  const handleToggleJob = async (id: string, enabled: boolean) => {
+  const handleToggleJob = async (id: string, enabled: boolean, expired?: boolean) => {
+    if (expired && !enabled) {
+      setSuccess(null);
+      setError(t('cron.errors.expiredCannotEnable'));
+      return;
+    }
     try {
       await webRequest<{ job: CronJob }>('cron.job.toggle', {
         id,
@@ -411,7 +425,13 @@ export default function CronPanel({ sessionId }: CronPanelProps) {
     }
   };
 
-  const handleRunNow = async (id: string) => {
+  const handleRunNow = async (id: string, expired?: boolean) => {
+    if (expired) {
+      setSuccess(null);
+      setError(t('cron.errors.expiredCannotRunNow'));
+      return;
+    }
+
     try {
       await webRequest<{ run_id: string }>('cron.job.run_now', { id, session_id: sessionId });
       setSuccess(t('cron.success.runNow'));
@@ -525,6 +545,13 @@ export default function CronPanel({ sessionId }: CronPanelProps) {
           </div>
         </div>
       )}
+      {error && (
+        <div className="pointer-events-none absolute top-3 left-1/2 -translate-x-1/2 z-20" data-testid="cron-error">
+          <div className="bg-danger text-white px-4 py-2 rounded-lg shadow-lg animate-rise text-sm">
+            {error}
+          </div>
+        </div>
+      )}
 
       <div className="card w-full h-full flex flex-col">
         <div className="flex items-center justify-between gap-4 mb-4">
@@ -542,12 +569,6 @@ export default function CronPanel({ sessionId }: CronPanelProps) {
         </div>
 
         <div className="flex-1 min-h-0">
-          {error && (
-            <div className="rounded-lg border border-danger/30 bg-danger/10 px-3 py-2 text-danger mb-4" data-testid="cron-error">
-              {error}
-            </div>
-          )}
-
           {loading ? (
             <div className="rounded-lg border border-border bg-secondary/30 px-3 py-4 flex items-center justify-center">
               {t('cron.loading')}
@@ -901,7 +922,7 @@ export default function CronPanel({ sessionId }: CronPanelProps) {
                           <td className="px-4 py-3 text-left">
                             <div className="flex items-center gap-4">
                               <span
-                                onClick={() => handleRunNow(job.id)}
+                                onClick={() => handleRunNow(job.id, job.expired)}
                                 className="cursor-pointer text-sm text-accent"
                                 data-testid={`cron-run-${job.id}`}
                               >
@@ -915,7 +936,7 @@ export default function CronPanel({ sessionId }: CronPanelProps) {
                                 {t('cron.previewAction')}
                               </span>
                               <span
-                                onClick={() => handleToggleJob(job.id, job.enabled)}
+                                onClick={() => handleToggleJob(job.id, job.enabled, job.expired)}
                                 className={`cursor-pointer text-sm ${job.enabled ? 'text-danger' : 'text-accent'}`}
                                 data-testid={`cron-toggle-${job.id}`}
                               >

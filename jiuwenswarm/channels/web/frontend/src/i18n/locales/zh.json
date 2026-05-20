@@ -721,6 +721,8 @@
       "toggleFailed": "更新任务状态失败",
       "previewFailed": "预览触发时间失败",
       "runNowFailed": "立即执行失败",
+      "expiredCannotRunNow": "任务过期，无法执行",
+      "expiredCannotEnable": "任务过期，无法启动",
       "loadDetailFailed": "获取任务详情失败",
       "nameRequired": "任务名称不能为空",
       "cronRequired": "Cron 表达式不能为空",
