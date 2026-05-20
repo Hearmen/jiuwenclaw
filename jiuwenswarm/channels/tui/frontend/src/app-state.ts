@@ -112,6 +112,16 @@ export interface AppSnapshot {
   memoryWarnings: { path: string; kind: string; char_count: number; threshold: number; message: string }[];
 }
 
+function formatElapsed(ms: number): string {
+  if (!Number.isFinite(ms) || ms < 0) {
+    return "0s";
+  }
+  const totalSeconds = Math.max(0, Math.floor(ms / 1000));
+  const minutes = Math.floor(totalSeconds / 60);
+  const seconds = totalSeconds % 60;
+  return minutes > 0 ? `${minutes}m ${seconds}s` : `${seconds}s`;
+}
+
 export class CliPiAppState {
   private listeners = new Set<() => void>();
   private entries: HistoryItem[] = [];
@@ -175,6 +185,8 @@ export class CliPiAppState {
   private suppressInterruptResult = false;
   /** 本地中断请求标志，cancel() 调用时立即置 true，用于 long-running 命令的中断检测。 */
   private interruptRequested = false;
+  /** 当前回合的起始时间戳，用于在回合结束时计算执行耗时。 */
+  private turnStartedAt: number | null = null;
   private readonly eventDelegate: AppEventDelegate = {
     getConnectionStatus: () => this.connectionStatus,
     getSessionId: () => this.sessionId,
@@ -276,6 +288,14 @@ export class CliPiAppState {
         total_tokens: (existing?.total_tokens ?? 0) + (typeof u.total_tokens === "number" ? u.total_tokens : 0),
       };
       this.usageByModel.set(key, entry);
+    },
+    addWorkedForEntry: () => {
+      if (this.turnStartedAt === null) return;
+      const elapsed = Date.now() - this.turnStartedAt;
+      this.turnStartedAt = null;
+      this.addItem(
+        addInfo(this.sessionId, `Worked for ${formatElapsed(elapsed)}`, undefined, { view: "dim" }),
+      );
     },
   };
 
@@ -777,6 +797,7 @@ readonly request = async <T = Record<string, unknown>>(
       ];
     }
     this.streamingState = StreamingState.Responding;
+    this.turnStartedAt = Date.now();
     this.emitChange();
     return requestId;
   };
