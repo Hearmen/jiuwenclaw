@@ -134,6 +134,7 @@ from jiuwenswarm.server.runtime.skill.skill_manager import SkillManager
 from jiuwenswarm.server.runtime.agent_adapter.evolution_helpers import (
     EvolutionPushContext,
     TEAM_EVOLUTION_EVENT_TIMEOUT_SEC,
+    TEAM_EVOLUTION_HIDDEN_TERMINAL_STAGES,
     TEAM_EVOLUTION_IDLE_SLEEP_SEC,
     build_evolution_status_update,
     evolution_outcome_from_event,
@@ -143,6 +144,8 @@ from jiuwenswarm.server.runtime.agent_adapter.evolution_helpers import (
     push_evolution_progress,
     push_evolution_status,
     team_evolution_terminal_progress,
+    terminal_stage,
+    visible_evolution_progress_from_events,
 )
 from jiuwenswarm.agents.harness.common.tools.multimodal_config import (
     apply_audio_model_config_from_yaml,
@@ -5434,14 +5437,15 @@ class JiuWenClawDeepAdapter:
             if not getattr(self._skill_evolution_rail, "auto_scan", True):
                 return
 
-            await _push_status("start", "collecting", "Running evolution analysis...")
+            active = False
             last_event_at = time.monotonic()
 
             while True:
                 if self._skill_evolution_rail is None:
                     return
                 if not getattr(self._skill_evolution_rail, "auto_scan", True):
-                    await _push_status("end", "hidden", "")
+                    if active:
+                        await _push_status("end", "hidden", "")
                     await _cleanup_rail()
                     return
 
@@ -5449,10 +5453,6 @@ class JiuWenClawDeepAdapter:
                 if not events:
                     idle_for = time.monotonic() - last_event_at
                     if idle_for >= TEAM_EVOLUTION_EVENT_TIMEOUT_SEC:
-                        message = (
-                            f"Evolution analysis timed out after "
-                            f"{TEAM_EVOLUTION_EVENT_TIMEOUT_SEC:.0f}s without host events"
-                        )
                         logger.warning(
                             "[JiuWenClawDeepAdapter] evolution watcher timed out: "
                             "request_id=%s session_id=%s idle_for=%.1fs",
@@ -5460,12 +5460,26 @@ class JiuWenClawDeepAdapter:
                             session_id,
                             idle_for,
                         )
-                        await _push_status("end", "hidden", message)
+                        if active:
+                            message = (
+                                f"Evolution analysis timed out after "
+                                f"{TEAM_EVOLUTION_EVENT_TIMEOUT_SEC:.0f}s without host events"
+                            )
+                            await _push_status("end", "hidden", message)
                         await _cleanup_rail()
                         return
                     await asyncio.sleep(TEAM_EVOLUTION_IDLE_SLEEP_SEC)
                     continue
                 last_event_at = time.monotonic()
+
+                visible_progress_statuses = visible_evolution_progress_from_events(events)
+                just_started = False
+                if not active and visible_progress_statuses:
+                    start_stage = visible_progress_statuses[0].stage
+                    start_message = visible_progress_statuses[0].message
+                    await _push_status("start", start_stage, start_message)
+                    active = True
+                    just_started = True
 
                 await push_evolution_progress(
                     push_context,
@@ -5475,8 +5489,21 @@ class JiuWenClawDeepAdapter:
                     build_push_message=build_server_push_message,
                 )
 
+                progress_statuses_to_push = (
+                    visible_progress_statuses[1:]
+                    if just_started
+                    else visible_progress_statuses
+                )
+                for progress_status in progress_statuses_to_push:
+                    if progress_status.terminal:
+                        continue
+                    await _push_status("progress", progress_status.stage, progress_status.message)
+
                 approval_events = [evt for evt in events if is_evolution_approval_event(evt)]
                 if approval_events:
+                    if not active:
+                        await _push_status("start", "approval_required", "")
+                        active = True
                     for evt in approval_events:
                         await _push_approval(evt)
                     await _push_status("end", "approval_required", "")
@@ -5489,6 +5516,9 @@ class JiuWenClawDeepAdapter:
                     if is_evolution_outcome_event(evt)
                 ]
                 if outcomes:
+                    if not active:
+                        await _cleanup_rail()
+                        return
                     outcome = outcomes[-1]
                     stage = str(outcome.get("status") or "completed").strip().lower()
                     message = str(outcome.get("message") or "")
@@ -5510,12 +5540,22 @@ class JiuWenClawDeepAdapter:
                 ]
                 if terminal_progress:
                     terminal = terminal_progress[-1]
-                    terminal_stage = str(terminal.get("stage") or "no_evolution_generated")
-                    if terminal_stage in {"failed", "timed_out"}:
-                        terminal_stage = "hidden"
+                    end_stage = terminal_stage(terminal) or "no_evolution_generated"
+                    if end_stage in TEAM_EVOLUTION_HIDDEN_TERMINAL_STAGES:
+                        end_stage = "hidden"
+                    if not active and end_stage == "hidden":
+                        await _cleanup_rail()
+                        return
+                    if not active:
+                        await _push_status(
+                            "start",
+                            end_stage,
+                            str(terminal.get("message") or ""),
+                        )
+                        active = True
                     await _push_status(
                         "end",
-                        terminal_stage,
+                        end_stage,
                         str(terminal.get("message") or ""),
                     )
                     await _cleanup_rail()
