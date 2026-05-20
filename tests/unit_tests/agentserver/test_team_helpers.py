@@ -286,7 +286,7 @@ async def test_team_evolution_monitor_maps_sdk_progress_stages(monkeypatch):
     rail = _FakeRail([[detecting_event], [generating_event], [outcome_event]], pending_first=False)
 
     monkeypatch.setattr(
-        "jiuwenclaw.server.gateway_push.WebSocketGatewayPushTransport",
+        "jiuwenswarm.server.gateway_push.WebSocketGatewayPushTransport",
         _FakeTransport,
     )
     monkeypatch.setattr(team_helpers, "parse_stream_chunk", lambda evt: None)
@@ -356,7 +356,7 @@ async def test_team_evolution_monitor_uses_meta_request_id_and_ends_on_cancelled
     )
 
     monkeypatch.setattr(
-        "jiuwenclaw.server.gateway_push.WebSocketGatewayPushTransport",
+        "jiuwenswarm.server.gateway_push.WebSocketGatewayPushTransport",
         _FakeTransport,
     )
     monkeypatch.setattr(team_helpers, "parse_stream_chunk", lambda evt: None)
@@ -437,7 +437,7 @@ async def test_team_evolution_monitor_filters_progress_by_request_id(monkeypatch
     )
 
     monkeypatch.setattr(
-        "jiuwenclaw.server.gateway_push.WebSocketGatewayPushTransport",
+        "jiuwenswarm.server.gateway_push.WebSocketGatewayPushTransport",
         _FakeTransport,
     )
     monkeypatch.setattr(team_helpers, "parse_stream_chunk", lambda evt: None)
