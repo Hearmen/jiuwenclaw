@@ -4494,6 +4494,8 @@ class JiuWenClawDeepAdapter:
                         if isinstance(chunk.payload, dict)
                         else str(chunk.payload)
                     )
+                    if not content or not content.strip():
+                        continue
                     yield AgentResponseChunk(
                         request_id=rid,
                         channel_id=cid,
@@ -4503,6 +4505,13 @@ class JiuWenClawDeepAdapter:
                     continue
 
                 if chunk_type == "llm_output":
+                    content = (
+                        chunk.payload.get("content", "")
+                        if isinstance(chunk.payload, dict)
+                        else str(chunk.payload)
+                    )
+                    if not content or not content.strip():
+                        continue
                     has_streamed_content = True
                     if accumulated_reasoning:
                         yield AgentResponseChunk(
@@ -4515,11 +4524,6 @@ class JiuWenClawDeepAdapter:
                             is_complete=False,
                         )
                         accumulated_reasoning = ""
-                    content = (
-                        chunk.payload.get("content", "")
-                        if isinstance(chunk.payload, dict)
-                        else str(chunk.payload)
-                    )
                     yield AgentResponseChunk(
                         request_id=rid,
                         channel_id=cid,
@@ -4711,7 +4715,7 @@ class JiuWenClawDeepAdapter:
                     content = (
                         payload.get("content", "") if isinstance(payload, dict) else str(payload)
                     )
-                    if not content:
+                    if not content or not content.strip():
                         return None
                     return {"event_type": "chat.delta", "content": content}
 
@@ -4721,7 +4725,7 @@ class JiuWenClawDeepAdapter:
                         if isinstance(payload, dict)
                         else str(payload)
                     )
-                    if not content:
+                    if not content or not content.strip():
                         return None
                     return {"event_type": "chat.reasoning", "content": content}
 
@@ -4729,7 +4733,7 @@ class JiuWenClawDeepAdapter:
                     content = (
                         payload.get("content", "") if isinstance(payload, dict) else str(payload)
                     )
-                    if not content:
+                    if not content or not content.strip():
                         return None
                     return {"event_type": "chat.delta", "content": content}
 
@@ -4751,11 +4755,11 @@ class JiuWenClawDeepAdapter:
                         content = str(payload)
                         is_chunked = False
 
+                    if not content or not content.strip():
+                        return None
+
                     if _has_streamed_content and not is_chunked:
                         return {"event_type": "chat.final", "content": content}
-
-                    if not content:
-                        return None
                     if is_chunked:
                         return {"event_type": "chat.delta", "content": content}
                     return {"event_type": "chat.final", "content": content}
@@ -4961,10 +4965,10 @@ class JiuWenClawDeepAdapter:
                     if "traceId" in payload or "invokeId" in payload:
                         return None
                     content = payload.get("content") or payload.get("output")
-                    if not content:
-                        return None
                 else:
                     content = str(payload)
+                if not content or not content.strip():
+                    return None
                 return {"event_type": "chat.delta", "content": content}
 
             if isinstance(chunk, dict):
