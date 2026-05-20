@@ -2519,6 +2519,49 @@ export function ConfigPanel({
     [draftModels],
   );
 
+  const agentModelReferencesLost = useMemo(() => {
+    if (!hasModelChanges) return [];
+    const lostReferences: { agentName: string; originalModel: string; newModel: string; changedFields: string[] }[] = [];
+    for (const agent of draftAgents) {
+      const matchedModel = draftModels.find(
+        (m) => m.model_name === agent.model.model
+          && m.model_provider === agent.model.provider
+          && m.api_base === agent.model.api_base
+      );
+      const originalMatched = storeAvailableModels.find(
+        (m) => m.model_name === agent.model.model
+          && m.model_provider === agent.model.provider
+          && m.api_base === agent.model.api_base
+      );
+      if (!matchedModel) {
+        if (originalMatched) {
+          lostReferences.push({
+            agentName: agent.name,
+            originalModel: `${originalMatched.model_name} (${originalMatched.model_provider})`,
+            newModel: agent.model.model ? `${agent.model.model} (${agent.model.provider})` : t('config.model.notSelected'),
+            changedFields: ['model_removed'],
+          });
+        }
+      } else if (originalMatched) {
+        const changedFields: string[] = [];
+        if (matchedModel.api_key !== originalMatched.api_key) changedFields.push('api_key');
+        if (matchedModel.alias !== originalMatched.alias) changedFields.push('alias');
+        if (matchedModel.is_default !== originalMatched.is_default) changedFields.push('is_default');
+        if (matchedModel.temperature !== originalMatched.temperature) changedFields.push('temperature');
+        if (matchedModel.timeout !== originalMatched.timeout) changedFields.push('timeout');
+        if (changedFields.length > 0) {
+          lostReferences.push({
+            agentName: agent.name,
+            originalModel: `${originalMatched.model_name} (${originalMatched.model_provider})`,
+            newModel: `${matchedModel.model_name} (${matchedModel.model_provider}) - ${changedFields.join(', ')} changed`,
+            changedFields,
+          });
+        }
+      }
+    }
+    return lostReferences;
+  }, [hasModelChanges, draftAgents, draftModels, storeAvailableModels, t]);
+
   const hasAgentsTeamsValidationError = useMemo(() => {
     for (const agent of draftAgents) {
       if (!agent.name.trim()) return true;
@@ -2702,7 +2745,7 @@ export function ConfigPanel({
             <button
               type="button"
               onClick={() => void handleSaveAndRestart()}
-              disabled={!hasChanges || saving || hasMissingRequiredModelFields || hasMissingModelApiKey || hasMissingModelApiBase || hasAgentsTeamsValidationError || (isProcessing && mode !== 'team')}
+              disabled={!hasChanges || saving || hasMissingRequiredModelFields || hasMissingModelApiKey || hasMissingModelApiBase || hasAgentsTeamsValidationError || agentModelReferencesLost.length > 0 || (isProcessing && mode !== 'team')}
               className="btn primary !px-3 !py-1.5 disabled:opacity-50 disabled:cursor-not-allowed"
             >
               {saving ? t('common.saving') : t('common.save')}
@@ -2727,6 +2770,11 @@ export function ConfigPanel({
         {!error && hasAgentsTeamsValidationError ? (
           <div className="mb-4 rounded-md border border-[var(--border-danger)] bg-danger-subtle px-3 py-2 text-sm text-danger">
             {t('config.agentsTeamsValidationError')}
+          </div>
+        ) : null}
+        {!error && agentModelReferencesLost.length > 0 ? (
+          <div className="mb-4 rounded-md border border-amber-500 bg-amber-50 dark:bg-amber-900/20 px-3 py-2 text-sm text-amber-700 dark:text-amber-300">
+            {t('config.model.referenceLostWarning')}: {agentModelReferencesLost.map((r) => r.agentName).join(', ')}
           </div>
         ) : null}
 
@@ -3061,6 +3109,7 @@ export function ConfigPanel({
           </div>
         </div>
       )}
+
     </div>
   );
 }
