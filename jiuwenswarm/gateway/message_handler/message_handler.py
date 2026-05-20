@@ -333,14 +333,22 @@ class MessageHandler(ABC):
         )
         await self.publish_robot_messages(msg)
 
-    async def _cancel_agent_work_for_session(self, msg: "Message", old_sid: str | None) -> None:
-        """取消指定 session 的网关流式任务，并向 AgentServer 发送 CHAT_CANCEL（与 Web chat.interrupt intent=cancel 对齐）。
+    async def _cancel_agent_work_for_session(
+        self,
+        msg: "Message",
+        old_sid: str | None,
+        *,
+        publish_interrupt_result: bool = True,
+    ) -> None:
+        """Cancel gateway and AgentServer work for a session.
 
-        网关侧仅取消 ``_stream_sessions[rid] == old_sid`` 的流式任务，并向 AgentServer 发送同 session 的
-        ``intent=cancel``，由 AgentServer 继续取消该 session 上的实际执行任务。
-
-        注意：先发送 interrupt 请求到 AgentServer，等待其发送 tool_result 等消息后，
-        再取消网关侧流式任务，确保前端能收到取消状态更新。
+        Args:
+            msg: The gateway message that triggered cancellation.
+            old_sid: The session ID whose in-flight work should be cancelled.
+            publish_interrupt_result: Whether to publish user-visible interrupt
+                results returned by AgentServer. Control commands use this as an
+                internal cleanup step, so they suppress the intermediate result
+                and only publish their own command notice.
         """
         from jiuwenswarm.common.schema.message import Message, ReqMethod
 
@@ -419,10 +427,11 @@ class MessageHandler(ABC):
         except Exception as exc:
             logger.warning("[MessageHandler] AgentServer 中断请求失败: %s", exc)
             await _cancel_tasks(tasks_to_cancel)
-            await self._send_interrupt_result_notification(
-                msg.id, msg.channel_id, sid_for_agent, "cancel",
-                message=f"任务终止失败: {exc}", success=False,
-            )
+            if publish_interrupt_result:
+                await self._send_interrupt_result_notification(
+                    msg.id, msg.channel_id, sid_for_agent, "cancel",
+                    message=f"任务终止失败: {exc}", success=False,
+                )
             return
 
         # AgentServer 中断成功后，取消网关侧流式任务
@@ -430,6 +439,13 @@ class MessageHandler(ABC):
 
         payload = resp.payload if isinstance(resp.payload, dict) else {}
         if payload.get("event_type") == "chat.interrupt_result":
+            if not publish_interrupt_result:
+                logger.info(
+                    "[MessageHandler] 已静默 AgentServer 中断结果: request_id=%s ok=%s",
+                    resp.request_id,
+                    resp.ok,
+                )
+                return
             out = self._response_to_message(
                 resp,
                 sid_for_agent,
@@ -456,14 +472,15 @@ class MessageHandler(ABC):
         elif not resp.ok:
             error_message = "任务终止失败"
 
-        await self._send_interrupt_result_notification(
-            msg.id,
-            msg.channel_id,
-            sid_for_agent,
-            "cancel",
-            message=error_message,
-            success=False,
-        )
+        if publish_interrupt_result:
+            await self._send_interrupt_result_notification(
+                msg.id,
+                msg.channel_id,
+                sid_for_agent,
+                "cancel",
+                message=error_message,
+                success=False,
+            )
 
     async def cancel_agent_sessions_on_disconnect(
         self,
@@ -516,7 +533,11 @@ class MessageHandler(ABC):
         msg: "Message",
     ) -> None:
         """先完成旧会话取消与 AgentServer 中断，再下发 session 已变更提示。"""
-        await self._cancel_agent_work_for_session(msg, params.old_sid)
+        await self._cancel_agent_work_for_session(
+            msg,
+            params.old_sid,
+            publish_interrupt_result=False,
+        )
         await self._send_channel_notice(
             params.user_infos,
             params.channel_id,
@@ -530,7 +551,11 @@ class MessageHandler(ABC):
         msg: "Message",
     ) -> None:
         """与 /new_session 一致：先取消当前会话在网关与 Agent 侧的任务，再下发 mode 已变更提示。"""
-        await self._cancel_agent_work_for_session(msg, params.old_sid)
+        await self._cancel_agent_work_for_session(
+            msg,
+            params.old_sid,
+            publish_interrupt_result=False,
+        )
         await self._send_channel_notice(
             params.user_infos,
             params.channel_id,
