@@ -231,6 +231,16 @@ class _WindowApi:
     def install_update(self, installer_path: str) -> bool:
         return self._runtime.install_update(installer_path)
 
+    def download_file(self, url: str, filename: str) -> bool:
+        """通过 webview 下载文件，解决 exe 中无法使用 <a> 标签下载的问题。"""
+        # 如果是相对路径，拼接完整的 URL（使用前端 web server 端口）
+        if url.startswith("/"):
+            full_url = f"http://{self._runtime.frontend_host}:{self._runtime.frontend_port}{url}"
+        else:
+            full_url = url
+        logger.info("[desktop] download_file called: url=%s, filename=%s", full_url, filename)
+        return self._runtime.download_file(full_url, filename)
+
 
 class DesktopRuntime:
     def __init__(
@@ -310,6 +320,79 @@ class DesktopRuntime:
 
         threading.Thread(target=_delayed_destroy, daemon=True).start()
         return True
+
+    def download_file(self, url: str, filename: str) -> bool:
+        """下载文件到用户下载目录（异步执行，避免阻塞 UI）。"""
+        def _download() -> None:
+            try:
+                import urllib.request
+
+                # 获取下载目录
+                download_dir = Path.home() / "Downloads"
+                if not download_dir.exists():
+                    download_dir.mkdir(parents=True, exist_ok=True)
+
+                # 处理文件名冲突
+                target_path = download_dir / filename
+                if target_path.exists():
+                    base, ext = Path(filename).stem, Path(filename).suffix
+                    counter = 1
+                    while target_path.exists():
+                        target_path = download_dir / f"{base} ({counter}){ext}"
+                        counter += 1
+
+                # 下载文件
+                urllib.request.urlretrieve(url, target_path)
+                logger.info("[desktop] file downloaded to: %s", target_path)
+
+                # 下载完成后提醒用户并打开文件
+                self._show_download_complete(str(target_path))
+            except Exception as exc:  # noqa: BLE001
+                logger.error("[desktop] download failed: %s", exc)
+
+        threading.Thread(target=_download, daemon=True).start()
+        return True
+
+    @staticmethod
+    def _show_download_complete(file_path: str) -> None:
+        """下载完成后提醒用户并打开文件所在文件夹。"""
+        try:
+            if os.name == "nt":
+                import ctypes
+                # Windows: 弹窗询问是否打开文件夹
+                result = ctypes.windll.user32.MessageBoxW(
+                    0,
+                    f"文件已下载到:\n{file_path}\n\n是否打开所在文件夹？",
+                    "下载完成",
+                    0x44  # MB_YESNO + MB_ICONINFORMATION
+                )
+                if result == 6:  # IDYES
+                    # 打开文件夹并选中文件
+                    explorer_path = os.path.join(os.environ.get("WINDIR", r"C:\Windows"), "explorer.exe")
+                    subprocess.Popen(
+                        [explorer_path, "/select,", file_path],
+                        stdout=subprocess.DEVNULL,
+                        stderr=subprocess.DEVNULL,
+                        creationflags=_creationflags(),
+                    )
+            elif sys.platform == "darwin":
+                # macOS: 弹窗询问
+                result = subprocess.run(
+                    ["/usr/bin/osascript", "-e", f'''
+                    display alert "下载完成" message "文件已下载到:\\n{file_path}\\n\\n是否打开所在文件夹？" buttons {"取消", "打开文件夹"} default button "打开文件夹" as informational
+                    '''],
+                    capture_output=True,
+                    text=True,
+                )
+                if "打开文件夹" in result.stdout:
+                    # 打开文件夹并选中文件
+                    subprocess.Popen(
+                        ["/usr/bin/open", "-R", file_path],
+                        stdout=subprocess.DEVNULL,
+                        stderr=subprocess.DEVNULL,
+                    )
+        except Exception as exc:  # noqa: BLE001
+            logger.error("[desktop] failed to show download complete: %s", exc)
 
     def install_update(self, installer_path: str) -> bool:
         if os.name != "nt":
@@ -515,6 +598,9 @@ setInterval(showTip,3500);
 
     def _on_loaded_first(self) -> None:
         if self.window is not None:
+            # 窗口首次加载后最大化（全屏会影响用户体验）
+            if hasattr(self.window, "maximize"):
+                self.window.maximize()
             self.window.events.loaded -= self._on_loaded_first
             self.window.events.loaded += self._on_loaded
 

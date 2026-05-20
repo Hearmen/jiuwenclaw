@@ -688,7 +688,18 @@ function FileDownloadList({
   files: FileDownloadItem[];
   className?: string;
 }) {
-  const handleDownload = (file: FileDownloadItem) => {
+  const handleDownload = async (file: FileDownloadItem) => {
+    // 检查是否在 PyWebView 环境中（exe 模式）
+    const pywebviewApi = (window as Window & { pywebview?: { api?: { download_file?: (url: string, filename: string) => Promise<boolean> | boolean } } }).pywebview?.api;
+    if (pywebviewApi?.download_file) {
+      // exe 模式：通过 webview API 下载
+      const success = await pywebviewApi.download_file(file.download_url, file.name || 'download');
+      if (!success) {
+        console.error('Download failed via pywebview API');
+      }
+      return;
+    }
+    // 浏览器模式：使用标准 <a> 标签下载
     const link = document.createElement('a');
     link.href = file.download_url;
     link.download = file.name || '';

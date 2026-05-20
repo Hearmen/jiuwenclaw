@@ -505,8 +505,11 @@ class TeamManager:
             send_file_enabled = (
                 config.get("channels", {})
                 .get(str(channel_id), {})
-                .get("send_file_allowed", False)
+                .get("send_file_allowed")
             )
+            # web channel defaults to True, others default to False
+            if send_file_enabled is None:
+                send_file_enabled = (channel_id == "web")
             if not send_file_enabled:
                 logger.info(
                     "[TeamManager] SendFileToolkit skipped: send_file_allowed=False for channel=%s",

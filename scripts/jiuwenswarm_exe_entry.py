@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import os
 import sys
+import ctypes
 import traceback
 from pathlib import Path
 
@@ -17,6 +18,18 @@ if getattr(sys, "frozen", False):
         os.chdir(os.path.expanduser("~"))
     except OSError:
         pass
+
+    # 设置 UTF-8 编码，避免 bash 操作乱码
+    os.environ["PYTHONIOENCODING"] = "utf-8"
+    os.environ["PYTHONUTF8"] = "1"
+    if os.name == "nt":
+        # Windows 控制台 UTF-8 模式
+        os.environ["PYTHONLEGACYWINDOWSSTDIO"] = "utf-8"
+        try:
+            ctypes.windll.kernel32.SetConsoleOutputCP(65001)
+            ctypes.windll.kernel32.SetConsoleCP(65001)
+        except Exception:  # noqa: BLE001
+            pass
 
     # Windows: 防止 subprocess 弹出控制台窗口（console=False 编译时 git 等命令会弹出黑框）
     # Monkey-patch asyncio.create_subprocess_exec，自动添加 CREATE_NO_WINDOW 标志
@@ -38,10 +51,6 @@ if getattr(sys, "frozen", False):
 
 _DESKTOP_RUN_AGENT = "--desktop-run-agent"
 _DESKTOP_RUN_GATEWAY = "--desktop-run-gateway"
-
-# 子进程 flag 集合，这些模式下需要将错误写入日志文件，
-# 因为 console=False 的 PyInstaller exe 在 Windows 上无法通过 stderr 捕获错误。
-_CHILD_FLAGS = {"--desktop-run-app", "--desktop-run-web", _DESKTOP_RUN_AGENT, _DESKTOP_RUN_GATEWAY}
 
 # ── 单实例锁（在重量级 import 之前执行） ──────────────────────────
 _SINGLE_INSTANCE_LOCK_FD: int | None = None
@@ -99,7 +108,6 @@ def _show_already_running_message() -> None:
     title = "JiuwenSwarm"
     try:
         if os.name == "nt":
-            import ctypes
             ctypes.windll.user32.MessageBoxW(0, msg, title, 0x30)
         elif sys.platform == "darwin":
             import subprocess as _sp
@@ -111,9 +119,6 @@ def _show_already_running_message() -> None:
     except Exception:  # noqa: BLE001
         pass
 
-
-def _is_child_mode() -> bool:
-    return any(flag in sys.argv for flag in _CHILD_FLAGS)
 
 
 def _write_child_error(exc: BaseException) -> None:
@@ -143,16 +148,18 @@ def _pop_flag(flag: str) -> bool:
 
 
 def main() -> None:
-    is_child = _is_child_mode()
-
     try:
         _dispatch()
-    except BaseException as exc:
-        if is_child:
-            _write_child_error(exc)
-            # 子进程异常：写入日志后静默退出，不弹窗
-            raise SystemExit(1) from exc
+    except SystemExit:
+        # SystemExit 是正常的退出请求（如 sys.exit()），直接传递，不弹窗
         raise
+    except KeyboardInterrupt as e:
+        # Ctrl+C 也是正常退出
+        raise SystemExit(0) from e
+    except BaseException as exc:
+        # 其他未捕获异常：记录日志后静默退出，避免 PyInstaller exe 弹窗
+        _write_child_error(exc)
+        raise SystemExit(1) from None
 
 
 def _dispatch() -> None:

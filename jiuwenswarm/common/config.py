@@ -97,6 +97,10 @@ def _normalize_config(config: dict[str, Any] | None) -> None:
         mcc = react.get("model_client_config")
         if isinstance(mcc, dict) and "custom_headers" in mcc:
             mcc["custom_headers"] = _parse_custom_headers(mcc["custom_headers"])
+    # web channel enable send file tool default
+    channels = config.get("channels", {})
+    if channels.get("web", {}).get("send_file_allowed") is None:
+        channels["web"] = {"send_file_allowed": True}
 
 
 def get_config():
