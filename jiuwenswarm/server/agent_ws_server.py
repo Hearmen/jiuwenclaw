@@ -3303,7 +3303,7 @@ class AgentWebSocketServer:
                 settings_sources.append(config_path)
 
                 # Memory diagnostics — use the actual workspace dir (trusted_dir or cwd), 
-                # same as ProjectMemoryRail, so we detect JIUWENCLAW.md where /init creates it.
+                # same as ProjectMemoryRail, so we detect JIUWESWARM.md where /init creates it.
                 params = request.params or {}
                 workspace_dir = str(params.get("cwd", "") or os.getcwd())
                 trusted_dirs = params.get("trusted_dirs")

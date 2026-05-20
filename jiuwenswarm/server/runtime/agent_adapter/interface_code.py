@@ -466,10 +466,10 @@ class JiuwenClawCodeAdapter(JiuWenClawDeepAdapter):
             return None
 
     def _build_project_memory_rail(self) -> ProjectMemoryRail | None:
-        """Build ProjectMemoryRail to auto-load JIUWENCLAW.md / CLAUDE.md etc.
+        """Build ProjectMemoryRail to auto-load JIUWENSWARM.md / CLAUDE.md etc.
 
         Code 模式专属 — 始终挂载。
-        确保能检索到 /init 命令创建 JIUWENCLAW.md 的目录（当前工作目录）。
+        确保能检索到 /init 命令创建 JIUWENSWARM.md 的目录（当前工作目录）。
         """
         try:
             workspace = self._project_dir or self._workspace_dir or "./"
@@ -762,7 +762,7 @@ class JiuwenClawCodeAdapter(JiuWenClawDeepAdapter):
         if self._project_memory_rail is not None:
             self._project_memory_rail.set_language(resolved_language)
             # trusted_dirs 来自 CLI 端的 trusted_dirs / workspace-dir，
-            # 包含用户项目目录（即 /init 写 JIUWENCLAW.md 的目录）
+            # 包含用户项目目录（即 /init 写 JIUWENSWARM.md 的目录）
             if runtime_config.trusted_dirs:
                 self._project_memory_rail.set_additional_directories(
                     runtime_config.trusted_dirs,
