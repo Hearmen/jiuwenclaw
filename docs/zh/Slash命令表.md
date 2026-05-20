@@ -31,6 +31,7 @@
 | `/evolve_list` | 查看某个 Skill 的演进经验库（见下文） |
 | `/evolve_simplify` | 整理、合并某个 Skill 的演进经验（见下文） |
 | `/evolve_rebuild` | 基于归档与演进记录重建 `SKILL.md`（见下文） |
+| `/sandbox` | 设置沙箱模式（见下文） |
 
 > 说明：`/mode` 的受控切换逻辑以 Gateway 侧行为为主，详见下文「`/mode` 与 `/switch`」。
 
@@ -481,6 +482,42 @@
 - `/export` — 复制对话到剪贴板
 - `/export my-chat` — 保存到工作空间下的 `my-chat.txt`
 - `/export 2026-05-09-debug-session.txt` — 使用显式时间戳文件名保存
+
+### `/sandbox`（沙箱模式管理）
+
+进入/离开 jiuwenbox 沙箱模式，并调整其运行时策略。通过 `command.sandbox` 与 agent-server 交互。
+
+#### 子命令
+
+| 命令 | 说明 |
+|---|---|
+| `/sandbox` 或 `/sandbox status` | 显示当前 runtime（`enabled`、`excluded_commands`、`files.allow_write`、`files.deny_write`） |
+| `/sandbox enable` | 进入沙箱模式（需要时启动 jiuwenbox，并重建 agent） |
+| `/sandbox disable` | 离开沙箱模式（重建 agent；jiuwenbox 只在 jiuwenswarm 启动时才停掉） |
+| `/sandbox exclude add <pattern>` | 加入一条 shell glob，命中后在本地而非沙箱内执行 |
+| `/sandbox exclude remove <pattern>` | 移除一条 pattern |
+| `/sandbox exclude list` | 列出当前 `excluded_commands` |
+| `/sandbox files allow <path> [perm]` | 允许沙箱内写 `<path>` |
+| `/sandbox files deny <path>` | 拒绝沙箱内写 `<path>` |
+| `/sandbox files remove <path>` | 从 user-configured allow & deny 中移除该 path |
+| `/sandbox files list` | 列出生效的 `allow_write` / `deny_write` |
+| `/sandbox help` | 打印用法 |
+
+#### 概念说明
+
+- **平台限制**：`/sandbox` 仅支持 Linux 平台（jiuwenbox 依赖 bwrap / Landlock / Linux namespace 等内核能力）。 在 Windows / macOS 上运行的 agent-server 收到任何 `/sandbox` 子命令都会返回 `SANDBOX_BAD_REQUEST` 错误；如果 TUI 在 Mac/Windows 上、agent-server 在 Linux 主机上，是支持的（看 agent-server 所在主机的平台）。
+- **生效写入策略**：状态面板里的 `files.allow_write` / `files.deny_write` 是 auto-managed 与 user-configured 合并后的视图。auto-managed 条目由服务端自动注入（intrinsic 文件 `AGENT.md`、`HEARTBEAT.md`、`IDENTITY.md`、`SOUL.md`、`USER.md`，`memory/daily_memory/` 目录，以及按 mode 决定的 `project_dir` 与 `config/config.yaml`），不能通过 `/sandbox files remove` 移除。
+- **preserve_file_sharing_mode**：由 jiuwenswarm 配置决定，不通过 `/sandbox` 切换。仅支持 `mount`：intrinsic 文件与 `project_dir` 通过 bind mount 注入沙箱，`project_dir/config/config.yaml` 会显式加进 `deny_write`；yaml 里写入其它值会被服务端拒绝。
+- **excluded_commands**：按完整命令字符串匹配（不是只看 `argv[0]`），命中后该次调用穿透到本地，相当于把对应命令的副作用授权给本地环境。
+- **add / remove 的去重与冲突**：`exclude add` 在已存在同名 pattern 时报错；`exclude remove` 在不存在该 pattern 时报错。`files allow|deny` 在同一 bucket 已有同 path 时报错，在对侧 bucket（allow vs deny）已登记同 path 时也报错，需要先 `files remove` 再 add；`files remove` 在用户配置里找不到该 path 时报错。
+- **enable / disable**：会触发 agent 重建，响应里会列出 `rebuilt_modes`（典型 `agent.*` / `code.*`）和 jiuwenbox 端点。
+
+#### 示例
+
+- `/sandbox enable` — 打开沙箱模式
+- `/sandbox status` — 查看 runtime 与生效路径
+- `/sandbox files allow ./tmp/ 0777` — 允许沙箱以 0777 写入 `./tmp/`
+- `/sandbox exclude add "git *"` — 让 `git` 命令穿透到本地执行，不进沙箱
 
 ### `/status`（查看运行状态）
 

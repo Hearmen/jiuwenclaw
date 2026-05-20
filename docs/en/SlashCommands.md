@@ -31,6 +31,7 @@ Executed locally in the terminal UI, not through Gateway control pipeline.
 | `/evolve_list` | Show one skill's evolution records (see below) |
 | `/evolve_simplify` | Simplify and consolidate one skill's evolution records (see below) |
 | `/evolve_rebuild` | Rebuild `SKILL.md` from archives and evolution records (see below) |
+| `/sandbox` | Set sandbox mode (see below) |
 
 > Note: `/mode` controlled switching logic is primarily on Gateway side, see "`/mode` and `/switch`" below.
 
@@ -464,6 +465,42 @@ Timestamp format: `YYYY-MM-DD-HHmmss`.
 - `/export` — Copy conversation to clipboard
 - `/export my-chat` — Save to `my-chat.txt` in workspace
 - `/export 2026-05-09-debug-session.txt` — Save with explicit timestamp name
+
+### `/sandbox` (Sandbox Mode Management)
+
+Enter / leave jiuwenbox sandbox mode and tune its runtime policy. Calls `command.sandbox` on the agent server.
+
+#### Subcommands
+
+| Command | Description |
+|---|---|
+| `/sandbox` or `/sandbox status` | Show current runtime (`enabled`, `excluded_commands`, `files.allow_write`, `files.deny_write`) |
+| `/sandbox enable` | Enter sandbox mode (spawns jiuwenbox if needed, rebuilds agent) |
+| `/sandbox disable` | Leave sandbox mode (rebuilds agent; stops jiuwenbox only if jiuwenswarm started it) |
+| `/sandbox exclude add <pattern>` | Add a shell glob whose matches run locally instead of in the sandbox |
+| `/sandbox exclude remove <pattern>` | Remove a pattern |
+| `/sandbox exclude list` | List current `excluded_commands` |
+| `/sandbox files allow <path> [perm]` | Allow writing `<path>` inside the sandbox |
+| `/sandbox files deny <path>` | Deny writing `<path>` inside the sandbox |
+| `/sandbox files remove <path>` | Remove `<path>` from the user-configured allow & deny sets |
+| `/sandbox files list` | List effective `allow_write` / `deny_write` |
+| `/sandbox help` | Print usage |
+
+#### Concepts
+
+- **Platform support**: `/sandbox` is Linux-only (jiuwenbox depends on Linux kernel features such as bwrap, Landlock, and Linux namespaces). On a Windows or macOS agent-server, every `/sandbox` sub-command returns a `SANDBOX_BAD_REQUEST` error. If the TUI runs on Windows/macOS but the agent-server is on a Linux host, the command works — what matters is the agent-server's platform.
+- **Effective write policy**: `files.allow_write` / `files.deny_write` in the status panel show the merged view of auto-managed and user-configured entries. Auto-managed entries are server-injected (intrinsic files such as `AGENT.md`, `HEARTBEAT.md`, `IDENTITY.md`, `SOUL.md`, `USER.md`, the `memory/daily_memory/` directory, and depending on the mode, `project_dir` and `config/config.yaml`) and cannot be removed via `/sandbox files remove`.
+- **preserve_file_sharing_mode**: Controlled by jiuwenswarm config, not by `/sandbox`. Only `mount` is supported: intrinsic files and `project_dir` are bind-mounted into the sandbox and `project_dir/config/config.yaml` is explicitly added to `deny_write`. Writing any other value into config.yaml is rejected by the server.
+- **excluded_commands**: Match the full command string (not just `argv[0]`); a match makes that tool call run on the host, effectively granting the command's side effects to the local environment.
+- **Add / remove are strict**: `exclude add` rejects a pattern that is already in the list; `exclude remove` rejects a pattern that is not in the list. `files allow|deny` rejects a path that is already in the same bucket, and rejects a path that exists in the opposite bucket (allow vs deny conflict) — run `files remove` first if you want to flip it. `files remove` rejects paths that have no matching user-configured entry.
+- **enable / disable**: Triggers an agent rebuild. The response lists `rebuilt_modes` (typically `agent.*` / `code.*`) and the jiuwenbox endpoint.
+
+#### Examples
+
+- `/sandbox enable` — turn on sandbox mode
+- `/sandbox status` — see runtime + effective files
+- `/sandbox files allow ./tmp/ 0777` — let the sandbox write into `./tmp/` with mode 0777
+- `/sandbox exclude add "git *"` — let `git` run on the host instead of inside the sandbox
 
 ### `/status` (Show Status)
 

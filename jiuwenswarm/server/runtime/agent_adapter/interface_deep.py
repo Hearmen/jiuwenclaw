@@ -35,13 +35,6 @@ from openjiuwen.core.sys_operation import (
     SysOperation,
     SysOperationCard,
     OperationMode,
-    LocalWorkConfig,
-    SandboxGatewayConfig,
-)
-from openjiuwen.core.sys_operation.config import (
-    SandboxIsolationConfig,
-    PreDeployLauncherConfig,
-    ContainerScope,
 )
 from openjiuwen.core.sys_operation.cwd import set_cwd
 from openjiuwen.harness import (
@@ -194,7 +187,12 @@ from jiuwenswarm.agents.harness.common.tools.xiaoyi_phone_tools import (
     xiaoyi_gui_agent,
     image_reading,
 )
-from jiuwenswarm.common.config import get_config, get_default_models, resolve_env_vars
+from jiuwenswarm.common.config import get_config, get_default_models, get_sandbox_runtime, resolve_env_vars
+from jiuwenswarm.server.runtime.agent_adapter.sysop_builder import (
+    build_filesystem_policy,
+    create_local_sysop_card,
+    create_sandbox_sysop_card,
+)
 from jiuwenswarm.agents.harness.common.plugins.rail_manager import get_rail_manager
 from jiuwenswarm.gateway.cron import CronTargetChannel
 from jiuwenswarm.common.schema.agent import AgentRequest, AgentResponse, AgentResponseChunk
@@ -219,7 +217,6 @@ TodoModifyTool = CompatibleTodoModifyTool
 install_todo_modify_compat_patch()
 
 _react_config = get_config().get("react", {})
-_sandbox_config = get_config().get("sandbox", {})
 
 _CRON_TOOL_CHANNEL_ID: ContextVar[str] = ContextVar(
     "cron_tool_channel_id",
@@ -477,6 +474,7 @@ class JiuWenClawDeepAdapter:
         self._tool_cards = None
         self._evolution_watcher_tasks: set[asyncio.Task] = set()
         self._sys_operation = None
+        self._sys_operation_card: SysOperationCard | None = None
         self._vision_model_config: VisionModelConfig | None = None
         self._audio_model_config: AudioModelConfig | None = None
         self._video_model_config: bool = False
@@ -1528,53 +1526,56 @@ class JiuWenClawDeepAdapter:
         return rail
 
     @staticmethod
-    def _create_sandbox_sys_operation(sandbox_url, sandbox_type) -> SysOperationCard | None:
-        """Create a sandbox sys operation."""
-        import openjiuwen.extensions.sys_operation.sandbox.providers
-        try:
-            file_funcs = [
-                get_deepagent_agent_md_path,
-                get_deepagent_heartbeat_path,
-                get_deepagent_identity_md_path,
-                get_deepagent_soul_md_path,
-                get_deepagent_user_md_path
-            ]
-            sandbox_policy = {
-                "policy": {
-                    'filesystem_policy': {
-                        'files': [],
-                        'directories': []
-                    }
-                },
-                "policy_mode": "append",
-            }
-            for func in file_funcs:
-                path = func()
-                if path is not None:
-                    sandbox_policy["policy"]["filesystem_policy"]["files"].append(
-                        {"path": str(path), "permissions": "0666"}
-                    )
-            sandbox_policy["policy"]["filesystem_policy"]["directories"].append(
-                {"path": str(get_agent_memory_dir() / "daily_memory"), "permissions": "0777"}
-            )
-            gateway_config = SandboxGatewayConfig(
-                isolation=SandboxIsolationConfig(container_scope=ContainerScope.SYSTEM),
-                launcher_config=PreDeployLauncherConfig(
-                    base_url=sandbox_url,
-                    sandbox_type=sandbox_type,
-                    idle_ttl_seconds=600,
-                    extra_params=sandbox_policy,
-                ),
-            )
-            sysop_card = SysOperationCard(
-                mode=OperationMode.SANDBOX,
-                work_config=LocalWorkConfig(shell_allowlist=None),
-                gateway_config=gateway_config,
-            )
-            return sysop_card
-        except Exception as exc:
-            logger.warning("[JiuWenClawDeepAdapter] create sandbox sys operation failed: %s", exc)
-            return None
+    def _create_sandbox_sys_operation(
+        sandbox_url: str,
+        sandbox_type: str,
+        *,
+        runtime: dict[str, Any] | None = None,
+        project_dir: str | None = None,
+    ) -> SysOperationCard | None:
+        """Create a sandbox SysOperationCard.
+
+        Delegates the actual construction to ``sysop_builder.py`` so that both
+        ``interface_deep.py`` and ``interface_code.py`` share one implementation.
+
+        Args:
+            sandbox_url: jiuwenbox HTTP base url.
+            sandbox_type: provider 名 (jiuwenbox).
+            runtime: ``sandbox`` 字段字典 (含 enabled / files / excluded_commands),
+                来自 ``get_sandbox_runtime``.
+            project_dir: 用户项目目录 (一般是 ``trusted_dirs[0]``); 透传给
+                :func:`create_sandbox_sysop_card` 让其作为 rw bind mount。``None``
+                时由下游 :func:`build_filesystem_policy` 回落到 cwd / env。
+        """
+        runtime = runtime or {}
+        return create_sandbox_sysop_card(
+            sandbox_url,
+            sandbox_type,
+            files_runtime=runtime.get("files"),
+            excluded_commands=runtime.get("excluded_commands"),
+            project_dir=project_dir,
+        )
+
+    def _resolve_project_dir_for_sandbox(self) -> str | None:
+        """Best-effort lookup of the user project directory for sandbox builds.
+
+        Prefers ``self._project_dir``,
+        then falls back to ``self._instance_overrides["project_dir"]`` which
+        :meth:`AgentManager.get_agent` populates from ``trusted_dirs[0]``.
+        Returning ``None`` lets :func:`build_filesystem_policy` use its own
+        fallback chain, but the agent-server cwd usually isn't what we want
+        so callers should treat ``None`` as "policy will mount cwd, which
+        may shadow secrets" and at minimum log it.
+        """
+        direct = getattr(self, "_project_dir", None)
+        if direct:
+            return str(direct)
+        overrides = getattr(self, "_instance_overrides", None)
+        if isinstance(overrides, dict):
+            value = overrides.get("project_dir")
+            if value:
+                return str(value)
+        return None
 
     @staticmethod
     def _sys_operation_isolation_key(sysop_card: SysOperationCard) -> str | None:
@@ -1612,22 +1613,39 @@ class JiuWenClawDeepAdapter:
             )
             return None
 
-    @staticmethod
-    def _create_sys_operation() -> SysOperation | None:
-        """Create a sys operation."""
+    def _create_sys_operation(self) -> SysOperation | None:
+        """Create a sys operation.
+
+        是否走沙箱由 ``config.yaml::sandbox.enabled`` 决定（同时要求
+        ``sandbox.url`` / ``sandbox.type`` 已配置）。其他 sandbox 字段
+        (``excluded_commands`` / ``files``) 透传给 ``create_sandbox_sysop_card``
+        写入 ``launcher_config.extra_params``。
+
+        注意: 每次都从 ``get_config()`` 读最新 sandbox.url/type, 因为
+        ``/sandbox enable`` 会动态写入这两个字段。
+
+        副作用: 在 ``self._sys_operation_card`` 保存生成或复用的 SysOperationCard，
+        供 ``apply_sandbox_runtime_patch`` 等运行时热更使用。
+        """
         try:
-            sandbox_url = _sandbox_config.get("url", None)
-            sandbox_type = _sandbox_config.get("type", None)
-            if sandbox_url and sandbox_type:
-                sysop_card = JiuWenClawDeepAdapter._create_sandbox_sys_operation(sandbox_url, sandbox_type)
-            else:
-                sysop_card = SysOperationCard(
-                    mode=OperationMode.LOCAL,
-                    work_config=LocalWorkConfig(shell_allowlist=None),
+            sandbox_cfg = (get_config() or {}).get("sandbox") or {}
+            sandbox_url = sandbox_cfg.get("url", None)
+            sandbox_type = sandbox_cfg.get("type", None)
+            runtime = get_sandbox_runtime()
+            sysop_card: SysOperationCard | None
+            if runtime.get("enabled") and sandbox_url and sandbox_type:
+                sysop_card = JiuWenClawDeepAdapter._create_sandbox_sys_operation(
+                    sandbox_url,
+                    sandbox_type,
+                    runtime=runtime,
+                    project_dir=self._resolve_project_dir_for_sandbox(),
                 )
+            else:
+                sysop_card = create_local_sysop_card()
             if sysop_card is None:
                 logger.warning("[JiuWenClawDeepAdapter] add sys_operation failed: sysop_card is None")
                 return None
+            self._sys_operation_card = sysop_card
             isolation_key_template = JiuWenClawDeepAdapter._sys_operation_isolation_key(sysop_card)
             registered_sys_operation = (
                 JiuWenClawDeepAdapter._get_registered_sys_operation_by_isolation_key(
@@ -1660,6 +1678,88 @@ class JiuWenClawDeepAdapter:
         except Exception as exc:
             logger.warning("[JiuWenClawDeepAdapter] add sys_operation failed: %s", exc)
             return None
+
+    async def apply_sandbox_runtime_patch(
+        self, runtime: dict[str, Any], *, files_changed: bool
+    ) -> None:
+        """轻量级热更新沙箱 runtime 参数（无需重建 agent）.
+
+        - 通过 mutate 已构建 SysOperationCard 的 ``launcher_config.extra_params``
+          字典让 provider 下次 exec 时读到新值（provider 持 dict 引用）。
+        - ``files_changed=True`` 时额外调用 ``force_recreate_jiuwenbox_sandbox``，
+          清除共享 sandbox_id 缓存并立即在 jiuwenbox 服务端新建 sandbox 实例，
+          把新 ID 写回 ``extra_params["sandbox_id"]``。
+
+        Args:
+            runtime: ``get_sandbox_runtime()`` 当前完整 runtime。
+            files_changed: 是否触发文件 policy 变更; 仅 files.* 子命令需要 True。
+        """
+        card = self._sys_operation_card
+        if card is None or card.mode != OperationMode.SANDBOX:
+            logger.info(
+                "[JiuWenSwarmDeepAdapter] apply_sandbox_runtime_patch skipped: "
+                "no active sandbox sys_operation"
+            )
+            return
+
+        launcher = card.gateway_config.launcher_config if card.gateway_config else None
+        if launcher is None:
+            logger.warning(
+                "[JiuWenSwarmDeepAdapter] apply_sandbox_runtime_patch: missing launcher_config"
+            )
+            return
+
+        extra = launcher.extra_params or {}
+        extra["excluded_commands"] = list(runtime.get("excluded_commands") or [])
+        new_policy, upload_list = build_filesystem_policy(
+            runtime.get("files") or {},
+            project_dir=self._resolve_project_dir_for_sandbox(),
+        )
+        extra["policy"] = new_policy
+        # provider 侧契约: 沙箱 sysop 永远带这两个 key, mode 固定 ``mount``,
+        # upload_list 当前一定是空 list。
+        extra["preserve_files_upload"] = upload_list
+        extra["preserve_file_sharing_mode"] = "mount"
+        extra.setdefault("policy_mode", "append")
+        launcher.extra_params = extra
+        logger.info(
+            "[JiuWenSwarmDeepAdapter] sandbox runtime patched "
+            "(exclude=%d, files_changed=%s, uploads=%d)",
+            len(extra["excluded_commands"]),
+            files_changed,
+            len(upload_list),
+        )
+
+        if files_changed:
+            try:
+                from openjiuwen.extensions.sys_operation.sandbox.providers.jiuwenbox import (
+                    force_recreate_jiuwenbox_sandbox,
+                )
+            except Exception as exc:  # noqa: BLE001
+                logger.warning(
+                    "[JiuWenSwarmDeepAdapter] force_recreate_jiuwenbox_sandbox import "
+                    "failed: %s",
+                    exc,
+                )
+                return
+            try:
+                new_sandbox_id = await force_recreate_jiuwenbox_sandbox(
+                    launcher.base_url,
+                    policy=new_policy,
+                    policy_mode=extra.get("policy_mode", "append"),
+                    preserve_files_upload=upload_list,
+                )
+                extra["sandbox_id"] = new_sandbox_id
+                logger.info(
+                    "[JiuWenSwarmDeepAdapter] sandbox instance recreated: %s",
+                    new_sandbox_id,
+                )
+            except Exception as exc:  # noqa: BLE001
+                logger.warning(
+                    "[JiuWenSwarmDeepAdapter] force_recreate_jiuwenbox_sandbox "
+                    "failed: %s",
+                    exc,
+                )
 
     @staticmethod
     def _build_filesystem_rail() -> SysOperationRail | None:

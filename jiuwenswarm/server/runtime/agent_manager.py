@@ -52,6 +52,8 @@ class AgentManager:
 
     def __init__(self) -> None:
         self.agents: dict[str, dict[str, "JiuWenClaw"]] = {}
+        # 记录每个 (channel_id, mode) 的创建参数, 便于 recreate_agent 立刻重建
+        self._agent_create_params: dict[str, dict[str, dict[str, Any]]] = {}
         self._client_capabilities_by_channel: dict[str, dict[str, Any]] = {}
         self._latest_env_overrides: dict[str, Any] = {}
 
@@ -79,6 +81,12 @@ class AgentManager:
         agent = JiuWenClaw()
         await agent.create_instance(config, mode=mode, sub_mode=sub_mode)
         self.agents.setdefault(agent_key, {})[mode] = agent
+        # 记录创建参数, recreate_agent() 时可原样复用
+        self._agent_create_params.setdefault(agent_key, {})[mode] = {
+            "mode": mode,
+            "sub_mode": sub_mode,
+            "config": config,
+        }
         logger.info("[AgentManager] %s agent created", agent_key)
         return agent
 
@@ -235,6 +243,92 @@ class AgentManager:
                 )
             logger.info(f"channel {channel_id} reload agent config success.")
 
+    async def recreate_agent(self, channel_id: str, *, immediate: bool = True) -> list[str]:
+        """重建指定 channel 的所有 agent 实例.
+
+        用于 ``/sandbox enable/disable`` 等需要重新构建 ``SysOperationCard`` 的场景.
+        步骤:
+        1. 备份现有 (mode -> create_params) 映射;
+        2. cleanup 并删除现有 agent 实例;
+        3. 若 ``immediate=True``, 依据备份的参数立即重新调用 ``_create_agent()``,
+           使新的 SysOperation 生效不必等到下次 ``get_agent()``;
+           ``immediate=False`` 则按原行为, 下次 ``get_agent()`` 时再重建.
+
+        Args:
+            channel_id: 通道 ID.
+            immediate: 是否立即重建 (默认 True).
+
+        Returns:
+            被重建的 mode 列表.
+        """
+        channel_key = channel_id or "default"
+        agents = self.agents.get(channel_key)
+        if not agents:
+            logger.info(
+                "[AgentManager] recreate_agent: no active agent on channel %s",
+                channel_key,
+            )
+            return []
+
+        # 1. 备份 (mode -> create_params)
+        existing_modes = list(agents.keys())
+        backup_params: dict[str, dict[str, Any]] = {}
+        channel_params = self._agent_create_params.get(channel_key) or {}
+        for mode_key in existing_modes:
+            params = channel_params.get(mode_key)
+            if params is None:
+                # 未记录创建参数 (理论上 _create_agent 一定记录), 兜底使用 mode_key
+                params = {"mode": mode_key, "sub_mode": None, "config": None}
+            backup_params[mode_key] = dict(params)
+
+        # 2. cleanup + 删除
+        for mode_key, agent in list(agents.items()):
+            if hasattr(agent, "cleanup"):
+                try:
+                    await agent.cleanup()
+                except Exception as exc:  # noqa: BLE001
+                    logger.warning(
+                        "[AgentManager] recreate cleanup failed (mode=%s): %s",
+                        mode_key,
+                        exc,
+                    )
+        del self.agents[channel_key]
+        self._agent_create_params.pop(channel_key, None)
+        logger.info(
+            "[AgentManager] recreate_agent: channel %s agents dropped (modes=%s)",
+            channel_key,
+            existing_modes,
+        )
+
+        if not immediate:
+            logger.info(
+                "[AgentManager] recreate_agent: channel %s will rebuild on next get_agent()",
+                channel_key,
+            )
+            return existing_modes
+
+        # 3. 立即按原参数重建
+        for mode_key, params in backup_params.items():
+            try:
+                await self._create_agent(
+                    channel_key,
+                    mode=params.get("mode") or mode_key,
+                    config=params.get("config"),
+                    sub_mode=params.get("sub_mode"),
+                )
+            except Exception as exc:  # noqa: BLE001
+                logger.error(
+                    "[AgentManager] recreate_agent: rebuild failed (mode=%s): %s",
+                    mode_key,
+                    exc,
+                )
+        logger.info(
+            "[AgentManager] recreate_agent: channel %s rebuilt (modes=%s)",
+            channel_key,
+            existing_modes,
+        )
+        return existing_modes
+
     async def cleanup(self) -> None:
         """清理所有 agent 实例."""
         for key, agents in list(self.agents.items()):
@@ -245,5 +339,6 @@ class AgentManager:
                     except Exception as e:
                         logger.warning("[AgentManager] Agent cleanup failed: %s", e)
             del self.agents[key]
+        self._agent_create_params.clear()
         self._client_capabilities_by_channel.clear()
         logger.info("[AgentManager] All agents cleaned up")

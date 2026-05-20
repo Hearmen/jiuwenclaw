@@ -413,11 +413,10 @@ sandbox:
   # —— 启动方式 & policy ——
   startup_mode: "internal"          # internal=agent-server 自动拉起 jiuwenbox-server；external=用户自行启动
   policy_file: "code-agent-policy.yaml"   # 仅文件名 → jiuwenbox/configs/<name>；含 / 或绝对路径 → 整路径
-  preserve_file_sharing_mode: "mount"     # mount=bind mount intrinsic 文件 + project_dir；copy=沙箱启动后上传 intrinsic
+  preserve_file_sharing_mode: "mount"     # 仅支持 mount；写入其它值会被服务端拒绝
 
   # —— 运行时（也可由 /sandbox 命令维护） ——
   enabled: true                     # 是否处于沙箱模式
-  permission_ask: true              # 沙箱内工具调用是否走 permission ask 流程
   excluded_commands:                # shell glob，命中后绕过沙箱在本地执行
     - "git *"
   files:                            # 用户配置的写入策略（auto-managed 路径不需要写在这里，服务端会自动注入）
@@ -433,9 +432,8 @@ sandbox:
 | `sandbox.type` | 字符串 | `jiuwenbox` | sandbox provider 名。当前 jiuwenswarm 只接通了 `jiuwenbox` |
 | `sandbox.startup_mode` | `internal` / `external` | `internal` | `internal`：agent-server 启动时自动 spawn `jiuwenbox-server` 子进程并落盘最终生效的 `url`（端口被占用时自动换端口）；`external`：jiuwenswarm 完全不碰 jiuwenbox 进程，要求按本 README 顶部的方式提前自己启动 |
 | `sandbox.policy_file` | 文件名 / 路径 | `code-agent-policy.yaml` | 仅给文件名 → 自动定位到 `jiuwenbox/configs/<name>`；包含 `/` `\` 或 `~` 时按整路径解析。**仅在 `startup_mode=internal` 下生效**——`external` 模式下 policy 由用户自启动时的 `JIUWENBOX_DEFAULT_POLICY_PATH` 决定 |
-| `sandbox.preserve_file_sharing_mode` | `mount` / `copy` | `mount` | `mount`：intrinsic 文件 + `project_dir` 通过 bind mount 注入，`project_dir/config/config.yaml` 自动 deny_write；`copy`：沙箱启动后由 provider 把 intrinsic 文件上传进沙箱，不挂载 `project_dir`，无需 deny `config.yaml` |
+| `sandbox.preserve_file_sharing_mode` | `mount` | `mount` | intrinsic 文件（`AGENT.md` 等）与 `project_dir` 通过 bind mount 注入沙箱，`project_dir/config/config.yaml` 自动加进 `deny_write`。 写入其它值会被服务端拒绝 |
 | `sandbox.enabled` | bool | `false` | 启用后 agent 在重建时会切到 sandbox provider；可用 `/sandbox enable` 触发 |
-| `sandbox.permission_ask` | bool | `true` | 沙箱内工具调用是否走 PermissionEngine 的 ask 流程 |
 | `sandbox.excluded_commands` | list[str] | `[]` | shell glob 列表；按**整条命令字符串**匹配，命中后该次调用穿透到本地 |
 | `sandbox.files.allow` / `sandbox.files.deny` | list | `[]` | 用户额外配置的写入策略；最终生效集合是 `auto_managed ∪ user_configured`，详见 [`/sandbox` 命令设计文档](../../agent-core/docs/zh/2.开发指南/沙箱与%20sandbox%20命令.md) |
 
@@ -469,16 +467,12 @@ sandbox:
   url: "http://10.0.0.5:8321"   # 或 unix:///run/jiuwenbox/jiuwenbox.sock
   type: "jiuwenbox"
   startup_mode: "external"
-  preserve_file_sharing_mode: "copy"   # 远端 jiuwenbox 看不到宿主目录，常用 copy 模式
   enabled: true
 ```
 
 此模式下 agent-server **不会**尝试拉起 jiuwenbox，`sandbox.policy_file` 也**不生效**（policy 由你启动 jiuwenbox-server 时通过 `JIUWENBOX_DEFAULT_POLICY_PATH` 指定）。jiuwenbox-server 的启动方式见前文 [`启动服务`](#启动服务) 与 [`通过 Unix Domain Socket 部署`](#通过-unix-domain-socket-部署)。
 
-跨机时配置：
-
-- 把 `preserve_file_sharing_mode` 设为 `copy`，让 jiuwenswarm 在沙箱启动后把 intrinsic 文件（`AGENT.md` / `HEARTBEAT.md` / `IDENTITY.md` / `SOUL.md` / `USER.md` / `memory/daily_memory/`）上传进去，避免依赖宿主路径。
-- 在 jiuwenbox 主机的 policy 里允许这些 intrinsic 文件被沙箱内写入（参考仓库内 `jiuwenbox/configs/code-agent-policy.yaml`）。
+跨机部署要求 jiuwenbox 主机能访问 jiuwenswarm 的固有 agent 文件路径——`preserve_file_sharing_mode` 现在只支持 `mount` jiuwenswarm 会把 intrinsic 文件（`AGENT.md` / `HEARTBEAT.md` / `IDENTITY.md` / `SOUL.md` / `USER.md` / `memory/daily_memory/`）和 `project_dir` 通过 bind mount 暴露给沙箱，因此目标主机必须能在同样的 host path 下看到这些文件（例如共享文件系统、容器 volume 等）。
 
 ## 推理隐私代理
 
@@ -561,7 +555,7 @@ inference_privacy_proxies:
 代理转发:    POST http://192.168.1.100:9000/v1/chat/completions    -H "Authorization: Bearer sk_sandbox_managed_custom_key"
 ```
 
-#### jiuwenswarm配置示例
+#### jiuwenswarm 配置示例
 
 
 | 配置项    | 旧值                          | 新值                             |

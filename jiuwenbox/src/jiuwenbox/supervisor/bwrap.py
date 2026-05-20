@@ -93,6 +93,24 @@ class BwrapConfig:
     cap_add: list[str] = field(default_factory=list)
     cap_drop: list[str] = field(default_factory=list)
 
+    # ``--die-with-parent``: arm ``PR_SET_PDEATHSIG=SIGKILL`` on every bwrap
+    # process in the sandbox chain (outer monitor, inner pid-namespace init,
+    # and the launched command). When jiuwenbox-server dies for *any* reason
+    # -- clean lifespan shutdown, crash, SIGKILL by an operator, parent
+    # jiuwenswarm being SIGKILLed before its grace window expired -- the
+    # kernel immediately SIGKILLs the bwrap monitor, which in turn cascades
+    # the kill into the pid namespace via bwrap's own ``--die-with-parent``
+    # propagation. Without this flag the sandbox-daemon.py + bwrap monitor
+    # stay alive after box-server vanishes (they were spawned with
+    # ``start_new_session=True`` so they own their own pgrp/session and
+    # nothing else kills them), showing up as long-lived ``bwrap ...
+    # --daemon /jiuwenbox/sandbox-daemon.py`` processes on the host that
+    # outlive every jiuwenbox lifecycle. The defensive layer is intentional:
+    # the normal teardown path (``runtime.stop`` -> SIGTERM/SIGKILL the
+    # daemon pgrp from lifespan) handles the cooperative case, and this
+    # flag covers every uncooperative one.
+    die_with_parent: bool = True
+
     # filesystem
     rootfs: str | None = None
     ro_binds: list[tuple[str, str]] = field(default_factory=list)
@@ -293,6 +311,12 @@ class BwrapConfig:
             args.extend(["--uid", str(self.uid)])
         if self.unshare_user and self.gid is not None:
             args.extend(["--gid", str(self.gid)])
+
+        if self.die_with_parent:
+            # Placed after the namespace flags so it visually groups with
+            # other lifecycle controls in ``ps -ef`` output. bwrap accepts
+            # the flag at any position before the command.
+            args.append("--die-with-parent")
 
         for cap in self.cap_add:
             args.extend(["--cap-add", cap])

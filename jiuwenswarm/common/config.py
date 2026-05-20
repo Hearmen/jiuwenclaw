@@ -1305,3 +1305,432 @@ def get_model_config(name: str, index: int | None = None) -> dict[str, Any] | No
                 return entry
         return matches[0][1]
     return models.get(name) if name in models else None
+
+
+# =====================================================================
+# Sandbox runtime config
+#
+# 字段挂在 ``sandbox`` 顶层 (与 ``url`` / ``type`` / ``startup_mode`` /
+# ``policy_file`` / ``preserve_file_sharing_mode`` 并列):
+#
+#   sandbox:
+#     url: ...
+#     enabled: true
+#     excluded_commands: [...]
+#     files: { allow: [...], deny: [...] }
+#
+# ``get_sandbox_runtime`` 把这些 key 读出来填默认值;
+# ``update_sandbox_runtime`` 写回时也只动这几个 key, 不动 endpoint 字段。
+# =====================================================================
+
+_SANDBOX_RUNTIME_DEFAULTS: dict[str, Any] = {
+    "enabled": False,
+    "excluded_commands": [],
+    "files": {"allow": [], "deny": []},
+}
+
+# 受 ``get_sandbox_runtime`` / ``update_sandbox_runtime`` 管辖的 sandbox 字段。
+_SANDBOX_RUNTIME_KEYS: tuple[str, ...] = tuple(_SANDBOX_RUNTIME_DEFAULTS.keys())
+
+
+def _ensure_sandbox_runtime_shape(runtime: Any) -> dict[str, Any]:
+    """填充 sandbox runtime 缺省字段，返回归一化后的 dict（不写盘）。"""
+    base = {k: (list(v) if isinstance(v, list) else dict(v) if isinstance(v, dict) else v)
+            for k, v in _SANDBOX_RUNTIME_DEFAULTS.items()}
+    if not isinstance(runtime, dict):
+        return base
+    out = dict(base)
+    if "enabled" in runtime:
+        out["enabled"] = bool(runtime["enabled"])
+    raw_excluded = runtime.get("excluded_commands")
+    if isinstance(raw_excluded, list):
+        out["excluded_commands"] = [
+            str(p) for p in raw_excluded if str(p).strip()
+        ]
+    files = runtime.get("files")
+    if isinstance(files, dict):
+        allow = files.get("allow")
+        deny = files.get("deny")
+        out["files"] = {
+            "allow": list(allow) if isinstance(allow, list) else [],
+            "deny": list(deny) if isinstance(deny, list) else [],
+        }
+    return out
+
+
+def get_sandbox_runtime() -> dict[str, Any]:
+    """返回 sandbox runtime 当前内容 (含缺省字段填充)。
+
+    直接从 ``sandbox.<key>`` 扁平字段读; 字段缺失时用 ``_SANDBOX_RUNTIME_DEFAULTS``。
+    """
+    cfg = get_config() or {}
+    sandbox = cfg.get("sandbox")
+    if not isinstance(sandbox, dict):
+        return _ensure_sandbox_runtime_shape(None)
+    raw = {key: sandbox[key] for key in _SANDBOX_RUNTIME_KEYS if key in sandbox}
+    return _ensure_sandbox_runtime_shape(raw)
+
+
+# ``preserve_file_sharing_mode`` 当前合法取值集合 = ``{"mount"}``; 空值表示
+# "未配置, 按默认走"。
+_VALID_PRESERVE_FILE_SHARING_MODES = ("mount",)
+_DEFAULT_PRESERVE_FILE_SHARING_MODE = "mount"
+
+
+def _normalize_preserve_file_sharing_mode(value: Any) -> str | None:
+    """归一化 ``sandbox.preserve_file_sharing_mode``.
+
+    - ``None`` / 空字符串 → 返回 ``None`` (表示 "未配置", 调用方按默认值处理).
+    - ``"mount"`` (大小写不敏感, 前后空格) → 返回 ``"mount"``.
+    - 其它任何取值 → 抛 ``ValueError``, 让调用方拒绝该 yaml / API 输入。
+    """
+    if value is None:
+        return None
+    text = str(value).strip().lower()
+    if not text:
+        return None
+    if text not in _VALID_PRESERVE_FILE_SHARING_MODES:
+        raise ValueError(
+            f"sandbox.preserve_file_sharing_mode must be one of "
+            f"{_VALID_PRESERVE_FILE_SHARING_MODES}, got {value!r}"
+        )
+    return text
+
+
+_VALID_SANDBOX_STARTUP_MODES = ("internal", "external")
+_DEFAULT_SANDBOX_STARTUP_MODE = "internal"
+_DEFAULT_SANDBOX_POLICY_FILE = "code-agent-policy.yaml"
+
+# Public re-exports for callers that need to fall back to / advertise defaults
+# (e.g. agent_ws_server 把缺省值持久化到 config.yaml, 让重启后 get_sandbox_endpoint
+# 能直接读到, 而不必每次再走一遍 fallback 逻辑)。
+DEFAULT_SANDBOX_STARTUP_MODE = _DEFAULT_SANDBOX_STARTUP_MODE
+DEFAULT_SANDBOX_POLICY_FILE = _DEFAULT_SANDBOX_POLICY_FILE
+
+
+def _normalize_sandbox_startup_mode(value: Any) -> str:
+    """归一化 ``sandbox.startup_mode``; 非法或空值回落到默认 ``internal``."""
+    text = str(value or "").strip().lower()
+    if text not in _VALID_SANDBOX_STARTUP_MODES:
+        return _DEFAULT_SANDBOX_STARTUP_MODE
+    return text
+
+
+def get_sandbox_startup_mode() -> str:
+    """返回 ``sandbox.startup_mode``: ``internal`` (agent-server 拉起 jiuwenbox)
+    或 ``external`` (用户自己启动 jiuwenbox)。
+
+    未配置时默认 ``internal`` (当前 code-agent 模式预期行为)。
+    """
+    cfg = get_config() or {}
+    sandbox = cfg.get("sandbox") or {}
+    return _normalize_sandbox_startup_mode(sandbox.get("startup_mode"))
+
+
+def get_sandbox_startup_mode_explicit() -> str | None:
+    """同 :func:`get_sandbox_startup_mode`, 但仅返回 ``config.yaml`` 里**显式**
+    写出的合法值 (``internal`` / ``external``); 未配置 / 空串 / 非法值都返回
+    ``None``。
+
+    用途: agent-server boot 时判断要不要自动拉起 jiuwenbox 子进程。
+    ``get_sandbox_startup_mode`` 默认归一会把缺失字段变成 ``internal``, 那样
+    会让从来没碰过沙箱的用户在升级到带 bootstrap 逻辑的版本后, 突然多出一个
+    jiuwenbox 进程。靠这个 ``_explicit`` 变体可以严格区分 "用户主动选了 internal"
+    和 "字段不存在, 走的默认"。
+    """
+    cfg = get_config() or {}
+    sandbox = cfg.get("sandbox") or {}
+    raw = sandbox.get("startup_mode")
+    if not isinstance(raw, str):
+        return None
+    text = raw.strip().lower()
+    if text not in _VALID_SANDBOX_STARTUP_MODES:
+        return None
+    return text
+
+
+def update_sandbox_startup_mode(mode: str) -> str:
+    """写入 ``sandbox.startup_mode`` 到 config.yaml; 返回归一化后的值。"""
+    normalized = _normalize_sandbox_startup_mode(mode)
+    if str(mode or "").strip().lower() not in _VALID_SANDBOX_STARTUP_MODES:
+        raise ValueError(
+            f"startup_mode must be one of {_VALID_SANDBOX_STARTUP_MODES}, got {mode!r}",
+        )
+    data = _load_yaml_round_trip(_CONFIG_YAML_PATH)
+    if "sandbox" not in data or not isinstance(data.get("sandbox"), dict):
+        data["sandbox"] = {}
+    data["sandbox"]["startup_mode"] = normalized
+    _dump_yaml_round_trip(_CONFIG_YAML_PATH, data)
+    return normalized
+
+
+def _looks_like_bare_filename(value: str) -> bool:
+    """``True`` 表示参数应该被解释为 ``jiuwenbox/configs/`` 下的文件名。
+
+    判据: 不含任何路径分隔符 (``/`` 或 ``os.sep``); 含分隔符或绝对路径一律按整路径处理。
+    """
+    if not value:
+        return False
+    return "/" not in value and "\\" not in value and not Path(value).is_absolute()
+
+
+def _jiuwenbox_configs_dir() -> Path | None:
+    """探测仓库或安装位置上的 ``jiuwenbox/configs/`` 目录。
+
+    优先在仓库目录树里寻找 (开发场景, ``code_agent/jiuwenbox/configs``);
+    失败再尝试已 ``pip install`` 的 jiuwenbox 包同级 ``configs/``。
+    """
+    here = Path(__file__).resolve()
+
+    for ancestor in here.parents[1:7]:
+        candidate = ancestor / "jiuwenbox" / "configs"
+        if candidate.is_dir():
+            return candidate
+    try:
+        import jiuwenbox  # type: ignore[import-not-found]
+    except ImportError:
+        return None
+    try:
+        pkg_dir = Path(jiuwenbox.__file__).resolve().parent
+    except Exception:  # noqa: BLE001
+        return None
+    # wheel 安装版: ``scripts/build.sh`` 把 ``jiuwenbox/configs/`` 临时 stage 到
+    # ``jiuwenbox/src/jiuwenbox/configs/`` 后再打包, 安装后表现为
+    # ``<site-packages>/jiuwenbox/configs/``。优先按这个布局找。
+    direct = pkg_dir / "configs"
+    if direct.is_dir():
+        return direct
+
+    for steps_up in (2, 3):
+        candidate = pkg_dir
+        for _ in range(steps_up):
+            candidate = candidate.parent
+        candidate = candidate / "configs"
+        if candidate.is_dir():
+            return candidate
+    return None
+
+
+def resolve_sandbox_policy_path(value: str | None) -> Path | None:
+    """把 ``sandbox.policy_file`` 的取值解析为宿主机绝对路径。
+
+    - ``None`` / 空字符串 → 返回 None, 由调用方决定是否落到 jiuwenbox 自身默认 policy;
+    - 仅文件名 (不含路径分隔符) → 在 ``jiuwenbox/configs/`` 下拼接;
+      ``configs/`` 探测不到时返回 None (调用方应当报错并提示给绝对路径);
+    - 含 ``/`` ``\`` 或绝对路径 → 展开 ``~`` / ``$VAR`` 后按整路径返回 (不强校验是否存在,
+      留给上游 ``_load_policy_file`` / jiuwenbox 自己做存在性检查并给出明确错误)。
+    """
+    if not value:
+        return None
+    text = str(value).strip()
+    if not text:
+        return None
+    expanded = os.path.expandvars(os.path.expanduser(text))
+    if _looks_like_bare_filename(expanded):
+        configs_dir = _jiuwenbox_configs_dir()
+        if configs_dir is None:
+            return None
+        return (configs_dir / expanded).resolve()
+    return Path(expanded).resolve()
+
+
+def get_sandbox_policy_file() -> str:
+    """返回 ``sandbox.policy_file`` 原始字符串 (空表示未配置, 由调用方走默认)。"""
+    cfg = get_config() or {}
+    sandbox = cfg.get("sandbox") or {}
+    return str(sandbox.get("policy_file") or "").strip()
+
+
+def get_sandbox_policy_path() -> Path | None:
+    """返回 ``sandbox.policy_file`` 解析后的绝对路径。
+
+    未配置时回落到 ``_DEFAULT_SANDBOX_POLICY_FILE`` (即 ``code-agent-policy.yaml``);
+    解析失败 (例如仅给文件名但 ``configs/`` 不可达) 返回 None。
+    """
+    raw = get_sandbox_policy_file() or _DEFAULT_SANDBOX_POLICY_FILE
+    return resolve_sandbox_policy_path(raw)
+
+
+def update_sandbox_policy_file(value: str) -> str:
+    """写入 ``sandbox.policy_file`` (仅文件名或绝对路径) 到 config.yaml; 返回归一化后的字符串。"""
+    text = str(value or "").strip()
+    if not text:
+        raise ValueError("policy_file must be non-empty")
+    data = _load_yaml_round_trip(_CONFIG_YAML_PATH)
+    if "sandbox" not in data or not isinstance(data.get("sandbox"), dict):
+        data["sandbox"] = {}
+    data["sandbox"]["policy_file"] = text
+    _dump_yaml_round_trip(_CONFIG_YAML_PATH, data)
+    return text
+
+
+def get_sandbox_endpoint() -> dict[str, Any]:
+    """返回 ``sandbox.url`` / ``sandbox.type`` / ``sandbox.preserve_file_sharing_mode``
+    / ``sandbox.startup_mode`` / ``sandbox.policy_file``.
+
+    ``preserve_file_sharing_mode`` 缺省或为空时返回空串, 由调用方决定默认值
+    (当前只有 ``"mount"``)。 ``startup_mode`` 未配置时回落到 ``internal``;
+    ``policy_file`` 未配置时返回空串 (由调用方决定默认 policy)。
+
+    Raises:
+        ValueError: yaml 里 ``preserve_file_sharing_mode`` 写了非法值时, 直接
+            把 :func:`_normalize_preserve_file_sharing_mode` 的异常向上抛, 由
+            调用方决定要不要兜底 (例如 TUI 命令层会回执给用户看明确错误)。
+    """
+    cfg = get_config() or {}
+    sandbox = cfg.get("sandbox") or {}
+    mode = _normalize_preserve_file_sharing_mode(sandbox.get("preserve_file_sharing_mode"))
+    return {
+        "url": str(sandbox.get("url") or "").strip(),
+        "type": str(sandbox.get("type") or "").strip(),
+        "preserve_file_sharing_mode": mode or "",
+        "startup_mode": _normalize_sandbox_startup_mode(sandbox.get("startup_mode")),
+        "policy_file": str(sandbox.get("policy_file") or "").strip(),
+    }
+
+
+def update_sandbox_endpoint(
+    url: str,
+    sandbox_type: str,
+    *,
+    preserve_file_sharing_mode: str | None = None,
+    startup_mode: str | None = None,
+    policy_file: str | None = None,
+) -> dict[str, Any]:
+    """写入 ``sandbox.url`` / ``sandbox.type`` 以及可选的
+    ``preserve_file_sharing_mode`` / ``startup_mode`` / ``policy_file``
+    到 config.yaml; 返回实际写入的字段集合 (没有改动的字段不在返回里)。
+
+    所有 ``None`` 入参表示"本次不修改该字段, 保留 config.yaml 中既有值",
+    以方便 ``_handle_sandbox_enable`` 在不同阶段分批落盘。
+    """
+    url_value = str(url or "").strip()
+    type_value = str(sandbox_type or "").strip()
+    if not url_value or not type_value:
+        raise ValueError("sandbox url and type must be non-empty")
+    mode_value = _normalize_preserve_file_sharing_mode(preserve_file_sharing_mode)
+
+    startup_value: str | None = None
+    if startup_mode is not None:
+        raw_startup = str(startup_mode).strip().lower()
+        if raw_startup not in _VALID_SANDBOX_STARTUP_MODES:
+            raise ValueError(
+                f"startup_mode must be one of {_VALID_SANDBOX_STARTUP_MODES}, "
+                f"got {startup_mode!r}",
+            )
+        startup_value = raw_startup
+
+    policy_value: str | None = None
+    if policy_file is not None:
+        policy_text = str(policy_file).strip()
+        if not policy_text:
+            raise ValueError("policy_file must be non-empty when provided")
+        policy_value = policy_text
+
+    data = _load_yaml_round_trip(_CONFIG_YAML_PATH)
+    if "sandbox" not in data or not isinstance(data.get("sandbox"), dict):
+        data["sandbox"] = {}
+    data["sandbox"]["url"] = url_value
+    data["sandbox"]["type"] = type_value
+    if mode_value is not None:
+        data["sandbox"]["preserve_file_sharing_mode"] = mode_value
+    if startup_value is not None:
+        data["sandbox"]["startup_mode"] = startup_value
+    if policy_value is not None:
+        data["sandbox"]["policy_file"] = policy_value
+    _dump_yaml_round_trip(_CONFIG_YAML_PATH, data)
+    result: dict[str, Any] = {"url": url_value, "type": type_value}
+    if mode_value is not None:
+        result["preserve_file_sharing_mode"] = mode_value
+    if startup_value is not None:
+        result["startup_mode"] = startup_value
+    if policy_value is not None:
+        result["policy_file"] = policy_value
+    return result
+
+
+def get_sandbox_preserve_file_sharing_mode() -> str | None:
+    """返回 ``sandbox.preserve_file_sharing_mode`` (当前仅 ``"mount"``).
+
+    未配置返回 ``None`` (调用方按默认走)。 非法取值不在这里兜底, 直接由
+    :func:`_normalize_preserve_file_sharing_mode` 抛 ``ValueError``。
+    """
+    cfg = get_config() or {}
+    sandbox = cfg.get("sandbox") or {}
+    return _normalize_preserve_file_sharing_mode(sandbox.get("preserve_file_sharing_mode"))
+
+
+def resolve_preserve_file_sharing_mode_default() -> str:
+    """返回当前可用的 ``preserve_file_sharing_mode``.
+
+    优先取 yaml 已配置的值, 否则用默认 (``"mount"``)。 当前合法值只有
+    ``"mount"`` 一个, 函数保留是为了将来若引入新模式时调用点不必再改一遍。
+    """
+    configured = get_sandbox_preserve_file_sharing_mode()
+    return configured or _DEFAULT_PRESERVE_FILE_SHARING_MODE
+
+
+def update_sandbox_preserve_file_sharing_mode(mode: str) -> str:
+    """写入 ``sandbox.preserve_file_sharing_mode``; 返回归一化后的值.
+
+    空值与非法值都会抛 ``ValueError``——写入路径不允许 "保留旧值" 语义, 必须
+    给出明确的合法 mode (当前仅 ``"mount"``)。
+    """
+    normalized = _normalize_preserve_file_sharing_mode(mode)
+    if normalized is None:
+        raise ValueError(
+            f"preserve_file_sharing_mode must be one of {_VALID_PRESERVE_FILE_SHARING_MODES}"
+        )
+    data = _load_yaml_round_trip(_CONFIG_YAML_PATH)
+    if "sandbox" not in data or not isinstance(data.get("sandbox"), dict):
+        data["sandbox"] = {}
+    data["sandbox"]["preserve_file_sharing_mode"] = normalized
+    _dump_yaml_round_trip(_CONFIG_YAML_PATH, data)
+    return normalized
+
+
+def update_sandbox_runtime(patch: dict[str, Any]) -> dict[str, Any]:
+    """合并 patch 到 sandbox runtime 字段, 写回 YAML, 返回合并后的完整 runtime.
+
+    持久化位置: ``sandbox`` 顶层 (扁平形式), 与 ``url`` / ``type`` /
+    ``startup_mode`` / ``policy_file`` / ``preserve_file_sharing_mode`` 并列。
+
+    Args:
+        patch: 部分字段更新；支持顶层键 ``enabled`` / ``excluded_commands``
+            / ``files``。 ``files`` 字典若提供则整体替换；其余键按值合并。
+    """
+    if not isinstance(patch, dict):
+        raise ValueError("patch must be an object")
+
+    current = get_sandbox_runtime()
+    merged = dict(current)
+
+    if "enabled" in patch:
+        merged["enabled"] = bool(patch["enabled"])
+    if "excluded_commands" in patch:
+        value = patch["excluded_commands"]
+        if not isinstance(value, list):
+            raise ValueError("excluded_commands must be a list")
+        merged["excluded_commands"] = [
+            str(p) for p in value if str(p).strip()
+        ]
+    if "files" in patch:
+        files = patch["files"] or {}
+        if not isinstance(files, dict):
+            raise ValueError("files must be an object")
+        allow = files.get("allow")
+        deny = files.get("deny")
+        merged["files"] = {
+            "allow": list(allow) if isinstance(allow, list) else merged["files"]["allow"],
+            "deny": list(deny) if isinstance(deny, list) else merged["files"]["deny"],
+        }
+
+    data = _load_yaml_round_trip(_CONFIG_YAML_PATH)
+    if "sandbox" not in data or not isinstance(data.get("sandbox"), dict):
+        data["sandbox"] = {}
+    sandbox_block = data["sandbox"]
+    # 写入扁平 runtime 字段, 每次 update 都把全集刷一遍, 保证 yaml 形状稳定。
+    for key in _SANDBOX_RUNTIME_KEYS:
+        sandbox_block[key] = merged[key]
+    _dump_yaml_round_trip(_CONFIG_YAML_PATH, data)
+    return merged

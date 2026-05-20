@@ -432,11 +432,10 @@ sandbox:
   # -- Startup & policy --
   startup_mode: "internal"          # internal = agent-server spawns jiuwenbox-server; external = you start it yourself
   policy_file: "code-agent-policy.yaml"   # bare name -> jiuwenbox/configs/<name>; otherwise an absolute / explicit path
-  preserve_file_sharing_mode: "mount"     # mount = bind-mount intrinsic files + project_dir; copy = upload intrinsic files after start
+  preserve_file_sharing_mode: "mount"     # only `mount` is supported; any other value is rejected
 
   # -- Runtime (also managed by the /sandbox TUI command) --
   enabled: true                     # whether sandbox mode is on
-  permission_ask: true              # whether tool calls inside the sandbox go through the permission-ask flow
   excluded_commands:                # shell globs whose matches run locally instead of in the sandbox
     - "git *"
   files:                            # user-configured write policy; auto-managed paths are injected by the server, no need to repeat them here
@@ -452,9 +451,8 @@ Field reference:
 | `sandbox.type` | string | `jiuwenbox` | Sandbox provider name. Currently jiuwenswarm only wires up `jiuwenbox`. |
 | `sandbox.startup_mode` | `internal` / `external` | `internal` | `internal`: agent-server spawns `jiuwenbox-server` at boot and persists the effective `url` (auto-picks a free port if the configured one is busy). `external`: agent-server never touches jiuwenbox; you must start it yourself per the top of this README. |
 | `sandbox.policy_file` | filename or path | `code-agent-policy.yaml` | Bare filename → resolved relative to `jiuwenbox/configs/`; otherwise expanded (`~`, `$VAR`) and used verbatim. **Only honored under `startup_mode=internal`**; in `external` mode the policy is chosen by whoever started jiuwenbox-server (via `JIUWENBOX_DEFAULT_POLICY_PATH`). |
-| `sandbox.preserve_file_sharing_mode` | `mount` / `copy` | `mount` | `mount`: intrinsic files and `project_dir` are bind-mounted, with `project_dir/config/config.yaml` auto-denied for write. `copy`: the provider uploads intrinsic files into the sandbox after start; `project_dir` is not mounted and `config.yaml` does not need a deny. |
+| `sandbox.preserve_file_sharing_mode` | `mount` | `mount` | Intrinsic files (`AGENT.md` etc.) and `project_dir` are bind-mounted, with `project_dir/config/config.yaml` auto-added to `deny_write`. Writing any other value is rejected. |
 | `sandbox.enabled` | bool | `false` | When true, agent rebuilds route tools through the sandbox provider; toggled by `/sandbox enable`. |
-| `sandbox.permission_ask` | bool | `true` | Whether sandboxed tool calls go through the PermissionEngine ask flow. |
 | `sandbox.excluded_commands` | list[str] | `[]` | Shell globs matched against the **full command string**; a match makes that single call run locally instead of in the sandbox. |
 | `sandbox.files.allow` / `sandbox.files.deny` | list | `[]` | User-configured write policy. The effective set shown by `/sandbox status` is `auto_managed ∪ user_configured`; see [the `/sandbox` design doc](../../agent-core/docs/en/2.Development%20Guide/Sandbox%20and%20sandbox%20command.md). |
 
@@ -488,16 +486,12 @@ sandbox:
   url: "http://10.0.0.5:8321"   # or unix:///run/jiuwenbox/jiuwenbox.sock
   type: "jiuwenbox"
   startup_mode: "external"
-  preserve_file_sharing_mode: "copy"   # remote jiuwenbox can't see host paths, copy is the natural choice
   enabled: true
 ```
 
 Under this mode agent-server **does not** try to spawn jiuwenbox, and `sandbox.policy_file` has **no effect** (the policy is whatever you passed to `jiuwenbox-server` via `JIUWENBOX_DEFAULT_POLICY_PATH`). See [`Start The Server`](#start-the-server) and [`Unix Domain Socket Deployment`](#unix-domain-socket-deployment) above for how to start jiuwenbox-server in TCP or UDS mode.
 
-For cross-host setups:
-
-- Set `preserve_file_sharing_mode` to `copy` so jiuwenswarm uploads intrinsic files (`AGENT.md`, `HEARTBEAT.md`, `IDENTITY.md`, `SOUL.md`, `USER.md`, `memory/daily_memory/`) into the sandbox after startup, instead of relying on host paths.
-- On the jiuwenbox host, make sure the policy allows those intrinsic files to be writable inside the sandbox (the bundled `jiuwenbox/configs/code-agent-policy.yaml` already does).
+For cross-host setups, the jiuwenbox host has to be able to reach jiuwenswarm's intrinsic agent files on the same host paths: `preserve_file_sharing_mode` is now fixed to `mount`, so jiuwenswarm bind-mounts the intrinsic files (`AGENT.md`, `HEARTBEAT.md`, `IDENTITY.md`, `SOUL.md`, `USER.md`, `memory/daily_memory/`) and `project_dir` into the sandbox. Make the relevant directories visible on the jiuwenbox machine (via shared filesystem, container volume, etc.) and confirm the policy allows writes into them (the bundled `jiuwenbox/configs/code-agent-policy.yaml` already does).
 
 
 ## Inference Privacy Proxy

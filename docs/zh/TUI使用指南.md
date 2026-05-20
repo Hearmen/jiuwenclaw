@@ -87,6 +87,7 @@
 | `/branch` | `/fork` | 从当前对话点创建分支会话 | `/branch fix-login-bug` | 全部 |
 | `/rewind` | `/checkpoint` | 回退对话到指定轮次之前 | `/rewind 2` | 全部 |
 | `/memory` | `/mem` | 记忆管理（状态、文件、开关、目录） | `/memory status` | 全部 |
+| `/sandbox` | - | 进出沙箱模式 / 管理 excluded_commands / files | `/sandbox enable`、`/sandbox status`、`/sandbox files allow ./tmp/` | 全部 |
 
 #### `/resume` 与 `/continue` 在 TUI 中的特殊行为
 
@@ -248,6 +249,21 @@
   - `toggle [key]` — 切换记忆开关；无参数时列出可切换项（`memory_enabled`、`memory_proactive`、`memory_forbidden_enabled`）。
   - `open` — 显示记忆系统各目录路径。
 - 示例：`/memory status`、`/memory toggle memory_enabled`、`/memory edit memory/MEMORY.md`。
+
+#### `/sandbox`（沙箱模式管理）
+
+- 平台限制：仅在 Linux 上的 agent-server 可用；Windows / macOS 的 agent-server 收到 `/sandbox` 命令会直接返回错误。TUI 本身跑在哪个平台不影响——只要 agent-server 在 Linux 上即可。
+- 子命令：`status`（默认）/ `enable` / `disable` / `exclude add|remove|list` / `files allow|deny|remove|list` / `help`。
+- `enable` 行为：必要时启动 jiuwenbox（已有 endpoint 则复用），随后触发 agent 重建；响应面板会显示 `rebuilt_modes` 与 jiuwenbox 端点。
+- `disable` 行为：重建 agent；只有 jiuwenswarm 自己启动的 jiuwenbox 才会被停掉，外部 endpoint 会显式保留。
+- 状态面板字段：
+  - `enabled` — 当前开关。
+  - `excluded_commands` — 命中后穿透到本地执行的 shell glob 列表。
+  - `files.allow_write` / `files.deny_write` — 生效（auto-managed ∪ user-configured，去重）的写入策略。
+- 自动配置路径：文件 `AGENT.md`、`HEARTBEAT.md`、`IDENTITY.md`、`SOUL.md`、`USER.md`，目录 `memory/daily_memory/`，以及 `project_dir`（allow_write）与 `project_dir/config/config.yaml`（deny_write）。`preserve_file_sharing_mode` 仅支持 `mount`。
+- `excluded_commands` 的匹配：按完整命令字符串匹配，不仅看 `argv[0]`；写 glob 时要把参数也覆盖进去（例如 `"git *"` 而不是 `git`）。本质等同于沙箱穿透口，不要对 `rm -rf` / `curl` 这类高风险命令使用。
+- add / remove 严格校验：`exclude add` 已存在 pattern、`exclude remove` 不存在 pattern 都会报错；`files allow|deny` 在同 bucket 已有 path 或对侧 bucket 已有 path（allow/deny 冲突）会报错，先 `files remove` 再 add；`files remove` 没匹配到也会报错。避免"看起来执行了实际什么也没改"。
+- 示例：`/sandbox enable`、`/sandbox status`、`/sandbox files allow ./tmp/ 0777`、`/sandbox exclude add "git *"`。
 
 #### `/clear` 与忙状态
 
