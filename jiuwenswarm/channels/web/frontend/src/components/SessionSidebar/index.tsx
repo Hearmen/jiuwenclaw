@@ -184,7 +184,7 @@ function AdvancedConfigPanel({
   isConnected: boolean;
   buttonRef: React.RefObject<HTMLButtonElement>;
 }) {
-  const { i18n } = useTranslation();
+  const { i18n, t } = useTranslation();
   const [theme, setTheme] = useState(() => localStorage.getItem('theme') || 'light');
   const panelRef = useRef<HTMLDivElement>(null);
 
@@ -233,17 +233,17 @@ function AdvancedConfigPanel({
   return (
     <div ref={panelRef} className="advanced-config-panel">
       <div className="config-row">
-        <span className="config-row__label">连接状态</span>
+        <span className="config-row__label">{t('sessionSidebar.connectionStatus')}</span>
         <div className={`connection-status ${isConnected ? 'connection-status--connected' : 'connection-status--disconnected'}`}>
           <span className="connection-status__dot" />
           <span className="connection-status__text">
-            {isConnected ? '已连接' : '未连接'}
+            {isConnected ? t('connection.connected') : t('connection.disconnected')}
           </span>
         </div>
       </div>
 
       <div className="config-row">
-        <span className="config-row__label">语言</span>
+        <span className="config-row__label">{t('sessionSidebar.language')}</span>
         <div className="segmented-control">
           <button
             className={`segmented-control__btn ${isZh ? 'segmented-control__btn--active' : ''}`}
@@ -261,26 +261,26 @@ function AdvancedConfigPanel({
       </div>
 
       <div className="config-row">
-        <span className="config-row__label">外观</span>
+        <span className="config-row__label">{t('sessionSidebar.appearance')}</span>
         <div className="segmented-control segmented-control--icons">
           <button
             className={`segmented-control__btn ${theme === 'system' ? 'segmented-control__btn--active' : ''}`}
             onClick={() => handleThemeChange('system')}
-            title="跟随系统"
+            title={t('app.themeSystem')}
           >
             <img src={appearanceSystemIcon} alt="" />
           </button>
           <button
             className={`segmented-control__btn ${theme === 'dark' ? 'segmented-control__btn--active' : ''}`}
             onClick={() => handleThemeChange('dark')}
-            title="深色模式"
+            title={t('app.themeDark')}
           >
             <img src={appearanceDarkIcon} alt="" />
           </button>
           <button
             className={`segmented-control__btn ${theme === 'light' ? 'segmented-control__btn--active' : ''}`}
             onClick={() => handleThemeChange('light')}
-            title="浅色模式"
+            title={t('app.themeLight')}
           >
             <img src={appearanceLightIcon} alt="" />
           </button>
@@ -372,27 +372,27 @@ export function SessionSidebar({
     return (
       <aside ref={sidebarRef} className="sidebar sidebar--collapsed">
         {/* Logo — SVG already contains gradient background + mark at 28×28 */}
-        <Tooltip text="展开侧边栏" targetRef={logoRef} visible={hoveredNav === 'logo'} />
+        <Tooltip text={t('sessionSidebar.expandSidebar')} targetRef={logoRef} visible={hoveredNav === 'logo'} />
         <div
           ref={logoRef}
           className="collapsed-logo"
           onClick={handleLogoClick}
           onMouseEnter={() => handleMouseEnter('logo')}
           onMouseLeave={() => setHoveredNav(null)}
-          title="展开侧边栏"
+          title={t('sessionSidebar.expandSidebar')}
         >
           <img src={logoIcon} alt="Logo" width="28" height="28" />
         </div>
 
         {/* New Chat button */}
-        <Tooltip text="新建会话" targetRef={newChatRef} visible={hoveredNav === 'newchat'} />
+        <Tooltip text={t('chat.newSession')} targetRef={newChatRef} visible={hoveredNav === 'newchat'} />
         <button
           ref={newChatRef}
           className="collapsed-nav-item"
           onClick={handleNewSession}
           onMouseEnter={() => handleMouseEnter('newchat')}
           onMouseLeave={() => setHoveredNav(null)}
-          title="新建会话"
+          title={t('chat.newSession')}
         >
           <img src={plusIcon} alt="" width="16" height="16" />
         </button>
@@ -454,14 +454,14 @@ export function SessionSidebar({
         <div className="collapsed-spacer" />
 
         {/* Settings icon */}
-        <Tooltip text="高级配置" targetRef={settingsRef} visible={hoveredNav === 'settings'} />
+        <Tooltip text={t('sessionSidebar.advancedConfig')} targetRef={settingsRef} visible={hoveredNav === 'settings'} />
         <button
           ref={settingsRef}
           className="collapsed-nav-item"
           onClick={toggleAdvancedConfig}
           onMouseEnter={() => handleMouseEnter('settings')}
           onMouseLeave={() => setHoveredNav(null)}
-          title="高级配置"
+          title={t('sessionSidebar.advancedConfig')}
         >
           <img src={advancedConfigIcon} alt="" width="16" height="16" />
         </button>
@@ -486,7 +486,7 @@ export function SessionSidebar({
         </div>
         <button
           className="collapse-btn"
-          title="收起侧边栏"
+          title={t('sessionSidebar.collapseSidebar')}
           onClick={() => onCollapse?.()}
         >
           <img src={collapseIcon} alt="" />
@@ -495,11 +495,11 @@ export function SessionSidebar({
 
       {/* 智能体 Section */}
       <div className="nav-section">
-        <div className="nav-section-label">智能体</div>
+        <div className="nav-section-label">{t('nav.agent')}</div>
         <button className="new-chat-btn" onClick={handleNewSession}>
           <span className="new-chat-btn__left">
             <img src={plusIcon} alt="" />
-            <span className="new-chat-btn__text">新建会话</span>
+            <span className="new-chat-btn__text">{t('chat.newSession')}</span>
           </span>
         </button>
         <nav className="sidebar-nav">
@@ -518,7 +518,7 @@ export function SessionSidebar({
 
       {/* Settings Section */}
       <div className="nav-section">
-        <div className="nav-section-label">设置</div>
+        <div className="nav-section-label">{t('nav.settings')}</div>
         <nav className="sidebar-nav">
           {settingsNavItems.map((item) => (
             <button
@@ -542,7 +542,7 @@ export function SessionSidebar({
           ref={advancedBtnRef}
           className="advanced-config-btn"
           onClick={toggleAdvancedConfig}
-          title="高级配置"
+          title={t('sessionSidebar.advancedConfig')}
         >
           <img src={advancedConfigIcon} alt="" />
         </button>
