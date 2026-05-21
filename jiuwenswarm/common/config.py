@@ -973,10 +973,23 @@ def replace_teams_in_config(front_payload: dict[str, Any]) -> None:
     """Replace ``modes.team`` using the frontend team-editor payload.
 
     Keep legacy top-level ``team`` config intact for backward compatibility.
+
+    If team array is empty, delete ``modes.team`` from config.
     """
     if not isinstance(front_payload, dict):
         raise ValueError("payload must be an object")
 
+    teams_raw = front_payload.get("team")
+
+    # 空数组：删除 modes.team 配置项
+    if isinstance(teams_raw, list) and not teams_raw:
+        data = _load_yaml_round_trip(_CONFIG_YAML_PATH)
+        if "modes" in data and isinstance(data["modes"], dict) and "team" in data["modes"]:
+            del data["modes"]["team"]
+            _dump_yaml_round_trip(_CONFIG_YAML_PATH, data)
+        return
+
+    # 非空数组：正常构建并保存
     team_mapping = _build_modes_team_mapping(front_payload)
 
     data = _load_yaml_round_trip(_CONFIG_YAML_PATH)

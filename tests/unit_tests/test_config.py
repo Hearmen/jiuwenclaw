@@ -349,3 +349,52 @@ modes:
 
         with pytest.raises(ValueError, match="duplicate member_name"):
             replace_teams_in_config(payload)
+
+    @staticmethod
+    def test_replace_teams_in_config_deletes_modes_team_when_empty(
+        monkeypatch: pytest.MonkeyPatch,
+        temp_config_file: Path,
+    ):
+        temp_config_file.write_text(
+            """
+channels:
+  web:
+    enabled: true
+modes:
+  team:
+    existing_team:
+      team_name: existing_team
+""",
+            encoding="utf-8",
+        )
+        monkeypatch.setattr("jiuwenswarm.common.config._CONFIG_YAML_PATH", temp_config_file)
+
+        # 空 team 数组应该删除 modes.team 配置项
+        replace_teams_in_config({"agents": {}, "team": []})
+
+        raw = yaml.safe_load(temp_config_file.read_text(encoding="utf-8"))
+        assert "team" not in raw["modes"]
+
+    @staticmethod
+    def test_replace_teams_in_config_no_change_when_modes_team_missing(
+        monkeypatch: pytest.MonkeyPatch,
+        temp_config_file: Path,
+    ):
+        temp_config_file.write_text(
+            """
+channels:
+  web:
+    enabled: true
+modes:
+  agent:
+    fast: {}
+""",
+            encoding="utf-8",
+        )
+        monkeypatch.setattr("jiuwenswarm.common.config._CONFIG_YAML_PATH", temp_config_file)
+
+        # 空 team 数组，且 modes.team 不存在，不应报错
+        replace_teams_in_config({"agents": {}, "team": []})
+
+        raw = yaml.safe_load(temp_config_file.read_text(encoding="utf-8"))
+        assert "team" not in raw["modes"]
