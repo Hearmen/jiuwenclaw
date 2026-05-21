@@ -25,7 +25,9 @@ class SecuritySessionState:
         self._messages: dict[str, deque[dict[str, str]]] = defaultdict(
             lambda: deque(maxlen=max(1, self.config.ring_buffer_size))
         )
-        self._failure_counts: Counter[tuple[str, str, FailureClass]] = Counter()
+        self._failure_counts: Counter[
+            tuple[str, str, str, FailureClass, str]
+        ] = Counter()
         self._advice: dict[str, SecurityAdvice] = {}
         self._session_order: deque[str] = deque()
         self._active_sessions: set[str] = set()
@@ -55,7 +57,11 @@ class SecuritySessionState:
             self._touch_session(signal.session_id)
             if signal.severity in {Severity.HIGH, Severity.CRITICAL}:
                 self._set_advice(signal)
-            if signal.failure_class is not None and signal.tool_name:
+            if (
+                signal.signal_type in {"permission_boundary_hit", "approval_required"}
+                and signal.failure_class is not None
+                and signal.tool_name
+            ):
                 generated.extend(self._record_failure(signal))
         return generated
 
@@ -80,14 +86,26 @@ class SecuritySessionState:
     def counter_snapshot(self, session_id: str) -> dict[str, int]:
         prefix = f"{session_id}:"
         return {
-            f"{tool}:{failure.value}": count
-            for (sid, tool, failure), count in self._failure_counts.items()
+            f"{tool}:{signal_type}:{failure.value}:{reason_code}": count
+            for (
+                sid,
+                tool,
+                signal_type,
+                failure,
+                reason_code,
+            ), count in self._failure_counts.items()
             if f"{sid}:" == prefix
         }
 
     def _record_failure(self, signal: SecuritySignal) -> list[SecuritySignal]:
         assert signal.failure_class is not None
-        key = (signal.session_id, signal.tool_name, signal.failure_class)
+        key = (
+            signal.session_id,
+            signal.tool_name,
+            signal.signal_type,
+            signal.failure_class,
+            signal.reason_code,
+        )
         self._failure_counts[key] += 1
         count = self._failure_counts[key]
         if count < max(1, self.config.repeated_tool_failure_threshold):
@@ -101,9 +119,50 @@ class SecuritySessionState:
             tool_name=signal.tool_name,
             failure_class=signal.failure_class,
             evidence=signal.evidence,
+            source="derived",
+            confidence="derived",
+            reason_code="repeated_tool_failure",
         )
         self._set_repeated_failure_advice(repeated, count)
-        return [repeated]
+        generated = [repeated]
+        if (
+            signal.signal_type == "approval_required"
+            and signal.reason_code == "approval_required"
+        ):
+            generated.append(
+                SecuritySignal(
+                    signal_type="approval_boundary_gap",
+                    severity=Severity.HIGH,
+                    session_id=signal.session_id,
+                    iteration=signal.iteration,
+                    tool_name=signal.tool_name,
+                    failure_class=signal.failure_class,
+                    evidence=signal.evidence,
+                    source="derived",
+                    confidence="derived",
+                    reason_code="approval_boundary_gap",
+                )
+            )
+        if (
+            signal.signal_type == "permission_boundary_hit"
+            and signal.failure_class == FailureClass.PERMISSION_DENIED
+            and signal.reason_code == "generic_permission_denied"
+        ):
+            generated.append(
+                SecuritySignal(
+                    signal_type="policy_rule_gap",
+                    severity=Severity.HIGH,
+                    session_id=signal.session_id,
+                    iteration=signal.iteration,
+                    tool_name=signal.tool_name,
+                    failure_class=signal.failure_class,
+                    evidence=signal.evidence,
+                    source="derived",
+                    confidence="derived",
+                    reason_code="policy_gap_repeated_generic_permission",
+                )
+            )
+        return generated
 
     def _touch_session(self, session_id: str) -> None:
         if session_id in self._active_sessions:

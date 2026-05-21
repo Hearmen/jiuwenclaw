@@ -129,8 +129,106 @@ def test_repeated_failure_counts_are_isolated_by_session():
     result = state.record_signals([s2_signal])
 
     assert result == []
-    assert state.counter_snapshot("s1") == {"read_file:permission_denied": 1}
-    assert state.counter_snapshot("s2") == {"read_file:permission_denied": 1}
+    assert state.counter_snapshot("s1") == {
+        "read_file:permission_boundary_hit:permission_denied:": 1
+    }
+    assert state.counter_snapshot("s2") == {
+        "read_file:permission_boundary_hit:permission_denied:": 1
+    }
+
+
+def test_repeated_failures_are_counted_by_reason_code():
+    state = SecuritySessionState(SecurityReviewConfig(repeated_tool_failure_threshold=2))
+    generic = SecuritySignal(
+        signal_type="permission_boundary_hit",
+        severity=Severity.MEDIUM,
+        session_id="s1",
+        tool_name="read_file",
+        failure_class=FailureClass.PERMISSION_DENIED,
+        reason_code="generic_permission_denied",
+    )
+    policy = SecuritySignal(
+        signal_type="permission_boundary_hit",
+        severity=Severity.HIGH,
+        session_id="s1",
+        tool_name="read_file",
+        failure_class=FailureClass.BLOCKED_BY_POLICY,
+        reason_code="permission_denied_policy",
+    )
+
+    state.record_signals([generic])
+    result = state.record_signals([policy])
+
+    assert result == []
+    assert state.counter_snapshot("s1") == {
+        "read_file:permission_boundary_hit:permission_denied:generic_permission_denied": 1,
+        "read_file:permission_boundary_hit:blocked_by_policy:permission_denied_policy": 1,
+    }
+
+
+def test_repeated_generic_permission_denial_derives_policy_gap():
+    state = SecuritySessionState(SecurityReviewConfig(repeated_tool_failure_threshold=2))
+    signal = SecuritySignal(
+        signal_type="permission_boundary_hit",
+        severity=Severity.MEDIUM,
+        session_id="s1",
+        iteration=3,
+        tool_name="read_file",
+        failure_class=FailureClass.PERMISSION_DENIED,
+        evidence="Permission denied",
+        source="tool_result",
+        confidence="regex_low",
+        reason_code="generic_permission_denied",
+    )
+
+    state.record_signals([signal])
+    generated = state.record_signals([signal])
+
+    assert [item.signal_type for item in generated] == [
+        "repeated_tool_failure",
+        "policy_rule_gap",
+    ]
+    assert generated[0].reason_code == "repeated_tool_failure"
+    assert generated[1].reason_code == "policy_gap_repeated_generic_permission"
+    assert all(item.source == "derived" for item in generated)
+
+
+def test_repeated_approval_required_derives_approval_boundary_gap():
+    state = SecuritySessionState(SecurityReviewConfig(repeated_tool_failure_threshold=2))
+    signal = SecuritySignal(
+        signal_type="approval_required",
+        severity=Severity.MEDIUM,
+        session_id="s1",
+        tool_name="bash",
+        failure_class=FailureClass.PERMISSION_DENIED,
+        reason_code="approval_required",
+    )
+
+    state.record_signals([signal])
+    generated = state.record_signals([signal])
+
+    assert [item.signal_type for item in generated] == [
+        "repeated_tool_failure",
+        "approval_boundary_gap",
+    ]
+    assert generated[1].reason_code == "approval_boundary_gap"
+
+
+def test_user_rejection_does_not_derive_repeated_failure():
+    state = SecuritySessionState(SecurityReviewConfig(repeated_tool_failure_threshold=2))
+    signal = SecuritySignal(
+        signal_type="user_rejected_permission",
+        severity=Severity.LOW,
+        session_id="s1",
+        tool_name="bash",
+        failure_class=FailureClass.PERMISSION_DENIED,
+        reason_code="user_rejected_permission",
+    )
+
+    state.record_signals([signal])
+    generated = state.record_signals([signal])
+
+    assert generated == []
 
 
 def test_max_session_eviction_removes_old_counters_events_and_advice():
