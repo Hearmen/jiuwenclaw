@@ -70,6 +70,9 @@ class SecuritySignal:
     failure_class: FailureClass | None = None
     evidence: str = ""
     skill_name: str = ""
+    source: str = ""
+    confidence: str = ""
+    reason_code: str = ""
 
 
 @dataclass(slots=True)
