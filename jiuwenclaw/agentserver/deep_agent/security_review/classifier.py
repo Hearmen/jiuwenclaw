@@ -60,7 +60,7 @@ class SecuritySignalClassifier:
         text = event.result_digest or event.arguments_digest or ""
         lowered = text.lower().replace("\u2019", "'")
         if re.search(
-            r"\b(do not|don't|never|avoid|refuse|cannot|can't)\b.{0,40}"
+            r"\b(do not|don't|never|refuse|cannot|can't)\b.{0,40}"
             r"(?:\b(run|execute|use this command)\b|\bcommand:)",
             lowered,
         ):

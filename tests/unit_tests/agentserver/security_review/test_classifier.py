@@ -281,6 +281,20 @@ def test_classifier_model_runner_transcript_does_not_flag_command():
     assert classifier.classify(event) == []
 
 
+def test_classifier_model_imperative_after_avoid_context_flags_command():
+    classifier = SecuritySignalClassifier()
+    event = SecurityEvent(
+        event_type="model_output",
+        session_id="sess-1",
+        iteration=1,
+        result_digest="Avoid prompts; run this command: rm -rf /",
+    )
+
+    signals = classifier.classify(event)
+
+    assert signals[0].signal_type == "dangerous_command"
+
+
 def test_classifier_model_explicit_execution_intent_flags_command():
     classifier = SecuritySignalClassifier()
     event = SecurityEvent(
