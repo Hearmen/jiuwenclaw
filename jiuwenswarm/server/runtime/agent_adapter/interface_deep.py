@@ -505,6 +505,8 @@ class JiuWenClawDeepAdapter:
         self._registered_mcp_server_ids: set[str] = set()
         self._registered_mcp_servers: dict[str, McpServerConfig] = {}
         self._auto_harness_service: Optional[AutoHarnessService] = None
+        self._dreaming_started = False
+        self._dreaming_mode: str = "agent"
 
     def set_skill_manager(self, skill_manager: SkillManager) -> None:
         """Inject shared SkillManager from facade for tool reuse."""
@@ -2381,6 +2383,7 @@ class JiuWenClawDeepAdapter:
         """
         await self.set_checkpoint()
 
+        self._dreaming_mode = mode if mode and mode.startswith("agent") else "agent"
         self._instance_overrides = dict(config or {}) if isinstance(config, dict) else {}
         load_dotenv(dotenv_path=get_env_file(), override=True)
         config_base = get_config()
@@ -5582,3 +5585,45 @@ class JiuWenClawDeepAdapter:
             task.result()
         except Exception as exc:
             logger.warning("[JiuWenClawDeepAdapter] evolution watcher task exception: %s", exc)
+
+    @staticmethod
+    def _is_approval_event(evt) -> bool:
+        """Check whether an OutputSchema event is an approval request."""
+        evt_type = getattr(evt, "type", "")
+        if evt_type == "chat.ask_user_question":
+            return True
+        if hasattr(evt, "payload") and isinstance(evt.payload, dict):
+            return evt.payload.get("event_type") == "chat.ask_user_question"
+        return False
+
+    async def try_start_dreaming(self, busy_checker: Callable[[], bool] | None = None) -> None:
+        if self._dreaming_started:
+            return
+        try:
+            from jiuwenclaw.agents.harness.common.memory.dreaming import start_dreaming
+            from jiuwenclaw.common.utils import get_agent_sessions_dir
+            sessions_dir = str(get_agent_sessions_dir() or "")
+            mode = getattr(self, "_dreaming_mode", "agent")
+            output_name = "memory" if mode == "agent" else "coding_memory"
+            base_dir = getattr(self, "_agent_workspace_dir", None) or self._workspace_dir
+            output_dir = os.path.join(base_dir, output_name)
+            orch = await start_dreaming(
+                sessions_dir=sessions_dir,
+                output_dir=output_dir,
+                mode=mode,
+                busy_checker=busy_checker,
+            )
+            self._dreaming_started = orch is not None
+        except Exception as exc:
+            logger.warning("[JiuWenClawDeepAdapter] start_dreaming failed: %s", exc)
+
+    async def try_stop_dreaming(self) -> None:
+        if not self._dreaming_started:
+            return
+        try:
+            from jiuwenclaw.agents.harness.common.memory.dreaming import stop_dreaming
+            mode = getattr(self, "_dreaming_mode", "agent")
+            await stop_dreaming(mode=mode)
+            self._dreaming_started = False
+        except Exception as exc:
+            logger.warning("[JiuWenClawDeepAdapter] stop_dreaming failed: %s", exc)

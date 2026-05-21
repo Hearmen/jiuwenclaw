@@ -1728,6 +1728,7 @@ async def _run(
         await heartbeat_service.stop()
         await message_handler.stop_forwarding()
         await client.disconnect()
+
         logger.info("[App] Gateway stopped")
 
 

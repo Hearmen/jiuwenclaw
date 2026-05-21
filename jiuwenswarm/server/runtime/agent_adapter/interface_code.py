@@ -166,6 +166,8 @@ class JiuwenClawCodeAdapter(JiuWenClawDeepAdapter):
         # 用于 coding_memory、todo文件等不应写入用户项目目录的数据。
         self._agent_workspace_dir = str(get_agent_workspace_dir())
 
+        self._dreaming_mode = "code"
+
         model = self._create_model(config_base)
         agent_card = AgentCard(name=self._agent_name, id='jiuwenswarm')
 
