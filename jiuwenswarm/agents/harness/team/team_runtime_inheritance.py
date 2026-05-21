@@ -13,7 +13,6 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from openjiuwen.agent_evolving.trajectory import FileTrajectoryStore, TrajectoryStore
 from openjiuwen.core.foundation.tool import ToolCard
 from openjiuwen.harness.rails import (
     SysOperationRail,
@@ -55,9 +54,9 @@ class TeamWorkspaceInfo:
     """Team 共享 workspace 信息."""
     root_dir: str | None = None
     skills_dir: str | None = None
-    trajectories_dir: str | None = None
     team_id: str | None = None
     config: dict[str, Any] | None = None
+    trajectory_registry: Any | None = None
 
 
 RAIL_WHITELIST = frozenset({
@@ -152,25 +151,11 @@ def build_member_rails(
     language = runtime.language
     team_ws_root = team_workspace.root_dir
     team_ws_skills_dir = team_workspace.skills_dir
-    team_trajectories_dir = team_workspace.trajectories_dir
     team_id = team_workspace.team_id
     config = team_workspace.config
+    team_trajectory_registry = team_workspace.trajectory_registry
 
     rails_list = []
-    shared_team_trajectory_store: TrajectoryStore | None = None
-    if team_trajectories_dir:
-        try:
-            shared_team_trajectory_store = FileTrajectoryStore(Path(team_trajectories_dir))
-            logger.info(
-                "[TeamRuntime] Shared team trajectory store created: %s",
-                team_trajectories_dir,
-            )
-        except Exception as exc:
-            logger.warning(
-                "[TeamRuntime] Shared team trajectory store failed: dir=%s error=%s",
-                team_trajectories_dir,
-                exc,
-            )
 
     try:
         rail = RuntimePromptRail(
@@ -252,25 +237,27 @@ def build_member_rails(
             Path(team_ws_skills_dir).mkdir(parents=True, exist_ok=True)
             llm_model, actual_model_name = build_evolution_llm()
             evolution_auto_scan = get_evolution_auto_scan_enabled(config)
+            bound_team_trajectory_registry = team_trajectory_registry if team_id else None
             team_skill_rail = TeamSkillEvolutionRail(
                 skills_dir=team_ws_skills_dir,
                 llm=llm_model,
                 model=actual_model_name,
                 language=language,
-                team_trajectory_store=shared_team_trajectory_store,
+                trajectory_source=bound_team_trajectory_registry,
+                trajectory_sink=bound_team_trajectory_registry,
+                member_role=role,
                 auto_scan=evolution_auto_scan,
                 auto_save=False,
                 team_id=team_id,
-                trajectories_dir=Path(team_trajectories_dir) if team_trajectories_dir else None,
             )
             rails_list.append(team_skill_rail)
             logger.info(
                 "[TeamRuntime] TeamSkillEvolutionRail created: skills_dir=%s, "
-                "model=%s, auto_scan=%s, team_trajectories_dir=%s",
+                "model=%s, auto_scan=%s, team_trajectory_registry=%s",
                 team_ws_skills_dir,
                 actual_model_name,
                 evolution_auto_scan,
-                team_trajectories_dir,
+                bool(bound_team_trajectory_registry),
             )
         except Exception as exc:
             logger.warning("[TeamRuntime] TeamSkillEvolutionRail failed: %s", exc, exc_info=True)
@@ -298,7 +285,8 @@ def build_member_rails(
         evo_rail = build_skill_evolution_rail(
             skills_dir=team_ws_skills_dir,
             config=config,
-            team_trajectory_store=shared_team_trajectory_store,
+            team_trajectory_sink=team_trajectory_registry,
+            team_id=team_id,
         )
         if evo_rail is not None:
             rails_list.append(evo_rail)
@@ -482,7 +470,8 @@ def build_evolution_llm(
 def build_skill_evolution_rail(
     skills_dir: str,
     config: dict[str, Any] | None = None,
-    team_trajectory_store: TrajectoryStore | None = None,
+    team_trajectory_sink: Any | None = None,
+    team_id: str | None = None,
 ) -> Any | None:
     """为 Team member 构造 SkillEvolutionRail.
 
@@ -503,13 +492,19 @@ def build_skill_evolution_rail(
             model=model_name,
             auto_scan=evolution_auto_scan,
             auto_save=True,
-            team_trajectory_store=team_trajectory_store,
         )
+        if team_trajectory_sink is not None and team_id:
+            rail.set_trajectory_sink(
+                team_trajectory_sink,
+                team_id=team_id,
+                member_role="teammate",
+            )
         logger.info(
-            "[TeamRuntime] SkillEvolutionRail created: model=%s, auto_scan=%s, shared_team_store=%s",
+            "[TeamRuntime] SkillEvolutionRail created: model=%s, auto_scan=%s, "
+            "team_trajectory_sink=%s",
             model_name,
             evolution_auto_scan,
-            bool(team_trajectory_store),
+            team_trajectory_sink is not None and bool(team_id),
         )
         return rail
     except Exception as exc:

@@ -19,6 +19,7 @@ from openjiuwen.agent_teams.agent.team_agent import TeamAgent
 from openjiuwen.agent_teams.paths import team_home
 from openjiuwen.agent_teams.schema.blueprint import TeamAgentSpec
 from openjiuwen.agent_teams.context import reset_session_id, set_session_id
+from openjiuwen.agent_evolving.trajectory import InMemoryTrajectoryRegistry
 from openjiuwen.core.runner import Runner
 from openjiuwen.harness import DeepAgent
 from openjiuwen.harness.rails import (
@@ -556,7 +557,7 @@ class TeamManager:
             else str(team_home(spec.team_name) / "team-workspace")
         )
         team_ws_skills_dir = Path(team_ws_root) / "skills"
-        team_ws_trajectories_dir = Path(team_ws_root) / "trajectories"
+        team_trajectory_registry = InMemoryTrajectoryRegistry()
 
         def resolve_member_spec(
             member_name: str | None,
@@ -814,9 +815,9 @@ class TeamManager:
             team_workspace = TeamWorkspaceInfo(
                 root_dir=str(Path(team_ws_root)),
                 skills_dir=str(team_ws_skills_dir),
-                trajectories_dir=str(team_ws_trajectories_dir),
                 team_id=spec.team_name,
                 config=get_config(),
+                trajectory_registry=team_trajectory_registry,
             )
 
             try:

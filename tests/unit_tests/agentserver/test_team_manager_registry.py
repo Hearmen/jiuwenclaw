@@ -221,7 +221,6 @@ async def test_update_evolution_config_skill_create_enabled_mounts_missing_team_
         team_workspace=TeamWorkspaceInfo(
             root_dir="/tmp/team",
             skills_dir="/tmp/team/skills",
-            trajectories_dir="/tmp/team/trajectories",
             team_id="demo-team",
             config={},
         ),
@@ -234,11 +233,15 @@ async def test_update_evolution_config_skill_create_enabled_mounts_missing_team_
         "jiuwenswarm.agents.harness.team.team_manager.get_config",
         lambda: {"evolution": {"skill_create": True}},
     )
+
+    def _fake_build_member_rails(**kwargs):
+        if kwargs["team_workspace"].config.get("evolution", {}).get("skill_create"):
+            return [_FakeTeamSkillCreateRail()]
+        return []
+
     monkeypatch.setattr(
         "jiuwenswarm.agents.harness.team.team_manager.build_member_rails",
-        lambda **kwargs: [_FakeTeamSkillCreateRail()]
-        if kwargs["team_workspace"].config.get("evolution", {}).get("skill_create")
-        else [],
+        _fake_build_member_rails,
     )
     monkeypatch.setattr(
         "jiuwenswarm.agents.harness.team.team_manager.TeamSkillCreateRail",
@@ -274,6 +277,105 @@ async def test_register_team_rail_context_keeps_leader_context() -> None:
     assert manager.get_team_rail_context("sess-1") is leader_context
 
 
+def test_build_agent_customizer_shares_one_trajectory_registry_per_runtime(
+    tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured_registries = []
+
+    class _FakeAbilityManager:
+        @staticmethod
+        def list():
+            return []
+
+    class _FakeAgentWithWorkspace:
+        def __init__(self, root_path):
+            self.card = type("Card", (), {"name": "agent"})()
+            self.ability_manager = _FakeAbilityManager()
+            self.deep_config = type(
+                "DeepConfig",
+                (),
+                {
+                    "workspace": type(
+                        "Workspace",
+                        (),
+                        {"root_path": str(root_path)},
+                    )()
+                },
+            )()
+            self.added_rails = []
+
+        def add_rail(self, rail):
+            self.added_rails.append(rail)
+
+    global_skills_dir = tmp_path / "global-skills"
+    global_skills_dir.mkdir()
+    (global_skills_dir / "skills_state.json").write_text("{}", encoding="utf-8")
+
+    spec = type(
+        "Spec",
+        (),
+        {
+            "team_name": "demo-team",
+            "workspace": type(
+                "Workspace",
+                (),
+                {"root_path": str(tmp_path / "team-workspace")},
+            )(),
+            "agents": {},
+        },
+    )()
+    deep_agent = _FakeAgentWithWorkspace(tmp_path / "parent-workspace")
+
+    monkeypatch.setattr(
+        "jiuwenswarm.agents.harness.team.team_manager.get_agent_skills_dir",
+        lambda: global_skills_dir,
+    )
+    monkeypatch.setattr(
+        "jiuwenswarm.agents.harness.team.team_manager.SkillManager",
+        lambda workspace_dir: object(),
+    )
+    monkeypatch.setattr(
+        "jiuwenswarm.agents.harness.team.team_manager.MemberSkillToolkitRail",
+        lambda workspace_dir: object(),
+    )
+
+    def _fake_build_member_rails(**kwargs):
+        captured_registries.append(kwargs["team_workspace"].trajectory_registry)
+        return []
+
+    monkeypatch.setattr(
+        "jiuwenswarm.agents.harness.team.team_manager.build_member_rails",
+        _fake_build_member_rails,
+    )
+    monkeypatch.setattr(
+        "jiuwenswarm.agents.harness.team.team_manager.filter_inheritable_ability_cards",
+        lambda deep_agent: [],
+    )
+    monkeypatch.setattr(
+        "jiuwenswarm.agents.harness.team.team_manager.get_default_model_name",
+        lambda: "model",
+    )
+    monkeypatch.setattr(
+        TeamManager,
+        "register_member_runtime_tools",
+        staticmethod(lambda *args, **kwargs: None),
+    )
+
+    customizer = TeamManager.build_agent_customizer(
+        spec,
+        deep_agent,
+        "sess-1",
+        channel_id="web",
+    )
+    customizer(_FakeAgentWithWorkspace(tmp_path / "leader-workspace"), role="leader")
+    customizer(_FakeAgentWithWorkspace(tmp_path / "member-workspace"), role="teammate")
+
+    assert len(captured_registries) == 2
+    assert captured_registries[0] is not None
+    assert captured_registries[0] is captured_registries[1]
+
+
 @pytest.mark.asyncio
 async def test_update_evolution_config_skips_rail_rebuild_when_skill_create_disabled(
     monkeypatch: pytest.MonkeyPatch,
@@ -287,7 +389,6 @@ async def test_update_evolution_config_skips_rail_rebuild_when_skill_create_disa
         team_workspace=TeamWorkspaceInfo(
             root_dir="/tmp/team",
             skills_dir="/tmp/team/skills",
-            trajectories_dir="/tmp/team/trajectories",
             team_id="demo-team",
             config={},
         ),
