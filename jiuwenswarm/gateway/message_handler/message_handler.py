@@ -130,6 +130,7 @@ class MessageHandler(ABC):
         self._stream_emits_processing_status: dict[str, bool] = {}  # request_id -> emits chat.processing_status
         self._pending_evolution_approval: dict[str, str] = {}  # session_id -> approval_request_id
         self._queued_supplement_input: dict[str, dict[str, Any]] = {}  # session_id -> queued supplement payload
+        self._session_last_user_query: dict[str, str] = {}
         self._session_evolution_in_progress: set[str] = set()
         self._acp_session_aliases: dict[str, str] = {}  # external_session_id -> internal_session_id
         self._acp_session_alias_lock = asyncio.Lock()
@@ -191,6 +192,7 @@ class MessageHandler(ABC):
 
     def handle_message(self, msg: "Message") -> None:
         """Channel 同步回调：将消息放入 user_messages 队列，由转发循环发给 AgentServer."""
+        self._remember_user_query_context(msg)
         self._user_messages.put_nowait(msg)
         logger.info(
             "[MessageHandler] _user_messages 入队: id=%s channel_id=%s session_id=%s",
@@ -198,6 +200,30 @@ class MessageHandler(ABC):
         )
 
     # ---------- Channel 控制状态：\new_session / \mode ----------
+
+    def _remember_user_query_context(self, msg: "Message") -> None:
+        if not self._is_chat_send_message(msg):
+            return
+        if not isinstance(msg.params, dict) or msg.params.get("is_supplement") is True:
+            return
+        session_id = str(msg.session_id or "").strip()
+        if not session_id:
+            return
+        query = str(msg.params.get("query") or msg.params.get("content") or "").strip()
+        if not query:
+            return
+        self._session_last_user_query[session_id] = query[:8000]
+
+    def _get_session_last_user_query(self, session_id: str | None) -> str:
+        if not session_id:
+            return ""
+        return self._session_last_user_query.get(str(session_id), "")
+
+    @staticmethod
+    def _is_chat_send_message(msg: "Message") -> bool:
+        method = getattr(msg, "req_method", None)
+        value = getattr(method, "value", method)
+        return value == "chat.send" or str(value) == "ReqMethod.CHAT_SEND"
 
     def _get_channel_default_state(self, channel_id: str) -> ChannelControlState:
         """从 config.yaml 读取 Channel 的默认 session_id / mode."""
@@ -1987,16 +2013,47 @@ class MessageHandler(ABC):
         self._pop_queued_supplement_input(session_id)
 
     @staticmethod
+    def _build_supplement_continuation_query(
+        new_input: str,
+        original_request: str = "",
+    ) -> str:
+        trimmed = str(new_input or "").strip()
+        original = str(original_request or "").strip()
+        original_section = (
+            f"\n\n原始任务请求如下，请以它作为继续执行 todo 时的上下文，尤其要保留其中的文件路径、目录、约束和目标：\n{original[:8000]}"
+            if original
+            else ""
+        )
+        return (
+            "用户在当前任务执行中追加了补充/调整请求：\n"
+            f"{trimmed}\n\n"
+            "请先处理这个补充/调整请求，然后检查并继续执行当前会话 todo 列表中仍未完成的 "
+            "in_progress 或 pending 任务。不要因为补充请求本身处理完成就询问用户下一步；"
+            "只有在确认 todo 列表没有未完成任务时，才可以总结或询问后续方向。\n\n"
+            "注意：追加补充请求会中断上一轮流式输出，用户界面上上一轮正在输出的任务结果可能只展示了一部分。"
+            "如果补充请求发生时某个 todo 正在输出结果，或者 todo 状态已经前进但该任务结果可能没有完整展示，"
+            "继续执行时请先补全或简要重述这个被中断任务的完整结果，再推进后续 todo；"
+            "不要仅因为 todo 状态已经变为 completed 就跳过用户尚未完整看到的任务结果。"
+            f"{original_section}"
+        )
+
+    @staticmethod
     def _build_queued_chat_send_message(
         msg: "Message",
         new_input: str,
         attachments: list[dict[str, Any]] | None = None,
+        original_request: str = "",
     ) -> "Message":
         from jiuwenswarm.common.schema.message import Message, ReqMethod
 
         new_req_id = f"req_{int(time.time() * 1000):x}_{msg.id}"
         params: dict[str, Any] = {
-            "query": new_input,
+            "query": MessageHandler._build_supplement_continuation_query(
+                new_input,
+                original_request,
+            ),
+            "supplement_input": new_input,
+            "original_request": original_request,
             "session_id": msg.session_id,
             "is_supplement": True,
         }
@@ -2090,6 +2147,7 @@ class MessageHandler(ABC):
                                     msg,
                                     queued_input,
                                     queued_attachments if isinstance(queued_attachments, list) else None,
+                                    self._get_session_last_user_query(msg.session_id),
                                 )
                                 self._user_messages.put_nowait(queued_msg)
                                 logger.info(
@@ -2214,13 +2272,19 @@ class MessageHandler(ABC):
 
                         new_req_id = f"req_{int(time.time() * 1000):x}_{msg.id}"
                         sup_meta = dict(msg.metadata) if msg.metadata else None
+                        original_request = self._get_session_last_user_query(msg.session_id)
                         new_msg = Message(
                             id=new_req_id,
                             type="req",
                             channel_id=msg.channel_id,
                             session_id=msg.session_id,
                             params={
-                                "query": new_input.strip(),
+                                "query": self._build_supplement_continuation_query(
+                                    new_input,
+                                    original_request,
+                                ),
+                                "supplement_input": new_input.strip(),
+                                "original_request": original_request,
                                 "session_id": msg.session_id,
                                 "is_supplement": True,
                                 **(
@@ -2695,6 +2759,7 @@ class MessageHandler(ABC):
         self._session_evolution_in_progress.clear()
         self._pending_evolution_approval.clear()
         self._queued_supplement_input.clear()
+        self._session_last_user_query.clear()
 
         # 取消转发循环
         if self._forward_task is not None:

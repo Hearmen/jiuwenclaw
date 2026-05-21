@@ -34,7 +34,7 @@ from openjiuwen.harness.workspace.workspace import WorkspaceNode
 
 from jiuwenswarm.common.utils import logger
 
-_TODO_TOOL_NAMES = frozenset(["todo_create", "todo_list", "todo_modify"])
+_TODO_TOOL_NAMES = frozenset(["todo_create", "todo_get", "todo_list", "todo_modify"])
 
 
 def _structured_tool_result_payload(result: Any) -> Any | None:
@@ -293,10 +293,10 @@ class JiuClawStreamEventRail(DeepAgentRail):
         if not self._conversation_id:
             return
         if tool_name in _TODO_TOOL_NAMES:
-            # Subagent tool calls have a different session object than _main_session.
-            # Only emit todo.updated for the main agent's calls.
-            if self._main_session is None or session is not self._main_session:
-                return
+            # Emit the main-agent todo snapshot after every todo tool call.  The
+            # todo tool itself is loaded from the main workspace below, so this
+            # stays authoritative even when a resumed/supplement turn uses a
+            # different stream session object.
             await self._emit_todo_updated(session, self._conversation_id)
 
     # ------------------------------------------------------------------
@@ -393,9 +393,6 @@ class JiuClawStreamEventRail(DeepAgentRail):
             logger.debug(
                 "[StreamEventRail] Failed to load todos: %s", exc
             )
-            return
-
-        if not todos_data:
             return
 
         todos = self._format_todos_for_frontend(todos_data)

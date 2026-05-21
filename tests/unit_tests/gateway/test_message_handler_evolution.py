@@ -112,6 +112,24 @@ class _TestMessageHandler(MessageHandler):
             publish_interrupt_result=publish_interrupt_result,
         )
 
+    def build_queued_chat_send_message(
+        self,
+        msg: Message,
+        new_input: str,
+        original_request: str = "",
+    ) -> Message:
+        return self._build_queued_chat_send_message(
+            msg,
+            new_input,
+            original_request=original_request,
+        )
+
+    def remember_user_query_context(self, msg: Message) -> None:
+        self._remember_user_query_context(msg)
+
+    def get_session_last_user_query(self, session_id: str) -> str:
+        return self._get_session_last_user_query(session_id)
+
 
 def _message(req_method: ReqMethod) -> Message:
     return Message(
@@ -150,6 +168,40 @@ def test_processing_status_is_only_emitted_for_chat_streams() -> None:
     assert handler.should_emit_processing_status_for_stream(
         _message(ReqMethod.HISTORY_GET)
     ) is False
+
+
+def test_queued_supplement_message_instructs_todo_continuation():
+    handler = _TestMessageHandler.create()
+    msg = _message(ReqMethod.CHAT_CANCEL)
+
+    queued = handler.build_queued_chat_send_message(
+        msg,
+        "删除 todo 列表里的提出改善意见",
+        original_request=r"Analyze C:\repo\src\ui\screen-layout.ts",
+    )
+
+    assert queued.params["supplement_input"] == "删除 todo 列表里的提出改善意见"
+    assert queued.params["original_request"] == r"Analyze C:\repo\src\ui\screen-layout.ts"
+    assert r"C:\repo\src\ui\screen-layout.ts" in queued.params["query"]
+    assert "继续执行当前会话 todo 列表中仍未完成" in queued.params["query"]
+    assert "不要因为补充请求本身处理完成就询问用户下一步" in queued.params["query"]
+    assert "上一轮正在输出的任务结果可能只展示了一部分" in queued.params["query"]
+    assert "不要仅因为 todo 状态已经变为 completed 就跳过" in queued.params["query"]
+
+
+def test_chat_send_query_context_is_remembered_for_supplement():
+    handler = _TestMessageHandler.create()
+    msg = _message(ReqMethod.CHAT_SEND)
+    msg.params = {
+        "query": r"Read C:\repo\src\ui\screen-layout.ts and summarize it",
+    }
+
+    handler.remember_user_query_context(msg)
+
+    assert (
+        handler.get_session_last_user_query("sess-1")
+        == r"Read C:\repo\src\ui\screen-layout.ts and summarize it"
+    )
 
 
 @pytest.mark.asyncio

@@ -797,6 +797,7 @@ export function handleIncomingFrame(delegate: AppEventDelegate, frame: EventFram
       );
       if (payload.is_processing !== true) {
         delegate.getActiveSubtasks().clear();
+        delegate.setTodos([]);
         delegate.setEvolutionStatus("idle");
         delegate.clearInterruptRequested();
       }
