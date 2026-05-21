@@ -24,7 +24,8 @@ build_bootstrap_ack_envelope = _mod.build_bootstrap_ack_envelope
 attach_remote_bootstrap_ack_listener = _mod.attach_remote_bootstrap_ack_listener
 attach_distributed_local_spawn_guard = _mod.attach_distributed_local_spawn_guard
 attach_spawn_member_remote_bootstrap_wrapper = _mod.attach_spawn_member_remote_bootstrap_wrapper
-release_a2x_reservations_for_team = _mod.release_a2x_reservations_for_team
+attach_shutdown_member_remote_cleanup_wrapper = _mod.attach_shutdown_member_remote_cleanup_wrapper
+release_a2x_reservations_for_session = _mod.release_a2x_reservations_for_session
 REMOTE_TEAM_DESTROY_DIRECT_EVENT_TYPE = _mod.REMOTE_TEAM_DESTROY_DIRECT_EVENT_TYPE
 
 
@@ -567,7 +568,15 @@ async def test_discard_auxiliary_team_agent_removes_cache_and_stops_runtime():
 
 
 @pytest.mark.asyncio
-async def test_release_a2x_reservations_notifies_remote_teammate_and_does_not_release_from_leader():
+async def test_release_a2x_reservations_notifies_remote_teammate_and_does_not_release_from_leader(
+    monkeypatch,
+):
+    monkeypatch.setattr(
+        "jiuwenswarm.common.config.get_config",
+        lambda: {"team": {"runtime": {"mode": "distributed", "role": "leader"}}},
+    )
+    getattr(_mod, "_A2X_RESERVATIONS_BY_SESSION").clear()
+
     send = AsyncMock()
     register_peer = MagicMock()
     messager = SimpleNamespace(register_peer=register_peer, send=send)
@@ -586,13 +595,15 @@ async def test_release_a2x_reservations_notifies_remote_teammate_and_does_not_re
         runtime_context=None,
         _messager=messager,
     )
-    setattr(
+
+    getattr(_mod, "_remember_a2x_reservation")(
         ta,
-        "_jiuwen_a2x_blank_agent_reservations",
-        [("sess_destroy_1", "math-calc-1", reservation)],
+        session_id="sess_destroy_1",
+        member_name="math-calc-1",
+        reservation=reservation,
     )
 
-    await release_a2x_reservations_for_team(ta)
+    await release_a2x_reservations_for_session("sess_destroy_1", team_agent=ta)
 
     send.assert_awaited_once()
     peer_agent_id, event = send.await_args.args
@@ -608,7 +619,115 @@ async def test_release_a2x_reservations_notifies_remote_teammate_and_does_not_re
     }
     reservation.release.assert_not_awaited()
     reservation.close.assert_awaited_once()
-    assert getattr(ta, "_jiuwen_a2x_blank_agent_reservations") == []
+    assert getattr(_mod, "_A2X_RESERVATIONS_BY_SESSION") == {}
+
+
+@pytest.mark.asyncio
+async def test_shutdown_member_wrapper_schedules_cleanup_when_all_teammates_closed(monkeypatch):
+    from openjiuwen.agent_teams.schema.status import MemberStatus
+    from openjiuwen.agent_teams.schema.team import TeamRole
+    from openjiuwen.core.runner import Runner
+
+    monkeypatch.setattr(
+        "jiuwenswarm.common.config.get_config",
+        lambda: {"team": {"runtime": {"mode": "distributed", "role": "leader"}}},
+    )
+
+    class _Result:
+        success = True
+
+    class _ShutdownMemberTool:
+        async def invoke(self, inputs, **kwargs):
+            return _Result()
+
+    tool = _ShutdownMemberTool()
+    resource_mgr = MagicMock()
+    resource_mgr.get_tool = MagicMock(return_value=tool)
+    monkeypatch.setattr(Runner, "resource_mgr", resource_mgr)
+
+    scheduled = []
+    monkeypatch.setattr(
+        _mod,
+        "".join(["_schedule", "_shutdown_cleanup"]),
+        lambda session_id, channel_id: scheduled.append((session_id, channel_id)),
+    )
+
+    team_agent = SimpleNamespace(
+        role=TeamRole.LEADER,
+        deep_agent=SimpleNamespace(
+            ability_manager=SimpleNamespace(
+                list=lambda: [SimpleNamespace(id="team.shutdown_member", name="shutdown_member")]
+            ),
+            card=SimpleNamespace(id="leader-card"),
+        ),
+        team_backend=SimpleNamespace(
+            list_members=AsyncMock(
+                return_value=[
+                    SimpleNamespace(member_name="teammate-1", status=MemberStatus.SHUTDOWN_REQUESTED.value),
+                    SimpleNamespace(member_name="teammate-2", status=MemberStatus.SHUTDOWN.value),
+                ]
+            )
+        ),
+    )
+
+    attach_shutdown_member_remote_cleanup_wrapper(team_agent, session_id="sid-1", channel_id="web")
+    await tool.invoke({"member_name": "teammate-1"})
+
+    assert scheduled == [("sid-1", "web")]
+
+
+@pytest.mark.asyncio
+async def test_shutdown_member_wrapper_waits_until_every_teammate_is_closed(monkeypatch):
+    from openjiuwen.agent_teams.schema.status import MemberStatus
+    from openjiuwen.agent_teams.schema.team import TeamRole
+    from openjiuwen.core.runner import Runner
+
+    monkeypatch.setattr(
+        "jiuwenswarm.common.config.get_config",
+        lambda: {"team": {"runtime": {"mode": "distributed", "role": "leader"}}},
+    )
+
+    class _Result:
+        success = True
+
+    class _ShutdownMemberTool:
+        async def invoke(self, inputs, **kwargs):
+            return _Result()
+
+    tool = _ShutdownMemberTool()
+    resource_mgr = MagicMock()
+    resource_mgr.get_tool = MagicMock(return_value=tool)
+    monkeypatch.setattr(Runner, "resource_mgr", resource_mgr)
+
+    scheduled = []
+    monkeypatch.setattr(
+        _mod,
+        "".join(["_schedule", "_shutdown_cleanup"]),
+        lambda session_id, channel_id: scheduled.append((session_id, channel_id)),
+    )
+
+    team_agent = SimpleNamespace(
+        role=TeamRole.LEADER,
+        deep_agent=SimpleNamespace(
+            ability_manager=SimpleNamespace(
+                list=lambda: [SimpleNamespace(id="team.shutdown_member", name="shutdown_member")]
+            ),
+            card=SimpleNamespace(id="leader-card"),
+        ),
+        team_backend=SimpleNamespace(
+            list_members=AsyncMock(
+                return_value=[
+                    SimpleNamespace(member_name="teammate-1", status=MemberStatus.SHUTDOWN_REQUESTED.value),
+                    SimpleNamespace(member_name="teammate-2", status=MemberStatus.READY.value),
+                ]
+            )
+        ),
+    )
+
+    attach_shutdown_member_remote_cleanup_wrapper(team_agent, session_id="sid-1", channel_id="web")
+    await tool.invoke({"member_name": "teammate-1"})
+
+    assert scheduled == []
 
 
 @pytest.mark.asyncio

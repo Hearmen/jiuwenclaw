@@ -35,16 +35,16 @@ _WRAPPED_SESSION_ID_ATTR = "_jiuwen_spawn_member_remote_bootstrap_session_id"
 _WRAPPED_CHANNEL_ID_ATTR = "_jiuwen_spawn_member_remote_bootstrap_channel_id"
 _WRAPPED_REMOTE_NAMES_ATTR = "_jiuwen_spawn_member_remote_bootstrap_remote_names"
 _WRAPPED_REMOTE_ALL_ATTR = "_jiuwen_spawn_member_remote_bootstrap_remote_all"
-_CLEAN_TEAM_WRAPPED_ATTR = "_jiuwen_clean_team_remote_destroy_wrapped"
-_CLEAN_TEAM_TEAM_AGENT_ATTR = "_jiuwen_clean_team_remote_destroy_team_agent"
-_CLEAN_TEAM_SESSION_ID_ATTR = "_jiuwen_clean_team_remote_destroy_session_id"
-_CLEAN_TEAM_CHANNEL_ID_ATTR = "_jiuwen_clean_team_remote_destroy_channel_id"
 _LOCAL_SPAWN_GUARD_ATTR = "_jiuwen_distributed_local_spawn_guard_attached"
 _SEND_MESSAGE_GUARDED_ATTR = "_jiuwen_distributed_send_message_guarded"
 _ACK_LISTENER_ATTR = "_jiuwen_remote_bootstrap_ack_listener_attached"
 _TEAMMATE_BOOTSTRAP_LISTENER_ATTR = "_jiuwen_remote_teammate_bootstrap_listener_attached"
+_SHUTDOWN_CLEANUP_WRAPPED_ATTR = "_jiuwen_shutdown_member_remote_cleanup_wrapped"
+_SHUTDOWN_CLEANUP_SESSION_ID_ATTR = "_jiuwen_shutdown_member_remote_cleanup_session_id"
+_SHUTDOWN_CLEANUP_CHANNEL_ID_ATTR = "_jiuwen_shutdown_member_remote_cleanup_channel_id"
 _METADATA_REMOTE_ALL_KEY = "jiuwen_remote_all_spawn_members"
-_A2X_RESERVATIONS_ATTR = "_jiuwen_a2x_blank_agent_reservations"
+_A2X_RESERVATIONS_BY_SESSION: dict[str, list[tuple[str, Any, dict[str, Any]]]] = {}
+_SHUTDOWN_CLEANUP_TASKS: dict[str, asyncio.Task] = {}
 
 # Remote claw → leader: JSON body on a normal team P2P message (DB + MESSAGE topic).
 REMOTE_BOOTSTRAP_ACK_TYPE = "jiuwen.remote_bootstrap_ack"
@@ -633,20 +633,40 @@ def _remember_a2x_reservation(
     member_name: str,
     reservation: Any,
 ) -> None:
-    reservations = getattr(team_agent, _A2X_RESERVATIONS_ATTR, None)
-    if not isinstance(reservations, list):
-        reservations = []
-        setattr(team_agent, _A2X_RESERVATIONS_ATTR, reservations)
-    reservations.append((str(session_id or "").strip(), member_name, reservation))
+    key = str(session_id or "").strip()
+    if not key:
+        logger.warning(
+            "[RemoteMemberBootstrap] skip A2X reservation tracking: missing session_id member=%s",
+            member_name,
+        )
+        return
+    destroy_envelope = build_team_destroy_envelope(
+        team_agent,
+        session_id=key,
+        member_name=member_name,
+        reservation=reservation,
+    )
+    reservations = _A2X_RESERVATIONS_BY_SESSION.setdefault(key, [])
+    reservations.append((member_name, reservation, destroy_envelope))
+    logger.info(
+        "[RemoteMemberBootstrap] tracked A2X reservation for session teardown "
+        "session_id=%s member=%s service_id=%s endpoint=%s",
+        key,
+        member_name,
+        getattr(reservation, "service_id", ""),
+        getattr(reservation, "endpoint", ""),
+    )
 
 
 async def _notify_reserved_teammate_team_destroy(
-    team_agent: Any,
-    session_id: str,
+    team_agent: Any | None,
     member_name: str,
     reservation: Any,
+    envelope: dict[str, Any],
 ) -> None:
-    messager = getattr(team_agent, "_messager", None) or getattr(team_agent, "mailbox_transport", None)
+    messager = None
+    if team_agent is not None:
+        messager = getattr(team_agent, "_messager", None) or getattr(team_agent, "mailbox_transport", None)
     peer_agent_id = str(getattr(reservation, "service_id", "") or "").strip()
     peer_addr = _normalize_leader_direct_addr(getattr(reservation, "endpoint", ""))
     if not peer_agent_id or not peer_addr:
@@ -659,12 +679,6 @@ async def _notify_reserved_teammate_team_destroy(
             peer_addr,
         )
         return
-    envelope = build_team_destroy_envelope(
-        team_agent,
-        session_id=session_id,
-        member_name=member_name,
-        reservation=reservation,
-    )
     delivered = False
     try:
         from openjiuwen.agent_teams.messager.base import MessagerPeerConfig
@@ -710,22 +724,44 @@ async def _notify_reserved_teammate_team_destroy(
         )
 
 
-async def release_a2x_reservations_for_team(team_agent: Any) -> None:
-    """Notify reserved teammates on team teardown and close leader-held registry clients."""
-    reservations = getattr(team_agent, _A2X_RESERVATIONS_ATTR, None)
-    if not isinstance(reservations, list) or not reservations:
+async def release_a2x_reservations_for_session(
+    session_id: str,
+    *,
+    team_agent: Any | None = None,
+) -> None:
+    """Notify reserved teammates for a distributed session teardown and close registry clients."""
+    from jiuwenswarm.common.config import get_config as _get_config
+
+    if not _is_distributed_leader_runtime(_get_config()):
+        logger.debug(
+            "[RemoteMemberBootstrap] non-distributed leader runtime; skip A2X reservation release "
+            "session_id=%s",
+            session_id,
+        )
         return
-    setattr(team_agent, _A2X_RESERVATIONS_ATTR, [])
-    for session_id, member_name, reservation in reservations:
+
+    key = str(session_id or "").strip()
+    reservations = _A2X_RESERVATIONS_BY_SESSION.pop(key, [])
+    if not reservations:
+        logger.debug("[RemoteMemberBootstrap] no A2X reservations to release session_id=%s", key)
+        return
+
+    for member_name, reservation, destroy_envelope in reservations:
         await _notify_reserved_teammate_team_destroy(
             team_agent,
-            session_id,
             member_name,
             reservation,
+            destroy_envelope,
         )
         close = getattr(reservation, "close", None)
         if callable(close):
             await close()
+    logger.info(
+        "[RemoteMemberBootstrap] released A2X reservations for distributed session teardown "
+        "session_id=%s count=%d",
+        key,
+        len(reservations),
+    )
 
 
 async def _ensure_remote_member_record(
@@ -964,18 +1000,176 @@ def attach_spawn_member_remote_bootstrap_wrapper(
     )
 
 
-def attach_clean_team_remote_destroy_wrapper(
+async def _all_teammates_shutdown_requested_or_done(team_agent: Any) -> bool:
+    tb = getattr(team_agent, "team_backend", None)
+    list_members = getattr(tb, "list_members", None) if tb is not None else None
+    if not callable(list_members):
+        logger.debug("[RemoteMemberBootstrap] shutdown cleanup skipped: missing public list_members")
+        return False
+
+    from openjiuwen.agent_teams.schema.status import MemberStatus
+
+    closed_statuses = {
+        MemberStatus.SHUTDOWN_REQUESTED.value,
+        MemberStatus.SHUTDOWN.value,
+    }
+
+    members = await list_members()
+    if not members:
+        return False
+
+    for member in members:
+        status = str(getattr(member, "status", "") or "").strip().lower()
+        if status not in closed_statuses:
+            logger.debug(
+                "[RemoteMemberBootstrap] shutdown cleanup waiting for member=%s status=%s",
+                getattr(member, "member_name", None),
+                status,
+            )
+            return False
+    return True
+
+
+def _schedule_shutdown_cleanup(session_id: str, channel_id: str | None) -> None:
+    sid = str(session_id or "").strip()
+    if not sid:
+        return
+    existing_task = _SHUTDOWN_CLEANUP_TASKS.get(sid)
+    if existing_task is None or existing_task.done():
+        _SHUTDOWN_CLEANUP_TASKS[sid] = asyncio.create_task(
+            _delayed_shutdown_cleanup(sid, channel_id)
+        )
+    logger.info(
+        "[RemoteMemberBootstrap] marked session for post-stream shutdown cleanup "
+        "session_id=%s channel=%s",
+        sid,
+        channel_id,
+    )
+
+
+async def _delayed_shutdown_cleanup(session_id: str, channel_id: str | None) -> bool:
+    try:
+        # Give the leader response a short chance to flush before stopping the team stream.
+        await asyncio.sleep(2.0)
+        return await run_pending_shutdown_cleanup_for_session(
+            session_id,
+            channel_id=channel_id,
+        )
+    finally:
+        current_task = asyncio.current_task()
+        if _SHUTDOWN_CLEANUP_TASKS.get(session_id) is current_task:
+            _SHUTDOWN_CLEANUP_TASKS.pop(session_id, None)
+
+
+async def wait_for_pending_shutdown_cleanup_for_session(
+    session_id: str,
+    *,
+    timeout: float = 15.0,
+) -> bool:
+    sid = str(session_id or "").strip()
+    task = _SHUTDOWN_CLEANUP_TASKS.get(sid)
+    if task is None:
+        return False
+    try:
+        return bool(await asyncio.wait_for(asyncio.shield(task), timeout=timeout))
+    except asyncio.TimeoutError:
+        logger.warning(
+            "[RemoteMemberBootstrap] timed out waiting for shutdown cleanup session_id=%s",
+            sid,
+        )
+        return False
+
+
+async def _push_shutdown_cleanup_notice(
+    *,
+    session_id: str,
+    channel_id: str | None,
+    deleted: bool,
+) -> None:
+    try:
+        from jiuwenswarm.server.gateway_push import WebSocketGatewayPushTransport
+        from jiuwenswarm.server.runtime.session.session_metadata import build_server_push_message
+
+        request_id = f"team_shutdown_cleanup_{session_id}"
+        content = (
+            "团队已清空并解散，远端成员已恢复为空闲状态。"
+            if deleted
+            else "团队解散清理未完成，请查看后端日志确认原因。"
+        )
+        await WebSocketGatewayPushTransport().send_push(
+            build_server_push_message(
+                session_id=session_id,
+                request_id=request_id,
+                fallback_channel_id=channel_id,
+                payload={
+                    "event_type": "chat.final",
+                    "request_id": request_id,
+                    "session_id": session_id,
+                    "content": content,
+                },
+            )
+        )
+    except Exception as exc:
+        logger.warning(
+            "[RemoteMemberBootstrap] shutdown cleanup notice push failed "
+            "session_id=%s error=%s",
+            session_id,
+            exc,
+        )
+
+
+async def run_pending_shutdown_cleanup_for_session(
+    session_id: str,
+    channel_id: str | None = None,
+) -> bool:
+    """Delete a distributed team session after all teammates have been asked to shut down."""
+    sid = str(session_id or "").strip()
+    if not sid:
+        return False
+    active_channel_id = channel_id
+    try:
+        from jiuwenswarm.agents.harness.team import get_team_manager
+
+        manager = get_team_manager(active_channel_id)
+        deleted = await manager.delete_session_runtime(sid, reason="team.shutdown_all_members: ")
+        logger.info(
+            "[RemoteMemberBootstrap] post-stream shutdown cleanup finished "
+            "session_id=%s deleted=%s",
+            sid,
+            deleted,
+        )
+        await _push_shutdown_cleanup_notice(
+            session_id=sid,
+            channel_id=active_channel_id,
+            deleted=bool(deleted),
+        )
+        return bool(deleted)
+    except Exception as exc:
+        logger.warning(
+            "[RemoteMemberBootstrap] post-stream shutdown cleanup failed session_id=%s error=%s",
+            sid,
+            exc,
+        )
+        await _push_shutdown_cleanup_notice(
+            session_id=sid,
+            channel_id=active_channel_id,
+            deleted=False,
+        )
+        return False
+
+
+def attach_shutdown_member_remote_cleanup_wrapper(
     team_agent: Any,
     *,
     session_id: str,
     channel_id: str | None,
 ) -> None:
-    """Monkey-patch clean_team so remote teammates return to the blank registry pool."""
+    """Delete a distributed team session after every teammate has been shut down."""
     from jiuwenswarm.common.config import get_config as _get_config
 
     config_base = _get_config()
     if not _is_distributed_leader_runtime(config_base):
-        logger.debug("[RemoteMemberBootstrap] non-distributed leader runtime; skip clean_team wrapper")
+        logger.debug("[RemoteMemberBootstrap] non-distributed leader runtime; skip shutdown cleanup wrapper")
         return
 
     from openjiuwen.agent_teams.schema.team import TeamRole
@@ -985,29 +1179,30 @@ def attach_clean_team_remote_destroy_wrapper(
         return
     leader = _team_agent_deep_agent(team_agent)
     if leader is None:
-        logger.debug("[RemoteMemberBootstrap] skip clean_team wrapper: missing leader DeepAgent")
+        logger.debug("[RemoteMemberBootstrap] skip shutdown cleanup wrapper: missing leader DeepAgent")
         return
 
-    tool_id = _team_tool_id(leader, "clean_team")
+    tool_id = _team_tool_id(leader, "shutdown_member")
     tag = getattr(getattr(leader, "card", None), "id", None)
     tool = Runner.resource_mgr.get_tool(tool_id, tag=tag) if tag else None
     if tool is None:
         tool = Runner.resource_mgr.get_tool(tool_id)
     if tool is None:
         logger.debug(
-            "[RemoteMemberBootstrap] tool %s not in Runner.resource_mgr (session_id=%s channel=%s)",
+            "[RemoteMemberBootstrap] tool %s not in Runner.resource_mgr; skip shutdown cleanup wrapper "
+            "session_id=%s channel=%s",
             tool_id,
             session_id,
             channel_id,
         )
         return
 
-    setattr(tool, _CLEAN_TEAM_TEAM_AGENT_ATTR, team_agent)
-    setattr(tool, _CLEAN_TEAM_SESSION_ID_ATTR, session_id)
-    setattr(tool, _CLEAN_TEAM_CHANNEL_ID_ATTR, channel_id)
-    if getattr(tool, _CLEAN_TEAM_WRAPPED_ATTR, False):
+    setattr(tool, _SHUTDOWN_CLEANUP_SESSION_ID_ATTR, session_id)
+    setattr(tool, _SHUTDOWN_CLEANUP_CHANNEL_ID_ATTR, channel_id)
+    setattr(tool, _WRAPPED_TEAM_AGENT_ATTR, team_agent)
+    if getattr(tool, _SHUTDOWN_CLEANUP_WRAPPED_ATTR, False):
         logger.info(
-            "[RemoteMemberBootstrap] rebound clean_team wrapper tool_id=%s session_id=%s channel=%s",
+            "[RemoteMemberBootstrap] rebound shutdown cleanup wrapper tool_id=%s session_id=%s channel=%s",
             tool_id,
             session_id,
             channel_id,
@@ -1021,27 +1216,32 @@ def attach_clean_team_remote_destroy_wrapper(
         try:
             if not bool(getattr(result, "success", False)):
                 return result
-            active_team_agent = getattr(self, _CLEAN_TEAM_TEAM_AGENT_ATTR, team_agent)
+            active_team_agent = getattr(self, _WRAPPED_TEAM_AGENT_ATTR, team_agent)
+            if not await _all_teammates_shutdown_requested_or_done(active_team_agent):
+                return result
             active_session_id = str(
-                getattr(self, _CLEAN_TEAM_SESSION_ID_ATTR, session_id) or session_id
+                getattr(self, _SHUTDOWN_CLEANUP_SESSION_ID_ATTR, session_id) or session_id
             ).strip() or session_id
-            await release_a2x_reservations_for_team(active_team_agent)
+            active_channel_id = getattr(self, _SHUTDOWN_CLEANUP_CHANNEL_ID_ATTR, channel_id)
             logger.info(
-                "[RemoteMemberBootstrap] clean_team released remote teammate reservations "
+                "[RemoteMemberBootstrap] all teammates are shutdown-requested; scheduling team cleanup "
                 "session_id=%s channel=%s",
                 active_session_id,
-                getattr(self, _CLEAN_TEAM_CHANNEL_ID_ATTR, channel_id),
+                active_channel_id,
             )
+            _schedule_shutdown_cleanup(active_session_id, active_channel_id)
         except Exception as exc:
-            logger.warning(
-                "[RemoteMemberBootstrap] clean_team remote reservation release failed: %s",
-                exc,
-            )
+            logger.warning("[RemoteMemberBootstrap] shutdown cleanup hook failed: %s", exc)
         return result
 
     tool.invoke = types.MethodType(wrapped_invoke, tool)
-    setattr(tool, _CLEAN_TEAM_WRAPPED_ATTR, True)
-    logger.info("[RemoteMemberBootstrap] attached clean_team wrapper tool_id=%s", tool_id)
+    setattr(tool, _SHUTDOWN_CLEANUP_WRAPPED_ATTR, True)
+    logger.info(
+        "[RemoteMemberBootstrap] attached shutdown cleanup wrapper tool_id=%s session_id=%s channel=%s",
+        tool_id,
+        session_id,
+        channel_id,
+    )
 
 
 def attach_distributed_local_spawn_guard(

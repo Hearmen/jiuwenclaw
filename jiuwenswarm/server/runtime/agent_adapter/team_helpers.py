@@ -559,6 +559,18 @@ async def process_team_message_stream(
 
     team_manager = get_team_manager(channel_id)
     query = inputs.get("query", "")
+    try:
+        from jiuwenswarm.agents.harness.team.remote_member_bootstrap import (
+            wait_for_pending_shutdown_cleanup_for_session,
+        )
+
+        await wait_for_pending_shutdown_cleanup_for_session(session_id)
+    except Exception as exc:
+        logger.warning(
+            "[TeamHelpers] waiting for pending shutdown cleanup failed: session_id=%s error=%s",
+            session_id,
+            exc,
+        )
     is_first_request = not team_manager.has_stream_task(session_id)
     request_queue: asyncio.Queue | None = None
 

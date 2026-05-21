@@ -56,7 +56,7 @@ from jiuwenswarm.agents.harness.team.distributed_runtime import (
     try_start_pg_cluster,
 )
 from jiuwenswarm.agents.harness.team.monitor_handler import TeamMonitorHandler
-from jiuwenswarm.agents.harness.team.remote_member_bootstrap import release_a2x_reservations_for_team
+from jiuwenswarm.agents.harness.team.remote_member_bootstrap import release_a2x_reservations_for_session
 from jiuwenswarm.common.config import get_config, get_default_models
 from jiuwenswarm.agents.harness.team.team_runtime_inheritance import (
     MemberInfo,
@@ -119,7 +119,8 @@ class TeamRailMountContext:
 
 async def _stop_team_messager(team_agent: Any, *, session_id: str) -> None:
     """Stop a team's mailbox transport so per-team ZMQ sockets release their ports."""
-    messager = getattr(team_agent, "_messager", None) or getattr(team_agent, "mailbox_transport", None)
+    infra = getattr(team_agent, "infra", None)
+    messager = getattr(infra, "messager", None) if infra is not None else None
     stop = getattr(messager, "stop", None)
     if not callable(stop):
         return
@@ -147,6 +148,7 @@ class TeamManager:
 
     def __init__(self):
         self._team_agents: dict[str, TeamAgent] = {}
+        self._runner_team_agents: dict[str, TeamAgent] = {}
         self._team_monitors: dict[str, TeamMonitorHandler] = {}
         self._stream_tasks: dict[str, asyncio.Task] = {}
         self._lock = asyncio.Lock()
@@ -1013,10 +1015,10 @@ class TeamManager:
             if self._is_distributed_mode(config_base):
                 try:
                     from jiuwenswarm.agents.harness.team.remote_member_bootstrap import (
-                        attach_clean_team_remote_destroy_wrapper,
                         attach_distributed_local_spawn_guard,
                         attach_remote_bootstrap_ack_listener,
                         attach_remote_teammate_bootstrap_listener,
+                        attach_shutdown_member_remote_cleanup_wrapper,
                         attach_spawn_member_remote_bootstrap_wrapper,
                     )
 
@@ -1030,7 +1032,7 @@ class TeamManager:
                         session_id=session_id,
                         channel_id=channel_id,
                     )
-                    attach_clean_team_remote_destroy_wrapper(
+                    attach_shutdown_member_remote_cleanup_wrapper(
                         team_agent,
                         session_id=session_id,
                         channel_id=channel_id,
@@ -1340,7 +1342,7 @@ class TeamManager:
                 try:
                     cleaned = await team_agent.destroy_team(force=True)
                 finally:
-                    await release_a2x_reservations_for_team(team_agent)
+                    await release_a2x_reservations_for_session(session_id, team_agent=team_agent)
                     await _stop_team_messager(team_agent, session_id=session_id)
             finally:
                 reset_session_id(token)
@@ -1436,12 +1438,14 @@ class TeamManager:
             )
             return False
 
+        self._runner_team_agents[session_id] = team_agent
+
         try:
             from jiuwenswarm.agents.harness.team.remote_member_bootstrap import (
-                attach_clean_team_remote_destroy_wrapper,
                 attach_distributed_local_spawn_guard,
                 attach_remote_bootstrap_ack_listener,
                 attach_remote_teammate_bootstrap_listener,
+                attach_shutdown_member_remote_cleanup_wrapper,
                 attach_spawn_member_remote_bootstrap_wrapper,
             )
 
@@ -1455,7 +1459,7 @@ class TeamManager:
                 session_id=session_id,
                 channel_id=channel_id,
             )
-            attach_clean_team_remote_destroy_wrapper(
+            attach_shutdown_member_remote_cleanup_wrapper(
                 team_agent,
                 session_id=session_id,
                 channel_id=channel_id,
@@ -1507,7 +1511,7 @@ class TeamManager:
                 )
 
         try:
-            await release_a2x_reservations_for_team(team_agent)
+            await release_a2x_reservations_for_session(session_id, team_agent=team_agent)
         except Exception as exc:
             logger.warning(
                 "[TeamManager] release A2X reservations failed: session_id=%s error=%s",
@@ -1523,6 +1527,35 @@ class TeamManager:
                 exc,
             )
         return stopped
+
+    async def _stop_runner_team_agent_transport(self, session_id: str) -> None:
+        if not self._is_distributed_mode(get_config()):
+            self._runner_team_agents.pop(session_id, None)
+            return
+
+        team_agent = self._runner_team_agents.pop(session_id, None)
+        if team_agent is None:
+            return
+
+        stop_coordination = getattr(team_agent, "stop_coordination", None)
+        if callable(stop_coordination):
+            try:
+                await stop_coordination()
+            except Exception as exc:
+                logger.warning(
+                    "[TeamManager] stop Runner-owned team coordination failed: session_id=%s error=%s",
+                    session_id,
+                    exc,
+                )
+
+        try:
+            await _stop_team_messager(team_agent, session_id=session_id)
+        except Exception as exc:
+            logger.warning(
+                "[TeamManager] stop Runner-owned team messager failed: session_id=%s error=%s",
+                session_id,
+                exc,
+            )
 
     async def _cleanup_runtime_locals(self, session_id: str) -> None:
         watcher_task = self._team_evolution_watchers.pop(session_id, None)
@@ -1701,6 +1734,7 @@ class TeamManager:
             has_local_team_runtime = self._has_local_team_runtime(session_id)
             has_team_runtime = (
                 has_local_team_runtime
+                or session_id in self._runner_team_agents
                 or session_id in self._team_monitors
                 or self._active_session_id == session_id
                 or self._pending_session_id == session_id
@@ -1733,6 +1767,17 @@ class TeamManager:
                         team_name,
                         exc,
                     )
+            if not has_local_team_runtime:
+                try:
+                    team_agent = self._runner_team_agents.get(session_id)
+                    await release_a2x_reservations_for_session(session_id, team_agent=team_agent)
+                except Exception as exc:
+                    logger.warning(
+                        "[TeamManager] release A2X reservations failed: session_id=%s error=%s",
+                        session_id,
+                        exc,
+                    )
+                await self._stop_runner_team_agent_transport(session_id)
 
             self.clear_active_runtime(session_id)
             self.clear_pending_runtime(session_id)

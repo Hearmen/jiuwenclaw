@@ -415,8 +415,8 @@ async def test_destroy_team_cleans_registered_evolution_rails(
     agent = _FakeAgent()
 
     monkeypatch.setattr(
-        "jiuwenswarm.agents.harness.team.team_manager.release_a2x_reservations_for_team",
-        lambda team_agent: None,
+        "jiuwenswarm.agents.harness.team.team_manager.release_a2x_reservations_for_session",
+        lambda session_id, *, team_agent=None: None,
     )
     manager.register_team_skill_rail("sess-1", rail)
     manager.register_team_member_skill_evolution_rail("sess-1", rail)
@@ -442,7 +442,11 @@ async def test_team_manager_keeps_single_session_per_channel(monkeypatch: pytest
     class _FakeTeamAgent:
         def __init__(self, session_id: str) -> None:
             self.session_id = session_id
-            self._messager = self._FakeMessager(session_id)
+            self.infra = type(
+                "FakeInfra",
+                (),
+                {"messager": self._FakeMessager(session_id)},
+            )()
 
         class _FakeMessager:
             def __init__(self, session_id: str) -> None:
