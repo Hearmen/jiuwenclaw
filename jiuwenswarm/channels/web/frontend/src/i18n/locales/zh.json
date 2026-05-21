@@ -143,6 +143,7 @@
     "stageFailed": "失败",
     "stageRunning": "执行中",
     "stagePending": "等待中",
+    "stageMessage": "消息",
     "inputPlaceholder": "输入优化目标...",
     "stages": {
       "assess": "评估当前状态",
@@ -164,9 +165,6 @@
     "status": "状态",
     "contextCompression": "上下文窗口",
     "memoryUsage": "内存占用",
-    "message": "消息",
-    "time": "时间",
-    "heartbeatClick": "心跳消息，点击查看",
     "poweredBy": "Powered by openJiuwen",
     "noExtension": "暂无扩展文件",
     "refreshFiles": "刷新",

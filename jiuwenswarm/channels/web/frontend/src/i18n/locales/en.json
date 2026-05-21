@@ -143,6 +143,7 @@
     "stageFailed": "Failed",
     "stageRunning": "Running",
     "stagePending": "Pending",
+    "stageMessage": "Message",
     "inputPlaceholder": "Enter optimization goal...",
     "stages": {
       "assess": "Assess",
@@ -164,9 +165,6 @@
     "status": "Status",
     "contextCompression": "Context window",
     "memoryUsage": "Memory usage",
-    "message": "Message",
-    "time": "Time",
-    "heartbeatClick": "Heartbeat message, click to view",
     "poweredBy": "Powered by openJiuwen",
     "noExtension": "No extension files available",
     "refreshFiles": "Refresh",
