@@ -61,7 +61,7 @@ class SecuritySignalClassifier:
         lowered = text.lower()
         if re.search(
             r"\b(do not|don't|never|avoid|refuse|cannot|can't)\b.{0,40}"
-            r"\b(run|execute|use this command)\b",
+            r"(?:\b(run|execute|use this command)\b|\bcommand:)",
             lowered,
         ):
             return []
