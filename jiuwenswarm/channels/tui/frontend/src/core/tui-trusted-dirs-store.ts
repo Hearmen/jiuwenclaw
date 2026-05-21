@@ -86,6 +86,7 @@ function persist(): void {
  * Defaults to process.cwd() but can be overridden.
  */
 let _currentProjectDir: string | null = null;
+let _currentCwd: string | null = null;
 
 /**
  * Override the project directory used for scoping trusted dirs.
@@ -101,6 +102,23 @@ export function setCurrentProjectDir(dir: string): void {
  * Get the current project scope directory (absolute path).
  */
 export function getCurrentProjectDir(): string {
+  return getProjectKey();
+}
+
+/**
+ * Override the dynamic cwd sent with each request.
+ */
+export function setCurrentCwd(dir: string): void {
+  _currentCwd = normalizePath(dir);
+}
+
+/**
+ * Get the dynamic cwd for runtime execution.
+ */
+export function getCurrentCwd(): string {
+  if (_currentCwd) {
+    return _currentCwd;
+  }
   return getProjectKey();
 }
 
@@ -122,7 +140,17 @@ function getProjectKey(): string {
 export function getTrustedDirs(): string[] {
   ensureLoaded();
   const key = getProjectKey();
-  return [...(_trustedDirsByProject![key] || [])];
+  const projectDirs = _trustedDirsByProject![key] || [];
+  const validDirs = projectDirs.filter((dir) => validateDirPath(dir) === "valid");
+  if (validDirs.length !== projectDirs.length) {
+    if (validDirs.length > 0) {
+      _trustedDirsByProject![key] = validDirs;
+    } else {
+      delete _trustedDirsByProject![key];
+    }
+    persist();
+  }
+  return [...validDirs];
 }
 
 /**

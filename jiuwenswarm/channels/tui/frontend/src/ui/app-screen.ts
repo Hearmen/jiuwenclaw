@@ -43,7 +43,15 @@ import type { ConfigItemSchema } from "../core/commands/builtins/config.js";
 import type { McpListItem, McpListPayload } from "../core/commands/builtins/mcp.js";
 import { buildModeAutocompleteItems } from "../core/commands/builtins/mode.js";
 import { isTeamMode } from "../core/modes.js";
-import { addTrustedDir, getTrustedDirs, isTrustedDir, setCurrentProjectDir } from "../core/tui-trusted-dirs-store.js";
+import {
+  addTrustedDir,
+  getCurrentCwd,
+  getCurrentProjectDir,
+  getTrustedDirs,
+  isTrustedDir,
+  setCurrentCwd,
+  setCurrentProjectDir,
+} from "../core/tui-trusted-dirs-store.js";
 import { handleAppScreenKeyInput } from "./keymap.js";
 import { buildAppScreenLines } from "./screen-layout.js";
 import {
@@ -552,6 +560,7 @@ export class AppScreen implements Component, Focusable {
     this.state.getInputValueRef(() => this.editor.getText());
     // Initialize project scope from the user's actual cwd
     setCurrentProjectDir(process.cwd());
+    setCurrentCwd(process.cwd());
     // Initialize startup prompt for workspace trust
     this.initStartupPrompt();
   }
@@ -2698,7 +2707,7 @@ export class AppScreen implements Component, Focusable {
   }
 
   private collectComposerAttachments(text: string): FileAttachment[] {
-    const cwd = getTrustedDirs()[0] || process.cwd();
+    const cwd = getCurrentCwd() || process.cwd();
     return extractAttachmentsFromText(text, {
       cwd,
       classifyAttachment: (path) => (this.isAcceptedAttachment(path) ? (isImageAttachment(path) ? "image" : "file") : null),
@@ -2938,7 +2947,7 @@ export class AppScreen implements Component, Focusable {
       new CombinedAutocompleteProvider(
         // Skill shorthands come last so they appear at the bottom of the dropdown.
         [...this.buildSlashCommands(), ...skillCommands],
-        getTrustedDirs()[0] || process.cwd(),
+        getCurrentCwd() || process.cwd(),
         resolveFdBinary(),
       ),
     );

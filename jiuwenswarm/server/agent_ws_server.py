@@ -111,6 +111,34 @@ def _is_restorable_history_record(record: Any) -> bool:
     return event_type in _HISTORY_RESTORABLE_ASSISTANT_EVENT_TYPES
 
 
+def resolve_request_project_dir(request: AgentRequest) -> str | None:
+    """Resolve the stable project identity for agent construction.
+
+    New clients send ``project_dir`` separately from dynamic ``cwd``. Keep
+    legacy fallbacks for older clients that only send cwd/trusted_dirs.
+    """
+    params = request.params or {}
+    project_dir = params.get("project_dir")
+    if isinstance(project_dir, str) and project_dir.strip():
+        return project_dir.strip()
+    metadata = request.metadata or {}
+    metadata_project_dir = metadata.get("project_dir") if isinstance(metadata, dict) else None
+    if isinstance(metadata_project_dir, str) and metadata_project_dir.strip():
+        return metadata_project_dir.strip()
+    cwd = params.get("cwd")
+    if isinstance(cwd, str) and cwd.strip():
+        return cwd.strip()
+    metadata_cwd = metadata.get("cwd") if isinstance(metadata, dict) else None
+    if isinstance(metadata_cwd, str) and metadata_cwd.strip():
+        return metadata_cwd.strip()
+    trusted_dirs = params.get("trusted_dirs")
+    if isinstance(trusted_dirs, list) and trusted_dirs:
+        first = trusted_dirs[0]
+        if isinstance(first, str) and first.strip():
+            return first.strip()
+    return None
+
+
 def resolve_agent_request_mode(raw_mode: Any) -> tuple[str, str | None, str]:
     """Resolve request params.mode into manager mode, sub_mode, and canonical value."""
     raw_value = getattr(raw_mode, "value", raw_mode)
@@ -949,17 +977,23 @@ class AgentWebSocketServer:
         channel_id = request.channel_id or "default"
 
         # 1. 尝试按 params 中的 mode 查找已有 agent
+        project_dir = resolve_request_project_dir(request)
         mode_param = request.params.get("mode", "")
         if mode_param:
             mode, sub_mode, _canonical = resolve_agent_request_mode(mode_param)
             agent_mode = "agent" if mode == "auto_harness" else mode
-            agent = self._agent_manager.agents.get(channel_id, {}).get(agent_mode)
+            agent = self._agent_manager.get_agent_nowait(
+                channel_id,
+                mode=agent_mode,
+                project_dir=project_dir,
+                sub_mode=sub_mode,
+            )
         else:
             agent = None
 
         # 2. 如果按 mode 没找到，用 get_agent_nowait 找任何已有 agent
         if agent is None:
-            agent = self._agent_manager.get_agent_nowait(channel_id)
+            agent = self._agent_manager.get_agent_nowait(channel_id, project_dir=project_dir)
 
         # 3. 仍然没找到时 fallback 到 get_agent（异常场景）
         if agent is None:
@@ -969,11 +1003,10 @@ class AgentWebSocketServer:
             )
             mode, sub_mode = _apply_resolved_mode_to_request(request)
             agent_mode = "agent" if mode == "auto_harness" else mode
-            trusted_dirs = request.params.get("trusted_dirs", None)
             agent = await self._agent_manager.get_agent(
                 channel_id=channel_id,
                 mode=agent_mode,
-                project_dir=trusted_dirs[0] if trusted_dirs else None,
+                project_dir=project_dir,
                 sub_mode=sub_mode,
             )
 
@@ -1009,11 +1042,10 @@ class AgentWebSocketServer:
 
         mode, sub_mode = _apply_resolved_mode_to_request(request)
         agent_mode = "agent" if mode == "auto_harness" else mode
-        trusted_dirs = request.params.get("trusted_dirs", None)
         agent = await self._agent_manager.get_agent(
             channel_id=channel_id,
             mode=agent_mode,
-            project_dir=trusted_dirs[0] if trusted_dirs else None,
+            project_dir=resolve_request_project_dir(request),
             sub_mode=sub_mode,
         )
         if agent is None:
@@ -1049,11 +1081,10 @@ class AgentWebSocketServer:
             self._session_stream_tasks[session_id] = current_task
         mode, sub_mode = _apply_resolved_mode_to_request(request)
         agent_mode = "agent" if mode == "auto_harness" else mode
-        trusted_dirs = request.params.get("trusted_dirs", None)
         agent = await self._agent_manager.get_agent(
             channel_id=channel_id,
             mode=agent_mode,
-            project_dir=trusted_dirs[0] if trusted_dirs else None,
+            project_dir=resolve_request_project_dir(request),
             sub_mode=sub_mode,
         )
         if agent is None:
@@ -1898,11 +1929,13 @@ class AgentWebSocketServer:
             params = request.params or {}
 
             channel_id = request.channel_id or "default"
-            mode, _, _ = resolve_agent_request_mode(params.get("mode", "agent.plan"))
+            mode, sub_mode, _ = resolve_agent_request_mode(params.get("mode", "agent.plan"))
+            agent_mode = "agent" if mode == "auto_harness" else mode
             agent = await self._agent_manager.get_agent(
                 channel_id=channel_id,
-                mode=mode,
-                project_dir=params.get("project_dir", None)
+                mode=agent_mode,
+                project_dir=resolve_request_project_dir(request),
+                sub_mode=sub_mode,
             )
 
             if agent is None:
@@ -1959,11 +1992,13 @@ class AgentWebSocketServer:
             params = request.params or {}
 
             channel_id = request.channel_id or "default"
-            mode, _, _ = resolve_agent_request_mode(params.get("mode", "agent.plan"))
+            mode, sub_mode, _ = resolve_agent_request_mode(params.get("mode", "agent.plan"))
+            agent_mode = "agent" if mode == "auto_harness" else mode
             agent = await self._agent_manager.get_agent(
                 channel_id=channel_id,
-                mode=mode,
-                project_dir=params.get("project_dir", None)
+                mode=agent_mode,
+                project_dir=resolve_request_project_dir(request),
+                sub_mode=sub_mode,
             )
 
             if agent is None:
@@ -1995,12 +2030,14 @@ class AgentWebSocketServer:
             session_id = request.session_id or "default"
             params = request.params or {}
             channel_id = request.channel_id or "default"
-            mode, _, _ = resolve_agent_request_mode(params.get("mode", "agent.plan"))
+            mode, sub_mode, _ = resolve_agent_request_mode(params.get("mode", "agent.plan"))
+            agent_mode = "agent" if mode == "auto_harness" else mode
 
             agent = await self._agent_manager.get_agent(
                 channel_id=channel_id,
-                mode=mode,
-                project_dir=params.get("project_dir", None),
+                mode=agent_mode,
+                project_dir=resolve_request_project_dir(request),
+                sub_mode=sub_mode,
             )
 
             if agent is None:
@@ -3067,15 +3104,10 @@ class AgentWebSocketServer:
 
         Lookup order, falling through on empty/missing:
 
-        1. ``params["trusted_dirs"][0]`` -- freshest, includes any
-           ``/workspace add`` the user did *after* the agent was created.
-        2. ``params["cwd"]`` -- TUI's own ``process.cwd()``, sent on every
-           request. This is the user's launch directory and matches what
-           they mean by "current directory" when ``trusted_dirs`` is empty.
-        3. ``adapter._project_dir``.
-        4. ``adapter._instance_overrides["project_dir"]`` (populated from
-           ``trusted_dirs[0]`` when :meth:`AgentManager.get_agent` created
-           the agent).
+        1. ``params["project_dir"]`` -- stable client project identity.
+        2. ``adapter._project_dir`` / ``adapter._instance_overrides``.
+        3. ``params["cwd"]`` -- legacy/dynamic fallback.
+        4. ``params["trusted_dirs"][0]`` -- final compatibility fallback.
 
         Returns ``None`` only when none of the above yield a usable path; we
         deliberately do NOT fall back to ``Path.cwd()`` of the agent-server
@@ -3083,14 +3115,9 @@ class AgentWebSocketServer:
         mislabel the displayed ``files.allow_write`` entry.
         """
         if isinstance(params, dict):
-            trusted_dirs = params.get("trusted_dirs")
-            if isinstance(trusted_dirs, (list, tuple)) and trusted_dirs:
-                first = str(trusted_dirs[0]).strip()
-                if first:
-                    return first
-            cwd_value = params.get("cwd")
-            if isinstance(cwd_value, str) and cwd_value.strip():
-                return cwd_value.strip()
+            project_dir = params.get("project_dir")
+            if isinstance(project_dir, str) and project_dir.strip():
+                return project_dir.strip()
         try:
             agent = self._agent_manager.get_agent_nowait(channel_id)
         except Exception as exc:  # noqa: BLE001
@@ -3107,6 +3134,15 @@ class AgentWebSocketServer:
             value = overrides.get("project_dir")
             if value:
                 return str(value)
+        if isinstance(params, dict):
+            cwd_value = params.get("cwd")
+            if isinstance(cwd_value, str) and cwd_value.strip():
+                return cwd_value.strip()
+            trusted_dirs = params.get("trusted_dirs")
+            if isinstance(trusted_dirs, (list, tuple)) and trusted_dirs:
+                first = str(trusted_dirs[0]).strip()
+                if first:
+                    return first
         return None
 
     def _attach_effective_sandbox_files(
@@ -4133,7 +4169,11 @@ class AgentWebSocketServer:
         try:
             # Get or create the agent instance (auto-create if not exists)
             channel_id = request.channel_id or "default"
-            agent = await self._agent_manager.get_agent(channel_id=channel_id, mode="agent")
+            agent = await self._agent_manager.get_agent(
+                channel_id=channel_id,
+                mode="agent",
+                project_dir=resolve_request_project_dir(request),
+            )
             agent_instance = None
             if agent is not None:
                 agent_instance = agent.get_instance()
@@ -4324,8 +4364,9 @@ class AgentWebSocketServer:
             needs_agent = action in ("create", "run", "cancel", "delete")
             if needs_agent:
                 agent = await self._agent_manager.get_agent(
-                    channel_id="web",
+                    channel_id=request.channel_id or "web",
                     mode="agent",
+                    project_dir=resolve_request_project_dir(request),
                 )
                 if agent is None:
                     raise ValueError("Failed to get agent for schedule request")

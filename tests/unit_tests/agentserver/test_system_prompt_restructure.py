@@ -61,6 +61,31 @@ async def test_runtime_time_section_participates_in_priority_order():
     assert "当前模型" in prompt
 
 
+@pytest.mark.asyncio
+async def test_runtime_prompt_uses_runtime_cwd_over_stale_trusted_dir(tmp_path):
+    builder = SystemPromptBuilder(language="en")
+    stale_dir = tmp_path / "missing-worktree"
+    project_dir = tmp_path / "project"
+    current_dir = project_dir / "current"
+    extra_dir = tmp_path / "extra"
+    current_dir.mkdir(parents=True)
+    extra_dir.mkdir()
+
+    runtime_rail = RuntimePromptRail(language="en", channel="tui")
+    runtime_rail.init(SimpleNamespace(system_prompt_builder=builder))
+    runtime_rail.set_trusted_dirs([str(stale_dir), str(current_dir), str(extra_dir)])
+    runtime_rail.set_runtime_paths(cwd=str(current_dir), project_dir=str(project_dir))
+
+    ctx = AgentCallbackContext(agent=None, inputs=None, session=None)
+    await runtime_rail.before_model_call(ctx)
+
+    prompt = builder.build()
+    assert "Current project directory" in prompt
+    assert str(current_dir) in prompt
+    assert str(stale_dir) not in prompt
+    assert str(extra_dir) in prompt
+
+
 def test_resolve_skill_mode_accepts_all_and_auto_list():
     assert JiuWenClawDeepAdapter._resolve_skill_mode({"skill_mode": "all"}) == "all"
     assert JiuWenClawDeepAdapter._resolve_skill_mode({"skill_mode": "auto_list"}) == "auto_list"

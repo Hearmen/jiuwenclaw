@@ -8,6 +8,7 @@ sees the current values without needing to call any tool.
 """
 from __future__ import annotations
 
+import os
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
@@ -40,6 +41,8 @@ class RuntimePromptRail(DeepAgentRail):
         self._channel = channel
         self._tz = timezone(timedelta(hours=timezone_offset))
         self._trusted_dirs: list[str] | None = None
+        self._cwd: str | None = None
+        self._project_dir: str | None = None
         self._model_name: str = ""
         self._mode: str = ""
 
@@ -68,6 +71,15 @@ class RuntimePromptRail(DeepAgentRail):
         """per-request 更新可信目录。"""
         self._trusted_dirs = trusted_dirs
 
+    def set_runtime_paths(self, *, cwd: str | None = None, project_dir: str | None = None) -> None:
+        """Per-request stable project identity and dynamic cwd."""
+        self._cwd = cwd.strip() if isinstance(cwd, str) and cwd.strip() else None
+        self._project_dir = (
+            project_dir.strip()
+            if isinstance(project_dir, str) and project_dir.strip()
+            else None
+        )
+
     def set_model_name(self, model_name: str) -> None:
         """per-request 更新模型名称，作为文件读取失败时的兜底。"""
         self._model_name = model_name or ""
@@ -75,6 +87,33 @@ class RuntimePromptRail(DeepAgentRail):
     def set_mode(self, mode: str) -> None:
         """per-request 更新运行模式，作为文件读取失败时的兜底。"""
         self._mode = mode or ""
+
+    @staticmethod
+    def _existing_dirs(paths: list[str] | None) -> list[str]:
+        """Return normalized existing directories, preserving order."""
+        result: list[str] = []
+        seen: set[str] = set()
+        for item in paths or []:
+            if not isinstance(item, str) or not item.strip():
+                continue
+            path = os.path.abspath(os.path.expanduser(item.strip()))
+            key = os.path.normcase(path)
+            if key in seen or not os.path.isdir(path):
+                continue
+            seen.add(key)
+            result.append(path)
+        return result
+
+    @staticmethod
+    def _existing_dir(path: str | None) -> str | None:
+        if not isinstance(path, str) or not path.strip():
+            return None
+        resolved = os.path.abspath(os.path.expanduser(path.strip()))
+        return resolved if os.path.isdir(resolved) else None
+
+    @staticmethod
+    def _same_path(left: str, right: str) -> bool:
+        return os.path.normcase(os.path.abspath(left)) == os.path.normcase(os.path.abspath(right))
 
     async def before_model_call(self, ctx: AgentCallbackContext) -> None:
         if not self.system_prompt_builder:
@@ -171,10 +210,19 @@ class RuntimePromptRail(DeepAgentRail):
 
         if self._channel == "tui":
             # Trusted directories policy for TUI mode
-            if self._trusted_dirs and len(self._trusted_dirs) > 0:
+            trusted_dirs = self._existing_dirs(self._trusted_dirs)
+            current_dir = (
+                self._existing_dir(self._cwd)
+                or self._existing_dir(self._project_dir)
+                or (trusted_dirs[0] if trusted_dirs else None)
+            )
+            if current_dir:
                 workspace_dir = str(get_agent_workspace_dir())
-                project_dir = self._trusted_dirs[0]
-                other_dirs = self._trusted_dirs[1:]
+                project_dir = current_dir
+                other_dirs = [
+                    path for path in trusted_dirs
+                    if not self._same_path(path, project_dir)
+                ]
                 other_dirs_display = ", ".join(other_dirs) if other_dirs else "无"
                 if self._language == "cn":
                     trusted_dirs_content = (

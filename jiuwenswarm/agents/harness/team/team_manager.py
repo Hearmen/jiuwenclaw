@@ -718,14 +718,39 @@ class TeamManager:
                 member_name,
                 role,
             )
-            agent_ws = agent.deep_config.workspace if agent.deep_config else None
+            member_deep_config = getattr(agent, "deep_config", None)
+            agent_ws = (
+                getattr(member_deep_config, "workspace", None)
+                if member_deep_config
+                else None
+            )
             if agent_ws:
-                logger.debug("[TeamManager] member workspace.root_path=%s", agent_ws.root_path)
+                logger.debug(
+                    "[TeamManager] member workspace.root_path=%s",
+                    getattr(agent_ws, "root_path", None),
+                )
             else:
                 logger.warning("[TeamManager] agent deep_config.workspace is None")
             parent_adapter_mode = str(
                 getattr(deep_agent, "_jiuwenswarm_adapter_mode", "") or ""
             ).lower()
+            parent_deep_config = getattr(deep_agent, "deep_config", None)
+            parent_workspace = (
+                getattr(parent_deep_config, "workspace", None)
+                if parent_deep_config
+                else None
+            )
+            parent_project_dir = (
+                str(getattr(deep_agent, "_jiuwenswarm_project_dir", "") or "")
+                or str(getattr(deep_agent, "_jiuwenswarm_code_project_dir", "") or "")
+                or (
+                    str(getattr(parent_workspace, "root_path", ""))
+                    if parent_workspace and getattr(parent_workspace, "root_path", None)
+                    else ""
+                )
+            )
+            if parent_project_dir and member_deep_config is not None:
+                setattr(agent, "_jiuwenswarm_project_dir", parent_project_dir)
 
             inheritable_cards = filter_inheritable_ability_cards(deep_agent)
             existing_ability_ids = {card.id for card in agent.ability_manager.list() or []}
@@ -743,11 +768,12 @@ class TeamManager:
                 len(existing_ability_ids),
             )
 
-            member_workspace = agent.deep_config.workspace if agent.deep_config else None
+            member_workspace = agent_ws
+            member_workspace_root = getattr(member_workspace, "root_path", None)
             member_skills_dir_resolved: Path | None = None
             member_skill_manager: Any | None = None
-            if member_workspace and member_workspace.root_path:
-                member_skills_dir = Path(member_workspace.root_path) / "skills"
+            if member_workspace and member_workspace_root:
+                member_skills_dir = Path(member_workspace_root) / "skills"
                 member_skills_dir_resolved = member_skills_dir
                 skills_configured, selected_skills = resolve_member_skills(member_name, role)
 
@@ -765,7 +791,7 @@ class TeamManager:
                     logger.warning("[TeamManager] skill copy failed: %s", exc)
 
                 try:
-                    member_skill_manager = SkillManager(workspace_dir=str(member_workspace.root_path))
+                    member_skill_manager = SkillManager(workspace_dir=str(member_workspace_root))
                 except Exception as exc:
                     logger.warning("[TeamManager] member SkillManager setup failed: %s", exc)
 
@@ -773,12 +799,12 @@ class TeamManager:
                 try:
                     agent.add_rail(
                         MemberSkillToolkitRail(
-                            workspace_dir=str(member_workspace.root_path),
+                            workspace_dir=str(member_workspace_root),
                         )
                     )
                     logger.info(
                         "[TeamManager] MemberSkillToolkitRail queued for member workspace: %s",
-                        member_workspace.root_path,
+                        member_workspace_root,
                     )
                 except Exception as exc:
                     logger.warning("[TeamManager] MemberSkillToolkitRail setup failed: %s", exc)
@@ -789,9 +815,6 @@ class TeamManager:
                         configure_code_team_member_agent,
                     )
 
-                    parent_workspace = (
-                        deep_agent.deep_config.workspace if deep_agent.deep_config else None
-                    )
                     configure_code_team_member_agent(
                         agent,
                         parent_agent=deep_agent,
@@ -800,11 +823,7 @@ class TeamManager:
                         role=role,
                         session_id=session_id,
                         channel_id=resolved_channel,
-                        project_dir=(
-                            str(parent_workspace.root_path)
-                            if parent_workspace and parent_workspace.root_path
-                            else None
-                        ),
+                        project_dir=parent_project_dir or None,
                     )
                 except Exception as exc:
                     logger.warning(

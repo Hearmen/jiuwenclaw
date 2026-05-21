@@ -2237,17 +2237,31 @@ class MessageHandler(ABC):
                         from jiuwenswarm.common.e2a.gateway_normalize import e2a_from_agent_fields
 
                         agent_msg = await self._prepare_agent_dispatch_message(msg)
+                        source_params = msg.params if isinstance(msg.params, dict) else {}
+                        runtime_params: dict[str, Any] = {}
+                        for key in ("cwd", "trusted_dirs", "mode"):
+                            value = source_params.get(key)
+                            if value:
+                                runtime_params[key] = value
+                        if "cwd" not in runtime_params and isinstance(msg.metadata, dict):
+                            metadata_cwd = msg.metadata.get("cwd")
+                            if isinstance(metadata_cwd, str) and metadata_cwd.strip():
+                                runtime_params["cwd"] = metadata_cwd.strip()
                         # 注入 mode 信息，确保 AgentServer 找到正确的 agent
-                        supplement_params = {"intent": "supplement", "session_id": agent_msg.session_id}
                         sup_state = self._channel_states.get(
                             self._get_channel_state_key(msg.channel_id, msg.session_id)
                         ) or self._channel_states.get(msg.channel_id)
-                        if sup_state is not None:
-                            supplement_params["mode"] = (
+                        if "mode" not in runtime_params and sup_state is not None:
+                            runtime_params["mode"] = (
                                 sup_state.mode.value
                                 if hasattr(sup_state.mode, 'value')
                                 else str(sup_state.mode)
                             )
+                        supplement_params = {
+                            "intent": "supplement",
+                            "session_id": agent_msg.session_id,
+                            **runtime_params,
+                        }
                         supplement_env = e2a_from_agent_fields(
                             request_id=f"supplement_{int(time.time() * 1000):x}",
                             channel_id=msg.channel_id,
@@ -2256,6 +2270,7 @@ class MessageHandler(ABC):
                             params=supplement_params,
                             is_stream=False,
                             timestamp=time.time(),
+                            metadata=msg.metadata,
                         )
                         try:
                             resp = await self._agent_client.send_request(supplement_env)
@@ -2287,6 +2302,7 @@ class MessageHandler(ABC):
                                 "original_request": original_request,
                                 "session_id": msg.session_id,
                                 "is_supplement": True,
+                                **runtime_params,
                                 **(
                                     {"model_name": (msg.params or {}).get("model_name")}
                                     if (msg.params or {}).get("model_name")

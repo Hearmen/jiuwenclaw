@@ -84,6 +84,7 @@ export interface AppEventDelegate {
     requestId?: string,
     at?: string,
   ): void;
+  setCurrentWorkspaceFromTool(path: string): void;
   clearToolExecutionState(): void;
   /** 用户中断：将 running 的工具标为已结束，避免 TUI 继续转圈 */
   markRunningToolsInterrupted(): void;
@@ -154,6 +155,111 @@ function _handleSwitchModeToolResult(
 
   if (newMode && newMode !== existingMode) {
     delegate.setMode(newMode);
+  }
+}
+
+function _getToolResultPayload(payload: Record<string, unknown>): Record<string, unknown> {
+  const nested = payload.tool_result;
+  if (nested && typeof nested === "object" && !Array.isArray(nested)) {
+    return nested as Record<string, unknown>;
+  }
+  return payload;
+}
+
+function _extractPathFromToolResult(
+  payload: Record<string, unknown>,
+  pathKeys: string[],
+): string | null {
+  const toolPayload = _getToolResultPayload(payload);
+  const data = toolPayload.data;
+  if (typeof toolPayload.success === "boolean" && toolPayload.success === false) {
+    return null;
+  }
+  for (const source of [toolPayload, payload]) {
+    for (const key of pathKeys) {
+      const path = source[key];
+      if (typeof path === "string" && path.trim()) {
+        return path.trim();
+      }
+    }
+  }
+  if (data && typeof data === "object" && !Array.isArray(data)) {
+    const record = data as Record<string, unknown>;
+    for (const key of pathKeys) {
+      const path = record[key];
+      if (typeof path === "string" && path.trim()) {
+        return path.trim();
+      }
+    }
+  }
+
+  const resultRaw = toolPayload.result ?? payload.result;
+  if (typeof resultRaw !== "string") {
+    return null;
+  }
+  if (/success\s*=\s*False/.test(resultRaw)) {
+    return null;
+  }
+
+  try {
+    const parsed = JSON.parse(resultRaw);
+    if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+      const parsedData = (parsed as Record<string, unknown>).data;
+      if (parsedData && typeof parsedData === "object" && !Array.isArray(parsedData)) {
+        const record = parsedData as Record<string, unknown>;
+        for (const key of pathKeys) {
+          const path = record[key];
+          if (typeof path === "string" && path.trim()) {
+            return path.trim();
+          }
+        }
+      }
+    }
+  } catch {
+    // ToolOutput is often rendered as a Python repr string.
+  }
+
+  for (const key of pathKeys) {
+    const match = resultRaw.match(new RegExp(`${key}['"]\\s*:\\s*['"]([^'"]+)['"]`));
+    if (match?.[1]?.trim()) {
+      return match[1].trim();
+    }
+  }
+  return null;
+}
+
+function _getToolName(payload: Record<string, unknown>): string {
+  const toolPayload = _getToolResultPayload(payload);
+  return typeof payload.tool_name === "string"
+    ? payload.tool_name
+    : typeof toolPayload.tool_name === "string"
+      ? toolPayload.tool_name
+      : typeof toolPayload.name === "string"
+        ? toolPayload.name
+        : "";
+}
+
+function _handleWorktreeToolResult(
+  delegate: AppEventDelegate,
+  payload: Record<string, unknown>,
+): void {
+  const toolName = _getToolName(payload);
+  if (toolName === "enter_worktree") {
+    const worktreePath = _extractPathFromToolResult(payload, ["worktree_path"]);
+    if (worktreePath) {
+      delegate.setCurrentWorkspaceFromTool(worktreePath);
+    }
+    return;
+  }
+
+  if (toolName === "exit_worktree") {
+    const restorePath = _extractPathFromToolResult(payload, [
+      "original_cwd",
+      "workspace_path",
+    ]);
+    if (restorePath) {
+      delegate.setCurrentWorkspaceFromTool(restorePath);
+    }
   }
 }
 
@@ -789,6 +895,7 @@ export function handleIncomingFrame(delegate: AppEventDelegate, frame: EventFram
         activeSessionId,
         typeof payload.request_id === "string" ? payload.request_id : undefined,
       );
+      _handleWorktreeToolResult(delegate, payload);
       return true;
 
     case "chat.processing_status":

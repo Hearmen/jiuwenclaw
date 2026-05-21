@@ -36,7 +36,7 @@ from openjiuwen.core.sys_operation import (
     SysOperationCard,
     OperationMode,
 )
-from openjiuwen.core.sys_operation.cwd import set_cwd
+from openjiuwen.core.sys_operation.cwd import init_cwd
 from openjiuwen.harness import (
     AudioModelConfig,
     DeepAgent,
@@ -446,6 +446,7 @@ class JiuWenClawDeepAdapter:
 
     def __init__(self) -> None:
         self._instance: DeepAgent | None = None
+        self._project_dir: str | None = None
         self._workspace_dir: str = str(get_agent_workspace_dir())
         self._agent_name: str = "main_agent"
         self._vision_tools_registered: bool = False
@@ -2393,6 +2394,9 @@ class JiuWenClawDeepAdapter:
         self._agent_name = self._instance_overrides.get(
             "agent_name", config.get("agent_name", "main_agent")
         )
+        self._project_dir = self._instance_overrides.get(
+            "project_dir", config.get("project_dir")
+        )
         self._workspace_dir = config.get("workspace_dir", str(get_agent_workspace_dir()))
 
         model = self._create_model(config_base)
@@ -2452,9 +2456,8 @@ class JiuWenClawDeepAdapter:
         )
 
         await self._instance.ensure_initialized()
-        project_dir = self._instance_overrides.get("project_dir")
-        if project_dir:
-            set_cwd(project_dir)
+        self._seed_runtime_cwd(self._project_dir or self._workspace_dir)
+        setattr(self._instance, "_jiuwenswarm_project_dir", self._project_dir or self._workspace_dir)
 
         self._sync_a2x_runtime_state()
         self._registered_mcp_server_ids.clear()
@@ -2933,6 +2936,16 @@ class JiuWenClawDeepAdapter:
         if self._instance.deep_config is not None:
             self._instance.deep_config.language = resolved_language
 
+    def _seed_runtime_cwd(self, cwd: str | None = None) -> None:
+        """Seed Core's CwdState holder from the request/runtime cwd."""
+        workspace_root = str(self._workspace_dir or self._project_dir or os.getcwd())
+        runtime_cwd = str(cwd or "").strip()
+        if not runtime_cwd or not os.path.isdir(runtime_cwd):
+            runtime_cwd = str(self._project_dir or "").strip()
+        if not runtime_cwd or not os.path.isdir(runtime_cwd):
+            runtime_cwd = workspace_root
+        init_cwd(runtime_cwd, workspace=workspace_root)
+
     @dataclass
     class _RuntimeConfig:
         """Per-request runtime config bundle for _update_runtime_config."""
@@ -2943,12 +2956,20 @@ class JiuWenClawDeepAdapter:
         channel_id: str | None = None
         request_metadata: dict[str, Any] | None = None
         trusted_dirs: list[str] | None = None
+        cwd: str | None = None
+        project_dir: str | None = None
 
     async def _update_runtime_config(self, runtime_config: "_RuntimeConfig") -> None:
         """Register per-request tools for current agent execution."""
         if self._instance is None:
             raise RuntimeError("JiuWenClawDeepAdapter 未初始化，请先调用 create_instance()")
 
+        self._seed_runtime_cwd(
+            runtime_config.cwd
+            or runtime_config.project_dir
+            or self._project_dir
+            or self._workspace_dir
+        )
         resolved_language = self._resolve_runtime_language()
         resolved_channel = (
             str(
@@ -2962,6 +2983,10 @@ class JiuWenClawDeepAdapter:
             self._runtime_prompt_rail.set_language(resolved_language)
             self._runtime_prompt_rail.set_channel(resolved_channel)
             self._runtime_prompt_rail.set_trusted_dirs(runtime_config.trusted_dirs)
+            self._runtime_prompt_rail.set_runtime_paths(
+                cwd=runtime_config.cwd,
+                project_dir=runtime_config.project_dir or self._project_dir,
+            )
             self._runtime_prompt_rail.set_model_name(self._resolve_model_name())
             self._runtime_prompt_rail.set_mode(runtime_config.mode)
         self._write_runtime_state(
@@ -4255,6 +4280,8 @@ class JiuWenClawDeepAdapter:
                     channel_id=request.channel_id,
                     request_metadata=request.metadata,
                     trusted_dirs=inputs.get("trusted_dirs"),
+                    cwd=inputs.get("cwd"),
+                    project_dir=inputs.get("project_dir"),
                 )
             )
             result = await Runner.run_agent(agent=self._instance, inputs=inputs)
@@ -4433,6 +4460,8 @@ class JiuWenClawDeepAdapter:
                     channel_id=request.channel_id,
                     request_metadata=request.metadata,
                     trusted_dirs=inputs.get("trusted_dirs"),
+                    cwd=inputs.get("cwd"),
+                    project_dir=inputs.get("project_dir"),
                 )
             )
             if self._stream_event_rail is not None:

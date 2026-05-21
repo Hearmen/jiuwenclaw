@@ -128,7 +128,7 @@ async def test_handle_command_compact_returns_custom_instructions(server, fake_w
 
     mock_agent = MockAgent()
 
-    async def mock_get_agent(channel_id, mode, project_dir=None):
+    async def mock_get_agent(channel_id, mode, project_dir=None, sub_mode=None):
         return mock_agent
 
     async def mock_send_push(msg):

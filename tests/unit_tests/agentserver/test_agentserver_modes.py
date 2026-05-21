@@ -4,7 +4,7 @@ import json
 import pytest
 
 from jiuwenswarm.server import agent_ws_server as agent_ws_server_module
-from jiuwenswarm.common.schema.agent import AgentRequest, AgentResponseChunk
+from jiuwenswarm.common.schema.agent import AgentRequest, AgentResponse, AgentResponseChunk
 
 
 class FakeWebSocket:
@@ -43,6 +43,114 @@ def fake_encode_agent_chunk_for_wire(chunk, response_id, sequence):
 )
 def test_resolve_agent_request_mode_accepts_primary_and_dotted_modes(raw_mode, expected):
     assert agent_ws_server_module.resolve_agent_request_mode(raw_mode) == expected
+
+
+def test_resolve_request_project_dir_uses_metadata_project_dir_for_control_requests():
+    request = AgentRequest(
+        request_id="req-control",
+        channel_id="tui",
+        params={"cwd": "/tmp/current", "trusted_dirs": ["/tmp/trusted"]},
+        metadata={"project_dir": "/tmp/project"},
+    )
+
+    assert agent_ws_server_module.resolve_request_project_dir(request) == "/tmp/project"
+
+
+def test_resolve_request_project_dir_prefers_params_project_dir():
+    request = AgentRequest(
+        request_id="req-chat",
+        channel_id="tui",
+        params={
+            "project_dir": "/tmp/project",
+            "cwd": "/tmp/params",
+            "trusted_dirs": ["/tmp/trusted"],
+        },
+        metadata={"project_dir": "/tmp/metadata-project", "cwd": "/tmp/metadata"},
+    )
+
+    assert agent_ws_server_module.resolve_request_project_dir(request) == "/tmp/project"
+
+
+def test_resolve_request_project_dir_falls_back_to_cwd_for_legacy_clients():
+    request = AgentRequest(
+        request_id="req-chat",
+        channel_id="tui",
+        params={"cwd": "/tmp/params", "trusted_dirs": ["/tmp/trusted"]},
+        metadata={"cwd": "/tmp/metadata"},
+    )
+
+    assert agent_ws_server_module.resolve_request_project_dir(request) == "/tmp/params"
+
+
+def test_build_inputs_keeps_stable_project_dir_and_dynamic_cwd(monkeypatch):
+    from jiuwenswarm.server.runtime.agent_adapter import interface as interface_module
+
+    class FakeSkillManager:
+        def __init__(self, workspace_dir=None):
+            self.workspace_dir = workspace_dir
+            self.hook = None
+
+        def set_skillnet_install_complete_hook(self, hook):
+            self.hook = hook
+
+    class FakeSessionManager:
+        @staticmethod
+        def get_session_id(session_id):
+            return session_id or "default"
+
+        async def submit_and_wait(self, _session_id, task_func):
+            return await task_func()
+
+    class FakeAdapter:
+        def __init__(self):
+            self.seen_inputs = None
+            self.skill_manager = None
+
+        def set_skill_manager(self, skill_manager):
+            self.skill_manager = skill_manager
+
+        async def handle_heartbeat(self, _request):
+            return None
+
+        async def process_message_impl(self, request, inputs):
+            self.seen_inputs = inputs
+            return AgentResponse(
+                request_id=request.request_id,
+                channel_id=request.channel_id,
+                payload={"content": "ok"},
+            )
+
+    fake_adapter = FakeAdapter()
+
+    monkeypatch.setattr(
+        interface_module,
+        "get_config",
+        lambda: {"preferred_language": "zh"},
+    )
+    monkeypatch.setattr(interface_module, "get_memory_mode", lambda _config: "disabled")
+    monkeypatch.setattr(interface_module, "SkillManager", FakeSkillManager)
+    monkeypatch.setattr(interface_module, "SessionManager", FakeSessionManager)
+    monkeypatch.setattr(interface_module, "append_history_record", lambda **_kwargs: None)
+    monkeypatch.setattr(interface_module, "resolve_sdk_choice", lambda: "harness")
+    monkeypatch.setattr(interface_module, "create_adapter", lambda _sdk, mode="agent": fake_adapter)
+    request = AgentRequest(
+        request_id="req-chat",
+        channel_id="tui",
+        session_id="tui_session",
+        params={
+            "query": "hello",
+            "project_dir": "/tmp/project",
+            "cwd": "/tmp/project-worktree",
+            "trusted_dirs": ["/tmp/project"],
+        },
+    )
+
+    asyncio.run(interface_module.JiuWenClaw().process_message(request))
+
+    inputs = fake_adapter.seen_inputs
+    assert inputs["project_dir"] == "/tmp/project"
+    assert inputs["cwd"] == "/tmp/project-worktree"
+    assert inputs["trusted_dirs"] == ["/tmp/project"]
 
 
 def test_handle_stream_accepts_team_mode_without_sub_mode(monkeypatch):
@@ -240,3 +348,60 @@ def test_agent_manager_creates_code_adapter_for_code_team(monkeypatch):
         "sub_mode": "team",
         "config": {},
     } in calls
+
+
+def test_agent_manager_uses_project_dir_in_cache_identity(monkeypatch, tmp_path):
+    from jiuwenswarm.server.runtime import agent_manager as agent_manager_module
+    from jiuwenswarm.server.runtime.agent_adapter import interface as interface_module
+
+    created = []
+
+    class FakeSkillManager:
+        def __init__(self, workspace_dir=None):
+            self.workspace_dir = workspace_dir
+            self.hook = None
+
+        def set_skillnet_install_complete_hook(self, hook):
+            self.hook = hook
+
+    class FakeSessionManager:
+        pass
+
+    class FakeAdapter:
+        def __init__(self):
+            self.config = {}
+            self.mode = "agent"
+            self.sub_mode = None
+
+        async def create_instance(self, config=None, *, mode="agent", sub_mode=None):
+            self.config = config or {}
+            self.mode = mode
+            self.sub_mode = sub_mode
+            created.append(self)
+
+    def fake_create_adapter(sdk=None, *, mode="agent"):
+        return FakeAdapter()
+
+    monkeypatch.setattr(interface_module, "SkillManager", FakeSkillManager)
+    monkeypatch.setattr(interface_module, "SessionManager", FakeSessionManager)
+    monkeypatch.setattr(interface_module, "get_agent_workspace_dir", lambda: "workspace")
+    monkeypatch.setattr(interface_module, "resolve_sdk_choice", lambda: "harness")
+    monkeypatch.setattr(interface_module, "create_adapter", fake_create_adapter)
+
+    project_a = tmp_path / "a"
+    project_b = tmp_path / "b"
+    project_a.mkdir()
+    project_b.mkdir()
+
+    async def run_case():
+        manager = agent_manager_module.AgentManager()
+        first = await manager.get_agent(channel_id="tui", mode="agent", project_dir=str(project_a))
+        second = await manager.get_agent(channel_id="tui", mode="agent", project_dir=str(project_b))
+        first_again = await manager.get_agent(channel_id="tui", mode="agent", project_dir=str(project_a))
+        return first, second, first_again
+
+    first, second, first_again = asyncio.run(run_case())
+
+    assert first is first_again
+    assert first is not second
+    assert len(created) == 2

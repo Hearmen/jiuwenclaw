@@ -24,7 +24,6 @@ from openjiuwen.core.foundation.llm import Model
 from openjiuwen.core.foundation.store.base_embedding import EmbeddingConfig
 from openjiuwen.core.runner import Runner
 from openjiuwen.core.single_agent import AgentCard
-from openjiuwen.core.sys_operation.cwd import set_cwd
 from openjiuwen.harness.factory import create_deep_agent
 from openjiuwen.harness.rails import (
     AgentModeRail,
@@ -221,13 +220,17 @@ class JiuwenClawCodeAdapter(JiuWenClawDeepAdapter):
             for tool in getattr(rail, 'tools', []) or []:
                 if hasattr(tool, '_workspace_path'):
                     setattr(tool, '_workspace_path', self._agent_workspace_dir)
-        if self._project_dir:
-            set_cwd(self._project_dir)
+        self._seed_runtime_cwd(self._project_dir or self._workspace_dir)
 
         setattr(self._instance, "_jiuwenswarm_adapter_mode", "code")
         setattr(
             self._instance,
             "_jiuwenswarm_code_project_dir",
+            self._project_dir or self._workspace_dir,
+        )
+        setattr(
+            self._instance,
+            "_jiuwenswarm_project_dir",
             self._project_dir or self._workspace_dir,
         )
 
@@ -751,6 +754,12 @@ class JiuwenClawCodeAdapter(JiuWenClawDeepAdapter):
         if self._instance is None:
             raise RuntimeError("JiuwenClawCodeAdapter 未初始化，请先调用 create_instance()")
 
+        self._seed_runtime_cwd(
+            runtime_config.cwd
+            or runtime_config.project_dir
+            or self._project_dir
+            or self._workspace_dir
+        )
         resolved_language = self._resolve_runtime_language()
         resolved_channel = str(runtime_config.channel_id or
                                self._resolve_prompt_channel(runtime_config.session_id) or "web").strip() or "web"
@@ -758,6 +767,10 @@ class JiuwenClawCodeAdapter(JiuWenClawDeepAdapter):
             self._runtime_prompt_rail.set_language(resolved_language)
             self._runtime_prompt_rail.set_channel(resolved_channel)
             self._runtime_prompt_rail.set_trusted_dirs(runtime_config.trusted_dirs)
+            self._runtime_prompt_rail.set_runtime_paths(
+                cwd=runtime_config.cwd,
+                project_dir=runtime_config.project_dir or self._project_dir,
+            )
         self._write_runtime_state(mode=runtime_config.mode, language=resolved_language, channel=resolved_channel)
 
         # ProjectMemoryRail 语言同步 + trusted_dirs 注入
@@ -976,6 +989,7 @@ class JiuwenClawCodeAdapter(JiuWenClawDeepAdapter):
             "project_dir": self._project_dir,
             "channel_id": channel_id,
         }
+        self._seed_runtime_cwd(self._project_dir or self._workspace_dir)
 
         model = self._create_model(config_base)
         deep_config = getattr(agent, "deep_config", None)
@@ -983,7 +997,6 @@ class JiuwenClawCodeAdapter(JiuWenClawDeepAdapter):
             deep_config.model = model
         if deep_config is not None and getattr(deep_config, "sys_operation", None) is None:
             deep_config.sys_operation = self._create_sys_operation()
-
         tool_cards = self.build_code_tool_cards(agent_id)
         added_tools = _merge_tool_cards(agent, tool_cards)
 
@@ -1001,6 +1014,7 @@ class JiuwenClawCodeAdapter(JiuWenClawDeepAdapter):
         _set_coding_memory_directory(agent, self._project_dir)
         setattr(agent, "_jiuwenswarm_adapter_mode", "code")
         setattr(agent, "_jiuwenswarm_code_project_dir", self._project_dir or self._workspace_dir)
+        setattr(agent, "_jiuwenswarm_project_dir", self._project_dir or self._workspace_dir)
         setattr(agent, "_jiuwenswarm_code_team_member", True)
 
         logger.info(

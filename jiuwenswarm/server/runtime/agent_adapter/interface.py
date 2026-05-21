@@ -305,6 +305,25 @@ class JiuWenClaw:
             for d in raw_trusted_dirs:
                 if isinstance(d, str) and d.strip():
                     trusted_dirs.append(d.strip())
+        metadata = request.metadata or {}
+        param_project_dir = request.params.get("project_dir")
+        metadata_project_dir = metadata.get("project_dir") if isinstance(metadata, dict) else None
+        project_dir = (
+            param_project_dir.strip()
+            if isinstance(param_project_dir, str) and param_project_dir.strip()
+            else metadata_project_dir.strip()
+            if isinstance(metadata_project_dir, str) and metadata_project_dir.strip()
+            else None
+        )
+        param_cwd = request.params.get("cwd")
+        metadata_cwd = metadata.get("cwd") if isinstance(metadata, dict) else None
+        cwd = (
+            param_cwd.strip()
+            if isinstance(param_cwd, str) and param_cwd.strip()
+            else metadata_cwd.strip()
+            if isinstance(metadata_cwd, str) and metadata_cwd.strip()
+            else None
+        )
         if request.metadata and request.metadata.get("interaction_context"):
             logger.info(
                 "[_build_inputs][DEBUG] request.params.query=\n%s",
@@ -351,6 +370,10 @@ class JiuWenClaw:
         # 传递 trusted_dirs 参数（用于 RuntimePromptRail 添加路径限制策略）
         if trusted_dirs:
             inputs["trusted_dirs"] = trusted_dirs
+        if project_dir:
+            inputs["project_dir"] = project_dir
+        if cwd:
+            inputs["cwd"] = cwd
 
         run = request.params.get("run")
         if run:

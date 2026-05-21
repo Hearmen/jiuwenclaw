@@ -56,6 +56,8 @@ import {
   clearTrustedDirs,
   setCurrentProjectDir,
   getCurrentProjectDir,
+  setCurrentCwd,
+  getCurrentCwd,
 } from "./core/tui-trusted-dirs-store.js";
 import { loadTuiConfig, type StatusLineSetting } from "./core/tui-config-store.js";
 import { execFile } from "node:child_process";
@@ -247,6 +249,9 @@ export class CliPiAppState {
     },
     addSyntheticToolExecution: (tool, sessionId, requestId, at) => {
       this.addSyntheticToolExecution(tool, sessionId, requestId, at);
+    },
+    setCurrentWorkspaceFromTool: (path) => {
+      this.setCurrentWorkspaceFromTool(path);
     },
     clearToolExecutionState: () => {
       this.clearToolExecutionState();
@@ -594,9 +599,12 @@ export class CliPiAppState {
       setTrustedDir: setTrustedDir,
       removeTrustedDir: removeTrustedDir,
       clearTrustedDirs: clearTrustedDirs,
-      setCurrentProjectDir: setCurrentProjectDir,
+      setCurrentProjectDir: (dir: string) => {
+        setCurrentProjectDir(dir);
+        setCurrentCwd(dir);
+      },
       getCurrentProjectDir: getCurrentProjectDir,
-      getWorkspaceDir: () => getTrustedDirs()[0] || process.cwd(),
+      getWorkspaceDir: () => getCurrentCwd() || process.cwd(),
       enterConfigEditor: undefined, // AppScreen injects the real handler when executing slash commands.
       setInput: this._setInputRef ?? undefined,
       enterStatusView: undefined,
@@ -632,7 +640,8 @@ export class CliPiAppState {
   ): string => {
     const id = `tui_${Date.now().toString(16)}_${Math.random().toString(36).slice(2, 6)}`;
     const trustedDirs = getTrustedDirs();
-    const workspaceDir = trustedDirs[0] || process.cwd();
+    const projectDir = getCurrentProjectDir() || process.cwd();
+    const cwd = getCurrentCwd() || projectDir;
     this.wsClient.send({
       type: "req",
       id,
@@ -642,7 +651,8 @@ export class CliPiAppState {
         ...params,
         session_id: (params.session_id as string | undefined) ?? this.sessionId,
         ...(trustedDirs.length > 0 ? { trusted_dirs: trustedDirs } : {}),
-        ...(workspaceDir ? { cwd: workspaceDir } : {}),
+        ...(projectDir ? { project_dir: projectDir } : {}),
+        ...(cwd ? { cwd } : {}),
       },
     });
     return id;
@@ -655,7 +665,8 @@ export class CliPiAppState {
   ): Promise<T> => {
     const id = `tui_${Date.now().toString(16)}_${Math.random().toString(36).slice(2, 6)}`;
     const trustedDirs = getTrustedDirs();
-    const workspaceDir = trustedDirs[0] || process.cwd();
+    const projectDir = getCurrentProjectDir() || process.cwd();
+    const cwd = getCurrentCwd() || projectDir;
     const response = await this.wsClient.request(
       id,
       method,
@@ -663,7 +674,8 @@ export class CliPiAppState {
         ...params,
         session_id: params.session_id ?? this.sessionId,
         ...(trustedDirs.length > 0 ? { trusted_dirs: trustedDirs } : {}),
-        ...(workspaceDir ? { cwd: workspaceDir } : {}),
+        ...(projectDir ? { project_dir: projectDir } : {}),
+        ...(cwd ? { cwd } : {}),
       },
       timeoutMs ?? 30000,
     );
@@ -1549,6 +1561,48 @@ export class CliPiAppState {
     return undefined;
   }
 
+  private setCurrentWorkspaceFromTool(path: string): void {
+    const previousCwd = getCurrentCwd();
+    const result = setTrustedDir(path);
+    if (result !== "set") {
+      this.entries = [
+        ...this.entries,
+        addError(this.sessionId, `Failed to switch workspace: ${path}`),
+      ];
+      return;
+    }
+
+    try {
+      setCurrentCwd(path);
+    } catch (error) {
+      setCurrentCwd(previousCwd);
+      const message = error instanceof Error ? error.message : String(error);
+      this.entries = [
+        ...this.entries,
+        addError(this.sessionId, `Failed to switch workspace: ${path} (${message})`),
+      ];
+      return;
+    }
+
+    try {
+      this.sendEventOnly("command.add_dir", {
+        path,
+        remember: true,
+      });
+    } catch (error) {
+      console.warn("Failed to sync workspace directory to server:", error);
+    }
+
+    this.entries = [
+      ...this.entries,
+      addInfo(this.sessionId, `Workspace switched: ${path}`, "c", {
+        view: "kv",
+        title: "Workspace",
+        items: [{ label: "path", value: path }],
+      }),
+    ];
+  }
+
   private addSyntheticToolExecution(
     tool: ToolCallDisplay,
     sessionId: string,
@@ -1605,7 +1659,7 @@ export class CliPiAppState {
     const snapshot = this.getSnapshot();
     const usage = this.getUsageSummary();
     const trustedDirs = getTrustedDirs();
-    const cwd = trustedDirs[0] || process.cwd();
+    const cwd = getCurrentCwd() || process.cwd();
     return {
       session_id: snapshot.sessionId,
       session_name: snapshot.sessionTitle,
@@ -1669,7 +1723,7 @@ export class CliPiAppState {
         const child = execFile(
           "sh",
           ["-c", fullCmd],
-          { timeout: 3_000, maxBuffer: 10_240, cwd: process.cwd() },
+          { timeout: 3_000, maxBuffer: 10_240, cwd: getCurrentCwd() || process.cwd() },
           (err, stdout) => {
             if (err) return;
             const text = stdout.trim();

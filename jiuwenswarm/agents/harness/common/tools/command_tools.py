@@ -85,13 +85,58 @@ def _check_command_safety(command: str) -> str | None:
     return None
 
 
+def _context_cwd() -> Path:
+    try:
+        from openjiuwen.core.sys_operation.cwd import get_cwd
+
+        return Path(get_cwd()).resolve()
+    except Exception:
+        return get_agent_workspace_dir().resolve()
+
+
+def _context_project_root() -> Path:
+    try:
+        from openjiuwen.core.sys_operation.cwd import get_project_root
+
+        return Path(get_project_root()).resolve()
+    except Exception:
+        return _context_cwd()
+
+
+def _context_workspace_root() -> Path | None:
+    try:
+        from openjiuwen.core.sys_operation.cwd import get_workspace
+
+        workspace = get_workspace()
+        return Path(workspace).resolve() if workspace else None
+    except Exception:
+        return None
+
+
+def _is_relative_to(path: Path, root: Path) -> bool:
+    try:
+        path.relative_to(root)
+        return True
+    except ValueError:
+        return False
+
+
 def _resolve_command_workdir(workdir: str) -> Path:
-    project_root = get_agent_workspace_dir()
-    candidate = Path(workdir) if workdir else project_root
+    current_cwd = _context_cwd()
+    project_root = _context_project_root()
+    candidate = Path(workdir) if workdir else current_cwd
     if not candidate.is_absolute():
-        candidate = project_root / candidate
+        candidate = current_cwd / candidate
     candidate = candidate.resolve()
-    candidate.relative_to(project_root)
+
+    allowed_roots = [project_root]
+    workspace_root = _context_workspace_root()
+    if workspace_root is not None:
+        allowed_roots.append(workspace_root)
+    allowed_roots.append(get_agent_workspace_dir().resolve())
+
+    if not any(_is_relative_to(candidate, root) for root in allowed_roots):
+        raise ValueError("workdir is outside project workspace")
     return candidate
 
 

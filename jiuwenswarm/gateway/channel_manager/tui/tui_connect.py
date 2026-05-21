@@ -1728,6 +1728,9 @@ def register_cli_handlers(bind: CliHandlersBindParams) -> None:
     from jiuwenswarm.common.utils import get_agent_workspace_dir
 
     def _resolve_project_dir(params):
+        project_dir = params.get("project_dir")
+        if isinstance(project_dir, str) and project_dir:
+            return project_dir
         trusted_dirs = params.get("trusted_dirs")
         if isinstance(trusted_dirs, list) and trusted_dirs:
             return str(trusted_dirs[0])
