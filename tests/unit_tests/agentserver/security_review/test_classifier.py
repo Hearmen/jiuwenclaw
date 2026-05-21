@@ -151,16 +151,99 @@ def test_classifier_flags_destructive_file_operation():
     assert any(signal.signal_type == "destructive_file_operation" for signal in signals)
 
 
-def test_classifier_flags_policy_rule_gap_from_blocked_result():
+def test_classifier_does_not_create_policy_gap_from_policy_block():
     classifier = SecuritySignalClassifier()
     event = SecurityEvent(
         event_type="tool_result",
         session_id="sess-1",
         iteration=1,
         tool_name="bash",
-        result_digest="blocked by policy rule: unknown shell command pattern",
+        result_digest="[PERMISSION_DENIED] Denied by rule tiered_policy: shell command blocked",
     )
 
     signals = classifier.classify(event)
 
-    assert any(signal.signal_type == "policy_rule_gap" for signal in signals)
+    assert [signal.signal_type for signal in signals] == ["permission_boundary_hit"]
+    assert signals[0].failure_class == FailureClass.BLOCKED_BY_POLICY
+    assert signals[0].source == "tool_result"
+    assert signals[0].confidence == "structured_marker"
+    assert signals[0].reason_code == "permission_denied_policy"
+
+
+def test_classifier_user_rejection_is_not_policy_gap():
+    classifier = SecuritySignalClassifier()
+    event = SecurityEvent(
+        event_type="tool_result",
+        session_id="sess-1",
+        iteration=1,
+        tool_name="bash",
+        result_digest="[PERMISSION_REJECTED] User rejected command execution",
+    )
+
+    signals = classifier.classify(event)
+
+    assert [signal.signal_type for signal in signals] == ["user_rejected_permission"]
+    assert signals[0].failure_class == FailureClass.PERMISSION_DENIED
+    assert signals[0].reason_code == "user_rejected_permission"
+
+
+def test_classifier_secret_denied_takes_precedence_over_external_path():
+    classifier = SecuritySignalClassifier()
+    event = SecurityEvent(
+        event_type="tool_result",
+        session_id="sess-1",
+        iteration=1,
+        tool_name="read_file",
+        result_digest="[PERMISSION_DENIED] outside workspace: /Users/alice/.ssh/id_rsa",
+    )
+
+    signals = classifier.classify(event)
+
+    assert signals[0].signal_type == "permission_boundary_hit"
+    assert signals[0].failure_class == FailureClass.SECRET_ACCESS_DENIED
+    assert signals[0].reason_code == "permission_denied_secret"
+
+
+def test_classifier_generic_permission_denied_is_low_confidence():
+    classifier = SecuritySignalClassifier()
+    event = SecurityEvent(
+        event_type="tool_result",
+        session_id="sess-1",
+        iteration=1,
+        tool_name="read_file",
+        result_digest="Permission denied",
+    )
+
+    signals = classifier.classify(event)
+
+    assert signals[0].failure_class == FailureClass.PERMISSION_DENIED
+    assert signals[0].confidence == "regex_low"
+    assert signals[0].reason_code == "generic_permission_denied"
+
+
+def test_classifier_model_safety_explanation_does_not_flag_command():
+    classifier = SecuritySignalClassifier()
+    event = SecurityEvent(
+        event_type="model_output",
+        session_id="sess-1",
+        iteration=1,
+        result_digest="Do not run `rm -rf /`; it is destructive.",
+    )
+
+    assert classifier.classify(event) == []
+
+
+def test_classifier_model_explicit_execution_intent_flags_command():
+    classifier = SecuritySignalClassifier()
+    event = SecurityEvent(
+        event_type="model_output",
+        session_id="sess-1",
+        iteration=1,
+        result_digest="Run this command: rm -rf /",
+    )
+
+    signals = classifier.classify(event)
+
+    assert signals[0].signal_type == "dangerous_command"
+    assert signals[0].source == "model_output"
+    assert signals[0].confidence == "regex_high"

@@ -39,69 +39,252 @@ class SecuritySignalClassifier:
     """Classify compact events without IO or LLM calls."""
 
     def classify(self, event: SecurityEvent) -> list[SecuritySignal]:
-        text = f"{event.arguments_digest}\n{event.result_digest}"
-        signals: list[SecuritySignal] = []
-
-        if event.event_type in {"tool_call", "model_output"}:
-            if _DANGEROUS_COMMAND.search(text):
-                signals.append(self._signal(event, "dangerous_command", Severity.HIGH, text))
-            elif _DESTRUCTIVE_FILE_OPERATION.search(text):
-                signals.append(
-                    self._signal(event, "destructive_file_operation", Severity.MEDIUM, text)
-                )
-            if _SANDBOX_ESCAPE.search(text):
-                signals.append(self._signal(event, "sandbox_escape_attempt", Severity.CRITICAL, text))
-            if _SECRET_PATH.search(text):
-                signals.append(self._signal(event, "secret_or_token_exposure", Severity.HIGH, text))
-            elif _WORKSPACE_EXTERNAL.search(text):
-                signals.append(self._signal(event, "cross_workspace_file_access", Severity.MEDIUM, text))
-            if _NETWORK.search(text) and "|" in text:
-                signals.append(self._signal(event, "unsafe_network_access", Severity.HIGH, text))
-
+        if event.event_type == "tool_call":
+            return self.classify_tool_call(event)
         if event.event_type == "tool_result":
-            failure_class = self.classify_failure(text)
-            if failure_class != FailureClass.UNKNOWN_FAILURE:
-                signal_type = "permission_boundary_hit"
-                severity = Severity.HIGH if failure_class in {
-                    FailureClass.BLOCKED_BY_POLICY,
-                    FailureClass.SECRET_ACCESS_DENIED,
-                    FailureClass.CROSS_WORKSPACE_DENIED,
-                } else Severity.MEDIUM
-                signals.append(
-                    self._signal(event, signal_type, severity, text, failure_class=failure_class)
-                )
-                if failure_class == FailureClass.BLOCKED_BY_POLICY:
-                    signals.append(
-                        self._signal(
-                            event,
-                            "policy_rule_gap",
-                            Severity.MEDIUM,
-                            text,
-                            failure_class=failure_class,
-                        )
-                    )
+            return self.classify_tool_result(event)
+        if event.event_type == "model_output":
+            return self.classify_model_output(event)
+        return []
 
-        return signals
+    def classify_tool_call(self, event: SecurityEvent) -> list[SecuritySignal]:
+        text = event.arguments_digest or ""
+        return self._classify_command_and_path_risk(event, text, source="tool_call")
+
+    def classify_tool_result(self, event: SecurityEvent) -> list[SecuritySignal]:
+        text = event.result_digest or ""
+        signal = self._classify_result_boundary(event, text)
+        return [signal] if signal is not None else []
+
+    def classify_model_output(self, event: SecurityEvent) -> list[SecuritySignal]:
+        text = event.result_digest or event.arguments_digest or ""
+        lowered = text.lower()
+        if re.search(r"\b(do not|don't|never|avoid|refuse|cannot|can't)\b.{0,40}\b(run|execute)\b", lowered):
+            return []
+        has_execution_intent = bool(
+            re.search(r"\b(run|execute|use this command|执行|运行)\b", lowered)
+        )
+        if not has_execution_intent:
+            return []
+        return self._classify_command_and_path_risk(event, text, source="model_output")
 
     def classify_failure(self, text: str) -> FailureClass:
+        failure_class, _, _ = self.classify_failure_detail(text)
+        return failure_class
+
+    def classify_failure_detail(self, text: str) -> tuple[FailureClass, str, str]:
         lowered = (text or "").lower()
         if "blocked" in lowered and "policy" in lowered:
-            return FailureClass.BLOCKED_BY_POLICY
+            return FailureClass.BLOCKED_BY_POLICY, "regex_medium", "blocked_by_policy"
+        if "denied by rule" in lowered or "tiered_policy" in lowered:
+            return FailureClass.BLOCKED_BY_POLICY, "regex_medium", "blocked_by_policy"
         if "sandbox" in lowered and ("denied" in lowered or "forbid" in lowered):
-            return FailureClass.SANDBOX_DENIED
+            return FailureClass.SANDBOX_DENIED, "regex_medium", "sandbox_denied"
         if "network" in lowered and ("denied" in lowered or "not allowed" in lowered):
-            return FailureClass.NETWORK_DENIED
+            return FailureClass.NETWORK_DENIED, "regex_medium", "network_denied"
         if _SECRET_PATH.search(lowered) and (
             "access denied" in lowered or "not allowed" in lowered
         ):
-            return FailureClass.SECRET_ACCESS_DENIED
+            return FailureClass.SECRET_ACCESS_DENIED, "regex_medium", "secret_access_denied"
         if _WORKSPACE_EXTERNAL.search(text or "") and (
-            "outside" in lowered or "not allowed" in lowered
+            "outside" in lowered
+            or "not allowed" in lowered
+            or "external_directory" in lowered
+            or "external path" in lowered
         ):
-            return FailureClass.CROSS_WORKSPACE_DENIED
+            return (
+                FailureClass.CROSS_WORKSPACE_DENIED,
+                "regex_medium",
+                "cross_workspace_denied",
+            )
         if "permission denied" in lowered or "access denied" in lowered:
-            return FailureClass.PERMISSION_DENIED
-        return FailureClass.UNKNOWN_FAILURE
+            return FailureClass.PERMISSION_DENIED, "regex_low", "generic_permission_denied"
+        return FailureClass.UNKNOWN_FAILURE, "", ""
+
+    def _classify_command_and_path_risk(
+        self,
+        event: SecurityEvent,
+        text: str,
+        *,
+        source: str,
+    ) -> list[SecuritySignal]:
+        signals: list[SecuritySignal] = []
+
+        if _DANGEROUS_COMMAND.search(text):
+            signals.append(
+                self._signal(
+                    event,
+                    "dangerous_command",
+                    Severity.HIGH,
+                    text,
+                    source=source,
+                    confidence="regex_high",
+                    reason_code="dangerous_command",
+                )
+            )
+        elif _DESTRUCTIVE_FILE_OPERATION.search(text):
+            signals.append(
+                self._signal(
+                    event,
+                    "destructive_file_operation",
+                    Severity.MEDIUM,
+                    text,
+                    source=source,
+                    confidence="regex_medium",
+                    reason_code="destructive_file_operation",
+                )
+            )
+        if _SANDBOX_ESCAPE.search(text):
+            signals.append(
+                self._signal(
+                    event,
+                    "sandbox_escape_attempt",
+                    Severity.CRITICAL,
+                    text,
+                    source=source,
+                    confidence="regex_high",
+                    reason_code="sandbox_escape_attempt",
+                )
+            )
+        if _SECRET_PATH.search(text):
+            signals.append(
+                self._signal(
+                    event,
+                    "secret_or_token_exposure",
+                    Severity.HIGH,
+                    text,
+                    source=source,
+                    confidence="regex_high",
+                    reason_code="secret_path_reference",
+                )
+            )
+        elif _WORKSPACE_EXTERNAL.search(text):
+            signals.append(
+                self._signal(
+                    event,
+                    "cross_workspace_file_access",
+                    Severity.MEDIUM,
+                    text,
+                    source=source,
+                    confidence="regex_medium",
+                    reason_code="external_path_reference",
+                )
+            )
+        if _NETWORK.search(text) and "|" in text:
+            signals.append(
+                self._signal(
+                    event,
+                    "unsafe_network_access",
+                    Severity.HIGH,
+                    text,
+                    source=source,
+                    confidence="regex_high",
+                    reason_code="network_pipe",
+                )
+            )
+        return signals
+
+    def _classify_result_boundary(self, event: SecurityEvent, text: str) -> SecuritySignal | None:
+        lowered = (text or "").lower()
+
+        if "[permission_rejected]" in lowered or "user rejected" in lowered:
+            return self._signal(
+                event,
+                "user_rejected_permission",
+                Severity.LOW,
+                text,
+                failure_class=FailureClass.PERMISSION_DENIED,
+                source="tool_result",
+                confidence="structured_marker",
+                reason_code="user_rejected_permission",
+            )
+        if "[approval_required]" in lowered:
+            return self._signal(
+                event,
+                "approval_required",
+                Severity.MEDIUM,
+                text,
+                failure_class=FailureClass.PERMISSION_DENIED,
+                source="tool_result",
+                confidence="structured_marker",
+                reason_code="approval_required",
+            )
+        if "[permission_denied]" in lowered:
+            if _SECRET_PATH.search(text or ""):
+                return self._permission_boundary_signal(
+                    event,
+                    text,
+                    FailureClass.SECRET_ACCESS_DENIED,
+                    "structured_marker",
+                    "permission_denied_secret",
+                )
+            if "tiered_policy" in lowered or "denied by rule" in lowered:
+                return self._permission_boundary_signal(
+                    event,
+                    text,
+                    FailureClass.BLOCKED_BY_POLICY,
+                    "structured_marker",
+                    "permission_denied_policy",
+                )
+            if (
+                "external_directory" in lowered
+                or "outside workspace" in lowered
+                or "external path" in lowered
+                or _WORKSPACE_EXTERNAL.search(text or "")
+            ):
+                return self._permission_boundary_signal(
+                    event,
+                    text,
+                    FailureClass.CROSS_WORKSPACE_DENIED,
+                    "structured_marker",
+                    "permission_denied_external_path",
+                )
+            return self._permission_boundary_signal(
+                event,
+                text,
+                FailureClass.PERMISSION_DENIED,
+                "structured_marker",
+                "permission_denied",
+                severity=Severity.MEDIUM,
+            )
+
+        failure_class, confidence, reason_code = self.classify_failure_detail(text)
+        if failure_class == FailureClass.UNKNOWN_FAILURE:
+            return None
+        severity = Severity.HIGH if failure_class in {
+            FailureClass.BLOCKED_BY_POLICY,
+            FailureClass.SECRET_ACCESS_DENIED,
+            FailureClass.CROSS_WORKSPACE_DENIED,
+        } else Severity.MEDIUM
+        return self._permission_boundary_signal(
+            event,
+            text,
+            failure_class,
+            confidence,
+            reason_code,
+            severity=severity,
+        )
+
+    def _permission_boundary_signal(
+        self,
+        event: SecurityEvent,
+        text: str,
+        failure_class: FailureClass,
+        confidence: str,
+        reason_code: str,
+        *,
+        severity: Severity = Severity.HIGH,
+    ) -> SecuritySignal:
+        return self._signal(
+            event,
+            "permission_boundary_hit",
+            severity,
+            text,
+            failure_class=failure_class,
+            source="tool_result",
+            confidence=confidence,
+            reason_code=reason_code,
+        )
 
     @staticmethod
     def _signal(
@@ -111,6 +294,9 @@ class SecuritySignalClassifier:
         evidence: str,
         *,
         failure_class: FailureClass | None = None,
+        source: str = "",
+        confidence: str = "",
+        reason_code: str = "",
     ) -> SecuritySignal:
         return SecuritySignal(
             signal_type=signal_type,
@@ -120,4 +306,7 @@ class SecuritySignalClassifier:
             tool_name=event.tool_name,
             failure_class=failure_class,
             evidence=(evidence or "")[:500],
+            source=source,
+            confidence=confidence,
+            reason_code=reason_code,
         )
