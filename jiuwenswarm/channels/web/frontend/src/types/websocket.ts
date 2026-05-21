@@ -123,6 +123,7 @@ export interface SubtaskUpdatePayload {
 export interface QuestionOption {
   label: string;
   description?: string;
+  value?: string;
 }
 
 /**

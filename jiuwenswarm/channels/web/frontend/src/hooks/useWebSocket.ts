@@ -1243,6 +1243,15 @@ export function useWebSocket(options: UseWebSocketOptions): UseWebSocketReturn {
         if (!shouldHandleSessionEvent(payload)) return;
         const content = typeof payload.content === 'string' ? payload.content : '';
         const stage = typeof payload.stage === 'string' ? payload.stage : undefined;
+
+        // Check for security alert
+        const metadata = (payload as { metadata?: { is_security_alert?: boolean } }).metadata;
+        if (metadata?.is_security_alert) {
+          window.dispatchEvent(new CustomEvent('security-alert', {
+            detail: { message: content }
+          }));
+        }
+
         useHarnessStore.getState().addHarnessMessage(content, stage);
 
         // Pipeline start message contains stages array: { content, pipeline, stages: [{slot, display_name}] }

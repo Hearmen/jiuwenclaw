@@ -4907,6 +4907,9 @@ class JiuWenClawDeepAdapter:
                             result["stages"] = payload["stages"]
                         if "pipeline" in payload:
                             result["pipeline"] = payload["pipeline"]
+                        # Pass through metadata for security alerts and other custom data
+                        if "metadata" in payload:
+                            result["metadata"] = payload["metadata"]
                     return result
 
                 # Auto-harness specific: harness.stage_result event
