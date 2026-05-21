@@ -233,6 +233,18 @@ def test_classifier_model_safety_explanation_does_not_flag_command():
     assert classifier.classify(event) == []
 
 
+def test_classifier_model_safety_use_this_command_does_not_flag_command():
+    classifier = SecuritySignalClassifier()
+    event = SecurityEvent(
+        event_type="model_output",
+        session_id="sess-1",
+        iteration=1,
+        result_digest="Do not use this command: rm -rf /",
+    )
+
+    assert classifier.classify(event) == []
+
+
 def test_classifier_model_explicit_execution_intent_flags_command():
     classifier = SecuritySignalClassifier()
     event = SecurityEvent(
@@ -240,6 +252,22 @@ def test_classifier_model_explicit_execution_intent_flags_command():
         session_id="sess-1",
         iteration=1,
         result_digest="Run this command: rm -rf /",
+    )
+
+    signals = classifier.classify(event)
+
+    assert signals[0].signal_type == "dangerous_command"
+    assert signals[0].source == "model_output"
+    assert signals[0].confidence == "regex_high"
+
+
+def test_classifier_model_command_introduction_flags_command():
+    classifier = SecuritySignalClassifier()
+    event = SecurityEvent(
+        event_type="model_output",
+        session_id="sess-1",
+        iteration=1,
+        result_digest="Here is the command: rm -rf /",
     )
 
     signals = classifier.classify(event)
