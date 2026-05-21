@@ -658,13 +658,14 @@
       "levelDeny": "拒绝 (deny)",
       "delete": "删除",
       "deleteConfirm": "确定从 permissions.tools 中删除「{{tool}}」吗？",
-      "invalidValue": "配置值非标准格式，选择策略后将写回为合法值。当前：{{raw}}",
-      "addTitle": "添加整工具规则",
-      "toolPlaceholder": "例如 mcp_exec_command",
-      "add": "添加",
-      "loadFailed": "加载工具权限失败",
-      "saveFailed": "保存失败"
-    },
+        "invalidValue": "配置值非标准格式，选择策略后将写回为合法值。当前：{{raw}}",
+        "addTitle": "添加整工具规则",
+        "toolPlaceholder": "例如 mcp_exec_command",
+        "duplicateTool": "工具已存在：{{tool}}",
+        "add": "添加",
+        "loadFailed": "加载工具权限失败",
+        "saveFailed": "保存失败"
+      },
     "errors": {
       "requiredModelFields": "模型配置为必填：{{fields}}。请完整填写后再保存并重启。",
       "saveFailed": "保存失败，请稍后重试",

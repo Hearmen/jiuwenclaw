@@ -659,13 +659,14 @@
       "levelDeny": "Deny",
       "delete": "Remove",
       "deleteConfirm": "Remove “{{tool}}” from permissions.tools?",
-      "invalidValue": "Non-standard value; choosing a policy will rewrite it. Current: {{raw}}",
-      "addTitle": "Add per-tool rule",
-      "toolPlaceholder": "e.g. mcp_exec_command",
-      "add": "Add",
-      "loadFailed": "Failed to load tool permissions",
-      "saveFailed": "Save failed"
-    },
+        "invalidValue": "Non-standard value; choosing a policy will rewrite it. Current: {{raw}}",
+        "addTitle": "Add per-tool rule",
+        "toolPlaceholder": "e.g. mcp_exec_command",
+        "duplicateTool": "Tool already exists: {{tool}}",
+        "add": "Add",
+        "loadFailed": "Failed to load tool permissions",
+        "saveFailed": "Save failed"
+      },
     "errors": {
       "requiredModelFields": "These model fields are required: {{fields}}. Complete them before saving and restarting.",
       "saveFailed": "Save failed, please try again later",
