@@ -257,6 +257,30 @@ def test_classifier_model_refusal_command_intro_does_not_flag_command():
     assert classifier.classify(event) == []
 
 
+def test_classifier_model_curly_apostrophe_refusal_does_not_flag_command():
+    classifier = SecuritySignalClassifier()
+    event = SecurityEvent(
+        event_type="model_output",
+        session_id="sess-1",
+        iteration=1,
+        result_digest="I can’t provide that command: rm -rf /",
+    )
+
+    assert classifier.classify(event) == []
+
+
+def test_classifier_model_runner_transcript_does_not_flag_command():
+    classifier = SecuritySignalClassifier()
+    event = SecurityEvent(
+        event_type="model_output",
+        session_id="sess-1",
+        iteration=1,
+        result_digest="The runner logged rm -rf / in a transcript.",
+    )
+
+    assert classifier.classify(event) == []
+
+
 def test_classifier_model_explicit_execution_intent_flags_command():
     classifier = SecuritySignalClassifier()
     event = SecurityEvent(

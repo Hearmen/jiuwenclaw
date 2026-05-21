@@ -58,7 +58,7 @@ class SecuritySignalClassifier:
 
     def classify_model_output(self, event: SecurityEvent) -> list[SecuritySignal]:
         text = event.result_digest or event.arguments_digest or ""
-        lowered = text.lower()
+        lowered = text.lower().replace("\u2019", "'")
         if re.search(
             r"\b(do not|don't|never|avoid|refuse|cannot|can't)\b.{0,40}"
             r"(?:\b(run|execute|use this command)\b|\bcommand:)",
@@ -67,7 +67,8 @@ class SecuritySignalClassifier:
             return []
         has_execution_intent = bool(
             re.search(
-                r"\b(run|execute|use this command|here is the command|command:)|执行|运行",
+                r"\b(?:run|execute)\b|\buse this command\b|\bhere is the command\b"
+                r"|\bcommand:|执行|运行",
                 lowered,
             )
         )
