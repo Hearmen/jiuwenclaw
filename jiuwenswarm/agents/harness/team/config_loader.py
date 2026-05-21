@@ -181,9 +181,9 @@ def _build_agents_config(team_raw: dict[str, Any], config_base: dict[str, Any]) 
     agents: dict[str, Any] = {}
     for agent_key, raw_agent_config in agents_raw.items():
         agent_config = dict(raw_agent_config) if isinstance(raw_agent_config, dict) else {}
-        # No longer auto-fill all skills
-        # When skills not configured, member won't copy any skill to own directory
-        # Global skills are copied to team shared directory, accessible via .team/{team_name}/skills
+        # No longer auto-fill all skills from global into each member by default.
+        # On spawn, team-shared skills are synced into member workspace/skills/.
+        # ensure_team_shared_skills_initialized also mirrors team-shared skills to agent global.
         agent_spec = _build_agent_spec_dict(
             agent_config,
             default_model=default_model,

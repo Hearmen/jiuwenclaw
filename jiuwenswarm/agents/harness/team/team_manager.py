@@ -751,13 +751,14 @@ class TeamManager:
                 member_skills_dir_resolved = member_skills_dir
                 skills_configured, selected_skills = resolve_member_skills(member_name, role)
 
-                # Copy member-configured skills to member's own skills directory
-                # Note: global skills are already copied to team shared directory in create_team
+                # Copy member-configured skills, then mirror team-shared skills so
+                # SkillManager / skills_state on the member workspace can discover them.
                 try:
                     # Ensure member skills directory exists
                     member_skills_dir.mkdir(parents=True, exist_ok=True)
                     if skills_configured and selected_skills:
                         copy_member_configured_skills(member_skills_dir, selected_skills)
+                    _sync_skills_dir(team_ws_skills_dir, member_skills_dir)
                     # Member directory always needs skills_state.json
                     write_member_skill_state(member_skills_dir)
                 except Exception as exc:
@@ -972,9 +973,25 @@ class TeamManager:
         logger.info("[TeamManager] Copied global skills dir to team shared: %s", team_shared_skills_dir)
 
     @staticmethod
+    def _resolve_team_shared_skills_dir(spec: TeamAgentSpec) -> Path:
+        ws_config = spec.workspace
+        ws_path = ws_config.root_path if ws_config and ws_config.root_path else None
+        if not ws_path:
+            ws_path = str(team_home(spec.team_name) / "team-workspace")
+        return Path(ws_path) / "skills"
+
+    @staticmethod
+    def _sync_team_shared_skills_to_agent_global(spec: TeamAgentSpec) -> None:
+        """Mirror team-shared skills into the local agent skills dir for SkillUseRail."""
+        team_shared_skills_dir = TeamManager._resolve_team_shared_skills_dir(spec)
+        global_skills_dir = get_agent_skills_dir()
+        _sync_skills_dir(team_shared_skills_dir, global_skills_dir)
+
+    @staticmethod
     def ensure_team_shared_skills_initialized(spec: TeamAgentSpec) -> None:
         """Ensure team shared skills are available in the team workspace."""
         TeamManager._copy_global_skills_to_team_shared_dir(spec)
+        TeamManager._sync_team_shared_skills_to_agent_global(spec)
 
     async def create_team(
         self,
