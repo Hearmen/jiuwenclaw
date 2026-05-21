@@ -28,6 +28,7 @@ import updateIcon from '../../assets/sidebar/advanced-config.svg';
 import appearanceSystemIcon from '../../assets/sidebar/appearance-system.svg';
 import appearanceDarkIcon from '../../assets/sidebar/appearance-dark.svg';
 import appearanceLightIcon from '../../assets/sidebar/appearance-light.svg';
+import { webRequest } from '../../services/webClient';
 
 type MainNavKey = 'chat' | 'skills' | 'agents' | 'teams' | 'sessions' | 'heartbeat' | 'cron' | 'channels' | 'extensions' | 'configpanel' | 'logspanel' | 'browserpanel' | 'updatepanel';
 
@@ -209,11 +210,7 @@ function AdvancedConfigPanel({
 
   const handleLanguageChange = (lang: 'zh' | 'en') => {
     i18n.changeLanguage(lang);
-    void fetch('/api/locale.set_conf', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ preferred_language: lang }),
-    }).catch(() => {});
+    void webRequest('locale.set_conf', { preferred_language: lang }).catch(() => {});
   };
 
   const handleThemeChange = (newTheme: string) => {
