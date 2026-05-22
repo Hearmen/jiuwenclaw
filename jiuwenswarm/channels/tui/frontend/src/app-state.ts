@@ -931,6 +931,13 @@ export class CliPiAppState {
     if (options?.showNotice === false) {
       this.suppressInterruptResult = true;
     }
+    // Reject local pending question immediately so local commands (e.g. /export) can terminate
+    if (this.localPendingQuestion) {
+      this.localPendingQuestion.reject(new Error("interrupted by Ctrl+C"));
+      this.localPendingQuestion = null;
+      this.pendingQuestion = null;
+      this.streamingState = StreamingState.Idle;
+    }
     // Set local interrupt flag immediately for long-running command detection
     this.interruptRequested = true;
     const hadLocalWork = this.getSnapshot().cancellableWork;

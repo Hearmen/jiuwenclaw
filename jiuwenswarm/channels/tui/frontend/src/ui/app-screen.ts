@@ -492,6 +492,8 @@ export class AppScreen implements Component, Focusable {
   private questionList: SelectList | null = null;
   private questionDetailsMap: Map<string, string[]> | null = null;
   private otherInputMode = false;
+  private ctrlCPendingForQuestion = false;
+  private ctrlCPendingForQuestionTimer: ReturnType<typeof setTimeout> | null = null;
   private resumeSessionList: ResumeSessionListState | null = null;
   private modelList: ModelListState | null = null;
   private mcpList: McpListState | null = null;
@@ -616,11 +618,20 @@ export class AppScreen implements Component, Focusable {
       clearTimeout(this.transientNoticeTimer);
       this.transientNoticeTimer = null;
     }
+    this.clearCtrlCPendingForQuestion();
     if (this.animationTimer) {
       clearInterval(this.animationTimer);
       this.animationTimer = null;
     }
     this.unsubscribe();
+  }
+
+  private clearCtrlCPendingForQuestion(): void {
+    this.ctrlCPendingForQuestion = false;
+    if (this.ctrlCPendingForQuestionTimer) {
+      clearTimeout(this.ctrlCPendingForQuestionTimer);
+      this.ctrlCPendingForQuestionTimer = null;
+    }
   }
 
   invalidate(): void {
@@ -786,6 +797,28 @@ export class AppScreen implements Component, Focusable {
 
     if (this.startupPromptList !== null && matchesKey(data, "ctrl+c")) {
       this.startupPromptList.handleInput(data);
+      this.tui.requestRender();
+      return;
+    }
+
+    // Ctrl+C double-press for pending questions (aligns with Claude Code behavior):
+    // First press: show "Press Ctrl+C again to exit" notice, don't cancel yet.
+    // Second press within 1s: actually cancel the question.
+    if (pendingQuestion && matchesKey(data, "ctrl+c")) {
+      if (this.ctrlCPendingForQuestion) {
+        this.clearCtrlCPendingForQuestion();
+        this.transientNotice = null;
+        this.interruptTask();
+        return;
+      }
+      this.ctrlCPendingForQuestion = true;
+      this.transientNotice = "Press Ctrl+C again to exit";
+      this.ctrlCPendingForQuestionTimer = setTimeout(() => {
+        this.ctrlCPendingForQuestion = false;
+        this.ctrlCPendingForQuestionTimer = null;
+        this.transientNotice = null;
+        this.tui.requestRender();
+      }, 1000);
       this.tui.requestRender();
       return;
     }
@@ -1073,6 +1106,7 @@ export class AppScreen implements Component, Focusable {
     if (snapshot.pendingQuestion && this.otherInputMode) {
       if (matchesKey(data, "escape")) {
         this.otherInputMode = false;
+        this.editor.setText("");
         this.syncQuestionList(this.state.getSnapshot());
         this.tui.requestRender();
         return;
@@ -1360,6 +1394,7 @@ export class AppScreen implements Component, Focusable {
         this.editor.setText(this.draftBeforeQuestion);
       }
       this.draftBeforeQuestion = "";
+      this.clearCtrlCPendingForQuestion();
     }
     this.syncTeamPanelSelection(snapshot);
     this.syncAnimationLoop(snapshot);
