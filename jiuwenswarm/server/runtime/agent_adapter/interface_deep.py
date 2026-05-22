@@ -5632,8 +5632,8 @@ class JiuWenClawDeepAdapter:
         if self._dreaming_started:
             return
         try:
-            from jiuwenclaw.agents.harness.common.memory.dreaming import start_dreaming
-            from jiuwenclaw.common.utils import get_agent_sessions_dir
+            from jiuwenswarm.agents.harness.common.memory.dreaming import start_dreaming
+            from jiuwenswarm.common.utils import get_agent_sessions_dir
             sessions_dir = str(get_agent_sessions_dir() or "")
             mode = getattr(self, "_dreaming_mode", "agent")
             output_name = "memory" if mode == "agent" else "coding_memory"
@@ -5653,7 +5653,7 @@ class JiuWenClawDeepAdapter:
         if not self._dreaming_started:
             return
         try:
-            from jiuwenclaw.agents.harness.common.memory.dreaming import stop_dreaming
+            from jiuwenswarm.agents.harness.common.memory.dreaming import stop_dreaming
             mode = getattr(self, "_dreaming_mode", "agent")
             await stop_dreaming(mode=mode)
             self._dreaming_started = False
