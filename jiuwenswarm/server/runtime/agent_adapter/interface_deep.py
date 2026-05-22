@@ -3414,7 +3414,7 @@ class JiuWenClawDeepAdapter:
         if not sid.startswith("heartbeat"):
             return None
 
-        request.params["query"] = "这是一次心跳请求任务"
+        request.params["query"] = "这是一次心跳请求任务，请根据</heartbeat_user_task>标签中的内容进行回复"
         logger.info(
             "[JiuWenClawDeepAdapter] heartbeat query injected:" " request_id=%s session_id=%s",
             request.request_id,
