@@ -29,8 +29,20 @@ _SECRET_PATH = re.compile(
     r"|\.ssh\b|id_rsa\b|id_ed25519\b|private[_-]?key\b)",
     re.IGNORECASE,
 )
-_WORKSPACE_EXTERNAL = re.compile(
-    r"(/Users/|/home/|/etc/|/var/|/root/|[A-Za-z]:\\\\)",
+_SENSITIVE_FILE_PATH = re.compile(
+    r"(^|[\"'\s:=])(?:"
+    r"/etc/(?:passwd|shadow|sudoers|hosts|ssh/sshd_config)\b"
+    r"|/var/run/docker\.sock\b"
+    r"|/proc/(?:self/)?environ\b"
+    r"|/root/(?:\.ssh|\.aws|\.kube)(?:/|\\|$)"
+    r"|/Users/[^/]+/(?:\.ssh|\.aws|\.kube)(?:/|\\|$)"
+    r"|/home/[^/]+/(?:\.ssh|\.aws|\.kube)(?:/|\\|$)"
+    r")",
+    re.IGNORECASE,
+)
+_PATH_TRAVERSAL = re.compile(
+    r"(?:^|[\"'\s:=/\\])(?:\.\.(?:/|\\)|%2e%2e(?:%2f|%5c))"
+    r"|(?:%00|%2500|\\x00|\\u0000|\x00)",
     re.IGNORECASE,
 )
 _NETWORK = re.compile(r"\b(curl|wget|nc|nmap|ssh|scp|ftp)\b", re.IGNORECASE)
@@ -95,17 +107,6 @@ class SecuritySignalClassifier:
             "access denied" in lowered or "not allowed" in lowered
         ):
             return FailureClass.SECRET_ACCESS_DENIED, "regex_medium", "secret_access_denied"
-        if _WORKSPACE_EXTERNAL.search(text or "") and (
-            "outside" in lowered
-            or "not allowed" in lowered
-            or "external_directory" in lowered
-            or "external path" in lowered
-        ):
-            return (
-                FailureClass.CROSS_WORKSPACE_DENIED,
-                "regex_medium",
-                "cross_workspace_denied",
-            )
         if "permission denied" in lowered or "access denied" in lowered:
             return FailureClass.PERMISSION_DENIED, "regex_low", "generic_permission_denied"
         return FailureClass.UNKNOWN_FAILURE, "", ""
@@ -155,6 +156,30 @@ class SecuritySignalClassifier:
                     reason_code="sandbox_escape_attempt",
                 )
             )
+        if _PATH_TRAVERSAL.search(text):
+            signals.append(
+                self._signal(
+                    event,
+                    "path_traversal_attempt",
+                    Severity.HIGH,
+                    text,
+                    source=source,
+                    confidence="regex_high",
+                    reason_code="path_traversal",
+                )
+            )
+        if _SENSITIVE_FILE_PATH.search(text):
+            signals.append(
+                self._signal(
+                    event,
+                    "sensitive_file_access",
+                    Severity.HIGH,
+                    text,
+                    source=source,
+                    confidence="regex_high",
+                    reason_code="sensitive_file_path",
+                )
+            )
         if _SECRET_PATH.search(text):
             signals.append(
                 self._signal(
@@ -165,18 +190,6 @@ class SecuritySignalClassifier:
                     source=source,
                     confidence="regex_high",
                     reason_code="secret_path_reference",
-                )
-            )
-        elif _WORKSPACE_EXTERNAL.search(text):
-            signals.append(
-                self._signal(
-                    event,
-                    "cross_workspace_file_access",
-                    Severity.MEDIUM,
-                    text,
-                    source=source,
-                    confidence="regex_medium",
-                    reason_code="external_path_reference",
                 )
             )
         if _NETWORK.search(text) and "|" in text:
@@ -235,19 +248,6 @@ class SecuritySignalClassifier:
                     "structured_marker",
                     "permission_denied_policy",
                 )
-            if (
-                "external_directory" in lowered
-                or "outside workspace" in lowered
-                or "external path" in lowered
-                or _WORKSPACE_EXTERNAL.search(text or "")
-            ):
-                return self._permission_boundary_signal(
-                    event,
-                    text,
-                    FailureClass.CROSS_WORKSPACE_DENIED,
-                    "structured_marker",
-                    "permission_denied_external_path",
-                )
             return self._permission_boundary_signal(
                 event,
                 text,
@@ -263,7 +263,6 @@ class SecuritySignalClassifier:
         severity = Severity.HIGH if failure_class in {
             FailureClass.BLOCKED_BY_POLICY,
             FailureClass.SECRET_ACCESS_DENIED,
-            FailureClass.CROSS_WORKSPACE_DENIED,
         } else Severity.MEDIUM
         return self._permission_boundary_signal(
             event,

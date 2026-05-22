@@ -62,6 +62,106 @@ def test_classifier_flags_secret_path_access():
     assert signals[0].severity == Severity.HIGH
 
 
+def test_classifier_flags_sensitive_file_path_access():
+    classifier = SecuritySignalClassifier()
+
+    for path in ("/etc/passwd", "/etc/shadow", "/var/run/docker.sock"):
+        event = SecurityEvent(
+            event_type="tool_call",
+            session_id="sess-1",
+            iteration=1,
+            tool_name="read_file",
+            arguments_digest=f'{{"path": "{path}"}}',
+        )
+
+        signals = classifier.classify(event)
+
+        assert any(
+            signal.signal_type == "sensitive_file_access"
+            and signal.reason_code == "sensitive_file_path"
+            for signal in signals
+        )
+
+
+def test_classifier_flags_path_traversal_attempt():
+    classifier = SecuritySignalClassifier()
+
+    for path in (
+        "../../etc/passwd",
+        "/workspace/data/../../../secrets.yaml",
+        "/workspace/report.md%00.png",
+        "/workspace/report.md%2500.png",
+        "/workspace/report.md\\x00.png",
+        "/workspace/report.md\\u0000.png",
+    ):
+        event = SecurityEvent(
+            event_type="tool_call",
+            session_id="sess-1",
+            iteration=1,
+            tool_name="read_file",
+            arguments_digest=f'{{"path": "{path}"}}',
+        )
+
+        signals = classifier.classify(event)
+
+        assert any(
+            signal.signal_type == "path_traversal_attempt"
+            and signal.reason_code == "path_traversal"
+            for signal in signals
+        )
+
+
+def test_classifier_does_not_treat_plain_zeroes_as_path_traversal():
+    classifier = SecuritySignalClassifier()
+    event = SecurityEvent(
+        event_type="tool_call",
+        session_id="sess-1",
+        iteration=1,
+        tool_name="read_file",
+        arguments_digest='{"path": "/workspace/reports/2026-00-summary.md"}',
+    )
+
+    signals = classifier.classify(event)
+
+    assert not any(signal.signal_type == "path_traversal_attempt" for signal in signals)
+
+
+def test_classifier_does_not_flag_normal_absolute_path_as_external():
+    classifier = SecuritySignalClassifier()
+    event = SecurityEvent(
+        event_type="tool_call",
+        session_id="sess-1",
+        iteration=1,
+        tool_name="read_file",
+        arguments_digest=(
+            '{"path": "/Users/hearmen/Project/AI4Sec/ai_generate/jiuwenclaw/README.md"}'
+        ),
+    )
+
+    signals = classifier.classify(event)
+
+    assert not any(signal.signal_type == "cross_workspace_file_access" for signal in signals)
+    assert not any(signal.signal_type == "sensitive_file_access" for signal in signals)
+    assert not any(signal.signal_type == "path_traversal_attempt" for signal in signals)
+
+
+def test_classifier_does_not_classify_external_path_as_workspace_boundary():
+    classifier = SecuritySignalClassifier()
+    event = SecurityEvent(
+        event_type="tool_result",
+        session_id="sess-1",
+        iteration=1,
+        tool_name="read_file",
+        result_digest="[PERMISSION_DENIED] outside workspace: /Users/hearmen/project/README.md",
+    )
+
+    signals = classifier.classify(event)
+
+    assert signals[0].signal_type == "permission_boundary_hit"
+    assert signals[0].failure_class == FailureClass.PERMISSION_DENIED
+    assert signals[0].reason_code == "permission_denied"
+
+
 def test_classifier_does_not_flag_benign_token_or_secret_substrings():
     classifier = SecuritySignalClassifier()
 
@@ -133,7 +233,7 @@ def test_classifier_flags_secret_specific_denied_result():
     assert signals[0].severity == Severity.HIGH
 
 
-def test_classifier_flags_cross_workspace_denied_result():
+def test_classifier_does_not_classify_workspace_text_as_cross_workspace_denied():
     classifier = SecuritySignalClassifier()
     event = SecurityEvent(
         event_type="tool_result",
@@ -145,9 +245,7 @@ def test_classifier_flags_cross_workspace_denied_result():
 
     signals = classifier.classify(event)
 
-    assert signals[0].signal_type == "permission_boundary_hit"
-    assert signals[0].failure_class == FailureClass.CROSS_WORKSPACE_DENIED
-    assert signals[0].severity == Severity.HIGH
+    assert signals == []
 
 
 def test_classifier_assigns_stable_failure_classes():
