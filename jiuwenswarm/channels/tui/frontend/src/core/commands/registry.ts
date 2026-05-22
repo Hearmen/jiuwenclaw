@@ -19,7 +19,6 @@ import {
 } from "./builtins/evolve.js";
 import { createExitCommand } from "./builtins/exit.js";
 import { createHelpCommand } from "./builtins/help.js";
-import { createHotkeyCommand } from "./builtins/hotkey.js";
 import { createInitCommand } from "./builtins/init.js";
 import { createModelCommand } from "./builtins/model.js";
 import { createMcpCommand } from "./builtins/mcp.js";
@@ -79,7 +78,6 @@ export function createBuiltinCommands(): SlashCommand[] {
     createThemeCommand(),
     createWorkspaceCommand(),
     createUsageCommand(),
-    createHotkeyCommand(),
     createMemoryCommand(),
   ];
 

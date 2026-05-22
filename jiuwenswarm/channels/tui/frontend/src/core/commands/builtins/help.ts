@@ -4,7 +4,7 @@ import { makeItem } from "../helpers.js";
 const COMMAND_GROUPS: Record<string, { name: string; commands: string[] }> = {
   core: {
     name: "Core",
-    commands: ["help", "clear", "exit", "init", "copy", "hotkey"],
+    commands: ["help", "clear", "exit", "init", "copy"],
   },
   session: {
     name: "Session",
