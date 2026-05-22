@@ -51,15 +51,11 @@ class DiffService:
 
             if record["role"] == "user":
                 turn_start = record["timestamp"]
-                turn_end = None
-
-                for j in range(i + 1, len(history)):
-                    next_record = history[j]
-                    if next_record["role"] == "user":
-                        break
-                    if self._is_turn_end(next_record):
-                        turn_end = next_record["timestamp"]
-                        break
+                # Use next user message timestamp as turn end boundary.
+                # A turn logically spans from one user message to the next,
+                # so this captures all file edits within the turn's scope
+                # (including those after chat.final but before the next user msg).
+                turn_end = self._find_next_user_time(history, i)
 
                 turns.append({
                     "turnIndex": len(turns) + 1,

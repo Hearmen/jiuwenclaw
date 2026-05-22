@@ -39,6 +39,7 @@ export interface PendingQuestionItem {
 export interface PendingQuestionOption {
   label: string;
   description?: string;
+  details?: string[];
 }
 
 export interface UserAnswer {

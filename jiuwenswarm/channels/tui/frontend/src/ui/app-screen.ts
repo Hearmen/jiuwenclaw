@@ -490,6 +490,7 @@ export class AppScreen implements Component, Focusable {
   private syncingComposerInput = false;
   private pendingQuestionAnswers = new Map<number, string>();
   private questionList: SelectList | null = null;
+  private questionDetailsMap: Map<string, string[]> | null = null;
   private otherInputMode = false;
   private resumeSessionList: ResumeSessionListState | null = null;
   private modelList: ModelListState | null = null;
@@ -1354,6 +1355,7 @@ export class AppScreen implements Component, Focusable {
       this.activeQuestionIndex = 0;
       this.pendingQuestionAnswers.clear();
       this.questionList = null;
+      this.questionDetailsMap = null;
       if (!this.editor.getText() && this.draftBeforeQuestion) {
         this.editor.setText(this.draftBeforeQuestion);
       }
@@ -3123,6 +3125,16 @@ export class AppScreen implements Component, Focusable {
 
     if (this.questionList !== null) {
       lines.push(...this.questionList.render(width));
+      // Render details sub-lines for the currently highlighted option
+      const selectedItem = this.questionList.getSelectedItem();
+      if (selectedItem && this.questionDetailsMap) {
+        const details = this.questionDetailsMap.get(selectedItem.value);
+        if (details && details.length > 0) {
+          for (const detail of details) {
+            lines.push(padToWidth(palette.text.dim(`              ${detail}`), width));
+          }
+        }
+      }
       lines.push(
         padToWidth(
           palette.text.dim(
@@ -3141,12 +3153,14 @@ export class AppScreen implements Component, Focusable {
     const pendingQuestion = snapshot.pendingQuestion;
     if (!pendingQuestion) {
       this.questionList = null;
+      this.questionDetailsMap = null;
       return;
     }
 
     const question = pendingQuestion.questions[this.activeQuestionIndex];
     if (!question || question.options.length === 0) {
       this.questionList = null;
+      this.questionDetailsMap = null;
       return;
     }
 
@@ -3158,11 +3172,27 @@ export class AppScreen implements Component, Focusable {
           : option.label,
       description: option.description,
     }));
+
+    // Build details map for options that have sub-lines (e.g. rewind file changes)
+    const detailsMap = new Map<string, string[]>();
+    for (const option of question.options) {
+      if (option.details && option.details.length > 0) {
+        detailsMap.set(option.label, option.details);
+      }
+    }
+    this.questionDetailsMap = detailsMap;
+
     const maxVisible = pendingQuestion.source === "permission_interrupt" ? 4 : 6;
+    // For questions with details sub-lines (e.g. rewind), use a narrower label column
+    // so the description starts sooner and details can align beneath it.
+    const layout = detailsMap.size > 0
+      ? { minPrimaryColumnWidth: 10, maxPrimaryColumnWidth: 10 }
+      : {};
     const list = new SelectList(
       items,
       Math.min(Math.max(items.length, 1), maxVisible),
       selectListTheme,
+      layout,
     );
     list.onSelect = (item) => {
       this.handleQuestionSelection(item.value);
@@ -3174,6 +3204,9 @@ export class AppScreen implements Component, Focusable {
       } else {
         this.handleQuestionSelection("");
       }
+    };
+    list.onSelectionChange = () => {
+      this.invalidate();
     };
     const selectedValue = this.pendingQuestionAnswers.get(this.activeQuestionIndex);
     const selectedIndex = selectedValue
