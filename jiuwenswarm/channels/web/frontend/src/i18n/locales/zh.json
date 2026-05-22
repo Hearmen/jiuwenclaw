@@ -601,7 +601,8 @@
       "untitled": "未命名",
       "deleteConfirmTitle": "确认删除Agent？",
       "deleteConfirmMessage": "确定要删除 Agent \"{{agentName}}\" 吗？",
-      "deleteConfirmMessageSimple": "Agent \"{{agentName}}\" 正在被 Team 引用。"
+      "deleteConfirmMessageSimple": "Agent \"{{agentName}}\" 正在被 Team 引用。",
+      "nameChangeWarning": "正在修改被引用的Agent名称，请重新配置Agent Key"
     },
     "team": {
       "leader": "Leader",

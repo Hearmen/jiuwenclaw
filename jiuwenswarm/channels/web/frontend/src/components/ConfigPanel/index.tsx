@@ -559,9 +559,8 @@ function GroupSection({
   };
 
   const nestedStyle = nested ? getNestedModelStyle(group.tag) : "";
-  const headerClass = `w-full flex items-center justify-between transition-colors text-sm ${
-    showNestedChrome ? `py-2 pr-3 pl-4 ${nestedStyle} hover:opacity-90` : "px-4 py-3 bg-secondary/30"
-  } ${alwaysExpanded ? "" : showNestedChrome ? "" : "hover:bg-secondary/60"}`;
+  const headerClass = `w-full flex items-center justify-between transition-colors text-sm ${showNestedChrome ? `py-2 pr-3 pl-4 ${nestedStyle} hover:opacity-90` : "px-4 py-3 bg-secondary/30"
+    } ${alwaysExpanded ? "" : showNestedChrome ? "" : "hover:bg-secondary/60"}`;
 
   const headerInner = (
     <>
@@ -594,10 +593,10 @@ function GroupSection({
     <div
       id={`config-group-${group.tag}`}
       className={
-      showNestedChrome
-        ? "rounded-r-md overflow-hidden border border-border/50"
-        : "rounded-xl border border-border bg-card/70 backdrop-blur-sm overflow-hidden shadow-sm"
-    }
+        showNestedChrome
+          ? "rounded-r-md overflow-hidden border border-border/50"
+          : "rounded-xl border border-border bg-card/70 backdrop-blur-sm overflow-hidden shadow-sm"
+      }
     >
       {alwaysExpanded ? (
         <div className={headerClass} role="presentation">
@@ -610,128 +609,123 @@ function GroupSection({
       )}
       {isOpen && (
         <>
-        <table className="w-full text-sm border-t border-border">
-          <tbody>
-            {group.keys.map(([key, value]) => (
-              <tr key={key} className="border-t border-border first:border-t-0 even:bg-secondary/10 hover:bg-secondary/25 transition-colors">
-                <td className="px-4 py-2.5 align-middle text-xs text-text-muted w-[32%]" title={key}>
-                  <div className="mono">{getKeyDisplayLabel(key, t)}</div>
-                  {getKeyLabelHintText(key, t) ? (
-                    <div className="mt-1 text-[11px] leading-4 text-text-muted">
-                      {getKeyLabelHintText(key, t)}
-                    </div>
-                  ) : null}
-                </td>
-                <td className="px-4 py-2.5 break-all text-[13px] align-middle">
-                  {isBooleanKey(key) ? (
-                    <div className="flex items-center gap-2">
-                      <span
-                        className={`inline-flex w-3 justify-center shrink-0 font-semibold leading-none select-none ${
-                          isRequiredModelField(key) ? "text-danger" : "text-transparent"
-                        }`}
-                        aria-hidden="true"
-                      >
-                        *
-                      </span>
-                      <div className="h-[calc(1.25rem+16px)] flex items-center">
-                        <button
-                          type="button"
-                          role="switch"
-                          aria-checked={parseBoolValue(draftValues[key] ?? value)}
-                          onClick={() => onChange(key, parseBoolValue(draftValues[key] ?? value) ? "false" : "true")}
-                          title={getBooleanKeyLabel(key, t) ?? key}
-                          className={`relative inline-flex h-5 w-9 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 focus:outline-none ${
-                            parseBoolValue(draftValues[key] ?? value) ? "bg-ok" : "bg-secondary"
-                          }`}
-                        >
-                          <span
-                            className={`pointer-events-none inline-block h-4 w-4 transform rounded-full bg-white shadow transition duration-200 ${
-                              parseBoolValue(draftValues[key] ?? value) ? "translate-x-4" : "translate-x-0"
+          <table className="w-full text-sm border-t border-border">
+            <tbody>
+              {group.keys.map(([key, value]) => (
+                <tr key={key} className="border-t border-border first:border-t-0 even:bg-secondary/10 hover:bg-secondary/25 transition-colors">
+                  <td className="px-4 py-2.5 align-middle text-xs text-text-muted w-[32%]" title={key}>
+                    <div className="mono">{getKeyDisplayLabel(key, t)}</div>
+                    {getKeyLabelHintText(key, t) ? (
+                      <div className="mt-1 text-[11px] leading-4 text-text-muted">
+                        {getKeyLabelHintText(key, t)}
+                      </div>
+                    ) : null}
+                  </td>
+                  <td className="px-4 py-2.5 break-all text-[13px] align-middle">
+                    {isBooleanKey(key) ? (
+                      <div className="flex items-center gap-2">
+                        <span
+                          className={`inline-flex w-3 justify-center shrink-0 font-semibold leading-none select-none ${isRequiredModelField(key) ? "text-danger" : "text-transparent"
                             }`}
-                          />
-                        </button>
-                      </div>
-                    </div>
-                  ) : isProviderKey(key) ? (
-                    <div className="flex items-center gap-2">
-                      <span
-                        className={`inline-flex w-3 justify-center shrink-0 font-semibold leading-none select-none ${
-                          isRequiredModelField(key) ? "text-danger" : "text-transparent"
-                        }`}
-                        aria-hidden="true"
-                      >
-                        *
-                      </span>
-                      <div className="flex-1">
-                        <select
-                          value={draftValues[key] ?? value}
-                          onChange={(e) => onChange(key, e.target.value)}
-                          className="w-full rounded-md border border-border bg-bg px-3 py-2 text-[13px] outline-none focus:border-accent"
+                          aria-hidden="true"
                         >
-                          <option value="" disabled>{t('config.selectModelProvider')}</option>
-                          <option value="OpenAI">OpenAI</option>
-                          {!key.includes('video_') && !key.includes('audio_') && !key.includes('vision_') && (
-                            <>
-                              <option value="DashScope">DashScope</option>
-                              <option value="SiliconFlow">SiliconFlow</option>
-                              <option value="InferenceAffinity">InferenceAffinity</option>
-                              <option value="DeepSeek">DeepSeek</option>
-                            </>
-                          )}
-                        </select>
-                      </div>
-                    </div>
-                  ) : (
-                    <div className="flex items-center gap-2">
-                      <span
-                        className={`inline-flex w-3 justify-center shrink-0 font-semibold leading-none select-none ${
-                          isRequiredModelField(key) ? "text-danger" : "text-transparent"
-                        }`}
-                        aria-hidden="true"
-                      >
-                        *
-                      </span>
-                      <div className="relative flex-1">
-                        <input
-                          type={isSensitiveKey(key) && !visibleFields[key] ? "password" : "text"}
-                          value={draftValues[key] ?? value}
-                          onChange={(e) => onChange(key, e.target.value)}
-                          placeholder={KEY_PLACEHOLDER_I18N[key] ? t(KEY_PLACEHOLDER_I18N[key]) : t('config.enterValue')}
-                          className={`w-full rounded-md border border-border bg-bg px-3 py-2 text-[13px] outline-none focus:border-accent ${isSensitiveKey(key) ? "pr-10" : ""}`}
-                        />
-                        {isSensitiveKey(key) ? (
+                          *
+                        </span>
+                        <div className="h-[calc(1.25rem+16px)] flex items-center">
                           <button
                             type="button"
-                            onClick={() => toggleFieldVisible(key)}
-                            className="absolute inset-y-0 right-0 flex items-center justify-center w-9 text-text-muted hover:text-text transition-colors"
-                            aria-label={visibleFields[key] ? t('config.hideValue') : t('config.showValue')}
-                            title={visibleFields[key] ? t('config.hideValue') : t('config.showValue')}
+                            role="switch"
+                            aria-checked={parseBoolValue(draftValues[key] ?? value)}
+                            onClick={() => onChange(key, parseBoolValue(draftValues[key] ?? value) ? "false" : "true")}
+                            title={getBooleanKeyLabel(key, t) ?? key}
+                            className={`relative inline-flex h-5 w-9 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 focus:outline-none ${parseBoolValue(draftValues[key] ?? value) ? "bg-ok" : "bg-secondary"
+                              }`}
                           >
-                            {visibleFields[key] ? (
-                              <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8}>
-                                <path strokeLinecap="round" strokeLinejoin="round" d="M3 3l18 18" />
-                                <path strokeLinecap="round" strokeLinejoin="round" d="M10.58 10.58A2 2 0 0013.42 13.42" />
-                                <path strokeLinecap="round" strokeLinejoin="round" d="M9.88 5.09A10.94 10.94 0 0112 4.9c5.05 0 9.27 3.11 10.5 7.5a11.6 11.6 0 01-3.06 4.88" />
-                                <path strokeLinecap="round" strokeLinejoin="round" d="M6.61 6.61A11.6 11.6 0 001.5 12.4c.53 1.9 1.63 3.56 3.11 4.79" />
-                                <path strokeLinecap="round" strokeLinejoin="round" d="M14.12 14.12a3 3 0 01-4.24-4.24" />
-                              </svg>
-                            ) : (
-                              <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8}>
-                                <path strokeLinecap="round" strokeLinejoin="round" d="M1.5 12s3.75-7.5 10.5-7.5S22.5 12 22.5 12s-3.75 7.5-10.5 7.5S1.5 12 1.5 12z" />
-                                <circle cx="12" cy="12" r="3" />
-                              </svg>
-                            )}
+                            <span
+                              className={`pointer-events-none inline-block h-4 w-4 transform rounded-full bg-white shadow transition duration-200 ${parseBoolValue(draftValues[key] ?? value) ? "translate-x-4" : "translate-x-0"
+                                }`}
+                            />
                           </button>
-                        ) : null}
+                        </div>
                       </div>
-                    </div>
-                  )}
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-        {afterTable}
+                    ) : isProviderKey(key) ? (
+                      <div className="flex items-center gap-2">
+                        <span
+                          className={`inline-flex w-3 justify-center shrink-0 font-semibold leading-none select-none ${isRequiredModelField(key) ? "text-danger" : "text-transparent"
+                            }`}
+                          aria-hidden="true"
+                        >
+                          *
+                        </span>
+                        <div className="flex-1">
+                          <select
+                            value={draftValues[key] ?? value}
+                            onChange={(e) => onChange(key, e.target.value)}
+                            className="w-full rounded-md border border-border bg-bg px-3 py-2 text-[13px] outline-none focus:border-accent"
+                          >
+                            <option value="" disabled>{t('config.selectModelProvider')}</option>
+                            <option value="OpenAI">OpenAI</option>
+                            {!key.includes('video_') && !key.includes('audio_') && !key.includes('vision_') && (
+                              <>
+                                <option value="DashScope">DashScope</option>
+                                <option value="SiliconFlow">SiliconFlow</option>
+                                <option value="InferenceAffinity">InferenceAffinity</option>
+                                <option value="DeepSeek">DeepSeek</option>
+                              </>
+                            )}
+                          </select>
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="flex items-center gap-2">
+                        <span
+                          className={`inline-flex w-3 justify-center shrink-0 font-semibold leading-none select-none ${isRequiredModelField(key) ? "text-danger" : "text-transparent"
+                            }`}
+                          aria-hidden="true"
+                        >
+                          *
+                        </span>
+                        <div className="relative flex-1">
+                          <input
+                            type={isSensitiveKey(key) && !visibleFields[key] ? "password" : "text"}
+                            value={draftValues[key] ?? value}
+                            onChange={(e) => onChange(key, e.target.value)}
+                            placeholder={KEY_PLACEHOLDER_I18N[key] ? t(KEY_PLACEHOLDER_I18N[key]) : t('config.enterValue')}
+                            className={`w-full rounded-md border border-border bg-bg px-3 py-2 text-[13px] outline-none focus:border-accent ${isSensitiveKey(key) ? "pr-10" : ""}`}
+                          />
+                          {isSensitiveKey(key) ? (
+                            <button
+                              type="button"
+                              onClick={() => toggleFieldVisible(key)}
+                              className="absolute inset-y-0 right-0 flex items-center justify-center w-9 text-text-muted hover:text-text transition-colors"
+                              aria-label={visibleFields[key] ? t('config.hideValue') : t('config.showValue')}
+                              title={visibleFields[key] ? t('config.hideValue') : t('config.showValue')}
+                            >
+                              {visibleFields[key] ? (
+                                <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8}>
+                                  <path strokeLinecap="round" strokeLinejoin="round" d="M3 3l18 18" />
+                                  <path strokeLinecap="round" strokeLinejoin="round" d="M10.58 10.58A2 2 0 0013.42 13.42" />
+                                  <path strokeLinecap="round" strokeLinejoin="round" d="M9.88 5.09A10.94 10.94 0 0112 4.9c5.05 0 9.27 3.11 10.5 7.5a11.6 11.6 0 01-3.06 4.88" />
+                                  <path strokeLinecap="round" strokeLinejoin="round" d="M6.61 6.61A11.6 11.6 0 001.5 12.4c.53 1.9 1.63 3.56 3.11 4.79" />
+                                  <path strokeLinecap="round" strokeLinejoin="round" d="M14.12 14.12a3 3 0 01-4.24-4.24" />
+                                </svg>
+                              ) : (
+                                <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8}>
+                                  <path strokeLinecap="round" strokeLinejoin="round" d="M1.5 12s3.75-7.5 10.5-7.5S22.5 12 22.5 12s-3.75 7.5-10.5 7.5S1.5 12 1.5 12z" />
+                                  <circle cx="12" cy="12" r="3" />
+                                </svg>
+                              )}
+                            </button>
+                          ) : null}
+                        </div>
+                      </div>
+                    )}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+          {afterTable}
         </>
       )}
     </div>
@@ -797,9 +791,9 @@ function MultiModelSection({
     if (!agents) return [];
     const references: string[] = [];
     agents.forEach((agent) => {
-      if (agent.model.model === modelName && 
-          agent.model.provider === modelProvider && 
-          agent.model.api_base === modelApiBase) {
+      if (agent.model.model === modelName &&
+        agent.model.provider === modelProvider &&
+        agent.model.api_base === modelApiBase) {
         references.push(agent.name);
       }
     });
@@ -1008,199 +1002,198 @@ function MultiModelSection({
     <>
       <div className="space-y-2">
         {localError && (
-        <div className="rounded-md border border-[var(--border-danger)] bg-danger-subtle px-3 py-2 text-xs text-danger">
-          {localError}
-        </div>
-      )}
-      {validateToast.show && (
-        <div
-          className={`fixed top-4 left-1/2 -translate-x-1/2 z-50 px-6 py-3 rounded-xl shadow-lg flex items-center gap-3 animate-fade-in ${
-            validateToast.success ? "bg-ok-subtle border border-ok text-ok" : "bg-danger-subtle border border-danger text-danger"
-          }`}
-        >
-          {validateToast.success ? (
-            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2}>
-              <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
-            </svg>
-          ) : (
-            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2}>
-              <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
-            </svg>
-          )}
-          <span className="font-medium">{validateToast.message}</span>
-        </div>
-      )}
-      {models.map((model, idx) => {
-        const isExpanded = expandedIdx === idx;
-        const vr = validateResults[model.model_name];
-        const isDefault = model.is_default !== false;
-        const isPrimaryDefault = idx === 0;
-        // 同名模型计数，用于区分显示
-        const sameNameIndices = models.reduce<number[]>((acc, m, i) => {
-          if (m.model_name === model.model_name) acc.push(i);
-          return acc;
-        }, []);
-        const sameNameCount = sameNameIndices.length;
-        const displayName = sameNameCount > 1
-          ? `${model.model_name} #${sameNameIndices.indexOf(idx) + 1}`
-          : model.model_name;
-        return (
-          <div key={idx} className="rounded-lg border border-border bg-secondary/20">
-            <div className="flex items-center justify-between px-3 py-2 gap-2">
-              <button
-                type="button"
-                className="flex items-center gap-2 text-sm font-medium text-text truncate flex-1 text-left"
-                onClick={() => setExpandedIdx(isExpanded ? null : idx)}
-              >
-                <svg className={`w-3 h-3 transition-transform shrink-0 ${isExpanded ? "rotate-90" : ""}`} fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2}>
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" />
-                </svg>
-                <span className="truncate">{displayName || t("config.modelList.untitled")}</span>
-                {isPrimaryDefault && (
-                  <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-accent/15 text-accent border border-accent/30">{t("config.modelList.primaryDefault")}</span>
-                )}
-                {!isPrimaryDefault && isDefault && sameNameCount > 1 && (
-                  <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-secondary/40 text-text-muted border border-border">{t("config.modelList.groupDefault")}</span>
-                )}
-                {vr === "ok" && (
-                  <span className="w-5 h-5 rounded-full bg-ok-subtle text-ok flex items-center justify-center">
-                    <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={3}>
-                      <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
-                    </svg>
-                  </span>
-                )}
-                {vr === "err" && (
-                  <span className="w-5 h-5 rounded-full bg-danger-subtle text-danger flex items-center justify-center">
-                    <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={3}>
-                      <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
-                    </svg>
-                  </span>
-                )}
-              </button>
-              <div className="flex items-center gap-1.5 shrink-0">
-                {!isPrimaryDefault && (
+          <div className="rounded-md border border-[var(--border-danger)] bg-danger-subtle px-3 py-2 text-xs text-danger">
+            {localError}
+          </div>
+        )}
+        {validateToast.show && (
+          <div
+            className={`fixed top-4 left-1/2 -translate-x-1/2 z-50 px-6 py-3 rounded-xl shadow-lg flex items-center gap-3 animate-fade-in ${validateToast.success ? "bg-ok-subtle border border-ok text-ok" : "bg-danger-subtle border border-danger text-danger"
+              }`}
+          >
+            {validateToast.success ? (
+              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
+              </svg>
+            ) : (
+              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+              </svg>
+            )}
+            <span className="font-medium">{validateToast.message}</span>
+          </div>
+        )}
+        {models.map((model, idx) => {
+          const isExpanded = expandedIdx === idx;
+          const vr = validateResults[model.model_name];
+          const isDefault = model.is_default !== false;
+          const isPrimaryDefault = idx === 0;
+          // 同名模型计数，用于区分显示
+          const sameNameIndices = models.reduce<number[]>((acc, m, i) => {
+            if (m.model_name === model.model_name) acc.push(i);
+            return acc;
+          }, []);
+          const sameNameCount = sameNameIndices.length;
+          const displayName = sameNameCount > 1
+            ? `${model.model_name} #${sameNameIndices.indexOf(idx) + 1}`
+            : model.model_name;
+          return (
+            <div key={idx} className="rounded-lg border border-border bg-secondary/20">
+              <div className="flex items-center justify-between px-3 py-2 gap-2">
+                <button
+                  type="button"
+                  className="flex items-center gap-2 text-sm font-medium text-text truncate flex-1 text-left"
+                  onClick={() => setExpandedIdx(isExpanded ? null : idx)}
+                >
+                  <svg className={`w-3 h-3 transition-transform shrink-0 ${isExpanded ? "rotate-90" : ""}`} fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" />
+                  </svg>
+                  <span className="truncate">{displayName || t("config.modelList.untitled")}</span>
+                  {isPrimaryDefault && (
+                    <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-accent/15 text-accent border border-accent/30">{t("config.modelList.primaryDefault")}</span>
+                  )}
+                  {!isPrimaryDefault && isDefault && sameNameCount > 1 && (
+                    <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-secondary/40 text-text-muted border border-border">{t("config.modelList.groupDefault")}</span>
+                  )}
+                  {vr === "ok" && (
+                    <span className="w-5 h-5 rounded-full bg-ok-subtle text-ok flex items-center justify-center">
+                      <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={3}>
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
+                      </svg>
+                    </span>
+                  )}
+                  {vr === "err" && (
+                    <span className="w-5 h-5 rounded-full bg-danger-subtle text-danger flex items-center justify-center">
+                      <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={3}>
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+                      </svg>
+                    </span>
+                  )}
+                </button>
+                <div className="flex items-center gap-1.5 shrink-0">
+                  {!isPrimaryDefault && (
+                    <button
+                      type="button"
+                      onClick={() => handleSetActive(idx)}
+                      className="text-[11px] px-2 py-0.5 rounded border border-border hover:bg-secondary/60"
+                    >
+                      {t("config.modelList.setPrimaryDefault")}
+                    </button>
+                  )}
                   <button
                     type="button"
-                    onClick={() => handleSetActive(idx)}
-                    className="text-[11px] px-2 py-0.5 rounded border border-border hover:bg-secondary/60"
+                    onClick={() => handleValidate(model)}
+                    disabled={!isConnected || validatingModel === model.model_name}
+                    className="text-[11px] px-2 py-0.5 rounded border border-border hover:bg-secondary/60 disabled:opacity-40"
                   >
-                    {t("config.modelList.setPrimaryDefault")}
+                    {validatingModel === model.model_name ? "..." : t("config.validateModel.button")}
                   </button>
-                )}
-                <button
-                  type="button"
-                  onClick={() => handleValidate(model)}
-                  disabled={!isConnected || validatingModel === model.model_name}
-                  className="text-[11px] px-2 py-0.5 rounded border border-border hover:bg-secondary/60 disabled:opacity-40"
-                >
-                  {validatingModel === model.model_name ? "..." : t("config.validateModel.button")}
-                </button>
-                <button
-                  type="button"
-                  onClick={() => removeModel(idx)}
-                  disabled={models.length <= 1}
-                  className="text-[11px] px-2 py-0.5 rounded border border-border hover:bg-danger-subtle hover:text-danger disabled:opacity-40"
-                >
-                  {t("config.modelList.removeModel")}
-                </button>
-              </div>
-            </div>
-            {isExpanded && (
-              <div className="border-t border-border px-3 py-2 space-y-2">
-                {(["model_name", "alias", "api_base", "api_key", "model_provider"] as const).map((field) => (
-                  <div key={field} className="flex items-center gap-2 text-xs">
-                    <label className="w-28 text-text-muted shrink-0">
-                      {field}{["api_key", "api_base", "model_name", "model_provider"].includes(field) && <span className="text-danger ml-0.5">*</span>}
-                    </label>
-                    {field === "model_provider" ? (
-                      <select
-                        value={models[idx]?.[field] ?? ""}
-                        onChange={(e) => updateModel(idx, field, e.target.value)}
-                        className="flex-1 rounded border border-border bg-bg px-2 py-1 text-text text-xs"
-                      >
-                        <option value="" disabled>{t("config.selectModelProvider")}</option>
-                        {MODEL_PROVIDER_OPTIONS.map((p) => <option key={p} value={p}>{p}</option>)}
-                      </select>
-                    ) : (
-                      <input
-                        type={field === "api_key" ? "password" : "text"}
-                        value={models[idx]?.[field] ?? ""}
-                        onChange={(e) => updateModel(idx, field, e.target.value)}
-                        className="flex-1 rounded border border-border bg-bg px-2 py-1 text-text text-xs"
-                        placeholder={field === "api_key" ? t("config.modelList.apiKeyPlaceholder") : ""}
-                      />
-                    )}
-                  </div>
-                ))}
-                {/* is_default 勾选框 */}
-                <div className="flex items-center gap-2 text-xs">
-                  <label className="w-28 text-text-muted shrink-0">{t("config.modelList.isDefault")}</label>
-                  <input
-                    type="checkbox"
-                    checked={isDefault}
-                    onChange={() => handleToggleDefault(idx)}
-                    disabled={sameNameCount <= 1}
-                    className="rounded border-border"
-                  />
-                  {sameNameCount <= 1 && (
-                    <span className="text-text-muted text-[10px]">{t("config.modelList.onlyOneInGroup")}</span>
-                  )}
+                  <button
+                    type="button"
+                    onClick={() => removeModel(idx)}
+                    disabled={models.length <= 1}
+                    className="text-[11px] px-2 py-0.5 rounded border border-border hover:bg-danger-subtle hover:text-danger disabled:opacity-40"
+                  >
+                    {t("config.modelList.removeModel")}
+                  </button>
                 </div>
               </div>
-            )}
-          </div>
-        );
-      })}
-
-      {addingNew ? (
-        <div className="rounded-lg border border-accent/40 bg-accent/5 px-3 py-2 space-y-2">
-          {(["model_name", "alias", "api_base", "api_key", "model_provider"] as const).map((field) => (
-            <div key={field} className="flex items-center gap-2 text-xs">
-              <label className="w-28 text-text-muted shrink-0">
-                {field}{["api_key", "api_base", "model_name", "model_provider"].includes(field) && <span className="text-danger ml-0.5">*</span>}
-              </label>
-              {field === "model_provider" ? (
-                <select
-                  value={newModel[field]}
-                  onChange={(e) => handleNewModelChange(field, e.target.value)}
-                  className="flex-1 rounded border border-border bg-bg px-2 py-1 text-text text-xs"
-                >
-                  <option value="" disabled>{t("config.selectModelProvider")}</option>
-                  {MODEL_PROVIDER_OPTIONS.map((p) => <option key={p} value={p}>{p}</option>)}
-                </select>
-              ) : (
-                <input
-                  type={field === "api_key" ? "password" : "text"}
-                  value={newModel[field] ?? ""}
-                  onChange={(e) => handleNewModelChange(field, e.target.value)}
-                  className="flex-1 rounded border border-border bg-bg px-2 py-1 text-text text-xs"
-                  placeholder={field === "model_name" ? "e.g. gpt-4o" : field === "api_key" ? t("config.modelList.apiKeyPlaceholder") : ""}
-                />
+              {isExpanded && (
+                <div className="border-t border-border px-3 py-2 space-y-2">
+                  {(["model_name", "alias", "api_base", "api_key", "model_provider"] as const).map((field) => (
+                    <div key={field} className="flex items-center gap-2 text-xs">
+                      <label className="w-28 text-text-muted shrink-0">
+                        {field}{["api_key", "api_base", "model_name", "model_provider"].includes(field) && <span className="text-danger ml-0.5">*</span>}
+                      </label>
+                      {field === "model_provider" ? (
+                        <select
+                          value={models[idx]?.[field] ?? ""}
+                          onChange={(e) => updateModel(idx, field, e.target.value)}
+                          className="flex-1 rounded border border-border bg-bg px-2 py-1 text-text text-xs"
+                        >
+                          <option value="" disabled>{t("config.selectModelProvider")}</option>
+                          {MODEL_PROVIDER_OPTIONS.map((p) => <option key={p} value={p}>{p}</option>)}
+                        </select>
+                      ) : (
+                        <input
+                          type={field === "api_key" ? "password" : "text"}
+                          value={models[idx]?.[field] ?? ""}
+                          onChange={(e) => updateModel(idx, field, e.target.value)}
+                          className="flex-1 rounded border border-border bg-bg px-2 py-1 text-text text-xs"
+                          placeholder={field === "api_key" ? t("config.modelList.apiKeyPlaceholder") : ""}
+                        />
+                      )}
+                    </div>
+                  ))}
+                  {/* is_default 勾选框 */}
+                  <div className="flex items-center gap-2 text-xs">
+                    <label className="w-28 text-text-muted shrink-0">{t("config.modelList.isDefault")}</label>
+                    <input
+                      type="checkbox"
+                      checked={isDefault}
+                      onChange={() => handleToggleDefault(idx)}
+                      disabled={sameNameCount <= 1}
+                      className="rounded border-border"
+                    />
+                    {sameNameCount <= 1 && (
+                      <span className="text-text-muted text-[10px]">{t("config.modelList.onlyOneInGroup")}</span>
+                    )}
+                  </div>
+                </div>
               )}
             </div>
-          ))}
-          <div className="flex justify-end gap-2 pt-1">
-            <button type="button" onClick={handleCancelAddNew} className="btn !px-3 !py-1 text-xs">{t("common.cancel")}</button>
-            <button
-              type="button"
-              onClick={handleAddNew}
-              disabled={!newModel.model_name.trim() || !newModel.api_base.trim() || !newModel.api_key.trim() || !newModel.model_provider.trim()}
-              className="btn primary !px-3 !py-1 text-xs"
-            >
-              {t("common.confirm")}
-            </button>
+          );
+        })}
+
+        {addingNew ? (
+          <div className="rounded-lg border border-accent/40 bg-accent/5 px-3 py-2 space-y-2">
+            {(["model_name", "alias", "api_base", "api_key", "model_provider"] as const).map((field) => (
+              <div key={field} className="flex items-center gap-2 text-xs">
+                <label className="w-28 text-text-muted shrink-0">
+                  {field}{["api_key", "api_base", "model_name", "model_provider"].includes(field) && <span className="text-danger ml-0.5">*</span>}
+                </label>
+                {field === "model_provider" ? (
+                  <select
+                    value={newModel[field]}
+                    onChange={(e) => handleNewModelChange(field, e.target.value)}
+                    className="flex-1 rounded border border-border bg-bg px-2 py-1 text-text text-xs"
+                  >
+                    <option value="" disabled>{t("config.selectModelProvider")}</option>
+                    {MODEL_PROVIDER_OPTIONS.map((p) => <option key={p} value={p}>{p}</option>)}
+                  </select>
+                ) : (
+                  <input
+                    type={field === "api_key" ? "password" : "text"}
+                    value={newModel[field] ?? ""}
+                    onChange={(e) => handleNewModelChange(field, e.target.value)}
+                    className="flex-1 rounded border border-border bg-bg px-2 py-1 text-text text-xs"
+                    placeholder={field === "model_name" ? "e.g. gpt-4o" : field === "api_key" ? t("config.modelList.apiKeyPlaceholder") : ""}
+                  />
+                )}
+              </div>
+            ))}
+            <div className="flex justify-end gap-2 pt-1">
+              <button type="button" onClick={handleCancelAddNew} className="btn !px-3 !py-1 text-xs">{t("common.cancel")}</button>
+              <button
+                type="button"
+                onClick={handleAddNew}
+                disabled={!newModel.model_name.trim() || !newModel.api_base.trim() || !newModel.api_key.trim() || !newModel.model_provider.trim()}
+                className="btn primary !px-3 !py-1 text-xs"
+              >
+                {t("common.confirm")}
+              </button>
+            </div>
           </div>
-        </div>
-      ) : (
-        <button
-          type="button"
-          onClick={handleStartAddNew}
-          className="w-full rounded-lg border border-dashed border-border py-2 text-xs text-text-muted hover:bg-secondary/40 hover:border-accent/40"
-        >
-          + {t("config.modelList.addModel")}
-        </button>
-      )}
-    </div>
+        ) : (
+          <button
+            type="button"
+            onClick={handleStartAddNew}
+            className="w-full rounded-lg border border-dashed border-border py-2 text-xs text-text-muted hover:bg-secondary/40 hover:border-accent/40"
+          >
+            + {t("config.modelList.addModel")}
+          </button>
+        )}
+      </div>
     </>
   );
 }
@@ -1210,17 +1203,21 @@ function MultiAgentSection({
   agents,
   onAgentsChange,
   teams,
+  onTeamsChange,
   availableModels,
   installedSkills,
   onDeleteAgent,
+  onAgentNameChangeWarning,
   t,
 }: {
   agents: AgentEntry[];
   onAgentsChange: (agents: AgentEntry[]) => void;
   teams: TeamEntry[];
+  onTeamsChange: (teams: TeamEntry[]) => void;
   availableModels: ModelEntry[];
   installedSkills?: string[];
   onDeleteAgent?: (idx: number, agentName: string, references: string[]) => void;
+  onAgentNameChangeWarning: (warning: string | null) => void;
   t: (key: string, options?: Record<string, unknown>) => string;
 }) {
   const [expandedIdx, setExpandedIdx] = useState<number | null>(null);
@@ -1257,9 +1254,9 @@ function MultiAgentSection({
     const references: string[] = [];
     agents.forEach((agent, agentIdx) => {
       if (agentIdx === excludeIdx) return;
-      if (agent.model.model === modelName && 
-          agent.model.provider === modelProvider && 
-          agent.model.api_base === modelApiBase) {
+      if (agent.model.model === modelName &&
+        agent.model.provider === modelProvider &&
+        agent.model.api_base === modelApiBase) {
         references.push(agent.name);
       }
     });
@@ -1290,6 +1287,26 @@ function MultiAgentSection({
   const updateAgentField = (idx: number, field: keyof AgentEntry, value: string | number) => {
     const copy = [...agents];
     if (field === "model") return;
+    if (field === "name") {
+      const oldName = agents[idx]?.name;
+      if (oldName && oldName !== value) {
+        const references = getAgentReferences(oldName);
+        if (references.length > 0) {
+          onAgentNameChangeWarning(t("config.agentList.nameChangeWarning"));
+          const updatedTeams = teams.map((team) => ({
+            ...team,
+            leader: team.leader?.agent_key === oldName ? { ...team.leader, agent_key: "" } : team.leader,
+            teammate: team.teammate?.agent_key === oldName ? { ...team.teammate, agent_key: "" } : team.teammate,
+            predefined_members: team.predefined_members?.map((member) =>
+              member.agent_key === oldName ? { ...member, agent_key: "" } : member
+            ),
+          }));
+          onTeamsChange(updatedTeams);
+        } else {
+          onAgentNameChangeWarning(null);
+        }
+      }
+    }
     copy[idx] = { ...copy[idx], [field]: value };
     onAgentsChange(copy);
   };
@@ -1613,6 +1630,18 @@ function TeamItemSection({
   const [newMember, setNewMember] = useState<TeamMember>({ member_name: "", display_name: "", persona: "", prompt_hint: "", agent_key: "" });
   const [newMemberNameError, setNewMemberNameError] = useState<string | null>(null);
 
+  useEffect(() => {
+    const allMembers = [...(team.predefined_members || []), team.leader].filter(Boolean) as { member_name: string }[];
+    const hasInvalidName = allMembers.some((m) => !/^[a-zA-Z0-9_]+$/.test(m.member_name));
+    const hasDuplicate = allMembers.some((m, i) =>
+      allMembers.some((m2, j) => i !== j && m.member_name === m2.member_name)
+    );
+
+    if (!hasInvalidName && !hasDuplicate) {
+      setMemberNameError(null);
+    }
+  }, [team]);
+
   const checkMemberNameDuplicate = (leaderName: string, members: TeamMember[], excludeIdx?: number): string | null => {
     if (!leaderName) return null;
     for (let i = 0; i < members.length; i++) {
@@ -1664,9 +1693,7 @@ function TeamItemSection({
 
   const updateMember = (idx: number, field: keyof TeamMember, value: string) => {
     if (field === "member_name") {
-      const members = [...team.predefined_members];
-      members[idx] = { ...members[idx], [field]: value };
-      const duplicateError = checkMemberNameDuplicate(value, members, idx);
+      const duplicateError = checkMemberNameDuplicate(value, team.predefined_members, idx);
       const leaderDuplicate = team.leader?.member_name === value ? t("config.team.duplicateMemberName") : null;
       const englishError = checkEnglishOnly(value);
       const errors = [englishError, duplicateError, leaderDuplicate].filter(Boolean);
@@ -2227,8 +2254,20 @@ export function ConfigPanel({
     return next;
   });
   const [draftModels, setDraftModels] = useState<ModelEntry[]>(() => storeAvailableModels.map((m) => ({ ...m })));
-  
-  // 仅缓存当前页面未保存的 agents 和 teams 草稿；后端配置始终是页面初始化来源。
+  // 从 localStorage 加载缓存的 agents 和 teams
+  const loadCachedAgentsTeams = (): { agents: AgentEntry[]; teams: TeamEntry[] } | null => {
+    try {
+      const cached = localStorage.getItem('jiuwenclaw_agents_teams_cache');
+      if (cached) {
+        return JSON.parse(cached);
+      }
+    } catch (e) {
+      console.error('Failed to load cached agents/teams:', e);
+    }
+    return null;
+  };
+
+  // 保存到 localStorage
   const saveCachedAgentsTeams = (agents: AgentEntry[], teams: TeamEntry[]) => {
     try {
       localStorage.setItem('jiuwenclaw_agents_teams_cache', JSON.stringify({ agents, teams }));
@@ -2245,8 +2284,11 @@ export function ConfigPanel({
     }
   };
 
-  const [draftAgents, setDraftAgents] = useState<AgentEntry[]>([]);
-  const [draftTeams, setDraftTeams] = useState<TeamEntry[]>([]);
+  const cached = loadCachedAgentsTeams();
+  const [draftAgents, setDraftAgents] = useState<AgentEntry[]>(cached?.agents || []);
+  const [draftTeams, setDraftTeams] = useState<TeamEntry[]>(cached?.teams || []);
+  const [initialAgents, setInitialAgents] = useState<AgentEntry[]>(cached?.agents || []);
+  const [initialTeams, setInitialTeams] = useState<TeamEntry[]>(cached?.teams || []);
   const [agentsTeamsEdited, setAgentsTeamsEdited] = useState(false);
   const [agentsTeamsValidationAttempted, setAgentsTeamsValidationAttempted] = useState(false);
   const [configTab, setConfigTab] = useState<ConfigMainTab>("model");
@@ -2258,6 +2300,8 @@ export function ConfigPanel({
   const [deleteTeamConfirm, setDeleteTeamConfirm] = useState<{ idx: number; teamName: string } | null>(null);
   const [deleteTeamMemberConfirm, setDeleteTeamMemberConfirm] = useState<{ teamIdx: number; memberIdx: number; memberName: string } | null>(null);
   const [installedSkills, setInstalledSkills] = useState<string[]>([]);
+  const [agentNameChangeWarning, setAgentNameChangeWarning] = useState<string | null>(null);
+  const [modelReferenceLostWarning, setModelReferenceLostWarning] = useState<{ agentNames: string[] } | null>(null);
 
   const markAgentsTeamsEdited = () => {
     setAgentsTeamsEdited(true);
@@ -2280,6 +2324,24 @@ export function ConfigPanel({
     };
     fetchSkills();
   }, []);
+
+  useEffect(() => {
+    if (agentNameChangeWarning) {
+      const timer = setTimeout(() => {
+        setAgentNameChangeWarning(null);
+      }, 3000);
+      return () => clearTimeout(timer);
+    }
+  }, [agentNameChangeWarning]);
+
+  useEffect(() => {
+    if (modelReferenceLostWarning) {
+      const timer = setTimeout(() => {
+        setModelReferenceLostWarning(null);
+      }, 3000);
+      return () => clearTimeout(timer);
+    }
+  }, [modelReferenceLostWarning]);
 
   const handleDeleteAgent = (idx: number, agentName: string, references: string[]) => {
     setDeleteAgentConfirm({ idx, agentName, references });
@@ -2640,6 +2702,12 @@ export function ConfigPanel({
     return lostReferences;
   }, [hasModelChanges, draftAgents, draftModels, storeAvailableModels, t]);
 
+  useEffect(() => {
+    if (agentModelReferencesLost.length > 0) {
+      setModelReferenceLostWarning({ agentNames: agentModelReferencesLost.map((r) => r.agentName) });
+    }
+  }, [agentModelReferencesLost]);
+
   const hasAgentsTeamsValidationError = useMemo(() => {
     for (const agent of draftAgents) {
       if (!agent.name.trim()) return true;
@@ -2693,13 +2761,14 @@ export function ConfigPanel({
     if (!hasChanges) return;
     setDraftValues(normalizedConfig);
     setDraftModels(storeAvailableModels.map((m) => ({ ...m, alias: m.alias || "" })));
-    setDraftAgents(agentsFromConfig);
-    setDraftTeams(teamsFromConfig);
-    clearCachedAgentsTeams();
+    setDraftAgents(initialAgents);
+    setDraftTeams(initialTeams);
     setAgentsTeamsEdited(false);
     setAgentsTeamsValidationAttempted(false);
     setError(null);
     setModelError(null);
+    setAgentNameChangeWarning(null);
+    setModelReferenceLostWarning(null);
   };
 
   const buildAgentsTeamsPayload = (): AgentsTeamsPayload => {
@@ -2839,6 +2908,9 @@ export function ConfigPanel({
           await onSaveConfig(configUpdates);
         }
       }
+      // 保存成功后更新初始值，以便下次取消时能正确恢复
+      setInitialAgents(draftAgents);
+      setInitialTeams(draftTeams);
     } catch (saveError) {
       const message = saveError instanceof Error ? saveError.message : t('config.errors.saveFailed');
       setError(message);
@@ -2889,9 +2961,14 @@ export function ConfigPanel({
             {t('config.agentsTeamsValidationError')}
           </div>
         ) : null}
-        {!error && agentModelReferencesLost.length > 0 ? (
+        {!error && modelReferenceLostWarning ? (
           <div className="mb-4 rounded-md border border-amber-500 bg-amber-50 dark:bg-amber-900/20 px-3 py-2 text-sm text-amber-700 dark:text-amber-300">
-            {t('config.model.referenceLostWarning')}: {agentModelReferencesLost.map((r) => r.agentName).join(', ')}
+            {t('config.model.referenceLostWarning')}: {modelReferenceLostWarning.agentNames.join(', ')}
+          </div>
+        ) : null}
+        {!error && agentNameChangeWarning ? (
+          <div className="mb-4 rounded-md border border-amber-500 bg-amber-50 dark:bg-amber-900/20 px-3 py-2 text-sm text-amber-700 dark:text-amber-300">
+            {agentNameChangeWarning}
           </div>
         ) : null}
 
@@ -3012,9 +3089,11 @@ export function ConfigPanel({
                         agents={draftAgents}
                         onAgentsChange={(agents) => { setDraftAgents(agents); markAgentsTeamsEdited(); }}
                         teams={draftTeams}
+                        onTeamsChange={(teams) => { setDraftTeams(teams); setAgentsTeamsEdited(true); }}
                         availableModels={draftModels}
                         installedSkills={installedSkills}
                         onDeleteAgent={handleDeleteAgent}
+                        onAgentNameChangeWarning={setAgentNameChangeWarning}
                         t={t}
                       />
                     </div>

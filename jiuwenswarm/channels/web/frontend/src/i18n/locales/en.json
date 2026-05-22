@@ -602,7 +602,8 @@
       "untitled": "Untitled",
       "deleteConfirmTitle": "Delete Agent?",
       "deleteConfirmMessage": "Are you sure you want to delete agent \"{{agentName}}\"?",
-      "deleteConfirmMessageSimple": "Agent \"{{agentName}}\" is referenced by team(s)."
+      "deleteConfirmMessageSimple": "Agent \"{{agentName}}\" is referenced by team(s).",
+      "nameChangeWarning": "Modifying a referenced Agent name, please reconfigure Agent Key"
     },
     "team": {
       "leader": "Leader",
