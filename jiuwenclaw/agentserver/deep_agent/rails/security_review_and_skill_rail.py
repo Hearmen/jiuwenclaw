@@ -2,6 +2,8 @@
 """SecurityReviewAndSkillRail for in-task security supervision."""
 from __future__ import annotations
 
+import asyncio
+import logging
 from collections.abc import Callable
 from dataclasses import fields
 from typing import Any
@@ -29,6 +31,8 @@ from jiuwenclaw.agentserver.deep_agent.security_review.session_state import (
 )
 from jiuwenclaw.agentserver.deep_agent.security_review.worker import SecurityReviewWorker
 
+logger = logging.getLogger(__name__)
+
 
 class SecurityReviewAndSkillRail(DeepAgentRail):
     """Observe security signals and inject bounded runtime advice."""
@@ -48,6 +52,9 @@ class SecurityReviewAndSkillRail(DeepAgentRail):
         self._message_provider: Callable[[str], list[dict[str, Any]]] | None = None
         self._skill_state_provider: Callable[[], dict[str, Any]] | None = None
         self._results: list[dict[str, Any]] = []
+        self._deferred_review_requests: list[ReviewRequest] = []
+        self._deferred_review_dedupe: set[tuple[str, ...]] = set()
+        self._background_review_task: asyncio.Task | None = None
         self.worker_call_count = 0
 
     def init(self, agent) -> None:
@@ -68,6 +75,7 @@ class SecurityReviewAndSkillRail(DeepAgentRail):
         query = self._extract_input_value(inputs, "query")
         if query:
             self.state.record_message(session_id, "user", self._truncate(query))
+            self._prune_evicted_sessions()
         advice = self.state.consume_advice(session_id)
         if self.system_prompt_builder is None:
             return
@@ -128,30 +136,38 @@ class SecurityReviewAndSkillRail(DeepAgentRail):
         inputs = getattr(ctx, "inputs", None)
         session_id = self._extract_session_id(inputs, self._session_id)
         signals = self._session_signals.get(session_id, [])
-        session_review_signals = [
-            signal for signal in signals if signal.severity in {Severity.LOW, Severity.MEDIUM}
-        ]
+        session_review_signals = list(signals)
         if not session_review_signals:
             return
         iteration = max((signal.iteration for signal in session_review_signals), default=0)
-        self.scheduler.schedule(
+        priority = max(
+            (signal.severity for signal in session_review_signals),
+            key=lambda severity: {
+                Severity.LOW: 1,
+                Severity.MEDIUM: 2,
+                Severity.HIGH: 3,
+                Severity.CRITICAL: 4,
+            }[severity],
+        )
+        self._schedule_review_request(
             ReviewRequest(
                 request_type="session_end_review",
                 session_id=session_id,
-                priority=Severity.MEDIUM,
+                priority=priority,
                 dedupe_key=(session_id, "session_end_review", str(iteration)),
                 iteration=iteration,
                 signals=session_review_signals[-5:],
                 counters=self.state.counter_snapshot(session_id),
                 sample_events=self.state.snapshot_events(session_id)[-5:],
-            )
+            ),
+            allow_same_session_deferral=True,
         )
 
     def get_session_snapshot(self, session_id: str) -> list[SecurityEvent]:
         return self.state.snapshot_events(session_id)
 
     def drain_review_requests(self) -> list[ReviewRequest]:
-        return self.scheduler.drain()
+        return self._drain_review_requests()
 
     def update_llm(self, llm: Any | None) -> None:
         self.worker.update_llm(llm)
@@ -171,14 +187,54 @@ class SecurityReviewAndSkillRail(DeepAgentRail):
         self._message_provider = message_provider
         self._skill_state_provider = skill_state_provider
 
-    async def process_pending_reviews(self) -> list[ReviewResult]:
+    async def process_pending_reviews(self, *, wait: bool = True) -> list[ReviewResult]:
         if not self.config.async_review:
             return []
 
+        if not wait:
+            self._ensure_background_review_task()
+            return []
+
+        if self._background_review_task is not None and not self._background_review_task.done():
+            await self._background_review_task
+            return []
+
+        return await self._process_pending_reviews_now()
+
+    async def wait_for_background_reviews(self) -> None:
+        task = self._background_review_task
+        if task is not None and not task.done():
+            await task
+
+    def _ensure_background_review_task(self) -> None:
+        if not self.config.async_review or not self._has_pending_review_work():
+            return
+        if self._background_review_task is not None and not self._background_review_task.done():
+            return
+        self._background_review_task = asyncio.create_task(self._run_background_reviews())
+        self._background_review_task.add_done_callback(self._on_background_review_done)
+
+    async def _run_background_reviews(self) -> None:
+        while self.config.async_review and self._has_pending_review_work():
+            await self._process_pending_reviews_now()
+            await asyncio.sleep(0)
+
+    def _on_background_review_done(self, task: asyncio.Task) -> None:
+        try:
+            task.result()
+        except asyncio.CancelledError:
+            pass
+        except Exception as exc:
+            logger.warning("security review background task failed: %s", exc)
+
+    def _has_pending_review_work(self) -> bool:
+        return self.scheduler.has_pending_work() or bool(self._deferred_review_requests)
+
+    async def _process_pending_reviews_now(self) -> list[ReviewResult]:
         results: list[ReviewResult] = []
-        for request in self.scheduler.drain():
-            if not self.scheduler.mark_review_started(request.session_id):
-                continue
+        for request in self._drain_review_requests():
+            # if not self.scheduler.mark_review_started(request.session_id):
+            #     continue
             request = self._enrich_request(request)
             result = await self.worker.review(request)
             self.worker_call_count += 1
@@ -199,15 +255,19 @@ class SecurityReviewAndSkillRail(DeepAgentRail):
             results.append(result)
         return results
 
-    def drain_candidates(self) -> list[dict[str, Any]]:
+    def drain_candidates(self, *, session_id: str | None = None) -> list[dict[str, Any]]:
         candidates: list[dict[str, Any]] = []
+        remaining_results: list[dict[str, Any]] = []
         for result in self._results:
+            if session_id is not None and result.get("session_id") != session_id:
+                remaining_results.append(result)
+                continue
             candidates.extend(
                 candidate
                 for candidate in result.get("candidates", [])
                 if self._candidate_enabled(candidate)
             )
-        self._results.clear()
+        self._results = remaining_results
         return candidates
 
     def add_review_result_for_test(self, result: dict[str, Any]) -> None:
@@ -215,10 +275,132 @@ class SecurityReviewAndSkillRail(DeepAgentRail):
 
     def _handle_event(self, event: SecurityEvent) -> None:
         self.state.record_event(event)
+        self._prune_evicted_sessions()
         signals = self.classifier.classify(event)
         if signals:
             self._session_signals.setdefault(event.session_id, []).extend(signals)
-        self.state.record_signals(signals)
+        generated_signals = self.state.record_signals(signals)
+        if generated_signals:
+            self._session_signals.setdefault(event.session_id, []).extend(generated_signals)
+            self._schedule_timely_reviews(event.session_id, generated_signals)
+        self._prune_evicted_sessions()
+
+    def _schedule_timely_reviews(
+        self,
+        session_id: str,
+        signals: list[SecuritySignal],
+    ) -> None:
+        if not self.config.timely_tool_failure_review:
+            return
+        reviewable_signal_types = {
+            "repeated_tool_failure",
+            "approval_boundary_gap",
+            "policy_rule_gap",
+        }
+        has_same_session_pending = self._has_pending_timely_review_for_session(session_id)
+        scheduled_or_buffered = False
+        seen_dedupe_keys: set[tuple[str, ...]] = set()
+        for signal in signals:
+            if signal.signal_type not in reviewable_signal_types:
+                continue
+            failure = signal.failure_class.value if signal.failure_class is not None else ""
+            request = ReviewRequest(
+                request_type="timely_tool_failure_review",
+                session_id=session_id,
+                priority=signal.severity,
+                dedupe_key=(
+                    session_id,
+                    "timely_tool_failure_review",
+                    signal.tool_name,
+                    failure,
+                    signal.reason_code or "",
+                ),
+                iteration=signal.iteration,
+                signals=[signal],
+                counters=self.state.counter_snapshot(session_id),
+                sample_events=self.state.snapshot_events(session_id)[-5:],
+            )
+            if request.dedupe_key in seen_dedupe_keys:
+                continue
+            seen_dedupe_keys.add(request.dedupe_key)
+            if self._schedule_review_request(
+                request,
+                allow_same_session_deferral=scheduled_or_buffered or has_same_session_pending,
+            ):
+                scheduled_or_buffered = True
+
+    def _drain_review_requests(self) -> list[ReviewRequest]:
+        requests = self.scheduler.drain()
+        scheduled_sessions = {request.session_id for request in requests}
+        deferred_requests = [
+            request
+            for request in self._deferred_review_requests
+            if request.session_id in scheduled_sessions
+        ]
+        for request in deferred_requests:
+            self._record_deferred_request_accounting(request)
+        requests.extend(deferred_requests)
+        self._deferred_review_requests.clear()
+        self._deferred_review_dedupe.clear()
+        return requests
+
+    def _schedule_review_request(
+        self,
+        request: ReviewRequest,
+        *,
+        allow_same_session_deferral: bool = False,
+    ) -> bool:
+        if self.scheduler.schedule(request):
+            return True
+        if self.scheduler.has_dedupe_key(request.dedupe_key):
+            return False
+        if request.dedupe_key in self._deferred_review_dedupe:
+            return False
+        if not allow_same_session_deferral:
+            return False
+        if not self._can_defer_same_session_collision(request):
+            return False
+        self._deferred_review_dedupe.add(request.dedupe_key)
+        self._deferred_review_requests.append(request)
+        return True
+
+    def _has_pending_timely_review_for_session(self, session_id: str) -> bool:
+        return self.scheduler.has_pending_timely_review(session_id)
+
+    def _has_pending_review_for_session(self, session_id: str) -> bool:
+        return self.scheduler.has_pending_session(session_id)
+
+    def _record_deferred_request_accounting(self, request: ReviewRequest) -> None:
+        self.scheduler.record_deferred_request_accounting(request)
+
+    def _can_defer_same_session_collision(self, request: ReviewRequest) -> bool:
+        return self.scheduler.can_defer_same_session_collision(request)
+
+    def _prune_evicted_sessions(self) -> None:
+        evicted_sessions = set(self.state.drain_evicted_sessions())
+        if not evicted_sessions:
+            return
+        for session_id in evicted_sessions:
+            self._session_signals.pop(session_id, None)
+        self._drop_scheduled_requests_for_sessions(evicted_sessions)
+        self._deferred_review_requests = [
+            request
+            for request in self._deferred_review_requests
+            if request.session_id not in evicted_sessions
+        ]
+        self._deferred_review_dedupe = {
+            dedupe_key
+            for dedupe_key in self._deferred_review_dedupe
+            if dedupe_key[0] not in evicted_sessions
+        }
+        self._results = [
+            result
+            for result in self._results
+            if result.get("session_id") not in evicted_sessions
+        ]
+
+    def _drop_scheduled_requests_for_sessions(self, session_ids: set[str]) -> None:
+        self.scheduler.drop_sessions(session_ids)
 
     def _enrich_request(self, request: ReviewRequest) -> ReviewRequest:
         request.sample_messages = self._sample_messages(request.session_id)[-8:]

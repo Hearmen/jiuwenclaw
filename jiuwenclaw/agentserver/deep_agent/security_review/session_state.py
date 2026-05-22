@@ -31,6 +31,7 @@ class SecuritySessionState:
         self._advice: dict[str, SecurityAdvice] = {}
         self._session_order: deque[str] = deque()
         self._active_sessions: set[str] = set()
+        self._evicted_sessions: deque[str] = deque()
 
     def record_event(self, event: SecurityEvent) -> None:
         self._touch_session(event.session_id)
@@ -50,6 +51,11 @@ class SecuritySessionState:
 
     def snapshot_messages(self, session_id: str) -> list[dict[str, str]]:
         return list(self._messages.get(session_id, ()))
+
+    def drain_evicted_sessions(self) -> list[str]:
+        sessions = list(self._evicted_sessions)
+        self._evicted_sessions.clear()
+        return sessions
 
     def record_signals(self, signals: list[SecuritySignal]) -> list[SecuritySignal]:
         generated: list[SecuritySignal] = []
@@ -177,6 +183,7 @@ class SecuritySessionState:
         self._events.pop(session_id, None)
         self._messages.pop(session_id, None)
         self._advice.pop(session_id, None)
+        self._evicted_sessions.append(session_id)
         for key in list(self._failure_counts):
             if key[0] == session_id:
                 del self._failure_counts[key]

@@ -425,6 +425,7 @@ class JiuWenClawDeepAdapter:
         self._avatar_rail: Any = None
         self._tool_cards = None
         self._evolution_watcher_tasks: set[asyncio.Task] = set()
+        self._security_review_watcher_tasks: set[asyncio.Task] = set()
         self._sys_operation = None
         self._vision_model_config: VisionModelConfig | None = None
         self._audio_model_config: AudioModelConfig | None = None
@@ -4150,8 +4151,8 @@ class JiuWenClawDeepAdapter:
                 self._evolution_watcher_tasks.add(task)
 
             if self._security_review_rail is not None:
-                await self._security_review_rail.process_pending_reviews()
-                candidates = self._security_review_rail.drain_candidates()
+                await self._security_review_rail.process_pending_reviews(wait=False)
+                candidates = self._security_review_rail.drain_candidates(session_id=session_id)
                 for payload in self._security_review_candidates_to_chunks(candidates):
                     yield AgentResponseChunk(
                         request_id=rid,
@@ -4159,6 +4160,11 @@ class JiuWenClawDeepAdapter:
                         payload=payload,
                         is_complete=False,
                     )
+                task = asyncio.create_task(
+                    self._watch_security_review_and_push(rid, cid, session_id)
+                )
+                task.add_done_callback(self._on_security_review_watcher_done)
+                self._security_review_watcher_tasks.add(task)
         except asyncio.CancelledError:
             logger.info(
                 "[JiuWenClawDeepAdapter] 流式任务被取消: request_id=%s session_id=%s",
@@ -4644,6 +4650,39 @@ class JiuWenClawDeepAdapter:
             task.result()
         except Exception as exc:
             logger.warning("[JiuWenClawDeepAdapter] evolution watcher task exception: %s", exc)
+
+    async def _watch_security_review_and_push(self, rid: str, cid: str, session_id: str) -> None:
+        """Wait for background security review and push approval events."""
+        from jiuwenclaw.agentserver.gateway_push import WebSocketGatewayPushTransport
+
+        if self._security_review_rail is None:
+            return
+
+        await self._security_review_rail.wait_for_background_reviews()
+        candidates = self._security_review_rail.drain_candidates(session_id=session_id)
+        if not candidates:
+            return
+
+        transport = WebSocketGatewayPushTransport()
+        for payload in self._security_review_candidates_to_chunks(candidates):
+            await transport.send_push(
+                {
+                    "request_id": rid,
+                    "channel_id": cid,
+                    "session_id": session_id,
+                    "payload": payload,
+                }
+            )
+
+    def _on_security_review_watcher_done(self, task: asyncio.Task) -> None:
+        self._security_review_watcher_tasks.discard(task)
+        try:
+            task.result()
+        except Exception as exc:
+            logger.warning(
+                "[JiuWenClawDeepAdapter] security review watcher task exception: %s",
+                exc,
+            )
 
     @staticmethod
     def _is_approval_event(evt) -> bool:

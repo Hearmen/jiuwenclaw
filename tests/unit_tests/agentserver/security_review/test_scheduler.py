@@ -138,3 +138,75 @@ def test_scheduler_enforces_minimum_interval_for_non_timely_reviews():
     assert scheduler.schedule(first) is True
     scheduler.drain()
     assert scheduler.schedule(too_soon) is False
+
+
+def test_scheduler_exposes_pending_work_and_dedupe_state():
+    scheduler = SecurityReviewScheduler(SecurityReviewConfig(async_queue_size=2))
+    request = _request("s1", Severity.HIGH, ("s1", "read_file", "cross"))
+
+    assert scheduler.has_pending_work() is False
+    assert scheduler.has_dedupe_key(request.dedupe_key) is False
+    assert scheduler.has_pending_session("s1") is False
+    assert scheduler.has_pending_timely_review("s1") is False
+
+    assert scheduler.schedule(request) is True
+
+    assert scheduler.has_pending_work() is True
+    assert scheduler.has_dedupe_key(request.dedupe_key) is True
+    assert scheduler.has_pending_session("s1") is True
+    assert scheduler.has_pending_timely_review("s1") is True
+
+
+def test_scheduler_can_defer_session_end_behind_pending_timely_review():
+    scheduler = SecurityReviewScheduler(SecurityReviewConfig(async_queue_size=2))
+    timely = _request("s1", Severity.HIGH, ("s1", "timely"))
+    session_end = ReviewRequest(
+        request_type="session_end_review",
+        session_id="s1",
+        priority=Severity.HIGH,
+        dedupe_key=("s1", "session-end"),
+        iteration=1,
+    )
+
+    assert scheduler.schedule(timely) is True
+
+    assert scheduler.can_defer_same_session_collision(session_end) is True
+
+
+def test_scheduler_records_deferred_non_timely_accounting():
+    scheduler = SecurityReviewScheduler(
+        SecurityReviewConfig(async_queue_size=2, min_review_interval_iterations=3)
+    )
+    deferred = ReviewRequest(
+        request_type="session_end_review",
+        session_id="s1",
+        priority=Severity.HIGH,
+        dedupe_key=("s1", "session-end-4"),
+        iteration=4,
+    )
+    too_soon = ReviewRequest(
+        request_type="session_end_review",
+        session_id="s1",
+        priority=Severity.HIGH,
+        dedupe_key=("s1", "session-end-6"),
+        iteration=6,
+    )
+
+    scheduler.record_deferred_request_accounting(deferred)
+
+    assert scheduler.schedule(too_soon) is False
+
+
+def test_scheduler_drops_sessions_from_pending_state():
+    scheduler = SecurityReviewScheduler(SecurityReviewConfig(async_queue_size=3))
+    keep = _request("keep", Severity.HIGH, ("keep", "read_file", "cross"))
+    drop = _request("drop", Severity.HIGH, ("drop", "read_file", "cross"))
+
+    assert scheduler.schedule(keep) is True
+    assert scheduler.schedule(drop) is True
+
+    scheduler.drop_sessions({"drop"})
+
+    assert scheduler.has_pending_session("drop") is False
+    assert scheduler.has_dedupe_key(drop.dedupe_key) is False
+    assert scheduler.drain() == [keep]

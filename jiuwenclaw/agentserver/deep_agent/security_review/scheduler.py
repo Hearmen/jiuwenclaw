@@ -57,6 +57,48 @@ class SecurityReviewScheduler:
         self._pending_sessions.clear()
         return items
 
+    def has_pending_work(self) -> bool:
+        return bool(self._queue)
+
+    def has_dedupe_key(self, dedupe_key: tuple[str, ...]) -> bool:
+        return dedupe_key in self._dedupe
+
+    def has_pending_session(self, session_id: str) -> bool:
+        return session_id in self._pending_sessions
+
+    def has_pending_timely_review(self, session_id: str) -> bool:
+        request = self._pending_sessions.get(session_id)
+        return (
+            request is not None
+            and request.request_type == "timely_tool_failure_review"
+        )
+
+    def can_defer_same_session_collision(self, request: ReviewRequest) -> bool:
+        pending = self._pending_sessions.get(request.session_id)
+        if pending is None:
+            return False
+        if (
+            pending.request_type == "timely_tool_failure_review"
+            and request.request_type == "session_end_review"
+        ):
+            return True
+        return self._passes_min_interval(request)
+
+    def record_deferred_request_accounting(self, request: ReviewRequest) -> None:
+        if request.request_type == "timely_tool_failure_review":
+            return
+        if request.iteration > 0:
+            self._last_scheduled_iteration[request.session_id] = request.iteration
+
+    def drop_sessions(self, session_ids: set[str]) -> None:
+        for request in list(self._queue):
+            if request.session_id in session_ids:
+                self._remove_pending(request)
+        for session_id in session_ids:
+            self._pending_sessions.pop(session_id, None)
+            self._last_scheduled_iteration.pop(session_id, None)
+            self._started_counts.pop(session_id, None)
+
     def mark_review_started(self, session_id: str) -> bool:
         if self._started_counts[session_id] >= max(1, self.config.max_reviews_per_session):
             return False

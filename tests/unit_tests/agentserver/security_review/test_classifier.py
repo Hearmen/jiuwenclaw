@@ -62,6 +62,44 @@ def test_classifier_flags_secret_path_access():
     assert signals[0].severity == Severity.HIGH
 
 
+def test_classifier_does_not_flag_benign_token_or_secret_substrings():
+    classifier = SecuritySignalClassifier()
+
+    for path in ("tokenizer_config.json", "tokenizer.py", "secretary-notes.md"):
+        event = SecurityEvent(
+            event_type="tool_call",
+            session_id="sess-1",
+            iteration=1,
+            tool_name="read_file",
+            arguments_digest=f'{{"path": "/workspace/{path}"}}',
+        )
+
+        signals = classifier.classify(event)
+
+        assert not any(
+            signal.signal_type == "secret_or_token_exposure" for signal in signals
+        )
+
+
+def test_classifier_flags_plural_token_and_secret_files():
+    classifier = SecuritySignalClassifier()
+
+    for path in ("tokens.json", "secrets.yaml"):
+        event = SecurityEvent(
+            event_type="tool_call",
+            session_id="sess-1",
+            iteration=1,
+            tool_name="read_file",
+            arguments_digest=f'{{"path": "/workspace/{path}"}}',
+        )
+
+        signals = classifier.classify(event)
+
+        assert any(
+            signal.signal_type == "secret_or_token_exposure" for signal in signals
+        )
+
+
 def test_classifier_flags_permission_boundary_result():
     classifier = SecuritySignalClassifier()
     event = SecurityEvent(

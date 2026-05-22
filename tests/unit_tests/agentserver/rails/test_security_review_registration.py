@@ -97,6 +97,59 @@ def test_security_review_candidate_chunks_are_approval_events():
 
 
 @pytest.mark.asyncio
+async def test_security_review_watcher_pushes_candidates_after_background_review(monkeypatch):
+    adapter = JiuWenClawDeepAdapter()
+    pushed = []
+
+    class _FakeTransport:
+        async def send_push(self, msg):
+            pushed.append(msg)
+
+    class _FakeRail:
+        async def wait_for_background_reviews(self):
+            return None
+
+        def drain_candidates(self, *, session_id=None):
+            assert session_id == "sess-1"
+            return [{"type": "security_note", "requires_approval": True}]
+
+    monkeypatch.setattr(
+        "jiuwenclaw.agentserver.gateway_push.WebSocketGatewayPushTransport",
+        _FakeTransport,
+    )
+    adapter._security_review_rail = _FakeRail()
+
+    await adapter._watch_security_review_and_push("rid-1", "cid-1", "sess-1")
+
+    assert pushed == [
+        {
+            "request_id": "rid-1",
+            "channel_id": "cid-1",
+            "session_id": "sess-1",
+            "payload": {
+                "event_type": "chat.ask_user_question",
+                "request_id": next(iter(adapter._security_review_pending_candidates)),
+                "questions": [
+                    {
+                        "header": "安全演进审批",
+                        "question": (
+                            "检测到安全自演进候选：\n\n"
+                            "类型：security_note\n"
+                            '内容：{"type": "security_note", "requires_approval": true}'
+                        ),
+                        "options": [
+                            {"label": "接收", "description": "保留此安全演进候选"},
+                            {"label": "拒绝", "description": "丢弃此安全演进候选"},
+                        ],
+                        "multi_select": False,
+                    }
+                ],
+            },
+        }
+    ]
+
+
+@pytest.mark.asyncio
 async def test_security_review_candidate_answer_is_resolved_and_recorded():
     adapter = JiuWenClawDeepAdapter()
     candidate = {"type": "security_note", "requires_approval": True}

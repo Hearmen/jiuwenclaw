@@ -25,7 +25,8 @@ _SANDBOX_ESCAPE = re.compile(
     re.IGNORECASE,
 )
 _SECRET_PATH = re.compile(
-    r"(\.env\b|credentials?|token|secret|\.ssh|id_rsa|id_ed25519|private[_-]?key)",
+    r"(\.env\b|credentials?\b|(?<![A-Za-z0-9])(?:tokens?|secrets?)(?![A-Za-z0-9])"
+    r"|\.ssh\b|id_rsa\b|id_ed25519\b|private[_-]?key\b)",
     re.IGNORECASE,
 )
 _WORKSPACE_EXTERNAL = re.compile(
