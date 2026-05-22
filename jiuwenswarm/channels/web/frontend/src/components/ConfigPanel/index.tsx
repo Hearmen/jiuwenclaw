@@ -756,7 +756,7 @@ function MultiModelSection({
 }) {
   const [validatingModel, setValidatingModel] = useState<string | null>(null);
   const [validateResults, setValidateResults] = useState<Record<string, "ok" | "err">>({});
-  const [expandedIdx, setExpandedIdx] = useState<number | null>(null);
+  const [expandedIdx, setExpandedIdx] = useState<number | null>(0);
   const [addingNew, setAddingNew] = useState(false);
   const [newModel, setNewModel] = useState<ModelEntry>({
     model_name: "", api_base: "", api_key: "", model_provider: "OpenAI",
@@ -1220,7 +1220,7 @@ function MultiAgentSection({
   onAgentNameChangeWarning: (warning: string | null) => void;
   t: (key: string, options?: Record<string, unknown>) => string;
 }) {
-  const [expandedIdx, setExpandedIdx] = useState<number | null>(null);
+  const [expandedIdx, setExpandedIdx] = useState<number | null>(0);
   const [addingNew, setAddingNew] = useState(false);
   const [newAgent, setNewAgent] = useState<AgentEntry>({
     name: "",
@@ -1621,11 +1621,11 @@ function TeamItemSection({
   teams?: TeamEntry[];
   t: (key: string, options?: Record<string, unknown>) => string;
 }) {
-  const [openLeader, setOpenLeader] = useState(false);
-  const [openTeammate, setOpenTeammate] = useState(false);
-  const [openMembers, setOpenMembers] = useState(false);
-  const [expandedMemberIdx, setExpandedMemberIdx] = useState<number | null>(null);
-  const [memberNameError, setMemberNameError] = useState<string | null>(null);
+  const [openLeader, setOpenLeader] = useState(true);
+  const [openTeammate, setOpenTeammate] = useState(true);
+  const [openMembers, setOpenMembers] = useState(true);
+  const [expandedMemberIdx, setExpandedMemberIdx] = useState<number | null>(0);
+  const [memberNameError, setMemberNameError] = useState<{ field: 'leader' | number; error: string } | null>(null);
   const [addingNewMember, setAddingNewMember] = useState(false);
   const [newMember, setNewMember] = useState<TeamMember>({ member_name: "", display_name: "", persona: "", prompt_hint: "", agent_key: "" });
   const [newMemberNameError, setNewMemberNameError] = useState<string | null>(null);
@@ -1655,7 +1655,7 @@ function TeamItemSection({
 
   const checkEnglishOnly = (value: string): string | null => {
     if (!value) return null;
-    if (!/^[a-zA-Z0-9_]+$/.test(value)) {
+    if (!/^[a-z][a-z0-9-]*$/.test(value)) {
       return t("config.team.memberNameFormatInvalid");
     }
     return null;
@@ -1686,7 +1686,7 @@ function TeamItemSection({
       const duplicateError = checkMemberNameDuplicate(value, team.predefined_members || []);
       const englishError = checkEnglishOnly(value);
       const errors = [englishError, duplicateError].filter(Boolean);
-      setMemberNameError(errors.length > 0 ? errors.join("; ") : null);
+      setMemberNameError(errors.length > 0 ? { field: 'leader', error: errors.join("; ") } : null);
     }
     onTeamChange({ ...team, leader: { ...team.leader, [field]: value } });
   };
@@ -1696,8 +1696,8 @@ function TeamItemSection({
       const duplicateError = checkMemberNameDuplicate(value, team.predefined_members, idx);
       const leaderDuplicate = team.leader?.member_name === value ? t("config.team.duplicateMemberName") : null;
       const englishError = checkEnglishOnly(value);
-      const errors = [englishError, duplicateError, leaderDuplicate].filter(Boolean);
-      setMemberNameError(errors.length > 0 ? errors[0] : null);
+      const errors = [englishError, duplicateError, leaderDuplicate].filter((e): e is string => e !== null);
+      setMemberNameError(errors.length > 0 ? { field: idx, error: errors[0] } : null);
     }
     const updated = [...team.predefined_members];
     updated[idx] = { ...updated[idx], [field]: value };
@@ -1887,10 +1887,10 @@ function TeamItemSection({
                       value={team.leader[field] ?? ""}
                       onChange={(e) => updateLeader(field, e.target.value)}
                       maxLength={field === "persona" ? 2048 : 64}
-                      className={`w-full rounded border bg-bg px-2 py-1 text-text text-xs ${field === "member_name" && memberNameError ? "border-danger" : "border-border"}`}
+                      className={`w-full rounded border bg-bg px-2 py-1 text-text text-xs ${field === "member_name" && memberNameError?.field === 'leader' ? "border-danger" : "border-border"}`}
                     />
-                    {field === "member_name" && memberNameError && (
-                      <p className="text-[10px] text-danger mt-1">{memberNameError}</p>
+                    {field === "member_name" && memberNameError?.field === 'leader' && (
+                      <p className="text-[10px] text-danger mt-1">{memberNameError.error}</p>
                     )}
                   </div>
                 )}
@@ -2017,10 +2017,10 @@ function TeamItemSection({
                                 value={member[field] ?? ""}
                                 onChange={(e) => updateMember(idx, field, e.target.value)}
                                 maxLength={field === "prompt_hint" ? 4096 : (field === "persona" ? 2048 : 64)}
-                                className={`w-full rounded border bg-bg px-2 py-1 text-text text-xs ${field === "member_name" && memberNameError ? "border-danger" : "border-border"}`}
+                                className={`w-full rounded border bg-bg px-2 py-1 text-text text-xs ${field === "member_name" && memberNameError?.field === idx ? "border-danger" : "border-border"}`}
                               />
-                              {field === "member_name" && memberNameError && (
-                                <p className="text-[10px] text-danger mt-1">{memberNameError}</p>
+                              {field === "member_name" && memberNameError?.field === idx && (
+                                <p className="text-[10px] text-danger mt-1">{memberNameError.error}</p>
                               )}
                             </div>
                           )}
@@ -2106,7 +2106,7 @@ function TeamsSection({
   onDeleteTeamMember?: (teamIdx: number, memberIdx: number, memberName: string) => void;
   t: (key: string, options?: Record<string, unknown>) => string;
 }) {
-  const [expandedIdx, setExpandedIdx] = useState<number | null>(null);
+  const [expandedIdx, setExpandedIdx] = useState<number | null>(0);
   const [addingNew, setAddingNew] = useState(false);
   const [newTeam, setNewTeam] = useState<TeamEntry>({
     team_name: "",
@@ -2722,18 +2722,19 @@ export function ConfigPanel({
       if (!team.teammate_mode?.trim()) return true;
       if (!team.spawn_mode?.trim()) return true;
       if (!team.leader?.member_name?.trim()) return true;
+      if (!/^[a-z][a-z0-9-]*$/.test(team.leader.member_name)) return true;
       if (!team.leader?.display_name?.trim()) return true;
       if (!team.leader?.persona?.trim()) return true;
       if (!team.leader?.agent_key?.trim()) return true;
       if (!team.teammate?.agent_key?.trim()) return true;
-      const leaderName = team.leader?.member_name?.trim().toLowerCase() || '';
+      const leaderName = team.leader?.member_name?.trim() || '';
       for (const member of team.predefined_members || []) {
         if (!member.member_name.trim()) return true;
-        if (!/^[a-zA-Z0-9_]+$/.test(member.member_name)) return true;
+        if (!/^[a-z][a-z0-9-]*$/.test(member.member_name)) return true;
         if (!member.display_name?.trim()) return true;
         if (!member.persona?.trim()) return true;
         if (!member.agent_key?.trim()) return true;
-        if (member.member_name.trim().toLowerCase() === leaderName) return true;
+        if (member.member_name.trim() === leaderName) return true;
       }
     }
     return false;

@@ -621,7 +621,7 @@
       "deleteMemberConfirmMessage": "确定要删除成员 \"{{memberName}}\" 吗？",
       "duplicateMemberName": "成员名称已存在",
       "memberNameEnglishOnly": "成员名称只能包含英文字母",
-      "memberNameFormatInvalid": "成员名称仅支持字母/数字/下划线",
+      "memberNameFormatInvalid": "成员名称必须以小写字母开头，后跟小写字母、数字或连字符",
       "referencedByTeams": "被 {{count}} 个 Team 引用"
     },
     "groups": {

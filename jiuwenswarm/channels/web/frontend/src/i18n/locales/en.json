@@ -622,7 +622,7 @@
       "deleteMemberConfirmMessage": "Are you sure you want to delete member \"{{memberName}}\"?",
       "duplicateMemberName": "Member name already exists",
       "memberNameEnglishOnly": "Member name can only contain English letters",
-      "memberNameFormatInvalid": "Member name only supports letters/numbers/underscore",
+      "memberNameFormatInvalid": "Member name must start with a lowercase letter, followed by lowercase letters, digits, or hyphens",
       "referencedByTeams": "Referenced by {{count}} Team(s)"
     },
     "groups": {

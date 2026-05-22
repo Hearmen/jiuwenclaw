@@ -239,6 +239,7 @@ function AppContent() {
     setThinking,
     setLoadingHistory,
     setPaused,
+    messages,
   } = useChatStore();
 
   const disposeInFlightHistoryHandles = useCallback(() => {
@@ -255,15 +256,17 @@ function AppContent() {
   const { extensionReady, reset: resetHarnessStore } = useHarnessStore();
 
   const toolPanelHasContent = useMemo(() => {
+    const hasMessages = messages.length > 0;
+    const hasHeartbeat = Boolean(heartbeatMessage);
     switch (mode) {
       case 'auto_harness':
-        return Boolean(extensionReady?.runtimePath);
+        return Boolean(extensionReady?.runtimePath) || hasMessages || hasHeartbeat;
       case 'team':
-        return teamTaskEvents.length > 0 || teamMembers.length > 0;
+        return teamTaskEvents.length > 0 || teamMembers.length > 0 || hasMessages || hasHeartbeat;
       default:
-        return todos.length > 0;
+        return todos.length > 0 || hasMessages || hasHeartbeat;
     }
-  }, [mode, todos.length, teamTaskEvents.length, teamMembers.length, extensionReady?.runtimePath]);
+  }, [mode, todos.length, teamTaskEvents.length, teamMembers.length, extensionReady?.runtimePath, messages.length, heartbeatMessage]);
 
   // WebSocket 连接 - provider 由后端配置决定 - provider 由后端配置决定，前端默认不在 URL query 传递
   const {
