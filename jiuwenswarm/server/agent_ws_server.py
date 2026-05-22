@@ -3959,6 +3959,7 @@ class AgentWebSocketServer:
         """
         from jiuwenswarm.agents.harness.common.session_ops_service import (
             copy_session_context,
+            copy_session_state,
             fork_session,
         )
 
@@ -3988,6 +3989,7 @@ class AgentWebSocketServer:
 
             # 2. Copy in-memory context (LLM conversation history)
             agent = self._agent_manager.get_agent_nowait(channel_id)
+            deep_agent = None
             if agent is not None:
                 deep_agent = agent.get_instance()
                 await copy_session_context(deep_agent, source, target)
@@ -3997,6 +3999,16 @@ class AgentWebSocketServer:
                     "in-memory context copy skipped",
                     channel_id,
                 )
+
+            # 3. Copy DeepAgentState (task_plan, plan_mode, etc.)
+            from openjiuwen.core.single_agent.schema.agent_card import AgentCard
+
+            await copy_session_state(
+                source_session_id=source,
+                target_session_id=target,
+                card=deep_agent.card if deep_agent is not None else AgentCard(id="jiuwenclaw", name="jiuwenclaw"),
+                deep_agent=deep_agent,
+            )
 
             resp = AgentResponse(
                 request_id=request.request_id,
