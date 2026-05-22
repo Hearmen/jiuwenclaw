@@ -44,6 +44,31 @@ import './App.css';
 
 type MainNavKey = 'chat' | 'skills' | 'agents' | 'teams' | 'sessions' | 'heartbeat' | 'cron' | 'channels' | 'extensions' | 'configpanel' | 'logspanel' | 'browserpanel' | 'updatepanel';
 
+type AgentsTeamsSavePayload = {
+  agents: Record<string, {
+    model: { provider: string; api_base: string; api_key: string; model: string };
+    skills: string[];
+    max_iterations: number;
+    completion_timeout: number;
+  }>;
+  team: Array<{
+    team_name: string;
+    lifecycle: string;
+    teammate_mode: string;
+    spawn_mode: string;
+    leader: { member_name: string; display_name: string; persona: string; agent_key: string };
+    teammate: { agent_key: string };
+    predefined_members: Array<{ member_name: string; display_name: string; persona: string; prompt_hint: string; agent_key: string }>;
+  }>;
+};
+
+type ConfigSaveAllPayload = {
+  config?: Record<string, string>;
+  models?: ModelEntry[];
+  agents?: AgentsTeamsSavePayload["agents"];
+  team?: AgentsTeamsSavePayload["team"];
+};
+
 // 错误边界组件
 interface ErrorBoundaryState {
   hasError: boolean;
@@ -214,6 +239,7 @@ function AppContent() {
     setThinking,
     setLoadingHistory,
     setPaused,
+    messages,
   } = useChatStore();
 
   const disposeInFlightHistoryHandles = useCallback(() => {
@@ -230,15 +256,17 @@ function AppContent() {
   const { extensionReady, reset: resetHarnessStore } = useHarnessStore();
 
   const toolPanelHasContent = useMemo(() => {
+    const hasMessages = messages.length > 0;
+    const hasHeartbeat = Boolean(heartbeatMessage);
     switch (mode) {
       case 'auto_harness':
-        return Boolean(extensionReady?.runtimePath);
+        return Boolean(extensionReady?.runtimePath) || hasMessages || hasHeartbeat;
       case 'team':
-        return teamTaskEvents.length > 0 || teamMembers.length > 0;
+        return teamTaskEvents.length > 0 || teamMembers.length > 0 || hasMessages || hasHeartbeat;
       default:
-        return todos.length > 0;
+        return todos.length > 0 || hasMessages || hasHeartbeat;
     }
-  }, [mode, todos.length, teamTaskEvents.length, teamMembers.length, extensionReady?.runtimePath]);
+  }, [mode, todos.length, teamTaskEvents.length, teamMembers.length, extensionReady?.runtimePath, messages.length, heartbeatMessage]);
 
   // WebSocket 连接 - provider 由后端配置决定 - provider 由后端配置决定，前端默认不在 URL query 传递
   const {
@@ -443,28 +471,22 @@ function AppContent() {
     }
   }, [clearRestartAutoCloseTimer, closeRestartModal, request]);
 
-  const handleAgentsTeamsSave = useCallback(async (payload: {
-    agents: Record<string, {
-      model: { provider: string; api_base: string; api_key: string; model: string };
-      skills: string[];
-      max_iterations: number;
-      completion_timeout: number;
-    }>;
-    team: Array<{
-      team_name: string;
-      lifecycle: string;
-      teammate_mode: string;
-      spawn_mode: string;
-      leader: { member_name: string; display_name: string; persona: string; agent_key: string };
-      teammate: { agent_key: string };
-      predefined_members: Array<{ member_name: string; display_name: string; persona: string; prompt_hint: string; agent_key: string }>;
-    }>;
-  }) => {
-    const result = await request<{ updated?: string[]; applied_without_restart?: boolean }>(
-      'config.set',
-      payload as unknown as Record<string, string>
-    );
-    // 更新前端配置缓存
+  const applyConfigSaveUiState = useCallback((appliedWithoutRestart: boolean) => {
+    setConfigError(null);
+    setRestartModalOpen(true);
+    setRestartSuccess(false);
+    setRestartSeenDisconnect(false);
+    setAppliedWithoutRestart(appliedWithoutRestart);
+    clearRestartAutoCloseTimer();
+    if (appliedWithoutRestart) {
+      setRestartSuccess(true);
+      restartAutoCloseTimerRef.current = window.setTimeout(() => {
+        closeRestartModal();
+      }, 5000);
+    }
+  }, [clearRestartAutoCloseTimer, closeRestartModal]);
+
+  const buildAgentsTeamsFlatConfig = useCallback((payload: AgentsTeamsSavePayload) => {
     const updates: Record<string, string> = {};
     Object.entries(payload.agents).forEach(([name, agent], idx) => {
       updates[`agent_name_${idx}`] = name;
@@ -483,27 +505,54 @@ function AppContent() {
       updates[`team_leader_persona_${idx}`] = team.leader.persona;
       updates[`team_leader_agent_key_${idx}`] = team.leader.agent_key;
       updates[`team_teammate_agent_key_${idx}`] = team.teammate.agent_key;
-      // 保存 predefined_members
-      if (team.predefined_members && team.predefined_members.length > 0) {
-        updates[`team_predefined_members_${idx}`] = JSON.stringify(team.predefined_members);
-      } else {
-        updates[`team_predefined_members_${idx}`] = "";
-      }
+      updates[`team_predefined_members_${idx}`] = team.predefined_members?.length
+        ? JSON.stringify(team.predefined_members)
+        : "";
     });
+    return updates;
+  }, []);
+
+  const handleAgentsTeamsSave = useCallback(async (payload: AgentsTeamsSavePayload) => {
+    const result = await request<{ updated?: string[]; applied_without_restart?: boolean }>(
+      'config.set',
+      payload as unknown as Record<string, string>
+    );
+    // 更新前端配置缓存
+    const updates = buildAgentsTeamsFlatConfig(payload);
     setServerConfig((prev: Record<string, unknown> | null) => ({ ...prev, ...updates }));
-    setConfigError(null);
-    setRestartModalOpen(true);
-    setRestartSuccess(false);
-    setRestartSeenDisconnect(false);
-    setAppliedWithoutRestart(result?.applied_without_restart === true);
-    clearRestartAutoCloseTimer();
-    if (result?.applied_without_restart === true) {
-      setRestartSuccess(true);
-      restartAutoCloseTimerRef.current = window.setTimeout(() => {
-        closeRestartModal();
-      }, 5000);
-    }
-  }, [clearRestartAutoCloseTimer, closeRestartModal, request]);
+    applyConfigSaveUiState(result?.applied_without_restart === true);
+  }, [applyConfigSaveUiState, buildAgentsTeamsFlatConfig, request]);
+
+  const saveAllConfigAndRestart = useCallback(async (payload: ConfigSaveAllPayload) => {
+    const result = await request<{ updated?: string[]; applied_without_restart?: boolean }>(
+      'config.save_all',
+      payload as unknown as Record<string, unknown>
+    );
+    setServerConfig((prev) => {
+      const next: Record<string, unknown> = { ...(prev ?? {}) };
+      if (payload.config) {
+        Object.assign(next, payload.config);
+        if (typeof prev?.memory_forbidden_description === 'object' && prev.memory_forbidden_description !== null
+            && !Array.isArray(prev.memory_forbidden_description)
+            && payload.config.memory_forbidden_description !== undefined) {
+          const prevDict = prev.memory_forbidden_description as Record<string, string>;
+          const lang = i18n.language || 'zh';
+          next.memory_forbidden_description = {
+            ...prevDict,
+            [lang]: payload.config.memory_forbidden_description,
+          };
+        }
+      }
+      if (payload.agents && payload.team) {
+        Object.assign(next, buildAgentsTeamsFlatConfig({
+          agents: payload.agents,
+          team: payload.team,
+        }));
+      }
+      return next;
+    });
+    applyConfigSaveUiState(result?.applied_without_restart === true);
+  }, [applyConfigSaveUiState, buildAgentsTeamsFlatConfig, i18n.language, request]);
 
   useEffect(() => {
     if (!restartModalOpen || restartSuccess) {
@@ -598,7 +647,16 @@ function AppContent() {
     
     // 仅处理以 sess_ 开头的会话 ID
     if (!sessionId.startsWith('sess_')) return;
-    
+
+    // 新建会话时跳过历史加载
+    const isNew = useChatStore.getState().isNewSession;
+    if (isNew) {
+      useChatStore.getState().setNewSession(false);
+      setHistoryPagerMeta(null);  // 新会话无历史，不显示分页栏
+      setLoadingHistory(false);
+      return;
+    }
+
     // 清理之前的历史加载句柄
     disposeInFlightHistoryHandles();
     setHistoryPagerMeta(null);
@@ -780,6 +838,7 @@ function AppContent() {
     }
     // 切换模式/新建会话时直接设置状态，避免闪现
     useChatStore.getState().setSwitchingMode(true);
+    useChatStore.getState().setNewSession(true);  // 标记新建会话，跳过历史加载
     useChatStore.getState().setInterruptResult(null);
     useChatStore.getState().setProcessing(false);
     useChatStore.getState().setThinking(false);
@@ -1239,6 +1298,7 @@ function AppContent() {
               config={serverConfig}
               isConnected={isConnected}
               onSaveConfig={saveConfigAndRestart}
+              onSaveAllConfig={saveAllConfigAndRestart}
               onValidateModel={validateModelConfig}
               initialExpandGroupTag={configInitialExpandGroup}
               onModelsReplaceAll={handleModelsReplaceAll}
