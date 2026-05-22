@@ -902,6 +902,7 @@ def _build_modes_team_mapping(front_payload: dict[str, Any]) -> dict[str, Any]:
             for key in ("member_name", "display_name", "persona")
             if key in leader_raw
         }
+        transformed_team["leader"]["agent_key"] = leader_raw.get("agent_key", "")
         leader_agent_spec = _resolve_front_team_agent_spec(
             agents_raw,
             leader_raw.get("agent_key"),
@@ -917,6 +918,7 @@ def _build_modes_team_mapping(front_payload: dict[str, Any]) -> dict[str, Any]:
                 teammate_raw.get("agent_key"),
                 field_name=f"team[{team_index}].teammate.agent_key",
             )
+            transformed_team["teammate"] = {"agent_key": teammate_raw.get("agent_key", "")}
 
         predefined_members_raw = team_raw.get("predefined_members", [])
         if predefined_members_raw is None:
@@ -944,7 +946,7 @@ def _build_modes_team_mapping(front_payload: dict[str, Any]) -> dict[str, Any]:
             seen_member_names.add(member_name)
             transformed_member = {
                 key: member[key]
-                for key in ("member_name", "display_name", "role_type", "persona", "prompt_hint")
+                for key in ("member_name", "display_name", "role_type", "persona", "prompt_hint", "agent_key")
                 if key in member
             }
             transformed_member["member_name"] = member_name
@@ -969,6 +971,15 @@ def _build_modes_team_mapping(front_payload: dict[str, Any]) -> dict[str, Any]:
     return team_mapping
 
 
+def _build_front_agent_registry(front_payload: dict[str, Any]) -> dict[str, Any]:
+    agents_raw = _require_dict(front_payload.get("agents"), "agents")
+    registry: dict[str, Any] = {}
+    for agent_key, agent_raw in agents_raw.items():
+        resolved_key = _require_non_empty_string(agent_key, f"agents.{agent_key}")
+        registry[resolved_key] = _transform_front_team_agent_spec(resolved_key, agent_raw)
+    return registry
+
+
 def replace_teams_in_config(front_payload: dict[str, Any]) -> None:
     """Replace ``modes.team`` using the frontend team-editor payload.
 
@@ -980,19 +991,29 @@ def replace_teams_in_config(front_payload: dict[str, Any]) -> None:
         raise ValueError("payload must be an object")
 
     teams_raw = front_payload.get("team")
+    data = _load_yaml_round_trip(_CONFIG_YAML_PATH)
+
+    if "agents" in front_payload:
+        agent_registry = _build_front_agent_registry(front_payload)
+        panel_cfg = data.get("web_config_panel")
+        if not isinstance(panel_cfg, dict):
+            panel_cfg = {}
+            data["web_config_panel"] = panel_cfg
+        if agent_registry:
+            panel_cfg["agent_team_agents"] = agent_registry
+        else:
+            panel_cfg.pop("agent_team_agents", None)
 
     # 空数组：删除 modes.team 配置项
     if isinstance(teams_raw, list) and not teams_raw:
-        data = _load_yaml_round_trip(_CONFIG_YAML_PATH)
         if "modes" in data and isinstance(data["modes"], dict) and "team" in data["modes"]:
             del data["modes"]["team"]
-            _dump_yaml_round_trip(_CONFIG_YAML_PATH, data)
+        _dump_yaml_round_trip(_CONFIG_YAML_PATH, data)
         return
 
     # 非空数组：正常构建并保存
     team_mapping = _build_modes_team_mapping(front_payload)
 
-    data = _load_yaml_round_trip(_CONFIG_YAML_PATH)
     if "modes" not in data or not isinstance(data["modes"], dict):
         data["modes"] = {}
     data["modes"]["team"] = team_mapping

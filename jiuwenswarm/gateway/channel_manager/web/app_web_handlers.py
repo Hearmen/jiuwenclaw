@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import asyncio
 import inspect
+import json
 import logging
 import os
 import re
@@ -342,6 +343,111 @@ _CONFIG_YAML_KEYS = frozenset({
 })
 
 
+def _flatten_modes_team_for_config_panel(raw: dict[str, Any]) -> dict[str, str]:
+    """Return the legacy flat fields consumed by the web config panel."""
+    modes = raw.get("modes")
+    teams_raw = modes.get("team") if isinstance(modes, dict) else {}
+    if not isinstance(teams_raw, dict):
+        teams_raw = {}
+
+    flat: dict[str, str] = {}
+    agent_specs: dict[str, dict[str, Any]] = {}
+
+    panel_cfg = raw.get("web_config_panel")
+    if isinstance(panel_cfg, dict):
+        registry = panel_cfg.get("agent_team_agents")
+        if isinstance(registry, dict):
+            for agent_key, spec in registry.items():
+                if isinstance(agent_key, str) and isinstance(spec, dict):
+                    agent_specs[agent_key] = spec
+
+    def add_agent(agent_key: str, spec: Any) -> str:
+        if not agent_key:
+            return ""
+        if isinstance(spec, dict) and agent_key not in agent_specs:
+            agent_specs[agent_key] = spec
+        return agent_key
+
+    def model_name_from_spec(spec: dict[str, Any]) -> str:
+        model_cfg = spec.get("model")
+        if not isinstance(model_cfg, dict):
+            return ""
+        if model_cfg.get("model") is not None:
+            return str(model_cfg.get("model") or "")
+        request_cfg = model_cfg.get("model_request_config")
+        if isinstance(request_cfg, dict) and request_cfg.get("model") is not None:
+            return str(request_cfg.get("model") or "")
+        client_cfg = model_cfg.get("model_client_config")
+        if isinstance(client_cfg, dict) and client_cfg.get("model_name") is not None:
+            return str(client_cfg.get("model_name") or "")
+        return ""
+
+    for team_idx, (team_name, team_spec) in enumerate(teams_raw.items()):
+        if team_idx >= 10 or not isinstance(team_spec, dict):
+            continue
+        team_prefix = f"team_{team_idx}_"
+        flat[f"{team_prefix}name"] = str(team_spec.get("team_name") or team_name or "")
+        flat[f"{team_prefix}lifecycle"] = str(team_spec.get("lifecycle") or "")
+        flat[f"{team_prefix}teammate_mode"] = str(team_spec.get("teammate_mode") or "")
+        flat[f"{team_prefix}spawn_mode"] = str(team_spec.get("spawn_mode") or "")
+
+        agents = team_spec.get("agents")
+        if not isinstance(agents, dict):
+            agents = {}
+
+        leader = team_spec.get("leader")
+        if isinstance(leader, dict):
+            for key in ("member_name", "display_name", "persona"):
+                flat[f"{team_prefix}leader_{key}"] = str(leader.get(key) or "")
+        leader_key = str(leader.get("agent_key") or "") if isinstance(leader, dict) else ""
+        if not leader_key:
+            leader_key = f"{team_name}_leader"
+        flat[f"{team_prefix}leader_agent_key"] = add_agent(leader_key, agents.get("leader"))
+
+        teammate_spec = agents.get("teammate")
+        if isinstance(teammate_spec, dict):
+            teammate = team_spec.get("teammate")
+            teammate_key = str(teammate.get("agent_key") or "") if isinstance(teammate, dict) else ""
+            if not teammate_key:
+                teammate_key = f"{team_name}_teammate"
+            flat[f"{team_prefix}teammate_agent_key"] = add_agent(teammate_key, teammate_spec)
+        else:
+            flat[f"{team_prefix}teammate_agent_key"] = ""
+
+        members_out: list[dict[str, str]] = []
+        members = team_spec.get("predefined_members")
+        if isinstance(members, list):
+            for member in members:
+                if not isinstance(member, dict):
+                    continue
+                member_name = str(member.get("member_name") or "")
+                agent_key = str(member.get("agent_key") or "")
+                if not agent_key:
+                    agent_key = f"{team_name}_{member_name}" if member_name else ""
+                if agent_key:
+                    add_agent(agent_key, agents.get(member_name))
+                members_out.append({
+                    "member_name": member_name,
+                    "display_name": str(member.get("display_name") or ""),
+                    "persona": str(member.get("persona") or ""),
+                    "prompt_hint": str(member.get("prompt_hint") or ""),
+                    "agent_key": agent_key,
+                })
+        flat[f"{team_prefix}predefined_members"] = json.dumps(members_out, ensure_ascii=False)
+
+    for agent_idx, (agent_key, spec) in enumerate(agent_specs.items()):
+        if agent_idx >= 10:
+            break
+        flat[f"agent_name_{agent_idx}"] = agent_key
+        flat[f"agent_model_{agent_idx}"] = model_name_from_spec(spec)
+        skills = spec.get("skills")
+        flat[f"agent_skills_{agent_idx}"] = ",".join(str(item) for item in skills) if isinstance(skills, list) else ""
+        flat[f"agent_max_iterations_{agent_idx}"] = str(spec.get("max_iterations") or 200)
+        flat[f"agent_completion_timeout_{agent_idx}"] = str(spec.get("completion_timeout") or 600)
+
+    return flat
+
+
 async def _clear_agent_config_cache(agent_client=None) -> None:
     """写回 config.yaml 后清除 agent 侧配置缓存，使下次读取时得到最新文件内容。"""
     try:
@@ -499,6 +605,7 @@ def _register_web_handlers(bind: WebHandlersBindParams) -> None:
                 payload["free_search_ddg_enabled"] = "false"
             if not payload.get("free_search_bing_enabled"):
                 payload["free_search_bing_enabled"] = "false"
+            payload.update(_flatten_modes_team_for_config_panel(raw))
         except Exception:  # noqa: BLE001
             payload.setdefault("context_engine_enabled", "false")
             payload.setdefault("kv_cache_affinity_enabled", "false")
@@ -2227,7 +2334,6 @@ def _register_web_handlers(bind: WebHandlersBindParams) -> None:
                 AutoHarnessService,
             )
             from pathlib import Path
-            import json
 
             try:
                 if req_method == ReqMethod.HARNESS_PACKAGES_GET:
