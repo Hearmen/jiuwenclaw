@@ -139,6 +139,7 @@ interface ConfigPanelProps {
   config: Record<string, unknown> | null;
   isConnected: boolean;
   onSaveConfig: (updates: Record<string, string>) => Promise<void>;
+  onSaveAllConfig?: (payload: ConfigSaveAllPayload) => Promise<void>;
   /** 校验默认模型配置（api_base / api_key / model / model_provider）能否完成一次最小 LLM 请求 */
   onValidateModel?: (fields: {
     api_base: string;
@@ -170,6 +171,31 @@ interface ConfigPanelProps {
       predefined_members: Array<{ member_name: string; display_name: string; persona: string; prompt_hint: string; agent_key: string }>;
     }>;
   }, showRestartModal?: boolean) => Promise<void>;
+}
+
+interface AgentsTeamsPayload {
+  agents: Record<string, {
+    model: { provider: string; api_base: string; api_key: string; model: string };
+    skills: string[];
+    max_iterations: number;
+    completion_timeout: number;
+  }>;
+  team: Array<{
+    team_name: string;
+    lifecycle: string;
+    teammate_mode: string;
+    spawn_mode: string;
+    leader: { member_name: string; display_name: string; persona: string; agent_key: string };
+    teammate: { agent_key: string };
+    predefined_members: Array<{ member_name: string; display_name: string; persona: string; prompt_hint: string; agent_key: string }>;
+  }>;
+}
+
+interface ConfigSaveAllPayload {
+  config?: Record<string, string>;
+  models?: ModelEntry[];
+  agents?: AgentsTeamsPayload["agents"];
+  team?: AgentsTeamsPayload["team"];
 }
 
 interface ConfigGroup {
@@ -2181,6 +2207,7 @@ export function ConfigPanel({
   config,
   isConnected,
   onSaveConfig,
+  onSaveAllConfig,
   onValidateModel: _onValidateModel,
   initialExpandGroupTag = null,
   onModelsReplaceAll,
@@ -2530,6 +2557,16 @@ export function ConfigPanel({
     const keys = Object.keys(normalizedConfig);
     return keys.some((key) => (draftValues[key] ?? "") !== normalizedConfig[key]);
   }, [draftValues, normalizedConfig]);
+  const configUpdates = useMemo(() => {
+    const updates: Record<string, string> = {};
+    for (const key of Object.keys(normalizedConfig)) {
+      const draftValue = draftValues[key] ?? "";
+      if (draftValue !== normalizedConfig[key]) {
+        updates[key] = draftValue;
+      }
+    }
+    return updates;
+  }, [draftValues, normalizedConfig]);
   const hasModelChanges = useMemo(() => {
     if (draftModels.length !== storeAvailableModels.length) return true;
     return draftModels.some((dm, i) => {
@@ -2665,6 +2702,32 @@ export function ConfigPanel({
     setModelError(null);
   };
 
+  const buildAgentsTeamsPayload = (): AgentsTeamsPayload => {
+    const agentsPayload: AgentsTeamsPayload["agents"] = {};
+    for (const agent of draftAgents) {
+      if (!agent.name) continue;
+      agentsPayload[agent.name] = {
+        model: { ...agent.model },
+        skills: agent.skills,
+        max_iterations: agent.max_iterations,
+        completion_timeout: agent.completion_timeout,
+      };
+    }
+    return {
+      agents: agentsPayload,
+      team: draftTeams.map((t) => ({ ...t })),
+    };
+  };
+
+  const clearAgentsTeamsCacheAfterSave = () => {
+    try {
+      localStorage.removeItem('jiuwenclaw_agents_teams_cache');
+    } catch (e) {
+      console.error('Failed to clear agents/teams cache:', e);
+    }
+    setAgentsTeamsEdited(false);
+  };
+
 
   const handleSaveAndRestart = async () => {
     if (!hasChanges || saving) return;
@@ -2731,7 +2794,7 @@ export function ConfigPanel({
       }
     }
 
-    if (hasAgentsTeamsValidationError) {
+    if (hasAgentsTeamsChanges && hasAgentsTeamsValidationError) {
       setConfigTab("agent");
       setAgentsTeamsValidationAttempted(true);
       setError(t('config.agentsTeamsValidationError'));
@@ -2742,44 +2805,39 @@ export function ConfigPanel({
     setError(null);
     setModelError(null);
     try {
-      // 先保存多模型变更——若此步骤失败，后续成功弹窗不会弹出
-      // 走 replace_all 一次性原子提交完整列表：避免按 model_name/index 多步 save+remove
-      // 在同 model_name 多条目场景下出现位置错位、漏删、覆写等问题
-      if (hasModelChanges && onModelsReplaceAll) {
-        await onModelsReplaceAll(draftModels);
-        if (onModelsRefresh) await onModelsRefresh();
-      }
-      // 保存 agents 和 teams
-      if (hasAgentsTeamsChanges && onAgentsTeamsSave) {
-        const agentsPayload: Record<string, {
-          model: { provider: string; api_base: string; api_key: string; model: string };
-          skills: string[];
-          max_iterations: number;
-          completion_timeout: number;
-        }> = {};
-        for (const agent of draftAgents) {
-          if (!agent.name) continue;
-          agentsPayload[agent.name] = {
-            model: { ...agent.model },
-            skills: agent.skills,
-            max_iterations: agent.max_iterations,
-            completion_timeout: agent.completion_timeout,
-          };
+      if (onSaveAllConfig) {
+        const payload: ConfigSaveAllPayload = {};
+        if (hasConfigChanges) {
+          payload.config = configUpdates;
         }
-        // 当同时有 agents/teams 变更和普通配置变更时，先不弹窗，等最后统一弹窗
-        const showRestartModal = !(hasConfigChanges || hasModelChanges);
-        await onAgentsTeamsSave({
-          agents: agentsPayload,
-          team: draftTeams.map((t) => ({ ...t })),
-        }, showRestartModal);
-        // 保存成功后清除 localStorage 缓存
-        clearCachedAgentsTeams();
-        setAgentsTeamsEdited(false);
-        setAgentsTeamsValidationAttempted(false);
-      }
-      // 只有当有普通配置或模型变更时，才保存并弹窗
-      if (hasConfigChanges || hasModelChanges) {
-        await onSaveConfig(draftValues);
+        if (hasModelChanges) {
+          payload.models = draftModels;
+        }
+        if (hasAgentsTeamsChanges) {
+          const agentsTeamsPayload = buildAgentsTeamsPayload();
+          payload.agents = agentsTeamsPayload.agents;
+          payload.team = agentsTeamsPayload.team;
+        }
+        await onSaveAllConfig(payload);
+        if (hasModelChanges && onModelsRefresh) await onModelsRefresh();
+        if (hasAgentsTeamsChanges) {
+          clearAgentsTeamsCacheAfterSave();
+        }
+      } else {
+        // 兼容旧后端：按旧接口顺序保存，但只在普通配置实际变化时调用 config.set。
+        if (hasModelChanges && onModelsReplaceAll) {
+          await onModelsReplaceAll(draftModels);
+          if (onModelsRefresh) await onModelsRefresh();
+        }
+        if (hasAgentsTeamsChanges && onAgentsTeamsSave) {
+          const agentsTeamsPayload = buildAgentsTeamsPayload();
+          const showRestartModal = !(hasConfigChanges || hasModelChanges);
+          await onAgentsTeamsSave(agentsTeamsPayload, showRestartModal);
+          clearAgentsTeamsCacheAfterSave();
+        }
+        if (hasConfigChanges) {
+          await onSaveConfig(configUpdates);
+        }
       }
     } catch (saveError) {
       const message = saveError instanceof Error ? saveError.message : t('config.errors.saveFailed');
