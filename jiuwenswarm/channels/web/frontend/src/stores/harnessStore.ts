@@ -113,14 +113,16 @@ interface HarnessState {
   packages: PackageInfo[];
   // Native version info
   nativeVersion: NativeVersionInfo | null;
-  // Currently active package ID
-  activePackageId: string | null;
+  // Currently active package IDs (multiple can be active simultaneously)
+  activePackageIds: string[];
   // Selected package ID in dropdown (not yet activated)
   selectedPackageId: string | null;
   // Loading state for packages
   loadingPackages: boolean;
   // Activating state
   activatingPackage: boolean;
+  // Deactivating state
+  deactivatingPackage: boolean;
 
   // Actions
   setStageDefinitions: (stages: HarnessStageDefinition[]) => void;
@@ -141,11 +143,12 @@ interface HarnessState {
   setActivateInteraction: (state: ActivateInteractionState | null) => void;
   reset: () => void;
 
-  setPackages: (packages: PackageInfo[], nativeVersion: NativeVersionInfo, activeId: string | null) => void;
-  setActivePackageId: (id: string | null) => void;
+  setPackages: (packages: PackageInfo[], nativeVersion: NativeVersionInfo, activeIds: string[]) => void;
+  isPackageActive: (packageId: string) => boolean;
   setSelectedPackageId: (id: string | null) => void;
   setLoadingPackages: (loading: boolean) => void;
   setActivatingPackage: (activating: boolean) => void;
+  setDeactivatingPackage: (deactivating: boolean) => void;
 }
 
 /**
@@ -204,7 +207,7 @@ function hasLaterActiveStage(stageResults: HarnessStageInfo[], stage: string): b
   );
 }
 
-export const useHarnessStore = create<HarnessState>((set) => ({
+export const useHarnessStore = create<HarnessState>((set, get) => ({
   stageDefinitions: [],
   harnessMessages: [],
   stageResults: [],
@@ -220,10 +223,11 @@ export const useHarnessStore = create<HarnessState>((set) => ({
 
   packages: [],
   nativeVersion: null,
-  activePackageId: null,
+  activePackageIds: [],
   selectedPackageId: null,
   loadingPackages: false,
   activatingPackage: false,
+  deactivatingPackage: false,
 
   setStageDefinitions: (stages) => {
     // Only set stages once - ignore subsequent updates
@@ -444,24 +448,26 @@ export const useHarnessStore = create<HarnessState>((set) => ({
       activateInteraction: null,
       packages: [],
       nativeVersion: null,
-      activePackageId: null,
+      activePackageIds: [],
       selectedPackageId: null,
       loadingPackages: false,
       activatingPackage: false,
+      deactivatingPackage: false,
     });
   },
 
-  setPackages: (packages, nativeVersion, activeId) => {
+  setPackages: (packages, nativeVersion, activeIds) => {
     set({
       packages,
       nativeVersion,
-      activePackageId: activeId,
-      selectedPackageId: activeId,
+      activePackageIds: activeIds,
+      selectedPackageId: null,
     });
   },
 
-  setActivePackageId: (id) => {
-    set({ activePackageId: id });
+  isPackageActive: (packageId) => {
+    const state = get();
+    return state.activePackageIds.includes(packageId);
   },
 
   setSelectedPackageId: (id) => {
@@ -474,5 +480,9 @@ export const useHarnessStore = create<HarnessState>((set) => ({
 
   setActivatingPackage: (activating) => {
     set({ activatingPackage: activating });
+  },
+
+  setDeactivatingPackage: (deactivating) => {
+    set({ deactivatingPackage: deactivating });
   },
 }));

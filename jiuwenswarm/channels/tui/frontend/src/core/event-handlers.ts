@@ -46,6 +46,33 @@ export interface UserAnswer {
   custom_input?: string;
 }
 
+// Harness extension ready info
+export interface HarnessExtensionReady {
+  extensionName: string;
+  runtimePath: string;
+  sessionRuntimePath?: string;
+  extensionRuntimePath?: string;
+  configPath: string;
+  runtimeExtensions?: RuntimeExtensionInfo[];
+  verifyReport?: Record<string, unknown>;
+  componentsSummary?: Record<string, unknown>;
+}
+
+export interface RuntimeExtensionInfo {
+  extensionName: string;
+  runtimePath: string;
+  configPath: string;
+}
+
+// Harness activate interaction state
+export interface HarnessActivateInteraction {
+  interactionId: string;
+  extensionName: string;
+  runtimePath: string;
+  options: string[];
+  pending: boolean;
+}
+
 export interface AppEventDelegate {
   getConnectionStatus(): ConnectionStatus;
   getSessionId(): string;
@@ -106,6 +133,14 @@ export interface AppEventDelegate {
   appendUsageSummary(usage: Record<string, unknown>, model?: string): void;
   /** 回合结束时记录执行耗时条目到对话区。 */
   addWorkedForEntry(): void;
+  /** Set harness extension ready info (for file tree display) */
+  setHarnessExtensionReady(info: HarnessExtensionReady | null): void;
+  /** Set harness activate interaction state (for user confirmation) */
+  setHarnessActivateInteraction(state: HarnessActivateInteraction | null): void;
+  /** Get current harness activate interaction state */
+  getHarnessActivateInteraction(): HarnessActivateInteraction | null;
+  /** Auto-activate extension (send activate_response with action="accept") */
+  autoActivateExtension(interactionId: string): void;
 }
 
 function _handleSwitchModeToolResult(
@@ -1052,6 +1087,100 @@ export function handleIncomingFrame(delegate: AppEventDelegate, frame: EventFram
         typeof payload.model === "string" ? payload.model : undefined,
       );
       return true;
+
+    case "harness.extension_ready": {
+      const extensionName = typeof payload.extension_name === "string" ? payload.extension_name : "";
+      const runtimePath = typeof payload.runtime_path === "string" ? payload.runtime_path : "";
+      const sessionRuntimePath = typeof payload.session_runtime_path === "string" ? payload.session_runtime_path : runtimePath;
+      const extensionRuntimePath = typeof payload.extension_runtime_path === "string" ? payload.extension_runtime_path : "";
+      const configPath = typeof payload.config_path === "string" ? payload.config_path : "";
+      const runtimeExtensions = Array.isArray(payload.runtime_extensions)
+        ? payload.runtime_extensions
+            .filter((item) => typeof item === "object" && item !== null)
+            .map((item) => {
+              const obj = item as Record<string, unknown>;
+              return {
+                extensionName: typeof obj.extension_name === "string" ? obj.extension_name : "",
+                runtimePath: typeof obj.runtime_path === "string" ? obj.runtime_path : "",
+                configPath: typeof obj.config_path === "string" ? obj.config_path : "",
+              };
+            })
+            .filter((item) => item.extensionName && item.runtimePath)
+        : [];
+      const verifyReport = typeof payload.verify_report === "object" && payload.verify_report !== null && !Array.isArray(payload.verify_report)
+        ? payload.verify_report as Record<string, unknown>
+        : {};
+      const componentsSummary = typeof payload.components_summary === "object" && payload.components_summary !== null && !Array.isArray(payload.components_summary)
+        ? payload.components_summary as Record<string, unknown>
+        : {};
+
+      delegate.setHarnessExtensionReady({
+        extensionName,
+        runtimePath,
+        sessionRuntimePath,
+        extensionRuntimePath,
+        configPath,
+        runtimeExtensions,
+        verifyReport,
+        componentsSummary,
+      });
+
+      // Show info entry for extension ready
+      appendEntry(delegate, {
+        kind: "info",
+        id: createId("harness-extension-ready"),
+        sessionId: activeSessionId,
+        content: `🔧 扩展已生成: ${extensionName}`,
+        icon: "i",
+        meta: {
+          title: `扩展生成完成: ${extensionName}`,
+          items: [
+            { label: "运行路径", value: runtimePath },
+            { label: "配置路径", value: configPath },
+            ...(runtimeExtensions.length > 0 ? [{ label: "依赖扩展", value: runtimeExtensions.map(e => e.extensionName).join(", ") }] : []),
+          ],
+        },
+        at: new Date().toISOString(),
+      });
+      return true;
+    }
+
+    case "harness.activate_interaction": {
+      const interactionId = typeof payload.interaction_id === "string" ? payload.interaction_id : "";
+      const extensionName = typeof payload.extension_name === "string" ? payload.extension_name : "";
+      const runtimePath = typeof payload.runtime_path === "string" ? payload.runtime_path : "";
+      const options: string[] = Array.isArray(payload.options) ? payload.options : ["accept", "reject"];
+
+      delegate.setHarnessActivateInteraction({
+        interactionId,
+        extensionName,
+        runtimePath,
+        options,
+        pending: false,
+      });
+
+      // TUI is a log-viewing interface - auto-activate without user confirmation
+      // Log activation info and send response directly
+      appendEntry(delegate, {
+        kind: "info",
+        id: createId("harness-activate"),
+        sessionId: activeSessionId,
+        content: `扩展 **${extensionName}** 激活请求已收到，正在自动激活生效...`,
+        icon: "i",
+        meta: {
+          title: `扩展激活: ${extensionName}`,
+          items: [
+            { label: "扩展名称", value: extensionName },
+            { label: "运行路径", value: runtimePath },
+          ],
+        },
+        at: new Date().toISOString(),
+      });
+
+      // Auto-activate extension (send activate_response with action="accept")
+      delegate.autoActivateExtension(interactionId);
+      return true;
+    }
 
     default:
       return connectionChanged;

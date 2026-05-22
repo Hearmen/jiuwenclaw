@@ -79,7 +79,7 @@ _DEFAULT_CI_GATE_INSTALL_COMMAND = "uv sync --active --group dev --extra cli"
 def reset_harness_packages_state() -> None:
     """Reset harness package state to native agent on service startup.
 
-    On service startup, clear active_package_id if there's historical activation info.
+    On service startup, clear active_package_ids if there's historical activation info.
     This ensures the agent always starts fresh in native mode.
     """
     try:
@@ -88,22 +88,21 @@ def reset_harness_packages_state() -> None:
             return
 
         data = json.loads(_HARNESS_PACKAGES_FILE.read_text(encoding="utf-8"))
-        active_package_id = data.get("active_package_id")
+        active_package_ids = data.get("active_package_ids", [])
 
-        if not active_package_id:
-            logger.debug("[AutoHarnessService] No active package in metadata, already native")
+        if not active_package_ids:
+            logger.debug("[AutoHarnessService] No active packages in metadata, already native")
             return
 
-        extension_name = data.get("active_extension_name", active_package_id)
         logger.info(
-            "[AutoHarnessService] Resetting to native agent, clearing previous: %s (%s)",
-            extension_name,
-            active_package_id,
+            "[AutoHarnessService] Resetting to native agent, clearing previous: %s",
+            active_package_ids,
         )
 
-        # Reset active_package_id to null (native state)
-        data["active_package_id"] = None
-        data["active_extension_name"] = None
+        # Reset active_package_ids to empty list (native state)
+        data["active_package_ids"] = []
+        data.pop("active_package_id", None)  # Remove legacy field if exists
+        data.pop("active_extension_name", None)  # Remove legacy field
         native_version = data.get("native_version", {})
         if native_version and native_version.get("is_active", False) == False:
             data["native_version"]["is_active"] = True
@@ -115,7 +114,7 @@ def reset_harness_packages_state() -> None:
             encoding="utf-8"
         )
         logger.info(
-            "[AutoHarnessService] Reset to native agent state, cleared active_package_id"
+            "[AutoHarnessService] Reset to native agent state, cleared active_package_ids"
         )
 
     except Exception as e:
@@ -1655,7 +1654,7 @@ class AutoHarnessService:
         )
 
     def cancel_session_run(self, session_id: str) -> bool:
-        """Cancel active run for a session (per §5.2)."""
+        """Cancel active run for a session."""
         active_run = self._active_runs.get(session_id)
         if active_run is None:
             logger.info("[AutoHarnessService] No active run for session %s", session_id)
@@ -1741,7 +1740,7 @@ class AutoHarnessService:
                 "extension_name": "Native Agent",
                 "is_active": True,
             },
-            "active_package_id": None,
+            "active_package_ids": [],
             "last_updated": datetime.now(timezone.utc).isoformat(),
         }
 
@@ -1811,31 +1810,53 @@ class AutoHarnessService:
                 return pkg
         return None
 
-    def update_active_status(self, package_id: str) -> dict[str, Any]:
-        """Update active_package_id in packages metadata (Mock implementation)."""
+    def update_active_status(self, package_id: str, operation: str = "add") -> dict[str, Any]:
+        """Update active_package_ids in packages metadata.
+
+        Args:
+            package_id: The package ID to add/remove from active list
+            operation: "add" to activate, "remove" to deactivate
+
+        Returns:
+            Updated packages data dict
+        """
         data = self.load_packages()
 
-        # Update is_active for all packages
-        for pkg in data.get("packages", []):
-            pkg["is_active"] = pkg.get("id") == package_id
+        # Get current active_package_ids list (migrate from legacy if needed)
+        active_ids = data.get("active_package_ids", [])
+        if not isinstance(active_ids, list):
+            # Migration: convert legacy single id to list
+            legacy_id = data.get("active_package_id")
+            active_ids = [legacy_id] if legacy_id else []
+            data.pop("active_package_id", None)
+            data.pop("active_extension_name", None)
 
-        # Update native_version
+        if operation == "add":
+            if package_id not in active_ids:
+                active_ids.append(package_id)
+            # Update is_active for this package
+            for pkg in data.get("packages", []):
+                if pkg.get("id") == package_id:
+                    pkg["is_active"] = True
+                    pkg["activated_at"] = datetime.now(timezone.utc).isoformat()
+        elif operation == "remove":
+            if package_id in active_ids:
+                active_ids.remove(package_id)
+            # Update is_active for this package
+            for pkg in data.get("packages", []):
+                if pkg.get("id") == package_id:
+                    pkg["is_active"] = False
+
+        data["active_package_ids"] = active_ids
+
+        # Update native_version: active when no packages are active
         native = data.get("native_version", {})
-        native["is_active"] = package_id == "native"
+        native["is_active"] = len(active_ids) == 0
         data["native_version"] = native
 
-        # Update active_package_id
-        data["active_package_id"] = package_id if package_id != "native" else None
         data["last_updated"] = datetime.now(timezone.utc).isoformat()
-
-        # Update activated_at for the active package
-        if package_id != "native":
-            active_pkg = self.find_package_by_id(data, package_id)
-            if active_pkg:
-                active_pkg["activated_at"] = datetime.now(timezone.utc).isoformat()
-
         self.save_packages(data)
-        logger.info("[AutoHarnessService] Updated active package: %s", package_id)
+        logger.info("[AutoHarnessService] Updated active packages: %s (operation=%s)", active_ids, operation)
 
         return data
 
@@ -1844,15 +1865,14 @@ class AutoHarnessService:
         return self.load_packages()
 
     async def activate_package(self, package_id: str) -> dict[str, Any]:
-        """Activate a harness package by loading its config or resetting to native agent.
+        """Activate a harness package by loading its config (stacking on existing).
 
-        Simplified activation flow:
-        1. Check current active package from metadata
-        2. If switching to native: unload current package (if any) via unload_harness_config
-        3. If switching to another package: unload current package first, then load new one
+        Stacked activation flow:
+        1. Load the new package config (stack on any existing active packages)
+        2. Update metadata: add package_id to active_package_ids list
 
         Args:
-            package_id: The package ID to activate, or "native" to reset to original agent
+            package_id: The package ID to activate
 
         Returns:
             Payload for frontend response with activation details
@@ -1866,46 +1886,19 @@ class AutoHarnessService:
             type(self._agent).__name__ if self._agent else None,
         )
         data = self.load_packages()
-        current_active_id = data.get("active_package_id")
 
-        # Step 1: Unload current active package if exists and different from target
-        if current_active_id and current_active_id != package_id and self._agent is not None:
-            current_package = self.find_package_by_id(data, current_active_id)
-            if current_package:
-                current_config_path = current_package.get("config_path", "")
-                if current_config_path and Path(current_config_path).exists():
-                    try:
-                        unloaded = await self._agent.unload_harness_config(current_config_path)
-                        logger.info(
-                            "[AutoHarnessService] Unloaded current package %s: %s",
-                            current_active_id,
-                            unloaded
-                        )
-                    except FileNotFoundError:
-                        logger.warning(
-                            "[AutoHarnessService] Current package config not found, skip unload: %s",
-                            current_config_path,
-                        )
-                    except Exception as exc:
-                        logger.warning(
-                            "[AutoHarnessService] Failed to unload current package %s: %s",
-                            current_active_id,
-                            exc,
-                        )
-
-        # Step 2: Handle native agent (just update status, no load needed)
-        if package_id == "native":
-            self.update_active_status("native")
-            logger.info("[AutoHarnessService] Switched to native agent")
+        # Check if already active
+        active_ids = data.get("active_package_ids", [])
+        if package_id in active_ids:
+            logger.info("[AutoHarnessService] Package %s already active", package_id)
             return {
-                "activated_package_id": "native",
-                "extension_name": "Native Agent",
+                "activated_package_id": package_id,
+                "extension_name": "",
                 "runtime_path": "",
                 "config_path": "",
-                "message": "已切换回原生 Agent 模式",
+                "message": "扩展已处于激活状态",
             }
 
-        # Step 3: Handle specific package activation
         package = self.find_package_by_id(data, package_id)
         if package is None:
             raise ValueError(f"Package not found: {package_id}")
@@ -1919,7 +1912,7 @@ class AutoHarnessService:
 
         if self._agent is None:
             logger.warning("[AutoHarnessService] No agent available for activation")
-            self.update_active_status(package_id)
+            self.update_active_status(package_id, "add")
             return {
                 "activated_package_id": package_id,
                 "extension_name": package.get("extension_name", ""),
@@ -1930,7 +1923,7 @@ class AutoHarnessService:
 
         try:
             loaded_resources = await self._agent.load_harness_config(config_path)
-            self.update_active_status(package_id)
+            self.update_active_status(package_id, "add")
             logger.info(
                 "[AutoHarnessService] Activated package %s, loaded resources: %s",
                 package_id,
@@ -1952,8 +1945,73 @@ class AutoHarnessService:
             logger.exception("[AutoHarnessService] Activate package %s failed: %s", package_id, exc)
             raise ValueError(f"激活扩展失败: {exc}") from exc
 
+    async def deactivate_package(self, package_id: str) -> dict[str, Any]:
+        """Deactivate a harness package by unloading its config.
+
+        Args:
+            package_id: The package ID to deactivate
+
+        Returns:
+            Payload for frontend response with deactivation details
+
+        Raises:
+            ValueError: Package not found or not active
+        """
+        logger.info(
+            "[AutoHarnessService] deactivate_package called: package_id=%s, agent=%s",
+            package_id,
+            type(self._agent).__name__ if self._agent else None,
+        )
+        data = self.load_packages()
+
+        # Check if package is in active list
+        active_ids = data.get("active_package_ids", [])
+        if package_id not in active_ids:
+            logger.info("[AutoHarnessService] Package %s is not active", package_id)
+            return {
+                "deactivated_package_id": package_id,
+                "extension_name": "",
+                "message": "扩展未处于激活状态",
+            }
+
+        package = self.find_package_by_id(data, package_id)
+        if package is None:
+            raise ValueError(f"Package not found: {package_id}")
+
+        config_path = package.get("config_path", "")
+        extension_name = package.get("extension_name", "")
+
+        if self._agent is not None and config_path and Path(config_path).exists():
+            try:
+                unloaded_resources = await self._agent.unload_harness_config(config_path)
+                logger.info(
+                    "[AutoHarnessService] Deactivated package %s, unloaded resources: %s",
+                    package_id,
+                    unloaded_resources,
+                )
+            except FileNotFoundError:
+                logger.warning(
+                    "[AutoHarnessService] Config file not found for deactivation: %s",
+                    config_path,
+                )
+            except Exception as exc:
+                logger.warning(
+                    "[AutoHarnessService] Failed to unload package %s: %s",
+                    package_id,
+                    exc,
+                )
+
+        self.update_active_status(package_id, "remove")
+        logger.info("[AutoHarnessService] Package %s deactivated", package_id)
+
+        return {
+            "deactivated_package_id": package_id,
+            "extension_name": extension_name,
+            "message": f"扩展 {extension_name} 已去激活",
+        }
+
     def delete_package(self, package_id: str) -> dict[str, Any]:
-        """Delete a package and optionally switch to native agent if it was active.
+        """Delete a package and optionally remove from active list if it was active.
 
         Args:
             package_id: The package ID to delete
@@ -1971,7 +2029,8 @@ class AutoHarnessService:
 
         # Check if package is currently active
         was_active = package.get("is_active", False)
-        active_package_id = data.get("active_package_id")
+        active_ids = data.get("active_package_ids", [])
+        was_in_active_list = package_id in active_ids
 
         # Delete runtime directory if exists
         runtime_path = package.get("runtime_path", "")
@@ -1989,17 +2048,24 @@ class AutoHarnessService:
         packages = [p for p in packages if p.get("id") != package_id]
         data["packages"] = packages
 
-        # If deleted package was active, switch to native
+        # If deleted package was active, remove from active_ids and update native status
         switched_to_native = False
-        if was_active or active_package_id == package_id:
-            data["active_package_id"] = None
-            for pkg in packages:
-                pkg["is_active"] = False
+        if was_active or was_in_active_list:
+            active_ids = [id for id in active_ids if id != package_id]
+            data["active_package_ids"] = active_ids
+            # Update native status: active when no packages are active
             native = data.get("native_version", {})
-            native["is_active"] = True
+            if len(active_ids) == 0:
+                native["is_active"] = True
+                switched_to_native = True
+            else:
+                native["is_active"] = False
             data["native_version"] = native
-            switched_to_native = True
-            logger.info("[AutoHarnessService] Deleted active package %s, switched to native agent", package_id)
+            logger.info("[AutoHarnessService] Deleted active package %s, remaining active: %s", package_id, active_ids)
+
+        # Remove legacy fields if present
+        data.pop("active_package_id", None)
+        data.pop("active_extension_name", None)
 
         data["last_updated"] = datetime.now(timezone.utc).isoformat()
         self.save_packages(data)
@@ -2206,7 +2272,8 @@ class AutoHarnessService:
         query: str,
         interval_hours: int,
         run_immediately: bool = False,
-        model: Optional[Model] = None
+        model: Optional[Model] = None,
+        pipeline: Optional[str] = None
     ) -> dict[str, Any]:
         """Create a new scheduled task.
 
@@ -2215,6 +2282,7 @@ class AutoHarnessService:
             interval_hours: Execution interval in hours
             run_immediately: If True, trigger immediate execution after creation
             model: Model configuration from JiuwenClaw (model_name stored for execution)
+            pipeline: Pipeline preference (extended_evolve_pipeline or meta_evolve_pipeline)
 
         Returns:
             {"task_id": str, "next_run_time": str, "message": str}
@@ -2244,6 +2312,7 @@ class AutoHarnessService:
             "current_execution_id": None,
             "execution_history": [],
             "model_name": model_name,
+            "pipeline": pipeline,  # Pipeline preference
         }
 
         self._task_store.add_task(task_data)
@@ -2271,7 +2340,8 @@ class AutoHarnessService:
     async def run_task(
         self,
         query: str,
-        model: Optional[Model] = None
+        model: Optional[Model] = None,
+        pipeline: Optional[str] = None
     ) -> dict[str, Any]:
         """Create and immediately execute a one-time task.
 
@@ -2282,6 +2352,7 @@ class AutoHarnessService:
         Args:
             query: The optimization goal/task description
             model: Model configuration from JiuwenClaw
+            pipeline: Pipeline preference (extended_evolve_pipeline or meta_evolve_pipeline)
 
         Returns:
             {"task_id": str, "status": "running", "message": str}
@@ -2309,6 +2380,7 @@ class AutoHarnessService:
             "current_execution_id": None,
             "execution_history": [],
             "model_name": model_name,
+            "pipeline": pipeline,  # Pipeline preference
         }
 
         self._task_store.add_task(task_data)
@@ -2344,8 +2416,8 @@ class AutoHarnessService:
         if self._task_store is None or self._scheduler is None:
             return {"error": "调度器未初始化"}
 
-        # Cancel running execution if exists
-        self._scheduler.cancel_execution(task_id)
+        # Cancel running execution if exists (async - must await)
+        await self._scheduler.cancel_execution(task_id)
 
         # Update status
         self._task_store.update_task(task_id, {"status": "cancelled"})
@@ -2375,7 +2447,7 @@ class AutoHarnessService:
 
         # Cancel running execution if exists
         if self._scheduler is not None and task.get("status") == "running":
-            self._scheduler.cancel_execution(task_id)
+            await self._scheduler.cancel_execution(task_id)
 
         # Delete task from store (includes removing log files)
         deleted = self._task_store.delete_task(task_id)

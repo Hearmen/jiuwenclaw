@@ -42,6 +42,7 @@ import type { SessionListPayload, SessionMeta } from "../core/commands/builtins/
 import type { ConfigItemSchema } from "../core/commands/builtins/config.js";
 import type { McpListItem, McpListPayload } from "../core/commands/builtins/mcp.js";
 import { buildModeAutocompleteItems } from "../core/commands/builtins/mode.js";
+import { PIPELINE_VALUES, PIPELINE_OPTIONS, INTERVAL_VALUES, INTERVAL_OPTIONS, FLAG_OPTIONS } from "../core/commands/builtins/auto-harness.js";
 import { isTeamMode } from "../core/modes.js";
 import {
   addTrustedDir,
@@ -2997,6 +2998,56 @@ export class AppScreen implements Component, Focusable {
             if (currentCommand.completion) {
               if (currentCommand.name === "mode") {
                 return buildModeAutocompleteItems();
+              }
+              // Special handling for auto-harness completions with descriptions
+              // Check top-level command name (command.name) since matchedPath only contains subcommands
+              if (command.name === "auto-harness") {
+                const remainingArgs = remainingTokens.join(" ");
+                const items = await currentCommand.completion(this.state.getCommandContext(), remainingArgs);
+                const prefix = matchedPath.length > 0 ? matchedPath.join(" ") + " " : "";
+
+                // Map completions to AutocompleteItem with descriptions
+                return items.map((value) => {
+                  let desc = "";
+
+                  // Check for subcommand descriptions (schedule -> start, list, etc.)
+                  if (currentCommand.subCommands) {
+                    const subCmd = currentCommand.subCommands.find(s => value.includes(s.name) || value === s.name);
+                    if (subCmd) {
+                      desc = subCmd.description;
+                    }
+                  }
+
+                  // Check for flag descriptions (--interval, --pipeline, -i, -p)
+                  const flagMatch = Object.keys(FLAG_OPTIONS).find(f => value.includes(f));
+                  if (flagMatch) {
+                    const flagDesc = FLAG_OPTIONS[flagMatch as keyof typeof FLAG_OPTIONS]?.desc || "";
+                    desc = desc ? `${desc} | ${flagDesc}` : flagDesc;
+                  }
+
+                  // Check for pipeline descriptions
+                  const pipelineName = PIPELINE_VALUES.find((p: string) => value.includes(p));
+                  if (pipelineName) {
+                    const pipelineDesc = PIPELINE_OPTIONS[pipelineName as keyof typeof PIPELINE_OPTIONS]?.desc || "";
+                    desc = desc ? `${desc} | ${pipelineDesc}` : pipelineDesc;
+                  }
+
+                  // Check for interval descriptions
+                  const intervalValue = INTERVAL_VALUES.find((v: string) => {
+                    const parts = value.split(/\s+/);
+                    return parts.includes(v) && (parts.includes("--interval") || parts.includes("-i"));
+                  });
+                  if (intervalValue) {
+                    const intervalDesc = INTERVAL_OPTIONS[intervalValue as keyof typeof INTERVAL_OPTIONS]?.desc || "";
+                    desc = desc ? `${desc} | ${intervalDesc}` : intervalDesc;
+                  }
+
+                  return {
+                    value: prefix + value,
+                    label: value,
+                    description: desc,
+                  };
+                });
               }
               const remainingArgs = remainingTokens.join(" ");
               const items = await currentCommand.completion(this.state.getCommandContext(), remainingArgs);

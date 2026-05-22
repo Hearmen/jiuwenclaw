@@ -858,6 +858,9 @@ class AgentWebSocketServer:
             if request.req_method == ReqMethod.HARNESS_PACKAGES_ACTIVATE:
                 await self._handle_harness_packages_activate(ws, request, send_lock)
                 return
+            if request.req_method == ReqMethod.HARNESS_PACKAGES_DEACTIVATE:
+                await self._handle_harness_packages_deactivate(ws, request, send_lock)
+                return
             if request.req_method == ReqMethod.HARNESS_PACKAGES_DELETE:
                 await self._handle_harness_packages_delete(ws, request, send_lock)
                 return
@@ -4212,6 +4215,62 @@ class AgentWebSocketServer:
         async with send_lock:
             await ws.send(json.dumps(wire, ensure_ascii=False))
 
+    async def _handle_harness_packages_deactivate(
+        self, ws: Any, request: AgentRequest, send_lock: asyncio.Lock
+    ) -> None:
+        """Handle harness.packages.deactivate request - deactivate a harness package."""
+        params = request.params if isinstance(request.params, dict) else {}
+        package_id = params.get("package_id")
+
+        if not package_id:
+            resp = AgentResponse(
+                request_id=request.request_id,
+                channel_id=request.channel_id,
+                ok=False,
+                payload={"error": "missing package_id"},
+            )
+            wire = encode_agent_response_for_wire(resp, response_id=request.request_id)
+            async with send_lock:
+                await ws.send(json.dumps(wire, ensure_ascii=False))
+            return
+
+        try:
+            # Get or create the agent instance (auto-create if not exists)
+            channel_id = request.channel_id or "default"
+            agent = await self._agent_manager.get_agent(channel_id=channel_id, mode="agent")
+            agent_instance = None
+            if agent is not None:
+                agent_instance = agent.get_instance()
+
+            service = AutoHarnessService(rail=None, agent=agent_instance)
+            payload = await service.deactivate_package(package_id)
+            resp = AgentResponse(
+                request_id=request.request_id,
+                channel_id=request.channel_id,
+                ok=True,
+                payload=payload,
+            )
+        except ValueError as exc:
+            logger.warning("[AgentServer] harness.packages.deactivate validation error: %s", exc)
+            resp = AgentResponse(
+                request_id=request.request_id,
+                channel_id=request.channel_id,
+                ok=False,
+                payload={"error": str(exc)},
+            )
+        except Exception as exc:
+            logger.exception("[AgentServer] harness.packages.deactivate failed: %s", exc)
+            resp = AgentResponse(
+                request_id=request.request_id,
+                channel_id=request.channel_id,
+                ok=False,
+                payload={"error": str(exc)},
+            )
+
+        wire = encode_agent_response_for_wire(resp, response_id=request.request_id)
+        async with send_lock:
+            await ws.send(json.dumps(wire, ensure_ascii=False))
+
     async def _handle_harness_packages_delete(
         self, ws: Any, request: AgentRequest, send_lock: asyncio.Lock
     ) -> None:
@@ -4386,18 +4445,20 @@ class AgentWebSocketServer:
                 interval_hours = params.get("interval_hours", 4)
                 run_immediately = params.get("run_immediately", False)
                 model_name = params.get("model_name")
+                pipeline = params.get("pipeline")  # Pipeline preference
                 # Resolve model from jiuwenswarm config
                 model = self._resolve_model(model_name)
                 payload = await self._scheduler_service.create_scheduled_task(
-                    query, interval_hours, run_immediately, model
+                    query, interval_hours, run_immediately, model, pipeline
                 )
 
             elif action == "run":
                 query = params.get("query", "")
                 model_name = params.get("model_name")
+                pipeline = params.get("pipeline")  # Pipeline preference
                 # Resolve model from jiuwenswarm config
                 model = self._resolve_model(model_name)
-                payload = await self._scheduler_service.run_task(query, model)
+                payload = await self._scheduler_service.run_task(query, model, pipeline)
 
             elif action == "list":
                 tasks = self._scheduler_service.list_scheduled_tasks()

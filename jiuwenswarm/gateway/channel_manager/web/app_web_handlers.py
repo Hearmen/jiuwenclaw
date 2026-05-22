@@ -2308,6 +2308,7 @@ def _register_web_handlers(bind: WebHandlersBindParams) -> None:
     _register_harness("harness.packages", _HarnessReq.HARNESS_PACKAGES_GET)
     _register_harness("harness.packages.scan", _HarnessReq.HARNESS_PACKAGES_SCAN)
     _register_harness("harness.activate", _HarnessReq.HARNESS_PACKAGES_ACTIVATE)
+    _register_harness("harness.deactivate", _HarnessReq.HARNESS_PACKAGES_DEACTIVATE)
     _register_harness("harness.delete", _HarnessReq.HARNESS_PACKAGES_DELETE)
 
     async def _harness_import_handler(ws, req_id, params, session_id):

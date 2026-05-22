@@ -3,70 +3,240 @@
 import { addError, addInfo, parseArgs } from "../helpers.js";
 import { CommandKind, type SlashCommand, type CommandContext } from "../types.js";
 
+// Pipeline options
+export const PIPELINE_OPTIONS = {
+  extended_evolve_pipeline: { display: "extended_evolve_pipeline", desc: "生成 harness package" },
+  meta_evolve_pipeline: { display: "meta_evolve_pipeline", desc: "生成 harness package + 提交 PR（需配置 git）" },
+};
+export const PIPELINE_VALUES = Object.keys(PIPELINE_OPTIONS);
+
+// Interval options
+export const INTERVAL_OPTIONS = {
+  "1": { desc: "每 1 小时执行" },
+  "2": { desc: "每 2 小时执行" },
+  "4": { desc: "每 4 小时执行" },
+  "8": { desc: "每 8 小时执行" },
+  "12": { desc: "每 12 小时执行" },
+  "24": { desc: "每 24 小时执行（每天）" },
+};
+export const INTERVAL_VALUES = Object.keys(INTERVAL_OPTIONS);
+
+// Flag options with descriptions (used by app-screen.ts for autocomplete descriptions)
+export const FLAG_OPTIONS = {
+  "--interval": { desc: "执行间隔（小时）", alias: "-i" },
+  "-i": { desc: "执行间隔（小时）", alias: "--interval" },
+  "--pipeline": { desc: "Pipeline 类型", alias: "-p" },
+  "-p": { desc: "Pipeline 类型", alias: "--pipeline" },
+};
+
+// Pipeline completion helper - returns completions with existing args preserved
+// The completion value becomes the FULL argument string, so we must preserve existing args
+function getPipelineCompletions(_partial: string, parts: string[]): string[] {
+  const lastPart = parts[parts.length - 1] || "";
+
+  // Helper to build completion preserving existing arguments
+  // Remove the last incomplete part and add the completion
+  const buildCompletion = (completion: string): string => {
+    // Keep all parts except the last one (which is being completed)
+    const existingParts = parts.slice(0, -1);
+    return [...existingParts, completion].join(" ");
+  };
+
+  // If --pipeline is typed (last part is the flag), suggest flag + value combinations
+  if (lastPart === "--pipeline") {
+    return PIPELINE_VALUES.map(v => buildCompletion(`--pipeline ${v}`));
+  }
+
+  // If -p is typed (last part is the short flag), suggest flag + value combinations
+  if (lastPart === "-p") {
+    return PIPELINE_VALUES.map(v => buildCompletion(`-p ${v}`));
+  }
+
+  // If we're typing a value after --pipeline/-p (flag exists, now typing value)
+  const pipelineIndex = parts.indexOf("--pipeline");
+  const shortPipelineIndex = parts.indexOf("-p");
+  if (pipelineIndex !== -1 || shortPipelineIndex !== -1) {
+    // Check if we're at the value position (right after the flag)
+    const flagPos = Math.max(pipelineIndex, shortPipelineIndex);
+    // parts.length === flagPos + 2 means we're at the value slot (flag at flagPos, value at flagPos+1)
+    if (parts.length === flagPos + 2 && !lastPart.startsWith("-")) {
+      // Return completions with flag preserved: "--pipeline <value>"
+      const flag = pipelineIndex !== -1 ? "--pipeline" : "-p";
+      return PIPELINE_VALUES
+        .filter(v => v.startsWith(lastPart.toLowerCase()))
+        .map(v => buildCompletion(`${flag} ${v}`));
+    }
+  }
+
+  // If typing a flag prefix (e.g., "--p"), suggest only flag + value combinations
+  if (lastPart.startsWith("-")) {
+    const hasPipeline = parts.includes("--pipeline") || parts.includes("-p");
+    if (!hasPipeline) {
+      const completions: string[] = [];
+      // Add matching flag + value combinations (skip bare flag)
+      const matchingFlags = ["--pipeline", "-p"].filter(f => f.startsWith(lastPart));
+      for (const f of matchingFlags) {
+        // Only add flag + value combinations, not bare flag
+        for (const v of PIPELINE_VALUES) {
+          completions.push(buildCompletion(`${f} ${v}`));
+        }
+      }
+      return completions;
+    }
+  }
+
+  return [];
+}
+
+// Helper functions
+
+function parseScheduleStartArgs(args: string): { interval: number; pipeline: string; query: string } {
+  const parts = parseArgs(args);
+
+  let interval = 0;
+  let pipeline = "";
+  let queryParts: string[] = [];
+  let i = 0;
+
+  while (i < parts.length) {
+    if (parts[i] === "--interval" || parts[i] === "-i") {
+      i++;
+      if (i < parts.length) {
+        interval = parseInt(parts[i], 10) || 0;
+        i++;
+      }
+    } else if (parts[i] === "--pipeline" || parts[i] === "-p") {
+      i++;
+      if (i < parts.length && !parts[i].startsWith("-")) {
+        pipeline = parts[i];
+        i++;
+      }
+    } else {
+      queryParts.push(parts[i]);
+      i++;
+    }
+  }
+
+  return {
+    interval,
+    pipeline,
+    query: queryParts.join(" "),
+  };
+}
+
+function parseRunArgs(args: string): { pipeline: string; query: string } {
+  const parts = parseArgs(args);
+
+  let pipeline = "";
+  let queryParts: string[] = [];
+  let i = 0;
+
+  while (i < parts.length) {
+    if (parts[i] === "--pipeline" || parts[i] === "-p") {
+      i++;
+      if (i < parts.length && !parts[i].startsWith("-")) {
+        pipeline = parts[i];
+        i++;
+      }
+    } else {
+      queryParts.push(parts[i]);
+      i++;
+    }
+  }
+
+  return {
+    pipeline,
+    query: queryParts.join(" "),
+  };
+}
+
 // Schedule subcommands
 
 const scheduleStartCommand: SlashCommand = {
   name: "start",
   description: "创建定时 auto_harness 任务",
-  usage: "/auto-harness schedule start --interval <hours> <query>",
-  example: "/auto-harness schedule start --interval 4 优化数据库查询性能",
+  usage: "/auto-harness schedule start --interval <hours> [--pipeline <pipeline>] <query>",
+  example: "/auto-harness schedule start --interval 4 --pipeline extended_evolve_pipeline 优化上下文压缩能力",
   kind: CommandKind.BUILT_IN,
   takesArgs: true,
   completion: (_ctx, partial) => {
-    // Completions: --interval and interval values
     const parts = partial.trim().split(/\s+/).filter(Boolean);
     const lastPart = parts[parts.length - 1] || "";
 
-    // If last part is exactly --interval or -i, suggest values (user just typed the flag)
-    if (lastPart === "--interval" || lastPart === "-i") {
-      return ["1", "2", "4", "8", "12", "24"];
+    // Helper to build completion preserving existing arguments
+    const buildCompletion = (completion: string): string => {
+      const existingParts = parts.slice(0, -1);
+      return [...existingParts, completion].join(" ");
+    };
+
+    // If --interval is typed, suggest --interval + value
+    if (lastPart === "--interval") {
+      return ["1", "2", "4", "8", "12", "24"].map(v => buildCompletion(`--interval ${v}`));
     }
 
-    // Check if --interval flag exists and we're at value position
-    const intervalIndex = parts.indexOf("--interval");
-    const shortIndex = parts.indexOf("-i");
-    const hasIntervalFlag = intervalIndex !== -1 || shortIndex !== -1;
+    // If -i is typed, suggest -i + value
+    if (lastPart === "-i") {
+      return ["1", "2", "4", "8", "12", "24"].map(v => buildCompletion(`-i ${v}`));
+    }
 
-    if (hasIntervalFlag) {
-      const flagIndex = Math.max(intervalIndex, shortIndex);
-      // If we're right after the flag (at value position)
-      if (parts.length === flagIndex + 1) {
-        const valuePart = lastPart;
-        // User started typing a number
-        if (valuePart && !valuePart.startsWith("-") && /^\d/.test(valuePart)) {
-          return ["1", "2", "4", "8", "12", "24"].filter((v) => v.startsWith(valuePart));
-        }
-        // No number typed yet, suggest values
-        if (!valuePart || valuePart === "") {
-          return ["1", "2", "4", "8", "12", "24"];
-        }
+    // If we're typing a value after --interval/-i
+    const intervalIndex = parts.indexOf("--interval");
+    const shortIntervalIndex = parts.indexOf("-i");
+    const intervalValues = ["1", "2", "4", "8", "12", "24"];
+    if (intervalIndex !== -1 || shortIntervalIndex !== -1) {
+      const flagPos = Math.max(intervalIndex, shortIntervalIndex);
+      if (parts.length === flagPos + 1 && !lastPart.startsWith("-") && /^\d/.test(lastPart)) {
+        const flag = intervalIndex !== -1 ? "--interval" : "-i";
+        return intervalValues
+          .filter(v => v.startsWith(lastPart))
+          .map(v => buildCompletion(`${flag} ${v}`));
       }
     }
 
-    // Otherwise suggest flags (but not ones already used)
-    const usedFlags: string[] = [];
-    if (parts.includes("--interval")) usedFlags.push("--interval");
-    if (parts.includes("-i")) usedFlags.push("-i", "--interval");
+    // Check pipeline completions (handles --pipeline/-p and values)
+    const pipelineCompletions = getPipelineCompletions(partial, parts);
+    if (pipelineCompletions.length > 0) return pipelineCompletions;
 
-    const flags = ["--interval"].filter((f) => !usedFlags.includes(f));
+    // Otherwise suggest flags that aren't already used
+    const usedFlags: string[] = [];
+    if (parts.includes("--interval") || parts.includes("-i")) usedFlags.push("--interval", "-i");
+    if (parts.includes("--pipeline") || parts.includes("-p")) usedFlags.push("--pipeline", "-p");
 
     if (lastPart.startsWith("-")) {
-      return flags.filter((f) => f.startsWith(lastPart));
+      const completions: string[] = [];
+      // For interval flags: show only flag + value combinations (skip bare flag)
+      if (!usedFlags.includes("--interval") && "--interval".startsWith(lastPart)) {
+        for (const v of intervalValues) {
+          completions.push(buildCompletion(`--interval ${v}`));
+        }
+      }
+      if (!usedFlags.includes("-i") && "-i".startsWith(lastPart)) {
+        for (const v of intervalValues) {
+          completions.push(buildCompletion(`-i ${v}`));
+        }
+      }
+      // For pipeline flags: show only flag + value combinations (skip bare flag)
+      if (!usedFlags.includes("--pipeline") && "--pipeline".startsWith(lastPart)) {
+        for (const v of PIPELINE_VALUES) {
+          completions.push(buildCompletion(`--pipeline ${v}`));
+        }
+      }
+      if (!usedFlags.includes("-p") && "-p".startsWith(lastPart)) {
+        for (const v of PIPELINE_VALUES) {
+          completions.push(buildCompletion(`-p ${v}`));
+        }
+      }
+      return completions;
     }
 
-    // If all flags used, no more completions
-    if (flags.length === 0) {
-      return [];
-    }
-
-    return flags;
+    return [];
   },
   action: async (ctx, args) => {
     const parsed = parseScheduleStartArgs(args);
 
     if (!parsed.interval || parsed.interval < 1) {
       ctx.addItem(
-        addError(ctx.sessionId, "用法: /auto-harness schedule start --interval <hours> [--immediate] <query>")
+        addError(ctx.sessionId, "用法: /auto-harness schedule start --interval <hours> [--pipeline <pipeline>] <query>\npipeline: extended_evolve_pipeline, meta_evolve_pipeline")
       );
       return;
     }
@@ -78,16 +248,48 @@ const scheduleStartCommand: SlashCommand = {
       return;
     }
 
-    // Check config
-    const configCheck = await ctx.request<{ valid: boolean; missing_fields?: Array<{ id: string; prompt: string }> }>("schedule.check_config", {});
+    // Ask user to select pipeline if not specified
+    let pipeline = parsed.pipeline;
+    if (!pipeline) {
+      try {
+        const [answer] = await ctx.askQuestions([
+          {
+            header: "Pipeline",
+            question: "请选择 Pipeline 类型:",
+            options: [
+              { label: "extended_evolve_pipeline", description: PIPELINE_OPTIONS.extended_evolve_pipeline.desc },
+              { label: "meta_evolve_pipeline", description: PIPELINE_OPTIONS.meta_evolve_pipeline.desc },
+            ],
+          },
+        ]);
+        pipeline = answer.selected_options[0];
+      } catch {
+        // User cancelled
+        ctx.addItem(addInfo(ctx.sessionId, "已取消创建任务"));
+        return;
+      }
+    }
 
-    const missingFields = configCheck.missing_fields as Array<{ id: string; prompt: string }> | undefined;
-    if (missingFields && missingFields.length > 0) {
-      const missingList = missingFields.map(f => `  - ${f.prompt}`).join("\n");
+    // Validate pipeline value
+    if (!PIPELINE_VALUES.includes(pipeline)) {
       ctx.addItem(
-        addInfo(ctx.sessionId, `检测到配置缺失:\n${missingList}\n\n请使用 /config edit 配置这些字段后重试`)
+        addError(ctx.sessionId, `无效的 pipeline: ${pipeline}\n可选值: ${PIPELINE_VALUES.join(", ")}`)
       );
       return;
+    }
+
+    // For meta_evolve_pipeline, check git config
+    if (pipeline === "meta_evolve_pipeline") {
+      const configCheck = await ctx.request<{ valid: boolean; missing_fields?: Array<{ id: string; prompt: string }> }>("schedule.check_config", {});
+
+      const missingFields = configCheck.missing_fields as Array<{ id: string; prompt: string }> | undefined;
+      if (missingFields && missingFields.length > 0) {
+        const missingList = missingFields.map(f => `  - ${f.prompt}`).join("\n");
+        ctx.addItem(
+          addInfo(ctx.sessionId, `meta_evolve_pipeline 需要配置 git 信息:\n${missingList}\n\n请使用 /config edit 配置这些字段后重试`)
+        );
+        return;
+      }
     }
 
     // Ask user whether to run immediately
@@ -112,6 +314,7 @@ const scheduleStartCommand: SlashCommand = {
     const result = await ctx.request<{ error?: string; task_id?: string; next_run_time?: string }>("schedule.create", {
       interval_hours: parsed.interval,
       query: parsed.query,
+      pipeline: pipeline,
       run_immediately: run_immediately,
     });
 
@@ -125,7 +328,7 @@ const scheduleStartCommand: SlashCommand = {
     ctx.addItem(
       addInfo(
         ctx.sessionId,
-        `\n定时任务已创建\nID: ${result.task_id}\n下次执行: ${formatLocalTime(result.next_run_time)}\n间隔: 每 ${parsed.interval} 小时${run_immediately ? "\n(已立即执行一次)" : ""}\n`
+        `\n定时任务已创建\nID: ${result.task_id}\nPipeline: ${pipeline}\n下次执行: ${formatLocalTime(result.next_run_time)}\n间隔: 每 ${parsed.interval} 小时${run_immediately ? "\n(已立即执行一次)" : ""}\n`
       )
     );
   },
@@ -139,9 +342,9 @@ const scheduleListCommand: SlashCommand = {
   action: async (ctx, _args) => {
     ctx.addItem(addInfo(ctx.sessionId, "\n正在查询任务...\n", "i"));
 
-    const result = await ctx.request<{ tasks?: Array<{ task_id: string; query: string; status: string; interval_hours: number; next_run_time: string; created_at: string; is_one_time?: boolean }> }>("schedule.list", {});
+    const result = await ctx.request<{ tasks?: Array<{ task_id: string; query: string; status: string; interval_hours: number; next_run_time: string; created_at: string; is_one_time?: boolean; pipeline?: string }> }>("schedule.list", {});
 
-    const tasks = result.tasks as Array<{ task_id: string; query: string; status: string; interval_hours: number; next_run_time: string; created_at: string; is_one_time?: boolean }> | undefined;
+    const tasks = result.tasks as Array<{ task_id: string; query: string; status: string; interval_hours: number; next_run_time: string; created_at: string; is_one_time?: boolean; pipeline?: string }> | undefined;
     if (!tasks || tasks.length === 0) {
       ctx.addItem(addInfo(ctx.sessionId, "\n暂无任务\n", "i"));
       return;
@@ -154,14 +357,15 @@ const scheduleListCommand: SlashCommand = {
                          task.status === "cancelled" ? "[已取消]" : "[已完成]";
       const isOneTime = task.is_one_time ? "[一次性]" : "";
       const queryPreview = task.query.length > 50 ? task.query.substring(0, 50) + "..." : task.query;
+      const pipelineInfo = task.pipeline ? `Pipeline: ${task.pipeline}` : "";
       lines.push(
         `${statusEmoji}${isOneTime} ${task.task_id} - ${queryPreview}`
       );
       // Show interval only for recurring tasks
       if (task.is_one_time) {
-        lines.push(`   状态: ${task.status} | 类型: 一次性`);
+        lines.push(`   状态: ${task.status} | 类型: 一次性${pipelineInfo ? ` | ${pipelineInfo}` : ""}`);
       } else {
-        lines.push(`   状态: ${task.status} | 间隔: ${task.interval_hours}h | 下次执行: ${formatLocalTime(task.next_run_time)}`);
+        lines.push(`   状态: ${task.status} | 间隔: ${task.interval_hours}h | 下次执行: ${formatLocalTime(task.next_run_time)}${pipelineInfo ? ` | ${pipelineInfo}` : ""}`);
       }
       lines.push(`   创建时间: ${formatLocalTime(task.created_at)}`);
       lines.push("");
@@ -200,7 +404,7 @@ const scheduleStatusCommand: SlashCommand = {
       return;
     }
 
-    const result = await ctx.request<{ error?: string; task_id?: string; query?: string; status?: string; interval_hours?: number; created_at?: string; next_run_time?: string; current_execution_id?: string; execution_history?: Array<{ execution_id: string; status: string; completed_at?: string }>; is_one_time?: boolean }>("schedule.status", { task_id });
+    const result = await ctx.request<{ error?: string; task_id?: string; query?: string; status?: string; interval_hours?: number; created_at?: string; next_run_time?: string; current_execution_id?: string; execution_history?: Array<{ execution_id: string; status: string; completed_at?: string }>; is_one_time?: boolean; pipeline?: string }>("schedule.status", { task_id });
 
     if (result.error) {
       ctx.addItem(
@@ -213,6 +417,9 @@ const scheduleStatusCommand: SlashCommand = {
     const lines = [`\n【任务详情: ${result.task_id}】`];
     lines.push(`目标: ${result.query}`);
     lines.push(`状态: ${result.status}`);
+    if (result.pipeline) {
+      lines.push(`Pipeline: ${result.pipeline}`);
+    }
     if (isOneTime) {
       lines.push(`类型: 一次性任务`);
     } else {
@@ -387,6 +594,15 @@ interface LogEntry {
   // Session finished info
   is_terminal?: boolean;
   results_count?: number;
+  // Extension-level fields (from harness.stage_result with scope='extension')
+  scope?: string;              // 'extension' indicates extension-level event
+  extension_name?: string;     // Extension name (e.g., context_fencing)
+  extension_stage?: string;    // 'implement_ext' | 'verify_ext' | 'activate_ext'
+  parent_stage?: string;       // Parent stage (e.g., 'build_verify')
+  task_id?: string;            // Task ID for extension
+  // Stage result messages
+  messages?: string[];
+  metrics?: Record<string, unknown>;
   // Nested tool payload (as in history-parser.ts resolveToolPayload)
   tool_call?: {
     name?: string;
@@ -631,16 +847,16 @@ async function readFullHistoryLogs(
     lines.push(`完成时间: ${formatLocalTime(completedAt)} | 状态: ${status}`);
   }
   lines.push("");
-  lines.push("=" .repeat(60));
+  lines.push("=" .repeat(80));
 
   for (const section of result.sections) {
-    const formattedLine = formatLogSectionDetailed(section);
+    const formattedLine = formatLogSection(section, true);
     if (formattedLine) {
       lines.push(formattedLine);
     }
   }
 
-  lines.push("=" .repeat(60));
+  lines.push("=" .repeat(80));
   lines.push("");
 
   const formattedContent = lines.join("\n");
@@ -663,7 +879,7 @@ async function readFullHistoryLogs(
  * Merges streaming chunks (chat.delta, chat.reasoning) into complete messages.
  */
 interface ParsedLogSection {
-  type: "thinking" | "assistant" | "stage" | "status" | "error" | "info" | "tool" | "pipeline" | "session_finished";
+  type: "assistant" | "stage" | "status" | "error" | "info" | "pipeline" | "session_finished";
   content: string;
   stage?: string;
   status?: string;
@@ -674,6 +890,14 @@ interface ParsedLogSection {
   pipeline?: string;
   stages?: Array<{ slot: string; display_name: string }>;
   completed_stages?: string[];
+  // Extension info (for extended_evolve_pipeline)
+  extension_order?: string[];
+  extensions_by_name?: Record<string, ExtensionProgressInfo>;
+  // Gap count for inline progress bar display
+  gap_count?: number;
+  // Stage messages (for meta_evolve_pipeline CI fix tracking)
+  stage_messages?: string[];
+  ci_fix_count?: number;
 }
 
 // ANSI color codes for log display differentiation
@@ -687,18 +911,170 @@ const ANSI = {
   brightWhite: "\x1b[97m",  // 辅助输出 (柔和)
   gray: "\x1b[90m",     // 普通 gray (bright black)
   dimGray: "\x1b[38;5;240m", // 更暗的灰色 (256-color mode)
+  lightBlue: "\x1b[94m",    // AI 消息 - 浅蓝色 (bright blue)
   bold: "\x1b[1m",
   reset: "\x1b[0m",
 };
 
+// Helper: get extension status icon
+function getExtensionStatusIcon(status: ExtensionProgressStatus): string {
+  switch (status) {
+    case 'success': return '✓';
+    case 'failed': return '✗';
+    case 'running': return '⏳';
+    case 'timeout': return '⏱';
+    case 'waiting': return '?';
+    case 'skipped': return '○';
+    case 'rejected': return '✗';
+    default: return '○'; // pending
+  }
+}
+
+// Helper: get extension status color
+function getExtensionStatusColor(status: ExtensionProgressStatus): string {
+  switch (status) {
+    case 'success': return ANSI.green;
+    case 'failed': return ANSI.red;
+    case 'running': return ANSI.yellow;
+    case 'timeout': return ANSI.red;
+    default: return ANSI.gray;
+  }
+}
+
+// Helper: format extension status matrix for display
+function formatExtensionStatusMatrix(
+  extensionOrder: string[],
+  extensionsByName: Record<string, ExtensionProgressInfo>
+): string {
+  const lines: string[] = [];
+  // Header with box border (yellow/gold color for extensions) - matching design list width
+  lines.push(`${ANSI.yellow}${ANSI.bold}┌${'─'.repeat(26)} 🔧 扩展状态 (${extensionOrder.length} 个) ${'─'.repeat(26)}┐${ANSI.reset}`);
+
+  for (let i = 0; i < extensionOrder.length; i++) {
+    const extName = extensionOrder[i];
+    const ext = extensionsByName[extName];
+    if (!ext) continue;
+
+    const implIcon = getExtensionStatusIcon(ext.implementStatus);
+    const implColor = getExtensionStatusColor(ext.implementStatus);
+    const verifyIcon = getExtensionStatusIcon(ext.verifyStatus);
+    const verifyColor = getExtensionStatusColor(ext.verifyStatus);
+
+    const num = `${ANSI.yellow}${String(i + 1).padStart(2, ' ')}.${ANSI.reset}`;
+    lines.push(`${ANSI.yellow}│${ANSI.reset} ${num} ${extName}: ${implColor}实现 ${implIcon}${ANSI.reset} → ${verifyColor}验证 ${verifyIcon}${ANSI.reset}`);
+  }
+
+  // Footer border - matching design list width (72 chars)
+  lines.push(`${ANSI.yellow}${ANSI.bold}└${'─'.repeat(72)}┘${ANSI.reset}`);
+
+  return lines.join('\n');
+}
+
+// Helper: parse named list from messages (same logic as Web's parseNamedList)
+// Gaps: separated by ';', Designs: separated by ','
+function parseNamedList(messages: string[], prefix: string): string[] {
+  const values: string[] = [];
+  for (const message of messages) {
+    const normalized = message.trim();
+    if (!normalized.startsWith(prefix)) continue;
+    const raw = normalized.slice(prefix.length).trim();
+    // Gaps use ';' separator, Designs use ',' separator (same as Web)
+    const parts = prefix === 'Designs:' ? raw.split(',') : raw.split(';');
+    for (const part of parts) {
+      const value = part.trim();
+      // Deduplicate
+      if (value && !values.includes(value)) {
+        values.push(value);
+      }
+    }
+  }
+  return values;
+}
+
+// Helper: format stage messages for display (extract key info)
+function formatStageMessages(stage: string, messages: string[]): string {
+  const lines: string[] = [];
+
+  for (const msg of messages) {
+    // Filter out structural messages (same logic as Web)
+    const normalized = msg.trim();
+    if (normalized.startsWith('Gaps:') || normalized.startsWith('Designs:') ||
+        normalized.startsWith('Gap analysis complete:') || normalized.startsWith('Extension design complete:')) {
+      continue; // These are shown separately
+    }
+
+    // Extract CI results for verify stage
+    if (stage === 'verify' && normalized.includes('CI 结果:')) {
+      const ciMatch = normalized.match(/CI 结果:\s*(.+)/);
+      if (ciMatch) {
+        const ciResults = ciMatch[1];
+        // Format lint and type-check results
+        const lintMatch = ciResults.match(/lint=(\w+)/);
+        const typeMatch = ciResults.match(/type-check=(\w+)/);
+        if (lintMatch && typeMatch) {
+          const lintIcon = lintMatch[1] === 'PASS' ? '✓' : '✗';
+          const lintColor = lintMatch[1] === 'PASS' ? ANSI.green : ANSI.red;
+          const typeIcon = typeMatch[1] === 'PASS' ? '✓' : '✗';
+          const typeColor = typeMatch[1] === 'PASS' ? ANSI.green : ANSI.red;
+          lines.push(`  🔍 lint ${lintColor}${lintIcon}${ANSI.reset} type-check ${typeColor}${typeIcon}${ANSI.reset}`);
+        }
+      }
+      continue;
+    }
+
+    // Show other messages with indent
+    lines.push(`  ${normalized}`);
+  }
+
+  return lines.join('\n');
+}
+
+// Helper: format gap list for assess stage completion
+function formatGapList(messages: string[]): string {
+  const gaps = parseNamedList(messages, 'Gaps:');
+  if (gaps.length === 0) return '';
+
+  const lines: string[] = [];
+  // Header with box border
+  lines.push(`${ANSI.cyan}${ANSI.bold}┌${'─'.repeat(25)} 📋 发现 ${gaps.length} 个关键缺口 ${'─'.repeat(25)}┐${ANSI.reset}`);
+  // Gap items with numbering
+  for (let i = 0; i < gaps.length; i++) {
+    const gap = gaps[i];
+    const num = `${ANSI.cyan}${String(i + 1).padStart(2, ' ')}.${ANSI.reset}`;
+    lines.push(`${ANSI.cyan}│${ANSI.reset} ${num} ${gap}`);
+  }
+  // Footer border
+  lines.push(`${ANSI.cyan}${ANSI.bold}└${'─'.repeat(72)}┘${ANSI.reset}`);
+  return lines.join('\n');
+}
+
+// Helper: format design list for plan stage completion
+function formatDesignList(messages: string[]): string {
+  const designs = parseNamedList(messages, 'Designs:');
+  if (designs.length === 0) return '';
+
+  const lines: string[] = [];
+  // Header with box border (magenta color for designs)
+  lines.push(`${ANSI.magenta}${ANSI.bold}┌${'─'.repeat(25)} 📝 生成 ${designs.length} 个设计方案 ${'─'.repeat(25)}┐${ANSI.reset}`);
+  // Design items with numbering
+  for (let i = 0; i < designs.length; i++) {
+    const design = designs[i];
+    const num = `${ANSI.magenta}${String(i + 1).padStart(2, ' ')}.${ANSI.reset}`;
+    lines.push(`${ANSI.magenta}│${ANSI.reset} ${num} ${design}`);
+  }
+  // Footer border
+  lines.push(`${ANSI.magenta}${ANSI.bold}└${'─'.repeat(72)}┘${ANSI.reset}`);
+  return lines.join('\n');
+}
+
 // Helper function to calculate visual width (Chinese/CJK chars = 2, others = 1)
 function visualWidth(str: string): number {
   let width = 0;
-  for (const char of str) {
-    const code = char.charCodeAt(0);
+  // Use codePointAt to correctly handle emoji (surrogate pairs)
+  for (let i = 0; i < str.length; i++) {
+    const code = str.codePointAt(i) || 0;
+
     // Box drawing characters (U+2500-U+257F) are width 1
-    // Emoji and CJK characters (above U+257F or in CJK ranges) are width 2
-    // ASCII and other symbols are width 1
     if (code >= 0x2500 && code <= 0x257F) {
       width += 1; // Box drawing
     } else if (
@@ -710,6 +1086,11 @@ function visualWidth(str: string): number {
       width += 2; // Wide characters (Chinese, emoji)
     } else {
       width += 1; // ASCII and others
+    }
+
+    // Skip low surrogate if we processed a surrogate pair (emoji takes 2 UTF-16 units)
+    if (code > 0xFFFF) {
+      i++; // Skip the low surrogate
     }
   }
   return width;
@@ -757,132 +1138,117 @@ function wrapText(text: string, maxWidth?: number): string {
 
 // Helper function to create a proper box with title embedded in top border
 function createBox(title: string, content: string, color: string): string {
-  // Fixed structure: left padding 32 ═, right padding 37 ═ (asymmetric for visual balance)
   const leftDashes = 32;
   const rightDashes = 37;
-
-  // Calculate visual widths
   const titleVisualWidth = visualWidth(title);
-  const contentVisualWidth = visualWidth(content);
-
-  // Calculate required widths:
-  // Top border: ╔(1) + ═(32) + sp(1) + title + sp(1) + ═(37) + ╗(1) = 72 + titleVisualWidth
   const topVisualWidth = 72 + titleVisualWidth;
+  const contentPadding = topVisualWidth - 3 - visualWidth(content);
 
-  // Content line: ║(1) + sp(1) + content + padding + sp(1) + ║(1) = 4 + contentVisualWidth + padding
-  // We need content line to match top border width
-  // So: padding = topVisualWidth - 4 - contentVisualWidth
-  const contentPadding = topVisualWidth - 3 - contentVisualWidth;
-
-  // If content is wider than available space (negative padding), truncate
   const topBorder = `╔${"═".repeat(leftDashes)} ${title} ${"═".repeat(rightDashes)}╗`;
   const paddedContent = contentPadding < 0
     ? `║ ${content.substring(0, topVisualWidth - 7)}... ║`
     : `║ ${content}${" ".repeat(Math.max(0, contentPadding))} ║`;
-  // Bottom border: all ═ characters matching top visual width (minus corners)
   const bottomBorder = `╚${"═".repeat(topVisualWidth - 1)}╝`;
 
   return `${ANSI.bold}${color}${topBorder}${ANSI.reset}\n${color}${paddedContent}${ANSI.reset}\n${color}${ANSI.bold}${bottomBorder}${ANSI.reset}`;
 }
 
-// Helper: format thinking content (shared between formatLogSection and formatLogSectionDetailed)
-function formatThinkingContent(content: string): string {
-  // Apply wrapText for auto line break, then ensure gray color on each line
-  const wrapped = wrapText(content);
-  const lines = wrapped.split('\n');
-  // First line has 🧠 思考: prefix, subsequent lines have indentation
-  const coloredLines = lines.map((line, index) => {
-    if (index === 0) {
-      return `${ANSI.gray}🧠 思考: ${line}${ANSI.reset}`;
-    }
-    return `${ANSI.gray}   ${line}${ANSI.reset}`;  // 9 spaces indent to align with "🧠 思考: "
-  });
-  return coloredLines.join('\n');
-}
-
-// Helper: format assistant content with proper indentation for multi-line
+// Helper: format assistant content with dialog bubble style (light blue)
 function formatAssistantContent(content: string): string {
   const wrapped = wrapText(content);
   const lines = wrapped.split('\n');
-  // First line has 💬 prefix, subsequent lines have indentation
+  // First line has 💬 prefix in light blue, subsequent lines have indentation
   const formattedLines = lines.map((line, index) => {
     if (index === 0) {
-      return `${ANSI.brightWhite}💬 ${line}${ANSI.reset}`;
+      return `${ANSI.lightBlue}💬 ${line}${ANSI.reset}`;
     }
-    return `${ANSI.brightWhite}   ${line}${ANSI.reset}`;  // 3 spaces indent to align with 💬
+    return `${ANSI.lightBlue}   ${line}${ANSI.reset}`;  // 3 spaces indent to align with 💬
   });
   return formattedLines.join('\n');
 }
 
-// Format log section for streaming display (compact but differentiated with colors)
-function formatLogSection(section: ParsedLogSection): string | null {
+// Format log section for display (compact for streaming, detailed for history)
+function formatLogSection(section: ParsedLogSection, detailed: boolean = false): string | null {
   switch (section.type) {
-    case "thinking":
-      return formatThinkingContent(section.content);
-
     case "assistant":
-      // Assistant output - bright white color with proper multi-line formatting
       return formatAssistantContent(section.content);
 
     case "pipeline":
-      // Pipeline header - show workflow structure in a proper box
       const stagesDisplay = section.stages?.map((s) => s.display_name).join(" → ") || "";
       return `\n${createBox(`Pipeline: ${section.pipeline || "unknown"}`, `流程: ${stagesDisplay}`, ANSI.cyan)}\n`;
 
     case "stage":
-      // Get display_name for this stage
       const stageDisplayName = section.stages?.find((s) => s.slot === section.stage)?.display_name || section.stage || "?";
 
       if (section.status) {
-        // Stage completion - show progress bar and simple completion line
-        const progressBar = formatStageProgress(section.stages, section.completed_stages);
-        const icon = section.status === "success" ? "✅" :
-                    section.status === "failed" ? "❌" : "⏸️";
-        const color = section.status === "success" ? ANSI.green :
-                     section.status === "failed" ? ANSI.red : ANSI.yellow;
-        const statusText = section.status === "success" ? "完成" :
-                          section.status === "failed" ? "失败" : section.status;
-        return `\n${progressBar}\n${color}${ANSI.bold}${icon} ${stageDisplayName} ${statusText}${ANSI.reset}\n`;
+        const progressBar = formatStageProgress(section.stages, section.completed_stages, undefined, section.gap_count, section.extension_order?.length);
+        const icon = section.status === "success" ? "✅" : section.status === "failed" ? "❌" : "⏸️";
+        const color = section.status === "success" ? ANSI.green : section.status === "failed" ? ANSI.red : ANSI.yellow;
+        const statusText = section.status === "success" ? "完成" : section.status === "failed" ? "失败" : section.status;
+
+        let detailLines: string[] = [];
+        if (section.stage === 'build_verify' && section.extension_order && section.extensions_by_name) {
+          detailLines.push(formatExtensionStatusMatrix(section.extension_order, section.extensions_by_name));
+        }
+        if (section.stage === 'assess' && section.stage_messages) {
+          const gapList = formatGapList(section.stage_messages);
+          if (gapList) detailLines.push(gapList);
+          const otherMsgs = formatStageMessages(section.stage, section.stage_messages);
+          if (otherMsgs) detailLines.push(otherMsgs);
+        }
+        if (section.stage === 'plan' && section.stage_messages) {
+          const designList = formatDesignList(section.stage_messages);
+          if (designList) detailLines.push(designList);
+          const otherMsgsPlan = formatStageMessages(section.stage, section.stage_messages);
+          if (otherMsgsPlan) detailLines.push(otherMsgsPlan);
+        }
+        if (section.stage === 'verify' && section.stage_messages) {
+          const formattedMsgs = formatStageMessages(section.stage, section.stage_messages);
+          if (formattedMsgs) detailLines.push(formattedMsgs);
+          if (section.ci_fix_count && section.ci_fix_count > 0) {
+            detailLines.push(`  🔄 修复循环: ${section.ci_fix_count} 次`);
+          }
+        }
+
+        const detailsBlock = detailLines.length > 0 ? '\n' + detailLines.join('\n') + '\n' : '';
+        return `\n${progressBar}\n${color}${ANSI.bold}${icon} ${stageDisplayName} ${statusText}${ANSI.reset}${detailsBlock}\n`;
       }
-      // Stage start - show progress bar and current stage indicator
-      const startProgressBar = formatStageProgress(section.stages, section.completed_stages, section.stage);
-      // Skip duplicate content - if content equals display_name, don't show it again
+
+      const startProgressBar = formatStageProgress(section.stages, section.completed_stages, section.stage, section.gap_count, section.extension_order?.length);
       const showContent = section.content && section.content !== stageDisplayName;
+      const normalizedContent = (section.content || "").trim();
+
+      if (normalizedContent.includes('Gap analysis complete') || normalizedContent.startsWith('Gaps:')) {
+        if (detailed) {
+          return `\n${startProgressBar}\n${ANSI.yellow}${ANSI.bold}▶ 📊 ${stageDisplayName}${ANSI.reset}\n`;
+        }
+        return `\n${startProgressBar}\n`;
+      }
+
       if (showContent) {
-        // Wrap content to visual width (100 chars) and add indent
         const wrappedContent = wrapText(section.content, 100);
         const indentedContent = wrappedContent.split("\n").map(line => "  " + line).join("\n");
-        return `\n${startProgressBar}\n${ANSI.yellow}${ANSI.bold}▶ 📊 ${stageDisplayName}${ANSI.reset}\n${ANSI.yellow}${indentedContent}${ANSI.reset}\n`;
+        if (detailed) {
+          return `\n${startProgressBar}\n${ANSI.yellow}${ANSI.bold}▶ 📊 ${stageDisplayName}${ANSI.reset}\n${ANSI.yellow}${indentedContent}${ANSI.reset}\n`;
+        }
+        return `\n${startProgressBar}\n${ANSI.gray}${indentedContent}${ANSI.reset}\n`;
       }
-      // Only show progress bar and stage name
-      return `\n${startProgressBar}\n${ANSI.yellow}${ANSI.bold}▶ 📊 ${stageDisplayName}${ANSI.reset}\n`;
+
+      if (detailed) {
+        return `\n${startProgressBar}\n${ANSI.yellow}${ANSI.bold}▶ 📊 ${stageDisplayName}${ANSI.reset}\n`;
+      }
+      return `\n${startProgressBar}\n`;
 
     case "session_finished":
-      // Session finished - prominent completion banner in a proper box
       const finishedIcon = section.status === "success" ? "🎉" : "⚠️";
       const finishedColor = section.status === "success" ? ANSI.green : ANSI.yellow;
       return `\n${createBox(`${finishedIcon} ${section.content}`, `Pipeline: ${section.pipeline || "unknown"}`, finishedColor)}\n`;
 
     case "status":
-      // Status change - simple indicator
       return `${ANSI.blue}▶ ${section.content}${ANSI.reset}`;
 
     case "error":
-      // Error - red color
       return `${ANSI.red}${ANSI.bold}🔥 错误: ${section.content}${ANSI.reset}`;
-
-    case "tool":
-      // Only show tool results, skip call starts to reduce noise
-      if (section.tool_success === undefined) {
-        // Tool call start - skip, only show result
-        return null;
-      } else if (section.tool_success) {
-        // Tool success result - green check
-        return `${ANSI.green}  ✓ ${section.tool_name || "unknown"}${ANSI.reset}`;
-      } else {
-        // Tool failure result - red cross
-        return `${ANSI.red}  ✗ ${section.tool_name || "unknown"}${ANSI.reset}`;
-      }
 
     case "info":
       return `${ANSI.gray}  · ${section.content}${ANSI.reset}`;
@@ -896,7 +1262,10 @@ function formatLogSection(section: ParsedLogSection): string | null {
 function formatStageProgress(
   stages?: Array<{ slot: string; display_name: string }>,
   completedStages?: string[],
-  currentStage?: string
+  currentStage?: string,
+  // Inline count display for progress bar
+  gapCount?: number,
+  extensionCount?: number
 ): string {
   if (!stages || stages.length === 0) return "";
 
@@ -905,37 +1274,58 @@ function formatStageProgress(
   const total = stages.length;
   const percent = Math.round((completedCount / total) * 100);
 
-  // Create visual progress bar: ████████░░░░░░░░░░░░ 50%
+  // Create progress bar (fixed 50 chars for consistent look)
   const barLength = 80;
   const filledLength = Math.round((completedCount / total) * barLength);
   const bar = `${ANSI.green}${"█".repeat(filledLength)}${ANSI.reset}${ANSI.gray}${"░".repeat(barLength - filledLength)}${ANSI.reset}`;
 
-  // Create stage status line with icons
+  // Create stage status line with icons and names
   const parts = stages.map((s) => {
     const isCompleted = completedStages?.includes(s.slot);
     const isCurrent = currentStage === s.slot;
 
+    // Add inline count for specific stages
+    let inlineCount = '';
+    if (s.slot === 'assess' && gapCount && gapCount > 0 && (isCompleted || isCurrent)) {
+      inlineCount = ` (${gapCount})`;
+    }
+    if (s.slot === 'plan' && extensionCount && extensionCount > 0 && (isCompleted || isCurrent)) {
+      inlineCount = ` (${extensionCount})`;
+    }
+
     if (isCompleted) {
-      return `${ANSI.green}✅ ${s.display_name}${ANSI.reset}`;
+      return `${ANSI.green}✓ ${s.display_name}${inlineCount}${ANSI.reset}`;
     } else if (isCurrent) {
-      return `${ANSI.yellow}▶ ${s.display_name}${ANSI.reset}`;
+      return `${ANSI.yellow}▶ ${s.display_name}${inlineCount}${ANSI.reset}`;
     } else {
-      // 沙漏图标单独使用更暗淡的颜色，名称用普通 gray
-      return `${ANSI.dimGray}⏳${ANSI.reset}${ANSI.gray} ${s.display_name}${ANSI.reset}`;
+      return `${ANSI.gray}○ ${s.display_name}${ANSI.reset}`;
     }
   });
 
   // Combine: progress bar with percent, then stage names on separate line
-  return `${ANSI.bold}进度: ${ANSI.reset}${bar} ${percent}%\n${ANSI.gray}${parts.join(" → ")}${ANSI.reset}`;
+  return `${ANSI.bold}进度${ANSI.reset} ${bar} ${percent}%\n${parts.join(" → ")}`;
+}
+
+// Extension progress status types (matching Web's harnessStore.ts)
+type ExtensionProgressStatus = 'pending' | 'running' | 'success' | 'failed' | 'timeout' | 'waiting' | 'skipped' | 'rejected';
+
+// Extension progress info for tracking each extension's status
+interface ExtensionProgressInfo {
+  extensionName: string;
+  implementStatus: ExtensionProgressStatus;
+  verifyStatus: ExtensionProgressStatus;
+  activateStatus: ExtensionProgressStatus;
 }
 
 // State for incremental log parsing (to maintain pipeline info across batches)
 interface ParseState {
   pipelineInfo: { pipeline: string; stages: Array<{ slot: string; display_name: string }> } | null;
   completedStages: string[];
-  currentThinking: string | null;
-  currentAssistant: string | null;
   currentStage: string | null;
+  extensionOrder: string[];
+  extensionsByName: Record<string, ExtensionProgressInfo>;
+  gapCount: number;
+  ciFixCount: number;
 }
 
 function parseAndAggregateLogs(
@@ -947,62 +1337,36 @@ function parseAndAggregateLogs(
   // Track pipeline progress - use initial state if provided (for incremental parsing)
   let pipelineInfo = initialState?.pipelineInfo ?? null;
   const completedStages: string[] = initialState?.completedStages ?? [];
-  let currentThinking = initialState?.currentThinking ?? null;
-  let currentAssistant = initialState?.currentAssistant ?? null;
   let currentStage = initialState?.currentStage ?? null;
+  const extensionOrder: string[] = initialState?.extensionOrder ?? [];
+  const extensionsByName: Record<string, ExtensionProgressInfo> = initialState?.extensionsByName ?? {};
+  let gapCount = initialState?.gapCount ?? 0;
+  let ciFixCount = initialState?.ciFixCount ?? 0;
+
+  // Note: pipeline type is determined dynamically in the loop when pipelineInfo is set
 
   for (const log of logs) {
     const eventType = log.event_type || "";
     const content = log.content || log.message || "";
 
+    // Pipeline-specific filtering: only show chat.final and chat.error
+    // Skip all other chat events (reasoning, delta, tool_call, tool_result, processing_status)
+    if (eventType.startsWith("chat.")) {
+      if (eventType !== "chat.final" && eventType !== "chat.error") {
+        continue;
+      }
+    }
+
     switch (eventType) {
-      case "chat.processing_status":
-        // Processing state change - finalize any pending content
-        if (currentThinking !== null) {
-          sections.push({ type: "thinking", content: currentThinking });
-          currentThinking = null;
-        }
-        if (currentAssistant !== null) {
-          sections.push({ type: "assistant", content: currentAssistant });
-          currentAssistant = null;
-        }
-        const statusText = log.is_processing ? "▶ 开始处理" : "■ 处理完成";
-        sections.push({ type: "status", content: statusText });
-        break;
-
-      case "chat.reasoning":
-        // Accumulate reasoning chunks (thinking)
-        if (currentThinking === null) {
-          currentThinking = content;
-        } else {
-          currentThinking += content;
-        }
-        break;
-
-      case "chat.delta":
-        // Accumulate assistant message chunks
-        if (log.source_chunk_type === "llm_reasoning") {
-          // This is also thinking content
-          if (currentThinking === null) {
-            currentThinking = content;
-          } else {
-            currentThinking += content;
-          }
-        }
-        // Don't accumulate assistant content from chat.delta - use chat.final instead
-        break;
-
       case "chat.final":
-        // Final message - finalize accumulated content (don't append, chat.delta already accumulated)
-        if (currentThinking !== null) {
-          sections.push({ type: "thinking", content: currentThinking });
-          currentThinking = null;
-        }
-        // Use chat.final's content directly (it contains the complete message)
         if (content) {
           sections.push({ type: "assistant", content: content });
         }
-        currentAssistant = null; // Clear any accumulated chat.delta content (should be empty now)
+        break;
+
+      case "chat.error":
+        const errorMsg = log.error || content || "未知错误";
+        sections.push({ type: "error", content: errorMsg });
         break;
 
       case "harness.message":
@@ -1019,22 +1383,12 @@ function parseAndAggregateLogs(
           break;
         }
 
-        // Regular stage message - finalize pending content before stage start
+        // Regular stage message
         const stage = log.stage || "";
         if (currentStage !== stage) {
-          // Stage change - finalize any pending content from previous stage
-          if (currentThinking !== null) {
-            sections.push({ type: "thinking", content: currentThinking });
-            currentThinking = null;
-          }
-          if (currentAssistant !== null) {
-            sections.push({ type: "assistant", content: currentAssistant });
-            currentAssistant = null;
-          }
           currentStage = stage;
         }
 
-        // Show stage with progress info if we have pipeline info
         sections.push({
           type: "stage",
           content: content,
@@ -1045,19 +1399,83 @@ function parseAndAggregateLogs(
         break;
 
       case "harness.stage_result":
-        // Stage completion result - finalize thinking/assistant, then output stage
-        if (currentThinking !== null) {
-          sections.push({ type: "thinking", content: currentThinking });
-          currentThinking = null;
-        }
-        if (currentAssistant !== null) {
-          sections.push({ type: "assistant", content: currentAssistant });
-          currentAssistant = null;
+        // Check if this is an extension-level event (scope === 'extension')
+        const scope = log.scope || '';
+        const extName = log.extension_name;
+
+        if (scope === 'extension' && extName) {
+          // Extension-level progress update
+          const extStage = log.extension_stage || '';
+          const extStatus = (log.status || 'pending') as ExtensionProgressStatus;
+
+          // Add to extension order if new
+          if (!extensionOrder.includes(extName)) {
+            extensionOrder.push(extName);
+          }
+
+          // Get or create extension info
+          const existing = extensionsByName[extName] || {
+            extensionName: extName,
+            implementStatus: 'pending',
+            verifyStatus: 'pending',
+            activateStatus: 'pending',
+          };
+
+          // Update specific extension stage status
+          if (extStage === 'implement_ext') {
+            existing.implementStatus = extStatus;
+          } else if (extStage === 'verify_ext') {
+            existing.verifyStatus = extStatus;
+          } else if (extStage === 'activate_ext' || log.parent_stage === 'activate') {
+            existing.activateStatus = extStatus;
+          }
+
+          extensionsByName[extName] = existing;
+
+          // Don't output section for extension-level events (will show in stage completion)
+          break;
         }
 
-        // Track completed stage
+        // Track completed stage (only for stage-level events)
         if (log.stage) {
           completedStages.push(log.stage);
+        }
+
+        // For meta_evolve_pipeline: track CI fix count from messages
+        const stageMessages = log.messages || [];
+        if (pipelineInfo?.pipeline === "meta_evolve_pipeline" && log.stage === "verify") {
+          for (const msg of stageMessages) {
+            if (msg.includes('修复循环') || msg.includes('[修复循环]')) {
+              ciFixCount++;
+            }
+          }
+        }
+
+        // Extract gap count from assess stage messages (Gaps: ...)
+        if (log.stage === 'assess' && stageMessages.length > 0) {
+          const gaps = parseNamedList(stageMessages, 'Gaps:');
+          gapCount = gaps.length;
+        }
+
+        // Extract extension names from plan stage messages (Designs: ...)
+        if (log.stage === 'plan' && stageMessages.length > 0) {
+          for (const msg of stageMessages) {
+            if (msg.startsWith('Designs:')) {
+              const designs = msg.slice('Designs:'.length).trim().split(',');
+              for (const design of designs) {
+                const name = design.trim();
+                if (name && !extensionOrder.includes(name)) {
+                  extensionOrder.push(name);
+                  extensionsByName[name] = {
+                    extensionName: name,
+                    implementStatus: 'pending',
+                    verifyStatus: 'pending',
+                    activateStatus: 'pending',
+                  };
+                }
+              }
+            }
+          }
         }
 
         sections.push({
@@ -1067,19 +1485,17 @@ function parseAndAggregateLogs(
           status: log.status,
           stages: pipelineInfo?.stages,
           completed_stages: [...completedStages],
+          // Include extension info for display
+          extension_order: extensionOrder.length > 0 ? extensionOrder : undefined,
+          extensions_by_name: Object.keys(extensionsByName).length > 0 ? extensionsByName : undefined,
+          // Include gap count for inline progress bar
+          gap_count: gapCount,
+          stage_messages: stageMessages.length > 0 ? stageMessages : undefined,
+          ci_fix_count: ciFixCount,
         });
         break;
 
       case "harness.session_finished":
-        // Session finished - finalize pending content and show completion
-        if (currentThinking !== null) {
-          sections.push({ type: "thinking", content: currentThinking });
-          currentThinking = null;
-        }
-        if (currentAssistant !== null) {
-          sections.push({ type: "assistant", content: currentAssistant });
-          currentAssistant = null;
-        }
         sections.push({
           type: "session_finished",
           content: log.status === "success" ? "任务执行成功" : `任务执行${log.status || "完成"}`,
@@ -1088,50 +1504,7 @@ function parseAndAggregateLogs(
         });
         break;
 
-      case "context.compressed":
-        // Context compression event
-        break;
-
-      case "chat.tool_call":
-        // Extract tool name from nested payload or direct fields
-        const toolCallPayload = log.tool_call || log;
-        const toolCallName = toolCallPayload.name || log.name || log.tool_name || "unknown";
-        sections.push({
-          type: "tool",
-          content: "",
-          tool_name: toolCallName,
-          tool_success: undefined, // call, not result
-        });
-        break;
-
-      case "chat.tool_result":
-        // Extract tool name from nested payload or direct fields
-        const toolResultNested = log.tool_result;
-        const toolResultName = toolResultNested?.name || toolResultNested?.tool_name || log.name || log.tool_name || "unknown";
-        const toolResultSuccess = !(log.is_error || toolResultNested?.success === false);
-        sections.push({
-          type: "tool",
-          content: "",
-          tool_name: toolResultName,
-          tool_success: toolResultSuccess,
-        });
-        break;
-
-      case "chat.error":
-        if (currentThinking !== null) {
-          sections.push({ type: "thinking", content: currentThinking });
-          currentThinking = null;
-        }
-        if (currentAssistant !== null) {
-          sections.push({ type: "assistant", content: currentAssistant });
-          currentAssistant = null;
-        }
-        const errorMsg = log.error || content || "未知错误";
-        sections.push({ type: "error", content: errorMsg });
-        break;
-
       default:
-        // Other events - skip empty content events
         if (content) {
           sections.push({ type: "info", content: `[${eventType}] ${content.substring(0, 100)}` });
         }
@@ -1139,83 +1512,10 @@ function parseAndAggregateLogs(
     }
   }
 
-  if (!initialState) {
-    if (currentThinking !== null) {
-      sections.push({ type: "thinking", content: currentThinking });
-      currentThinking = null;
-    }
-    if (currentAssistant !== null) {
-      sections.push({ type: "assistant", content: currentAssistant });
-      currentAssistant = null;
-    }
-  }
-
-  return { sections, state: { pipelineInfo, completedStages, currentThinking, currentAssistant, currentStage } };
+  return { sections, state: { pipelineInfo, completedStages, currentStage, extensionOrder, extensionsByName, gapCount, ciFixCount } };
 }
 
 // Format log section for history display (detailed with colors)
-function formatLogSectionDetailed(section: ParsedLogSection): string | null {
-  switch (section.type) {
-    case "thinking":
-      return formatThinkingContent(section.content);
-    case "assistant":
-      // Assistant output - bright white color
-      return formatAssistantContent(section.content);
-    case "pipeline":
-      // Pipeline header - show workflow structure in a proper box
-      const stagesDisplayDetailed = section.stages?.map((s) => s.display_name).join(" → ") || "";
-      return `\n${createBox(`Pipeline: ${section.pipeline || "unknown"}`, `流程: ${stagesDisplayDetailed}`, ANSI.cyan)}\n`;
-    case "stage":
-      // Get display_name for this stage
-      const stageDisplayNameDetailed = section.stages?.find((s) => s.slot === section.stage)?.display_name || section.stage || "?";
-
-      if (section.status) {
-        // Stage completion - show progress bar and simple completion line
-        const progressBarDetailed = formatStageProgress(section.stages, section.completed_stages);
-        const icon = section.status === "success" ? "✅" :
-                    section.status === "failed" ? "❌" : "⏸️";
-        const color = section.status === "success" ? ANSI.green :
-                     section.status === "failed" ? ANSI.red : ANSI.yellow;
-        const statusText = section.status === "success" ? "完成" :
-                          section.status === "failed" ? "失败" : section.status;
-        return `\n${progressBarDetailed}\n${color}${ANSI.bold}${icon} ${stageDisplayNameDetailed} ${statusText}${ANSI.reset}\n`;
-      }
-      // Stage start - show progress bar and current stage indicator
-      const startProgressBarDetailed = formatStageProgress(section.stages, section.completed_stages, section.stage);
-      // Skip duplicate content display
-      const showContentDetailed = section.content && section.content !== stageDisplayNameDetailed;
-      if (showContentDetailed) {
-        // Wrap content to visual width (100 chars) and add indent
-        const wrappedContentDetailed = wrapText(section.content, 100);
-        const indentedContentDetailed = wrappedContentDetailed.split("\n").map(line => "  " + line).join("\n");
-        return `\n${startProgressBarDetailed}\n${ANSI.yellow}${ANSI.bold}▶ 📊 ${stageDisplayNameDetailed}${ANSI.reset}\n${ANSI.yellow}${indentedContentDetailed}${ANSI.reset}\n`;
-      }
-      return `\n${startProgressBarDetailed}\n${ANSI.yellow}${ANSI.bold}▶ 📊 ${stageDisplayNameDetailed}${ANSI.reset}\n`;
-    case "session_finished":
-      // Session finished - completion banner in a proper box
-      const finishedIconDetailed = section.status === "success" ? "🎉" : "⚠️";
-      const finishedColorDetailed = section.status === "success" ? ANSI.green : ANSI.yellow;
-      return `\n${createBox(`${finishedIconDetailed} ${section.content}`, `Pipeline: ${section.pipeline || "unknown"}`, finishedColorDetailed)}\n`;
-    case "status":
-      return `${ANSI.blue}▶ ${section.content}${ANSI.reset}`;
-    case "error":
-      return `${ANSI.red}🔥 错误: ${section.content}${ANSI.reset}`;
-    case "tool":
-      // Only show tool results, skip call starts to reduce noise
-      if (section.tool_success === undefined) {
-        return null;
-      } else if (section.tool_success) {
-        return `${ANSI.green}  ✓ ${section.tool_name || "unknown"}${ANSI.reset}`;
-      } else {
-        return `${ANSI.red}  ← ❌ ${section.tool_name || "unknown"}${ANSI.reset}`;
-      }
-    case "info":
-      return `${ANSI.gray}  · ${section.content}${ANSI.reset}`;
-    default:
-      return null;
-  }
-}
-
 const scheduleCancelCommand: SlashCommand = {
   name: "cancel",
   description: "取消任务",
@@ -1334,37 +1634,75 @@ const scheduleCommand: SlashCommand = {
 const runCommand: SlashCommand = {
   name: "run",
   description: "执行一次性 auto_harness 任务",
-  usage: "/auto-harness run <query>",
-  example: "/auto-harness run 优化数据库查询性能",
+  usage: "/auto-harness run [--pipeline <pipeline>] <query>",
+  example: "/auto-harness run --pipeline extended_evolve_pipeline 优化数据库查询性能",
   kind: CommandKind.BUILT_IN,
   takesArgs: true,
+  completion: (_ctx, partial) => {
+    const parts = partial.trim().split(/\s+/).filter(Boolean);
+    // Check pipeline completions (handles --pipeline/-p and values with preserved args)
+    return getPipelineCompletions(partial, parts);
+  },
   action: async (ctx, args) => {
-    const query = args.trim();
+    const parsed = parseRunArgs(args);
 
-    if (!query) {
+    if (!parsed.query) {
       ctx.addItem(
-        addError(ctx.sessionId, "用法: /auto-harness run <query>")
+        addError(ctx.sessionId, "用法: /auto-harness run [--pipeline <pipeline>] <query>\npipeline: extended_evolve_pipeline (仅生成 package), meta_evolve_pipeline (生成 package + 提交 PR)")
       );
       return;
     }
 
-    // Check config
-    const configCheck = await ctx.request<{ valid: boolean; missing_fields?: Array<{ id: string; prompt: string }> }>("schedule.check_config", {});
+    // Ask user to select pipeline if not specified
+    let pipeline = parsed.pipeline;
+    if (!pipeline) {
+      try {
+        const [answer] = await ctx.askQuestions([
+          {
+            header: "Pipeline",
+            question: "请选择 Pipeline 类型:",
+            options: [
+              { label: "extended_evolve_pipeline", description: PIPELINE_OPTIONS.extended_evolve_pipeline.desc },
+              { label: "meta_evolve_pipeline", description: PIPELINE_OPTIONS.meta_evolve_pipeline.desc },
+            ],
+          },
+        ]);
+        pipeline = answer.selected_options[0];
+      } catch {
+        // User cancelled
+        ctx.addItem(addInfo(ctx.sessionId, "已取消创建任务"));
+        return;
+      }
+    }
 
-    const missingFields = configCheck.missing_fields as Array<{ id: string; prompt: string }> | undefined;
-    if (missingFields && missingFields.length > 0) {
-      const missingList = missingFields.map(f => `  - ${f.prompt}`).join("\n");
+    // Validate pipeline value
+    if (!PIPELINE_VALUES.includes(pipeline)) {
       ctx.addItem(
-        addInfo(ctx.sessionId, `检测到配置缺失:\n${missingList}\n\n请使用 /config edit 配置这些字段后重试`)
+        addError(ctx.sessionId, `无效的 pipeline: ${pipeline}\n可选值: ${PIPELINE_VALUES.join(", ")}`)
       );
       return;
     }
 
-    ctx.addItem(addInfo(ctx.sessionId, `\n正在创建一次性任务...\n`, "i"));
+    // For meta_evolve_pipeline, check git config
+    if (pipeline === "meta_evolve_pipeline") {
+      const configCheck = await ctx.request<{ valid: boolean; missing_fields?: Array<{ id: string; prompt: string }> }>("schedule.check_config", {});
+
+      const missingFields = configCheck.missing_fields as Array<{ id: string; prompt: string }> | undefined;
+      if (missingFields && missingFields.length > 0) {
+        const missingList = missingFields.map(f => `  - ${f.prompt}`).join("\n");
+        ctx.addItem(
+          addInfo(ctx.sessionId, `meta_evolve_pipeline 需要配置 git 信息:\n${missingList}\n\n请使用 /config edit 配置这些字段后重试`)
+        );
+        return;
+      }
+    }
+
+    ctx.addItem(addInfo(ctx.sessionId, `\n正在创建一次性任务...\nPipeline: ${pipeline}\n`, "i"));
 
     // Create and execute one-time task
     const result = await ctx.request<{ error?: string; task_id?: string; status?: string; message?: string }>("schedule.run", {
-      query,
+      query: parsed.query,
+      pipeline: pipeline,
     });
 
     if (result.error) {
@@ -1375,7 +1713,7 @@ const runCommand: SlashCommand = {
     }
 
     ctx.addItem(
-      addInfo(ctx.sessionId, `\n一次性任务已创建并开始执行\nID: ${result.task_id}\n状态: ${result.status}\n`)
+      addInfo(ctx.sessionId, `\n一次性任务已创建并开始执行\nID: ${result.task_id}\nPipeline: ${pipeline}\n状态: ${result.status}\n`)
     );
 
     // Start streaming logs
@@ -1391,7 +1729,7 @@ export function createAutoHarnessCommand(): SlashCommand {
   return {
     name: "auto-harness",
     description: "Auto-Harness 任务管理",
-    hidden: true, // Temporarily hidden from TUI, core functionality preserved for future re-enable
+    hidden: false, // Temporarily hidden from TUI, core functionality preserved for future re-enable
     kind: CommandKind.BUILT_IN,
     takesArgs: true,
     subCommands: [runCommand, scheduleCommand],
@@ -1409,34 +1747,6 @@ export function createAutoHarnessCommand(): SlashCommand {
         );
       }
     },
-  };
-}
-
-// Helper functions
-
-function parseScheduleStartArgs(args: string): { interval: number; query: string } {
-  const parts = parseArgs(args);
-
-  let interval = 0;
-  let queryParts: string[] = [];
-  let i = 0;
-
-  while (i < parts.length) {
-    if (parts[i] === "--interval" || parts[i] === "-i") {
-      i++;
-      if (i < parts.length) {
-        interval = parseInt(parts[i], 10) || 0;
-        i++;
-      }
-    } else {
-      queryParts.push(parts[i]);
-      i++;
-    }
-  }
-
-  return {
-    interval,
-    query: queryParts.join(" "),
   };
 }
 

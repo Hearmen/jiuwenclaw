@@ -155,6 +155,19 @@ class Scheduler:
         # Get current execution_id to build session_id
         task_data = self._task_store.get_task(task_id)
         execution_id = task_data.get("current_execution_id") if task_data else None
+        started_at_str = None
+        log_path_str = None
+
+        # Try to get started_at from execution_history (most recent)
+        if task_data:
+            history = task_data.get("execution_history", [])
+            if history:
+                # Find the execution record for this execution_id
+                for record in reversed(history):
+                    if record.get("execution_id") == execution_id:
+                        started_at_str = record.get("started_at")
+                        log_path_str = record.get("log_path")
+                        break
 
         # Cancel the internal service run first (orchestrator execution)
         if execution_id:
@@ -163,13 +176,50 @@ class Scheduler:
             self._service.cancel_session_run(session_id)
 
         # Cancel the scheduler-level asyncio.Task
+        logger.info("[Scheduler] Cancelling asyncio.Task for task %s", task_id)
         exec_task.cancel()
         try:
             await exec_task
         except asyncio.CancelledError:
-            pass
+            logger.info("[Scheduler] CancelledError caught for task %s", task_id)
 
+        # Remove from running dict (before adding execution record to avoid race)
         self._running_executions.pop(task_id, None)
+
+        # Record execution history if we have execution_id
+        # (This ensures history is recorded even if _execute_scheduled_task's finally block didn't run)
+        if execution_id and task_data:
+            completed_at = datetime.now(timezone.utc)
+            logger.info(
+                "[Scheduler] Recording execution history for cancelled task %s, execution_id %s",
+                task_id, execution_id
+            )
+
+            # Build log path if not found
+            if not log_path_str:
+                log_path = self._task_store.get_log_path(task_id, execution_id)
+                log_path_str = str(log_path)
+
+            # Use current time as started_at if not found
+            if not started_at_str:
+                started_at_str = completed_at.isoformat()
+
+            self._task_store.add_execution_record(task_id, {
+                "execution_id": execution_id,
+                "started_at": started_at_str,
+                "completed_at": completed_at.isoformat(),
+                "status": "cancelled",
+                "error": "User cancelled",
+                "log_path": log_path_str,
+            })
+
+            # Update task status to cancelled
+            self._task_store.update_task(task_id, {
+                "status": "cancelled",
+                "current_execution_id": None,
+            })
+            logger.info("[Scheduler] Task %s execution %s marked as cancelled in history", task_id, execution_id)
+
         logger.info("[Scheduler] Cancelled execution for task: %s", task_id)
         return True
 
@@ -235,6 +285,7 @@ class Scheduler:
         query = task.get("query")
         interval_hours = task.get("interval_hours", 4)
         model_name = task.get("model_name")
+        pipeline = task.get("pipeline")  # Pipeline preference from task
 
         if not task_id or not query:
             logger.warning("[Scheduler] Invalid task data: %s", task)
@@ -269,6 +320,9 @@ class Scheduler:
             # Build request for execution
             from jiuwenswarm.common.schema.agent import AgentRequest
 
+            # Resolve pipeline preference (use task's pipeline or default to META_EVOLVE_PIPELINE)
+            pipeline_preference = pipeline if pipeline else META_EVOLVE_PIPELINE
+
             request = AgentRequest(
                 request_id=execution_id,
                 channel_id="tui",
@@ -276,7 +330,7 @@ class Scheduler:
                 params={
                     "mode": "auto_harness",
                     "scheduled": True,
-                    "pipeline_preference": META_EVOLVE_PIPELINE,
+                    "pipeline_preference": pipeline_preference,
                 },
             )
 

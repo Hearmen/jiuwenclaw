@@ -177,7 +177,7 @@
     "versionInfo": "Version Info",
     "nativeVersion": "Native Version",
     "harnessVersion": "Auto Harness Version",
-    "currentActive": "Currently Active",
+    "currentActive": "Activated",
     "hotActivate": "Hot Activate",
     "activating": "Activating...",
     "activateSuccess": "Version switched successfully",
@@ -218,7 +218,14 @@
     "packageExists": "Package with this name already exists",
     "invalidZipFormat": "Invalid zip file format",
     "missingHarnessConfig": "Zip must contain harness_config.yaml",
-    "selectZipFile": "Select a .zip file to import"
+    "selectZipFile": "Select a .zip file to import",
+    "deactivate": "Deactivate",
+    "deactivating": "Deactivating...",
+    "deactivateFailed": "Deactivation failed",
+    "deactivateSuccess": "Deactivation successful",
+    "deactivateAll": "Deactivate All",
+    "allDeactivated": "All packages deactivated",
+    "activePackages": "Active Packages"
   },
   "todoList": {
     "title": "Task list",

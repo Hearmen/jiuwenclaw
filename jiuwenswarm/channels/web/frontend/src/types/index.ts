@@ -85,7 +85,7 @@ export interface NativeVersionInfo {
 export interface PackagesPayload {
   packages: PackageInfo[];
   native_version: NativeVersionInfo;
-  active_package_id: string | null;
+  active_package_ids: string[];
   last_updated?: string;
 }
 
@@ -96,4 +96,10 @@ export interface ActivatePayload {
   config_path: string;
   message: string;
   loaded_resources?: string[];
+}
+
+export interface DeactivatePayload {
+  deactivated_package_id: string;
+  extension_name: string;
+  message: string;
 }

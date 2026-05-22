@@ -22,6 +22,8 @@ import {
   type PendingQuestion,
   type PendingQuestionItem,
   type UserAnswer,
+  type HarnessExtensionReady,
+  type HarnessActivateInteraction,
 } from "./core/event-handlers.js";
 import { isTeamMode, type ClientMode } from "./core/modes.js";
 import { isEventFrame, type EventFrame, type FileAttachment } from "./core/protocol.js";
@@ -199,6 +201,10 @@ export class CliPiAppState {
   private interruptRequested = false;
   /** 当前回合的起始时间戳，用于在回合结束时计算执行耗时。 */
   private turnStartedAt: number | null = null;
+  /** Harness extension ready info (for file tree display) */
+  private harnessExtensionReady: HarnessExtensionReady | null = null;
+  /** Harness activate interaction state (for user confirmation) */
+  private harnessActivateInteraction: HarnessActivateInteraction | null = null;
   private readonly eventDelegate: AppEventDelegate = {
     getConnectionStatus: () => this.connectionStatus,
     getSessionId: () => this.sessionId,
@@ -314,6 +320,30 @@ export class CliPiAppState {
       this.turnStartedAt = null;
       this.addItem(
         addInfo(this.sessionId, `Worked for ${formatElapsed(elapsed)}`, undefined, { view: "dim" }),
+      );
+    },
+    setHarnessExtensionReady: (info) => {
+      this.harnessExtensionReady = info;
+    },
+    setHarnessActivateInteraction: (state) => {
+      this.harnessActivateInteraction = state;
+    },
+    getHarnessActivateInteraction: () => this.harnessActivateInteraction,
+    autoActivateExtension: (interactionId: string) => {
+      // TUI auto-activates extensions without user confirmation
+      this.sendEventOnly(
+        "chat.send",
+        {
+          query: "",
+          content: "",
+          mode: "auto_harness",
+          activate_response: {
+            interaction_id: interactionId,
+            action: "accept",
+            feedback: "",
+          },
+        },
+        true,
       );
     },
   };
@@ -737,6 +767,8 @@ export class CliPiAppState {
     this.historyEntries = [];
     this.historyTotalPages = null;
     this.historyPageDoneResolvers.clear();
+    this.harnessExtensionReady = null;
+    this.harnessActivateInteraction = null;
     this.emitChange();
   };
 
@@ -928,6 +960,7 @@ export class CliPiAppState {
       return;
     }
     const source = this.pendingQuestion.source;
+
     if (source === "permission_interrupt" || source === "ask_user_interrupt") {
       this.sendEventOnly(
         "chat.send",
