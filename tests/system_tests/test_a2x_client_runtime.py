@@ -6,11 +6,11 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from jiuwenclaw.agentserver.deep_agent import interface_deep as interface_module
-from jiuwenclaw.agentserver.deep_agent.interface_deep import JiuWenClawDeepAdapter
-from jiuwenclaw.agentserver.interface import build_user_prompt
-from jiuwenclaw.schema.agent import AgentRequest
-from jiuwenclaw.schema.message import ReqMethod
+from jiuwenswarm.server.runtime.agent_adapter import interface_deep as interface_module
+from jiuwenswarm.server.runtime.agent_adapter.interface_deep import JiuWenClawDeepAdapter
+from jiuwenswarm.server.runtime.agent_adapter.interface import build_user_prompt
+from jiuwenswarm.common.schema.agent import AgentRequest
+from jiuwenswarm.common.schema.message import ReqMethod
 
 pytestmark = [pytest.mark.integration, pytest.mark.system]
 
@@ -118,7 +118,7 @@ def _make_request(session_id: str = "web_a2x_system_test") -> tuple[AgentRequest
 
 
 async def _create_adapter_and_run_chat(config_base: dict) -> AsyncMock:
-    created_agent = SimpleNamespace(card=SimpleNamespace(id="jiuwenclaw", name="main_agent"))
+    created_agent = SimpleNamespace(card=SimpleNamespace(id="jiuwenswarm", name="main_agent"), ensure_initialized=AsyncMock())
     request, inputs = _make_request()
 
     with (
@@ -128,7 +128,7 @@ async def _create_adapter_and_run_chat(config_base: dict) -> AsyncMock:
         patch.object(interface_module.JiuWenClawDeepAdapter, "_get_tool_cards", AsyncMock(return_value=[])),
         patch.object(interface_module.JiuWenClawDeepAdapter, "_build_agent_rails", return_value=[]),
         patch.object(interface_module.JiuWenClawDeepAdapter, "_create_sys_operation", return_value=MagicMock()),
-        patch.object(interface_module.JiuWenClawDeepAdapter, "_build_configured_subagents", return_value=None),
+        patch.object(interface_module.JiuWenClawDeepAdapter, "_build_configured_subagents", return_value=(None, False)),
         patch.object(interface_module.JiuWenClawDeepAdapter, "_update_runtime_config", AsyncMock()),
         patch.object(interface_module.JiuWenClawDeepAdapter, "load_user_rails", AsyncMock()),
         patch.object(interface_module, "get_config", return_value=config_base),
@@ -154,9 +154,9 @@ async def test_a2x_teammate_registers_blank_agent_during_runtime(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     _FakeAsyncA2XRegistryClient.instances.clear()
-    fake_module = ModuleType("jiuwenclaw.a2x_registry_client")
+    fake_module = ModuleType("jiuwenswarm.agents.harness.team.a2x.client")
     fake_module.AsyncA2XRegistryClient = _FakeAsyncA2XRegistryClient
-    monkeypatch.setitem(sys.modules, "jiuwenclaw.a2x_registry_client", fake_module)
+    monkeypatch.setitem(sys.modules, "jiuwenswarm.agents.harness.team.a2x.client", fake_module)
 
     run_agent_mock = await _create_adapter_and_run_chat(
         _make_config(
@@ -183,9 +183,9 @@ async def test_a2x_teamleader_skips_blank_agent_registration(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     _FakeAsyncA2XRegistryClient.instances.clear()
-    fake_module = ModuleType("jiuwenclaw.a2x_registry_client")
+    fake_module = ModuleType("jiuwenswarm.agents.harness.team.a2x.client")
     fake_module.AsyncA2XRegistryClient = _FakeAsyncA2XRegistryClient
-    monkeypatch.setitem(sys.modules, "jiuwenclaw.a2x_registry_client", fake_module)
+    monkeypatch.setitem(sys.modules, "jiuwenswarm.agents.harness.team.a2x.client", fake_module)
 
     run_agent_mock = await _create_adapter_and_run_chat(_make_config("teamleader"))
 
@@ -198,9 +198,9 @@ async def test_a2x_teamleader_skips_blank_agent_registration(
 async def test_a2x_init_failure_does_not_block_runtime(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    fake_module = ModuleType("jiuwenclaw.a2x_registry_client")
+    fake_module = ModuleType("jiuwenswarm.agents.harness.team.a2x.client")
     fake_module.AsyncA2XRegistryClient = _FailingAsyncA2XRegistryClient
-    monkeypatch.setitem(sys.modules, "jiuwenclaw.a2x_registry_client", fake_module)
+    monkeypatch.setitem(sys.modules, "jiuwenswarm.agents.harness.team.a2x.client", fake_module)
 
     run_agent_mock = await _create_adapter_and_run_chat(_make_config("teammate"))
 

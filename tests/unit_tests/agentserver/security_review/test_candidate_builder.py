@@ -3,16 +3,16 @@ from __future__ import annotations
 
 import pytest
 
-from jiuwenclaw.agentserver.deep_agent.security_review.candidate_builder import (
+from jiuwenswarm.agents.harness.common.security_review.candidate_builder import (
     SecurityCandidateBuilder,
 )
-from jiuwenclaw.agentserver.deep_agent.security_review.schema import (
+from jiuwenswarm.agents.harness.common.security_review.schema import (
     FailureClass,
     ReviewRequest,
     SecuritySignal,
     Severity,
 )
-from jiuwenclaw.agentserver.deep_agent.security_review.worker import SecurityReviewWorker
+from jiuwenswarm.agents.harness.common.security_review.worker import SecurityReviewWorker
 
 
 def _signal(
@@ -182,7 +182,7 @@ def test_llm_candidate_input_includes_messages_and_skill_state():
 
 
 def test_candidate_builder_prompt_contains_security_addendum():
-    from jiuwenclaw.agentserver.deep_agent.security_review.candidate_builder import (
+    from jiuwenswarm.agents.harness.common.security_review.candidate_builder import (
         SECURITY_ADDENDUM,
         SECURITY_CANDIDATE_SYSTEM_PROMPT,
     )

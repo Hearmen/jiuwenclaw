@@ -3,9 +3,9 @@ import json
 
 import pytest
 
-from jiuwenclaw.agentserver import agent_ws_server as agent_ws_server_module
-from jiuwenclaw.schema.agent import AgentRequest
-from jiuwenclaw.schema.message import ReqMethod
+from jiuwenswarm.server import agent_ws_server as agent_ws_server_module
+from jiuwenswarm.common.schema.agent import AgentRequest
+from jiuwenswarm.common.schema.message import ReqMethod
 
 
 class FakeWebSocket:
@@ -128,7 +128,7 @@ async def test_handle_command_compact_returns_custom_instructions(server, fake_w
 
     mock_agent = MockAgent()
 
-    async def mock_get_agent(channel_id, mode, workspace_dir):
+    async def mock_get_agent(channel_id, mode, project_dir=None, sub_mode=None):
         return mock_agent
 
     async def mock_send_push(msg):
@@ -269,6 +269,16 @@ async def test_handle_command_mcp_add_triggers_reload(server, fake_ws, monkeypat
         lambda payload: (payload, True),
     )
     monkeypatch.setattr(agent_ws_server_module, "get_config", lambda: {"mcp": {"servers": []}})
+
+    # Mock pre-check so it does not attempt a real MCP connection.
+    async def _pre_check_ok(_payload):
+        return True, "pre-check ok"
+
+    monkeypatch.setattr(
+        agent_ws_server_module.AgentWebSocketServer,
+        "_pre_check_mcp_server",
+        staticmethod(_pre_check_ok),
+    )
 
     called = {"reload": 0}
 

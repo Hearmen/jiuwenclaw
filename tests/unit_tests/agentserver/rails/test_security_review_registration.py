@@ -12,9 +12,9 @@ warnings.filterwarnings(
     category=UserWarning,
 )
 
-from jiuwenclaw.agentserver.deep_agent.interface_deep import JiuWenClawDeepAdapter
-from jiuwenclaw.agentserver.deep_agent.rails import SecurityReviewAndSkillRail
-from jiuwenclaw.schema.agent import AgentRequest
+from jiuwenswarm.agents.harness.common.rails import SecurityReviewAndSkillRail
+from jiuwenswarm.common.schema.agent import AgentRequest
+from jiuwenswarm.server.runtime.agent_adapter.interface_deep import JiuWenClawDeepAdapter
 
 
 def test_security_review_rail_disabled_by_default():
@@ -71,7 +71,11 @@ def test_build_agent_rails_registers_security_review_when_enabled():
         patch.object(adapter, "_build_avatar_rail", return_value=None),
         patch.object(adapter, "_build_subagent_rail", return_value=None),
         patch(
-            "jiuwenclaw.agentserver.deep_agent.interface_deep.build_permission_rail",
+            "jiuwenswarm.server.runtime.agent_adapter.interface_deep.build_permission_rail",
+            return_value=None,
+        ),
+        patch(
+            "jiuwenswarm.server.runtime.agent_adapter.interface_deep._build_context_processor_rail",
             return_value=None,
         ),
     ):
@@ -114,7 +118,7 @@ async def test_security_review_watcher_pushes_candidates_after_background_review
             return [{"type": "security_note", "requires_approval": True}]
 
     monkeypatch.setattr(
-        "jiuwenclaw.agentserver.gateway_push.WebSocketGatewayPushTransport",
+        "jiuwenswarm.server.gateway_push.WebSocketGatewayPushTransport",
         _FakeTransport,
     )
     adapter._security_review_rail = _FakeRail()
@@ -208,7 +212,7 @@ async def test_security_review_rule_candidate_is_applied_after_approval(monkeypa
         }
 
     monkeypatch.setattr(
-        "jiuwenclaw.agentserver.deep_agent.interface_deep.apply_security_rule_candidate",
+        "jiuwenswarm.server.runtime.agent_adapter.interface_deep.apply_security_rule_candidate",
         fake_apply,
     )
 
@@ -255,7 +259,7 @@ async def test_security_review_skill_candidate_is_applied_after_approval(monkeyp
         }
 
     monkeypatch.setattr(
-        "jiuwenclaw.agentserver.deep_agent.interface_deep.apply_security_skill_candidate",
+        "jiuwenswarm.server.runtime.agent_adapter.interface_deep.apply_security_skill_candidate",
         fake_apply,
     )
 
@@ -301,7 +305,7 @@ async def test_security_review_evolution_candidate_is_applied_after_approval(mon
         }
 
     monkeypatch.setattr(
-        "jiuwenclaw.agentserver.deep_agent.interface_deep.apply_security_evolution_candidate",
+        "jiuwenswarm.server.runtime.agent_adapter.interface_deep.apply_security_evolution_candidate",
         fake_apply,
     )
 

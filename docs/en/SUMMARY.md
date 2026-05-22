@@ -1,7 +1,9 @@
 # Summary
 
+- [Install guide](InstallGuide.md)
 - [Quick start](Quickstart.md)
 - [Quick start (TUI)](Quickstart_tui.md)
+- [Page overview (web UI)](Page-Overview.md)
 - [E2A protocol (Gateway↔Agent)](E2A-protocol.md)
 - [A2A integration](A2A.md)
 - [Configuration](Configuration.md)
@@ -32,6 +34,6 @@
   - [ACP Plugin Usage](ACP_Client_Config.md)
   - [Windows auto-update design](WindowsAutoUpdateDesign.md)
 - [Development practices](development-practices/README.md)
-  - [Daily report generator practice](development-practices/JiuwenClaw-Daily-Report-Generator.md)
-  - [Code review assistant practice](development-practices/JiuwenClaw-Code-Review-Assistant.md)
+  - [Daily report generator practice](development-practices/JiuwenSwarm-Daily-Report-Generator.md)
+  - [Code review assistant practice](development-practices/JiuwenSwarm-Code-Review-Assistant.md)
 - [Linux NFS Shared Filesystem](../linux-agent-teams-shared-filesystem.md)

@@ -10,8 +10,8 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[1]
-CLI_ENTRY = ROOT / "jiuwenclaw" / "cli" / "src" / "index.ts"
-OUTPUT_ROOT = ROOT / "packages" / "jiuwenclaw-tui" / "jiuwenclaw_tui" / "resources" / "tui-bin"
+TUI_ENTRY = ROOT / "jiuwenswarm" / "channels" / "tui" / "frontend" / "src" / "index.ts"
+OUTPUT_ROOT = ROOT / "packages" / "jiuwenswarm-tui" / "jiuwenswarm_tui" / "resources" / "tui-bin"
 
 TARGETS = {
     "linux-x64": "bun-linux-x64",
@@ -39,7 +39,7 @@ def current_platform_key() -> str:
 
 
 def output_binary_name(platform_key: str) -> str:
-    return "jiuwenclaw-tui.exe" if platform_key.startswith("windows-") else "jiuwenclaw-tui"
+    return "jiuwenswarm-tui.exe" if platform_key.startswith("windows-") else "jiuwenswarm-tui"
 
 
 def resolve_requested_targets(raw: str) -> list[str]:
@@ -85,7 +85,7 @@ def build_target(platform_key: str) -> Path:
         bun_target,
         "--outfile",
         str(output_path),
-        str(CLI_ENTRY),
+        str(TUI_ENTRY),
     ]
     subprocess.run(cmd, cwd=ROOT, check=True)
 
@@ -96,7 +96,7 @@ def build_target(platform_key: str) -> Path:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Build jiuwenclaw-tui native binaries with Bun.")
+    parser = argparse.ArgumentParser(description="Build jiuwenswarm-tui native binaries with Bun.")
     parser.add_argument(
         "--target",
         default="current",
@@ -110,9 +110,9 @@ def main() -> None:
     args = parser.parse_args()
 
     if shutil.which("bun") is None:
-        raise SystemExit("bun is required to build jiuwenclaw-tui binaries")
-    if not CLI_ENTRY.exists():
-        raise SystemExit(f"CLI entry not found: {CLI_ENTRY}")
+        raise SystemExit("bun is required to build jiuwenswarm-tui binaries")
+    if not TUI_ENTRY.exists():
+        raise SystemExit(f"CLI entry not found: {TUI_ENTRY}")
 
     if args.clean and OUTPUT_ROOT.exists():
         shutil.rmtree(OUTPUT_ROOT)

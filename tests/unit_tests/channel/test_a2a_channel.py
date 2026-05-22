@@ -3,8 +3,8 @@ import time
 
 import pytest
 
-from jiuwenclaw.channel.a2a_channel import A2AChannel, A2AChannelConfig
-from jiuwenclaw.schema.message import EventType, Message
+from jiuwenswarm.gateway.channel_manager.protocol.a2a.a2a_connect import A2AChannel, A2AChannelConfig
+from jiuwenswarm.common.schema.message import EventType, Message
 
 
 class DummyBus:
@@ -75,6 +75,8 @@ def test_map_a2a_parts_to_params_text_and_files():
 
 
 def test_message_to_a2a_parts_filters_completion_sentinel_text():
+    pytest.importorskip("a2a.types")
+
     msg = Message(
         id="r1",
         type="event",
@@ -92,6 +94,8 @@ def test_message_to_a2a_parts_filters_completion_sentinel_text():
 
 
 def test_message_to_a2a_parts_maps_tool_events():
+    pytest.importorskip("a2a.types")
+
     tool_call_msg = Message(
         id="r2",
         type="event",

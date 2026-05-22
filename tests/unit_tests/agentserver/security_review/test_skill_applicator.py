@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import pytest
 
-from jiuwenclaw.agentserver.deep_agent.security_review.skill_applicator import (
+from jiuwenswarm.agents.harness.common.security_review.skill_applicator import (
     SecuritySkillApplicationError,
     apply_security_evolution_candidate,
     apply_security_skill_candidate,

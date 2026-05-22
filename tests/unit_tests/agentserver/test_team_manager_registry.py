@@ -4,17 +4,71 @@
 
 from __future__ import annotations
 
+import asyncio
 from pathlib import Path
 
 import pytest
 
-from jiuwenclaw.agentserver.team.team_manager import (
+from jiuwenswarm.agents.harness.team.team_manager import (
     TeamManager,
-    cleanup_team_runtime_state_once,
+    TeamRailMountContext,
+    MemberInfo,
+    RuntimeInfo,
+    TeamWorkspaceInfo,
     get_team_manager,
     reset_team_manager,
     sync_team_skills_across_managers,
 )
+
+
+class _TeamManagerHarness(TeamManager):
+    def set_active_runtime_for_test(self, session_id: str, team_name: str) -> None:
+        self.commit_runtime_ready(session_id, team_name)
+
+    def set_pending_runtime_for_test(self, session_id: str, team_name: str) -> None:
+        setattr(self, "_pending_session_id", session_id)
+        setattr(self, "_pending_team_name", team_name)
+
+    def cache_local_team_agent_for_test(self, session_id: str, team_agent) -> None:
+        getattr(self, "_team_agents")[session_id] = team_agent
+
+    def resolve_session_team_name_for_test(self, session_id: str) -> str | None:
+        return self._resolve_session_team_name(session_id)
+
+
+class _FakeRail:
+    pass
+
+
+class _FakeSkillEvolutionRail:
+    def __init__(self, auto_scan: bool = True) -> None:
+        self.auto_scan = auto_scan
+
+
+class _FakeTeamSkillEvolutionRail:
+    def __init__(self, *, auto_scan: bool = True) -> None:
+        self.auto_scan = auto_scan
+        self._pending_approval_snapshots: dict[str, object] = {}
+
+    def add_pending_approval_snapshot(self, request_id: str) -> None:
+        self._pending_approval_snapshots[request_id] = object()
+
+
+class _FakeTeamSkillCreateRail:
+    pass
+
+
+class _FakeAgent:
+    def __init__(self) -> None:
+        self.unregistered: list[object] = []
+        self.added_rails: list[object] = []
+
+    async def unregister_rail(self, rail: object):
+        self.unregistered.append(rail)
+        return self
+
+    def add_rail(self, rail: object) -> None:
+        self.added_rails.append(rail)
 
 
 def setup_function() -> None:
@@ -37,6 +91,349 @@ def test_get_team_manager_is_scoped_by_channel() -> None:
 
 
 @pytest.mark.asyncio
+async def test_update_evolution_config_updates_member_skill_evolution_auto_scan(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    manager = TeamManager()
+    rail = _FakeSkillEvolutionRail(auto_scan=True)
+    manager.register_team_member_skill_evolution_rail("sess-1", rail)
+
+    monkeypatch.delenv("EVOLUTION_AUTO_SCAN", raising=False)
+    await manager.update_evolution_config({"evolution": {"auto_scan": False}})
+
+    assert rail.auto_scan is False
+
+    await manager.update_evolution_config({"evolution": {"auto_scan": True}})
+
+    assert rail.auto_scan is True
+
+
+@pytest.mark.asyncio
+async def test_update_evolution_config_enabled_false_keeps_team_skill_rail_and_watcher(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    manager = TeamManager()
+    rail = _FakeRail()
+    agent = _FakeAgent()
+    task = asyncio.create_task(asyncio.sleep(3600))
+
+    monkeypatch.delenv("EVOLUTION_AUTO_SCAN", raising=False)
+    manager.register_team_skill_rail("sess-1", rail)
+    manager.register_team_live_rail("sess-1", agent, rail)
+    manager.register_team_evolution_watcher("sess-1", task)
+
+    await manager.update_evolution_config({"evolution": {"enabled": False, "auto_scan": False}})
+
+    assert manager.get_team_skill_rail("sess-1") is rail
+    assert manager.get_team_evolution_watcher("sess-1") is task
+    assert agent.unregistered == []
+    assert not task.cancelled()
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
+
+@pytest.mark.asyncio
+async def test_update_evolution_config_keeps_team_skill_rail_when_only_auto_scan_disabled(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    manager = TeamManager()
+    rail = _FakeTeamSkillEvolutionRail(auto_scan=True)
+    manager.register_team_skill_rail("sess-1", rail)
+
+    monkeypatch.delenv("EVOLUTION_AUTO_SCAN", raising=False)
+    await manager.update_evolution_config({"evolution": {"enabled": True, "auto_scan": False}})
+
+    assert manager.get_team_skill_rail("sess-1") is rail
+    assert rail.auto_scan is False
+
+
+@pytest.mark.asyncio
+async def test_update_evolution_config_enabled_false_does_not_override_auto_scan(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    manager = TeamManager()
+    rail = _FakeTeamSkillEvolutionRail(auto_scan=False)
+    manager.register_team_skill_rail("sess-1", rail)
+
+    monkeypatch.delenv("EVOLUTION_AUTO_SCAN", raising=False)
+    await manager.update_evolution_config({"evolution": {"enabled": False, "auto_scan": True}})
+
+    assert manager.get_team_skill_rail("sess-1") is rail
+    assert rail.auto_scan is True
+
+
+@pytest.mark.asyncio
+async def test_update_evolution_config_auto_scan_only_updates_existing_rails(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    manager = TeamManager()
+    team_rail = _FakeTeamSkillEvolutionRail(auto_scan=True)
+    member_rail = _FakeSkillEvolutionRail(auto_scan=True)
+    manager.register_team_skill_rail("sess-1", team_rail)
+    manager.register_team_member_skill_evolution_rail("sess-1", member_rail)
+
+    monkeypatch.delenv("EVOLUTION_AUTO_SCAN", raising=False)
+    monkeypatch.setenv("SKILL_CREATE", "false")
+    await manager.update_evolution_config({"evolution": {"auto_scan": False}})
+
+    assert team_rail.auto_scan is False
+    assert member_rail.auto_scan is False
+    assert manager.get_team_skill_rail("sess-1") is team_rail
+    assert manager.get_team_skill_create_rail("sess-1") is None
+
+
+def test_find_team_skill_rail_for_request_uses_pending_approval_snapshots() -> None:
+    manager = TeamManager()
+    rail = _FakeTeamSkillEvolutionRail()
+    rail.add_pending_approval_snapshot("team_skill_evolve_req1")
+    manager.register_team_skill_rail("sess-1", rail)
+
+    assert manager.find_team_skill_rail_for_request("team_skill_evolve_req1") is rail
+    assert manager.find_team_skill_rail_for_request("missing") is None
+
+
+@pytest.mark.asyncio
+async def test_update_evolution_config_disables_team_skill_create_rail() -> None:
+    manager = TeamManager()
+    rail = _FakeRail()
+    agent = _FakeAgent()
+
+    manager.register_team_skill_create_rail("sess-1", rail)
+    manager.register_team_live_rail("sess-1", agent, rail)
+
+    await manager.update_evolution_config({"evolution": {"skill_create": False}})
+
+    assert manager.get_team_skill_create_rail("sess-1") is None
+    assert agent.unregistered == [rail]
+
+
+@pytest.mark.asyncio
+async def test_update_evolution_config_skill_create_enabled_mounts_missing_team_skill_create_rail(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    manager = TeamManager()
+    agent = _FakeAgent()
+    context = TeamRailMountContext(
+        agent=agent,
+        member_info=MemberInfo(role="leader"),
+        runtime=RuntimeInfo(channel="web"),
+        team_workspace=TeamWorkspaceInfo(
+            root_dir="/tmp/team",
+            skills_dir="/tmp/team/skills",
+            team_id="demo-team",
+            config={},
+        ),
+    )
+    manager.register_team_rail_context("sess-1", context)
+
+    monkeypatch.delenv("EVOLUTION_AUTO_SCAN", raising=False)
+    monkeypatch.delenv("SKILL_CREATE", raising=False)
+    monkeypatch.setattr(
+        "jiuwenswarm.agents.harness.team.team_manager.get_config",
+        lambda: {"evolution": {"skill_create": True}},
+    )
+
+    def _fake_build_member_rails(**kwargs):
+        if kwargs["team_workspace"].config.get("evolution", {}).get("skill_create"):
+            return [_FakeTeamSkillCreateRail()]
+        return []
+
+    monkeypatch.setattr(
+        "jiuwenswarm.agents.harness.team.team_manager.build_member_rails",
+        _fake_build_member_rails,
+    )
+    monkeypatch.setattr(
+        "jiuwenswarm.agents.harness.team.team_manager.TeamSkillCreateRail",
+        _FakeTeamSkillCreateRail,
+    )
+    await manager.update_evolution_config(
+        {"evolution": {"skill_create": True}}
+    )
+
+    assert isinstance(manager.get_team_skill_create_rail("sess-1"), _FakeTeamSkillCreateRail)
+    assert len(agent.added_rails) == 1
+
+
+@pytest.mark.asyncio
+async def test_register_team_rail_context_keeps_leader_context() -> None:
+    manager = TeamManager()
+    leader_context = TeamRailMountContext(
+        agent=_FakeAgent(),
+        member_info=MemberInfo(role="leader"),
+        runtime=RuntimeInfo(channel="web"),
+        team_workspace=TeamWorkspaceInfo(team_id="demo-team"),
+    )
+    member_context = TeamRailMountContext(
+        agent=_FakeAgent(),
+        member_info=MemberInfo(role="member"),
+        runtime=RuntimeInfo(channel="web"),
+        team_workspace=TeamWorkspaceInfo(team_id="demo-team"),
+    )
+
+    manager.register_team_rail_context("sess-1", leader_context)
+    manager.register_team_rail_context("sess-1", member_context)
+
+    assert manager.get_team_rail_context("sess-1") is leader_context
+
+
+def test_build_agent_customizer_shares_one_trajectory_registry_per_runtime(
+    tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured_registries = []
+
+    class _FakeAbilityManager:
+        @staticmethod
+        def list():
+            return []
+
+    class _FakeAgentWithWorkspace:
+        def __init__(self, root_path):
+            self.card = type("Card", (), {"name": "agent"})()
+            self.ability_manager = _FakeAbilityManager()
+            self.deep_config = type(
+                "DeepConfig",
+                (),
+                {
+                    "workspace": type(
+                        "Workspace",
+                        (),
+                        {"root_path": str(root_path)},
+                    )()
+                },
+            )()
+            self.added_rails = []
+
+        def add_rail(self, rail):
+            self.added_rails.append(rail)
+
+    global_skills_dir = tmp_path / "global-skills"
+    global_skills_dir.mkdir()
+    (global_skills_dir / "skills_state.json").write_text("{}", encoding="utf-8")
+
+    spec = type(
+        "Spec",
+        (),
+        {
+            "team_name": "demo-team",
+            "workspace": type(
+                "Workspace",
+                (),
+                {"root_path": str(tmp_path / "team-workspace")},
+            )(),
+            "agents": {},
+        },
+    )()
+    deep_agent = _FakeAgentWithWorkspace(tmp_path / "parent-workspace")
+
+    monkeypatch.setattr(
+        "jiuwenswarm.agents.harness.team.team_manager.get_agent_skills_dir",
+        lambda: global_skills_dir,
+    )
+    monkeypatch.setattr(
+        "jiuwenswarm.agents.harness.team.team_manager.SkillManager",
+        lambda workspace_dir: object(),
+    )
+    monkeypatch.setattr(
+        "jiuwenswarm.agents.harness.team.team_manager.MemberSkillToolkitRail",
+        lambda workspace_dir: object(),
+    )
+
+    def _fake_build_member_rails(**kwargs):
+        captured_registries.append(kwargs["team_workspace"].trajectory_registry)
+        return []
+
+    monkeypatch.setattr(
+        "jiuwenswarm.agents.harness.team.team_manager.build_member_rails",
+        _fake_build_member_rails,
+    )
+    monkeypatch.setattr(
+        "jiuwenswarm.agents.harness.team.team_manager.filter_inheritable_ability_cards",
+        lambda deep_agent: [],
+    )
+    monkeypatch.setattr(
+        "jiuwenswarm.agents.harness.team.team_manager.get_default_model_name",
+        lambda: "model",
+    )
+    monkeypatch.setattr(
+        TeamManager,
+        "register_member_runtime_tools",
+        staticmethod(lambda *args, **kwargs: None),
+    )
+
+    customizer = TeamManager.build_agent_customizer(
+        spec,
+        deep_agent,
+        "sess-1",
+        channel_id="web",
+    )
+    customizer(_FakeAgentWithWorkspace(tmp_path / "leader-workspace"), role="leader")
+    customizer(_FakeAgentWithWorkspace(tmp_path / "member-workspace"), role="teammate")
+
+    assert len(captured_registries) == 2
+    assert captured_registries[0] is not None
+    assert captured_registries[0] is captured_registries[1]
+
+
+@pytest.mark.asyncio
+async def test_update_evolution_config_skips_rail_rebuild_when_skill_create_disabled(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    manager = TeamManager()
+    agent = _FakeAgent()
+    context = TeamRailMountContext(
+        agent=agent,
+        member_info=MemberInfo(role="leader"),
+        runtime=RuntimeInfo(channel="web"),
+        team_workspace=TeamWorkspaceInfo(
+            root_dir="/tmp/team",
+            skills_dir="/tmp/team/skills",
+            team_id="demo-team",
+            config={},
+        ),
+    )
+    manager.register_team_rail_context("sess-1", context)
+
+    monkeypatch.delenv("SKILL_CREATE", raising=False)
+
+    await manager.update_evolution_config(
+        {"evolution": {"skill_create": False}}
+    )
+
+    assert manager.get_team_skill_create_rail("sess-1") is None
+    assert agent.unregistered == []
+    assert manager.get_team_rail_context("sess-1") is context
+
+
+@pytest.mark.asyncio
+async def test_destroy_team_cleans_registered_evolution_rails(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    manager = TeamManager()
+    rail = _FakeRail()
+    agent = _FakeAgent()
+
+    monkeypatch.setattr(
+        "jiuwenswarm.agents.harness.team.team_manager.release_a2x_reservations_for_session",
+        lambda session_id, *, team_agent=None: None,
+    )
+    manager.register_team_skill_rail("sess-1", rail)
+    manager.register_team_member_skill_evolution_rail("sess-1", rail)
+    manager.register_team_skill_create_rail("sess-1", rail)
+    manager.register_team_live_rail("sess-1", agent, rail)
+    manager.register_team_skill_sync_target("sess-1", Path("/tmp/src"), Path("/tmp/dst"))
+    manager.commit_runtime_ready("sess-1", "demo-team")
+
+    cleaned = await manager.destroy_team("sess-1")
+
+    assert cleaned is False
+    assert manager.get_team_skill_rail("sess-1") is None
+    assert manager.get_team_skill_create_rail("sess-1") is None
+    assert not manager.has_team_skill_sync_target("sess-1")
+
+
+@pytest.mark.asyncio
 async def test_team_manager_keeps_single_session_per_channel(monkeypatch: pytest.MonkeyPatch) -> None:
     destroyed_sessions: list[str] = []
     created_sessions: list[str] = []
@@ -45,7 +442,11 @@ async def test_team_manager_keeps_single_session_per_channel(monkeypatch: pytest
     class _FakeTeamAgent:
         def __init__(self, session_id: str) -> None:
             self.session_id = session_id
-            self._messager = self._FakeMessager(session_id)
+            self.infra = type(
+                "FakeInfra",
+                (),
+                {"messager": self._FakeMessager(session_id)},
+            )()
 
         class _FakeMessager:
             def __init__(self, session_id: str) -> None:
@@ -80,7 +481,7 @@ async def test_team_manager_keeps_single_session_per_channel(monkeypatch: pytest
     monkeypatch.setattr(
         TeamManager,
         "_copy_global_skills_to_team_shared_dir",
-        lambda self, spec: None,
+        staticmethod(lambda spec: None),
     )
 
     web_manager = get_team_manager("web")
@@ -100,8 +501,6 @@ async def test_team_manager_keeps_single_session_per_channel(monkeypatch: pytest
 
 @pytest.mark.asyncio
 async def test_create_team_does_not_run_global_runtime_cleanup(monkeypatch: pytest.MonkeyPatch) -> None:
-    cleanup_called = False
-
     class _FakeWorkspace:
         root_path = None
 
@@ -122,52 +521,428 @@ async def test_create_team_does_not_run_global_runtime_cleanup(monkeypatch: pyte
     monkeypatch.setattr(
         TeamManager,
         "_copy_global_skills_to_team_shared_dir",
-        lambda self, spec: None,
+        staticmethod(lambda spec: None),
     )
     manager = TeamManager()
-
-    async def fail_cleanup(*_args, **_kwargs):
-        nonlocal cleanup_called
-        cleanup_called = True
-        raise AssertionError("global runtime cleanup should not run during create_team")
-
-    monkeypatch.setattr(
-        "jiuwenclaw.agentserver.team.team_manager.cleanup_team_runtime_state_once",
-        fail_cleanup,
-    )
 
     team_agent = await manager.create_team("sess-1", deep_agent=object(), channel_id="web")
 
     assert team_agent is not None
-    assert cleanup_called is False
     assert manager.get_team_agent("sess-1") is team_agent
 
 
 @pytest.mark.asyncio
-async def test_cleanup_team_runtime_state_once_uses_shared_db(monkeypatch: pytest.MonkeyPatch) -> None:
-    class _FakeSharedDb:
-        @staticmethod
-        async def cleanup_all_runtime_state():
-            return ["dyn_table"], ["static_table"]
+async def test_create_team_appends_session_id_to_team_name(monkeypatch: pytest.MonkeyPatch) -> None:
+    created_team_names: list[str] = []
 
-    captured: dict[str, object] = {}
+    class _FakeWorkspace:
+        root_path = None
 
-    def fake_get_shared_db(db_config):
-        captured["db_type"] = db_config.db_type
-        captured["connection_string"] = db_config.connection_string
-        return _FakeSharedDb()
+    class _Spec:
+        def __init__(self) -> None:
+            self.team_name = "demo_team"
+            self.agent_customizer = None
+            self.workspace = _FakeWorkspace()
+
+        def build(self):
+            created_team_names.append(self.team_name)
+            return object()
+
+    monkeypatch.setattr(TeamManager, "_load_team_spec", staticmethod(lambda _session_id: _Spec()))
+    monkeypatch.setattr(
+        TeamManager,
+        "_copy_global_skills_to_team_shared_dir",
+        staticmethod(lambda spec: None),
+    )
+    manager = TeamManager()
+
+    team_agent = await manager.create_team("oc_abc123", deep_agent=object(), channel_id="feishu")
+
+    assert team_agent is not None
+    assert created_team_names == ["demo_team_oc_abc123"]
+
+
+@pytest.mark.asyncio
+async def test_create_team_appends_session_id_to_web_team_name(monkeypatch: pytest.MonkeyPatch) -> None:
+    created_team_names: list[str] = []
+
+    class _FakeWorkspace:
+        root_path = None
+
+    class _Spec:
+        def __init__(self) -> None:
+            self.team_name = "demo_team"
+            self.agent_customizer = None
+            self.workspace = _FakeWorkspace()
+
+        def build(self):
+            created_team_names.append(self.team_name)
+            return object()
+
+    monkeypatch.setattr(TeamManager, "_load_team_spec", staticmethod(lambda _session_id: _Spec()))
+    monkeypatch.setattr(
+        TeamManager,
+        "_copy_global_skills_to_team_shared_dir",
+        staticmethod(lambda spec: None),
+    )
+    manager = TeamManager()
+
+    team_agent = await manager.create_team("oc_abc123", deep_agent=object(), channel_id="web")
+
+    assert team_agent is not None
+    assert created_team_names == ["demo_team_oc_abc123"]
+
+
+@pytest.mark.asyncio
+async def test_prepare_session_switch_stops_other_active_and_pending_sessions(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    manager = _TeamManagerHarness()
+    manager.set_active_runtime_for_test("sess-active", "team-active")
+    manager.set_pending_runtime_for_test("sess-pending", "team-pending")
+
+    stopped: list[tuple[str, str]] = []
+
+    async def fake_stop(self, session_id: str, reason: str = "") -> bool:
+        stopped.append((session_id, reason))
+        return True
 
     monkeypatch.setattr(
-        "openjiuwen.agent_teams.spawn.shared_resources.get_shared_db",
-        fake_get_shared_db,
+        TeamManager,
+        "stop_session_runtime",
+        fake_stop,
     )
 
-    deleted_tables, cleared_tables = await cleanup_team_runtime_state_once()
+    await manager.prepare_session_switch("sess-target", reason="session switch: ")
 
-    assert deleted_tables == ["dyn_table"]
-    assert cleared_tables == ["static_table"]
-    assert captured["db_type"] == "sqlite"
-    assert str(captured["connection_string"]).endswith("team.db")
+    assert stopped == [
+        ("sess-active", "session switch: "),
+        ("sess-pending", "session switch: "),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_delete_session_runtime_deletes_single_team_session_team(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    manager = _TeamManagerHarness()
+    manager.set_active_runtime_for_test("sess-1", "demo-team")
+
+    stopped: list[tuple[str, str]] = []
+    deleted_teams: list[dict] = []
+
+    async def fake_stop(self, session_id: str, reason: str = "") -> bool:
+        stopped.append((session_id, reason))
+        return True
+
+    async def fake_delete_agent_team(*, team_name: str, session_ids: list[str], force: bool) -> bool:
+        deleted_teams.append(
+            {"team_name": team_name, "session_ids": session_ids, "force": force}
+        )
+        return True
+
+    monkeypatch.setattr(TeamManager, "stop_session_runtime", fake_stop)
+    monkeypatch.setattr(
+        "jiuwenswarm.agents.harness.team.team_manager.Runner.delete_agent_team",
+        fake_delete_agent_team,
+    )
+    monkeypatch.setattr(
+        "jiuwenswarm.agents.harness.team.team_manager.get_session_metadata",
+        lambda _session_id: {"team_name": "demo-team"},
+    )
+
+    deleted = await manager.delete_session_runtime("sess-1", reason="session.delete: ")
+
+    assert deleted is True
+    assert stopped == [("sess-1", "session.delete: ")]
+    assert deleted_teams == [
+        {"team_name": "demo-team", "session_ids": ["sess-1"], "force": True}
+    ]
+
+
+@pytest.mark.asyncio
+async def test_delete_session_runtime_uses_metadata_not_active_team_name(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    manager = _TeamManagerHarness()
+    manager.set_active_runtime_for_test("sess-1", "active-team")
+
+    deleted_teams: list[dict] = []
+
+    async def fake_stop(self, session_id: str, reason: str = "") -> bool:
+        return True
+
+    async def fake_delete_agent_team(*, team_name: str, session_ids: list[str], force: bool) -> bool:
+        deleted_teams.append(
+            {"team_name": team_name, "session_ids": session_ids, "force": force}
+        )
+        return True
+
+    monkeypatch.setattr(TeamManager, "stop_session_runtime", fake_stop)
+    monkeypatch.setattr(
+        "jiuwenswarm.agents.harness.team.team_manager.Runner.delete_agent_team",
+        fake_delete_agent_team,
+    )
+    monkeypatch.setattr(
+        "jiuwenswarm.agents.harness.team.team_manager.get_session_metadata",
+        lambda _session_id: {"team_name": "metadata-team"},
+    )
+
+    deleted = await manager.delete_session_runtime("sess-1", reason="session.delete: ")
+
+    assert deleted is True
+    assert deleted_teams == [
+        {"team_name": "metadata-team", "session_ids": ["sess-1"], "force": True}
+    ]
+
+
+@pytest.mark.asyncio
+async def test_stop_session_runtime_stops_runner_owned_team_runtime(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    manager = _TeamManagerHarness()
+    manager.set_active_runtime_for_test("sess-1", "demo-team")
+
+    stop_calls: list[tuple[str, str]] = []
+
+    async def fake_stop_agent_team(*, team_name: str, session_id: str) -> bool:
+        stop_calls.append((team_name, session_id))
+        return True
+
+    monkeypatch.setattr(
+        "jiuwenswarm.agents.harness.team.team_manager.Runner.stop_agent_team",
+        fake_stop_agent_team,
+    )
+
+    stopped = await manager.stop_session_runtime("sess-1", reason="switch runtime: ")
+
+    assert stopped is True
+    assert stop_calls == [("demo-team", "sess-1")]
+    assert manager.active_session_id is None
+    assert manager.active_team_name is None
+
+
+@pytest.mark.asyncio
+async def test_pause_session_runtime_pauses_runner_owned_team_runtime(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    manager = _TeamManagerHarness()
+    manager.set_active_runtime_for_test("sess-1", "demo-team")
+
+    pause_calls: list[tuple[str, str]] = []
+
+    async def fake_pause_agent_team(*, team_name: str, session_id: str) -> bool:
+        pause_calls.append((team_name, session_id))
+        return True
+
+    async def fake_stop_agent_team(*, team_name: str, session_id: str) -> bool:
+        raise AssertionError("pause should not stop the Runner-owned team runtime")
+
+    monkeypatch.setattr(
+        "jiuwenswarm.agents.harness.team.team_manager.Runner.pause_agent_team",
+        fake_pause_agent_team,
+    )
+    monkeypatch.setattr(
+        "jiuwenswarm.agents.harness.team.team_manager.Runner.stop_agent_team",
+        fake_stop_agent_team,
+    )
+
+    paused = await manager.pause_session_runtime("sess-1", reason="interrupt(intent=pause): ")
+
+    assert paused is True
+    assert pause_calls == [("demo-team", "sess-1")]
+    assert manager.active_session_id is None
+    assert manager.active_team_name is None
+
+
+@pytest.mark.asyncio
+async def test_interact_uses_runner_only_for_active_session(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    manager = _TeamManagerHarness()
+    manager.set_active_runtime_for_test("sess-1", "demo-team")
+
+    class _LocalTeamAgent:
+        async def interact(self, _user_input: str) -> None:
+            raise AssertionError("single-machine interact should not use local TeamAgent")
+
+    interact_calls: list[tuple[str, str, str]] = []
+
+    async def fake_interact_agent_team(user_input: str, *, team_name: str, session_id: str) -> bool:
+        interact_calls.append((user_input, team_name, session_id))
+        return True
+
+    monkeypatch.setattr(
+        "jiuwenswarm.agents.harness.team.team_manager.Runner.interact_agent_team",
+        fake_interact_agent_team,
+    )
+
+    success = await manager.interact("sess-1", "hello team")
+
+    assert success is True
+    assert interact_calls == [("hello team", "demo-team", "sess-1")]
+
+
+@pytest.mark.asyncio
+async def test_interact_returns_false_for_non_active_session(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    manager = _TeamManagerHarness()
+    manager.set_active_runtime_for_test("sess-active", "demo-team")
+
+    interact_calls: list[tuple[str, str, str]] = []
+
+    async def fake_interact_agent_team(user_input: str, *, team_name: str, session_id: str) -> bool:
+        interact_calls.append((user_input, team_name, session_id))
+        return True
+
+    monkeypatch.setattr(
+        "jiuwenswarm.agents.harness.team.team_manager.Runner.interact_agent_team",
+        fake_interact_agent_team,
+    )
+
+    success = await manager.interact("sess-other", "hello team")
+
+    assert success is False
+    assert interact_calls == []
+
+
+@pytest.mark.asyncio
+async def test_stop_session_runtime_ignores_local_team_cache_in_single_machine_mode(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    manager = _TeamManagerHarness()
+    manager.set_active_runtime_for_test("sess-1", "demo-team")
+
+    class _LocalTeamAgent:
+        async def destroy_team(self, force: bool = False) -> bool:
+            _ = force
+            raise AssertionError("single-machine stop should not destroy local TeamAgent cache")
+
+    stop_calls: list[tuple[str, str]] = []
+
+    async def fake_stop_agent_team(*, team_name: str, session_id: str) -> bool:
+        stop_calls.append((team_name, session_id))
+        return True
+
+    monkeypatch.setattr(
+        "jiuwenswarm.agents.harness.team.team_manager.Runner.stop_agent_team",
+        fake_stop_agent_team,
+    )
+
+    manager.cache_local_team_agent_for_test("sess-1", _LocalTeamAgent())
+
+    stopped = await manager.stop_session_runtime("sess-1", reason="switch runtime: ")
+
+    assert stopped is True
+    assert stop_calls == [("demo-team", "sess-1")]
+
+
+@pytest.mark.asyncio
+async def test_stop_session_runtime_uses_metadata_team_name_for_non_active_session(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    manager = _TeamManagerHarness()
+    manager.register_stream_task("sess-1", asyncio.create_task(asyncio.sleep(0)))
+
+    stop_calls: list[tuple[str, str]] = []
+
+    async def fake_stop_agent_team(*, team_name: str, session_id: str) -> bool:
+        stop_calls.append((team_name, session_id))
+        return True
+
+    monkeypatch.setattr(
+        "jiuwenswarm.agents.harness.team.team_manager.Runner.stop_agent_team",
+        fake_stop_agent_team,
+    )
+    monkeypatch.setattr(
+        "jiuwenswarm.agents.harness.team.team_manager.get_session_metadata",
+        lambda _session_id: {"team_name": "meta-team"},
+    )
+
+    stopped = await manager.stop_session_runtime("sess-1", reason="switch runtime: ")
+
+    assert stopped is True
+    assert stop_calls == [("meta-team", "sess-1")]
+
+
+@pytest.mark.asyncio
+async def test_delete_session_runtime_uses_metadata_team_name(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    manager = _TeamManagerHarness()
+
+    stop_calls: list[tuple[str, str]] = []
+    deleted_teams: list[dict] = []
+
+    async def fake_stop(self, session_id: str, reason: str = "") -> bool:
+        stop_calls.append((session_id, reason))
+        return True
+
+    async def fake_delete_agent_team(*, team_name: str, session_ids: list[str], force: bool) -> bool:
+        deleted_teams.append(
+            {"team_name": team_name, "session_ids": session_ids, "force": force}
+        )
+        return True
+
+    monkeypatch.setattr(TeamManager, "stop_session_runtime", fake_stop)
+    monkeypatch.setattr(
+        "jiuwenswarm.agents.harness.team.team_manager.Runner.delete_agent_team",
+        fake_delete_agent_team,
+    )
+    monkeypatch.setattr(
+        "jiuwenswarm.agents.harness.team.team_manager.get_session_metadata",
+        lambda _session_id: {"team_name": "meta-team"},
+    )
+
+    deleted = await manager.delete_session_runtime("sess-1", reason="session.delete: ")
+
+    assert deleted is True
+    assert stop_calls == [("sess-1", "session.delete: ")]
+    assert deleted_teams == [
+        {"team_name": "meta-team", "session_ids": ["sess-1"], "force": True}
+    ]
+
+
+@pytest.mark.asyncio
+async def test_delete_session_runtime_falls_back_to_release_without_team_name(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    manager = _TeamManagerHarness()
+    manager.set_active_runtime_for_test("sess-1", "active-team")
+
+    stop_calls: list[tuple[str, str]] = []
+    released: list[str] = []
+
+    async def fake_stop(self, session_id: str, reason: str = "") -> bool:
+        stop_calls.append((session_id, reason))
+        return True
+
+    async def fake_release(session_id: str) -> None:
+        released.append(session_id)
+
+    async def fake_delete_agent_team(*, team_name: str, session_ids: list[str], force: bool) -> bool:
+        raise AssertionError("delete_agent_team should not use active team_name when metadata is missing")
+
+    monkeypatch.setattr(TeamManager, "stop_session_runtime", fake_stop)
+    monkeypatch.setattr(
+        "jiuwenswarm.agents.harness.team.team_manager.Runner.release",
+        fake_release,
+    )
+    monkeypatch.setattr(
+        "jiuwenswarm.agents.harness.team.team_manager.Runner.delete_agent_team",
+        fake_delete_agent_team,
+    )
+    monkeypatch.setattr(
+        "jiuwenswarm.agents.harness.team.team_manager.get_session_metadata",
+        lambda _session_id: {},
+    )
+
+    deleted = await manager.delete_session_runtime("sess-1", reason="session.delete: ")
+
+    assert deleted is True
+    assert stop_calls == [("sess-1", "session.delete: ")]
+    assert released == ["sess-1"]
 
 
 def test_sync_team_skills_across_managers_uses_public_lookup(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -186,3 +961,17 @@ def test_sync_team_skills_across_managers_uses_public_lookup(monkeypatch: pytest
 
     assert sync_team_skills_across_managers("sess-1") is True
     assert called["count"] == 1
+
+
+def test_resolve_session_team_name_returns_none_when_metadata_missing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    manager = _TeamManagerHarness()
+    monkeypatch.setattr(
+        "jiuwenswarm.agents.harness.team.team_manager.get_session_metadata",
+        lambda _session_id: {},
+    )
+
+    team_name = manager.resolve_session_team_name_for_test("sess-missing")
+
+    assert team_name is None

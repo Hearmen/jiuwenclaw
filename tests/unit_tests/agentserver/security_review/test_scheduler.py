@@ -1,8 +1,8 @@
 # coding: utf-8
 from __future__ import annotations
 
-from jiuwenclaw.agentserver.deep_agent.security_review.scheduler import SecurityReviewScheduler
-from jiuwenclaw.agentserver.deep_agent.security_review.schema import (
+from jiuwenswarm.agents.harness.common.security_review.scheduler import SecurityReviewScheduler
+from jiuwenswarm.agents.harness.common.security_review.schema import (
     FailureClass,
     ReviewRequest,
     SecurityReviewConfig,

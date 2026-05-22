@@ -1,14 +1,14 @@
 # coding: utf-8
 from __future__ import annotations
 
-from jiuwenclaw.agentserver.deep_agent.security_review.schema import (
+from jiuwenswarm.agents.harness.common.security_review.schema import (
     FailureClass,
     SecurityEvent,
     SecurityReviewConfig,
     SecuritySignal,
     Severity,
 )
-from jiuwenclaw.agentserver.deep_agent.security_review.session_state import (
+from jiuwenswarm.agents.harness.common.security_review.session_state import (
     SecuritySessionState,
 )
 

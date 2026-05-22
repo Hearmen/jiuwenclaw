@@ -49,9 +49,10 @@ def _load_rail_module():
     try:
         path = (
             Path(__file__).resolve().parents[4]
-            / "jiuwenclaw"
-            / "agentserver"
-            / "deep_agent"
+            / "jiuwenswarm"
+            / "agents"
+            / "harness"
+            / "common"
             / "rails"
             / "security_review_and_skill_rail.py"
         )
@@ -122,9 +123,10 @@ def _restore_modules(old_modules):
 def test_rail_uses_scheduler_public_api_for_scheduler_state():
     path = (
         Path(__file__).resolve().parents[4]
-        / "jiuwenclaw"
-        / "agentserver"
-        / "deep_agent"
+        / "jiuwenswarm"
+        / "agents"
+        / "harness"
+        / "common"
         / "rails"
         / "security_review_and_skill_rail.py"
     )
@@ -148,12 +150,14 @@ def _install_rail_package_stubs(rail_module):
     }
     stubs = {}
     for module_name, class_name in sibling_classes.items():
-        full_name = f"jiuwenclaw.agentserver.deep_agent.rails.{module_name}"
+        full_name = f"jiuwenswarm.agents.harness.common.rails.{module_name}"
         module = types.ModuleType(full_name)
         setattr(module, class_name, type(class_name, (), {}))
         stubs[full_name] = module
 
-    security_module_name = "jiuwenclaw.agentserver.deep_agent.rails.security_review_and_skill_rail"
+    security_module_name = (
+        "jiuwenswarm.agents.harness.common.rails.security_review_and_skill_rail"
+    )
     security_module = types.ModuleType(security_module_name)
     security_module.SecurityReviewAndSkillRail = rail_module.SecurityReviewAndSkillRail
     stubs[security_module_name] = security_module
@@ -995,8 +999,8 @@ def test_security_review_rail_is_exported_from_rails_package(rail_module):
     try:
         import importlib
 
-        sys.modules.pop("jiuwenclaw.agentserver.deep_agent.rails", None)
-        module = importlib.import_module("jiuwenclaw.agentserver.deep_agent.rails")
+        sys.modules.pop("jiuwenswarm.agents.harness.common.rails", None)
+        module = importlib.import_module("jiuwenswarm.agents.harness.common.rails")
         assert module.SecurityReviewAndSkillRail is rail_module.SecurityReviewAndSkillRail
         assert "SecurityReviewAndSkillRail" in module.__all__
     finally:

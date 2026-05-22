@@ -1,10 +1,10 @@
 # coding: utf-8
 from __future__ import annotations
 
-from jiuwenclaw.agentserver.deep_agent.security_review.classifier import (
+from jiuwenswarm.agents.harness.common.security_review.classifier import (
     SecuritySignalClassifier,
 )
-from jiuwenclaw.agentserver.deep_agent.security_review.schema import (
+from jiuwenswarm.agents.harness.common.security_review.schema import (
     FailureClass,
     SecurityEvent,
     Severity,

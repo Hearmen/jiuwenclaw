@@ -7,9 +7,9 @@ from openjiuwen.core.foundation.llm import Model
 from openjiuwen.core.single_agent.rail.base import AgentCallbackContext
 from openjiuwen.harness.prompts import PromptSection, SystemPromptBuilder
 
-from jiuwenclaw.agentserver.deep_agent.interface_deep import JiuWenClawDeepAdapter
-from jiuwenclaw.agentserver.deep_agent.prompt_builder import build_identity_prompt
-from jiuwenclaw.agentserver.deep_agent.rails.runtime_prompt_rail import RuntimePromptRail
+from jiuwenswarm.server.runtime.agent_adapter.interface_deep import JiuWenClawDeepAdapter
+from jiuwenswarm.agents.harness.common.prompt.prompt_builder import build_identity_prompt
+from jiuwenswarm.agents.harness.common.rails.runtime_prompt_rail import RuntimePromptRail
 
 
 class _TestableJiuWenClawDeepAdapter(JiuWenClawDeepAdapter):
@@ -54,11 +54,36 @@ async def test_runtime_time_section_participates_in_priority_order():
         "# 可用工具",
         "# 工作空间",
         "# 当前日期与时间",
-        "# 运行时",
+        "# 运行时状态",
     ]
     positions = [prompt.index(marker) for marker in ordered_markers]
     assert positions == sorted(positions)
-    assert "runtime_state.yaml" in prompt
+    assert "当前模型" in prompt
+
+
+@pytest.mark.asyncio
+async def test_runtime_prompt_uses_runtime_cwd_over_stale_trusted_dir(tmp_path):
+    builder = SystemPromptBuilder(language="en")
+    stale_dir = tmp_path / "missing-worktree"
+    project_dir = tmp_path / "project"
+    current_dir = project_dir / "current"
+    extra_dir = tmp_path / "extra"
+    current_dir.mkdir(parents=True)
+    extra_dir.mkdir()
+
+    runtime_rail = RuntimePromptRail(language="en", channel="tui")
+    runtime_rail.init(SimpleNamespace(system_prompt_builder=builder))
+    runtime_rail.set_trusted_dirs([str(stale_dir), str(current_dir), str(extra_dir)])
+    runtime_rail.set_runtime_paths(cwd=str(current_dir), project_dir=str(project_dir))
+
+    ctx = AgentCallbackContext(agent=None, inputs=None, session=None)
+    await runtime_rail.before_model_call(ctx)
+
+    prompt = builder.build()
+    assert "Current project directory" in prompt
+    assert str(current_dir) in prompt
+    assert str(stale_dir) not in prompt
+    assert str(extra_dir) in prompt
 
 
 def test_resolve_skill_mode_accepts_all_and_auto_list():
@@ -67,7 +92,8 @@ def test_resolve_skill_mode_accepts_all_and_auto_list():
     assert JiuWenClawDeepAdapter._resolve_skill_mode({"skill_mode": "invalid"}) == "all"
 
 
-def test_resolve_enable_task_loop_can_be_called_on_class():
+def test_resolve_enable_task_loop_can_be_called_on_class(monkeypatch):
+    monkeypatch.delenv("SKILL_CREATE", raising=False)
     assert (
         JiuWenClawDeepAdapter._resolve_enable_task_loop(
             {"enable_task_loop": False},
@@ -89,7 +115,7 @@ def test_resolve_enable_task_loop_can_be_called_on_class():
 
 def test_deep_adapter_subagents_includes_optional_browser_and_configured_research():
     adapter = _TestableJiuWenClawDeepAdapter()
-    adapter.set_workspace_dir("/tmp/jiuwenclaw-workspace")
+    adapter.set_workspace_dir("/tmp/jiuwenswarm-workspace")
     model = object()
     config = {
         "max_iterations": 9,
@@ -103,26 +129,26 @@ def test_deep_adapter_subagents_includes_optional_browser_and_configured_researc
         patch.object(adapter, "_resolve_runtime_language", return_value="cn"),
         patch.object(adapter, "_browser_runtime_enabled", return_value=True),
         patch(
-            "jiuwenclaw.agentserver.deep_agent.interface_deep.build_research_agent_config",
+            "jiuwenswarm.server.runtime.agent_adapter.interface_deep.build_research_agent_config",
             return_value="research_spec",
         ) as mock_research,
         patch(
-            "jiuwenclaw.agentserver.deep_agent.interface_deep.build_browser_agent_config",
+            "jiuwenswarm.server.runtime.agent_adapter.interface_deep.build_browser_agent_config",
             return_value="browser_spec",
         ) as mock_browser,
     ):
-        subagents = adapter.build_configured_subagents(model, config)
+        subagents, _ = adapter.build_configured_subagents(model, config)
 
     assert subagents == ["research_spec", "browser_spec"]
     mock_research.assert_called_once_with(
         model,
-        workspace="/tmp/jiuwenclaw-workspace",
+        workspace="/tmp/jiuwenswarm-workspace",
         language="cn",
         max_iterations=9,
     )
     mock_browser.assert_called_once_with(
         model,
-        workspace="/tmp/jiuwenclaw-workspace",
+        workspace="/tmp/jiuwenswarm-workspace",
         language="cn",
         max_iterations=7,
     )
@@ -130,7 +156,7 @@ def test_deep_adapter_subagents_includes_optional_browser_and_configured_researc
 
 def test_deep_adapter_subagents_omits_research_without_explicit_enable():
     adapter = _TestableJiuWenClawDeepAdapter()
-    adapter.set_workspace_dir("/tmp/jiuwenclaw-workspace")
+    adapter.set_workspace_dir("/tmp/jiuwenswarm-workspace")
     model = object()
     config = {"max_iterations": 9}
 
@@ -138,15 +164,15 @@ def test_deep_adapter_subagents_omits_research_without_explicit_enable():
         patch.object(adapter, "_resolve_runtime_language", return_value="cn"),
         patch.object(adapter, "_browser_runtime_enabled", return_value=True),
         patch(
-            "jiuwenclaw.agentserver.deep_agent.interface_deep.build_research_agent_config",
+            "jiuwenswarm.server.runtime.agent_adapter.interface_deep.build_research_agent_config",
             return_value="research_spec",
         ) as mock_research,
         patch(
-            "jiuwenclaw.agentserver.deep_agent.interface_deep.build_browser_agent_config",
+            "jiuwenswarm.server.runtime.agent_adapter.interface_deep.build_browser_agent_config",
             return_value="browser_spec",
         ) as mock_browser,
     ):
-        subagents = adapter.build_configured_subagents(model, config)
+        subagents, _ = adapter.build_configured_subagents(model, config)
 
     # DeepAdapter: no research_agent configured, browser enabled
     assert subagents == ["browser_spec"]

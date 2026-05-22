@@ -1,8 +1,8 @@
 # Tool Permissions & Security
 
-This document explains how JiuwenClaw **tool call permissions** (`allow` / `ask` / `deny`) take effect, how they relate to **workspace-external paths**, **built-in security rules**, **user approval persistence**, and what the **CLI `/add-dir`** command changes in configuration.
+This document explains how JiuwenSwarm **tool call permissions** (`allow` / `ask` / `deny`) take effect, how they relate to **workspace-external paths**, **built-in security rules**, **user approval persistence**, and what the **CLI `/add-dir`** command changes in configuration.
 
-The main configuration file is typically `~/.jiuwenclaw/config/config.yaml`; you can override this via the `JIUWENCLAW_CONFIG_DIR` environment variable (consistent with [Configuration](Configuration.md)).
+The main configuration file is typically `~/.jiuwenswarm/config/config.yaml`; you can override this via the `JIUWENSWARM_CONFIG_DIR` environment variable (consistent with [Configuration](Configuration.md)).
 
 ---
 
@@ -21,7 +21,7 @@ In digital persona and group chat scenarios, `ask` may be downgraded to `deny` â
 
 ## 2. Tiered Policy Resolution â€” How a Tool Call Gets Its Level
 
-This corresponds to `evaluate_tiered_policy()` in `jiuwenclaw/agentserver/permissions/tiered_policy.py`. Parameters are the current `tool_name` and `tool_args` (e.g. bash `command`, file-read `path`, etc.).
+This corresponds to `evaluate_tiered_policy()` in the `openjiuwen` harness SDK. Parameters are the current `tool_name` and `tool_args` (e.g. bash `command`, file-read `path`, etc.). The tiered policy engine is part of the `openjiuwen.harness.security` module shipped with the harness SDK.
 
 ### 2.1 Setup: `permission_mode` and `severity`
 
@@ -89,8 +89,8 @@ On the `check_permission` path, tiered results are typically computed **without*
 
 ## 3. Built-in Security Rules `builtin_rules.yaml`
 
-- **Package default**: `jiuwenclaw/resources/builtin_rules.yaml`.
-- **User override**: A `builtin_rules.yaml` in the **same directory** as `config.yaml` (i.e. `JIUWENCLAW_CONFIG_DIR` or default `~/.jiuwenclaw/config/`) takes **priority** if it exists.
+- **Package default**: `jiuwenswarm/resources/builtin_rules.yaml`.
+- **User override**: A `builtin_rules.yaml` in the **same directory** as `config.yaml` (i.e. `JIUWENSWARM_CONFIG_DIR` or default `~/.jiuwenswarm/config/`) takes **priority** if it exists.
 
 Built-in rules mostly cover **shell high-risk commands** (deletion, formatting, download-and-execute, privilege escalation, etc.), some with explicit `action: deny`. User `rules` cannot override built-in denials (built-in deny returns first).
 
@@ -138,16 +138,16 @@ If not using `tiered_policy`, typically **only** `external_directory` is updated
 
 | Module | Path |
 |--------|------|
-| Tiered policy | `jiuwenclaw/agentserver/permissions/tiered_policy.py` |
-| External directory checker | `jiuwenclaw/agentserver/permissions/checker.py` (`ExternalDirectoryChecker`) |
-| Persistence / `add_dir` | `jiuwenclaw/agentserver/permissions/patterns.py` (`persist_cli_trusted_directory`, etc.) |
-| Engine merging | `jiuwenclaw/agentserver/permissions/core.py` |
-| WebSocket command | `jiuwenclaw/agentserver/agent_ws_server.py` (`_handle_command_add_dir`) |
+| Tiered policy | `openjiuwen.harness.security` (harness SDK) |
+| Permissions persistence | `jiuwenswarm/agents/harness/common/rails/permissions/permissions_persist.py` |
+| Owner scopes | `jiuwenswarm/agents/harness/common/rails/permissions/owner_scopes.py` |
+| Tool permission RPC | `jiuwenswarm/agents/harness/common/rails/permissions/permissions_config_rpc.py` |
+| Tool permission context | `jiuwenswarm/agents/harness/common/rails/permissions/tool_permission_context.py` |
 
 ---
 
 ## 8. See Also
 
-- [Configuration](Configuration.md): `JIUWENCLAW_CONFIG_DIR`, configuration file location.
+- [Configuration](Configuration.md): `JIUWENSWARM_CONFIG_DIR`, configuration file location.
 - [CLI Commands](CLI.md): CLI/TUI entry points (including slash commands).
 - [Channels](Channels.md): `owner_scopes`, digital persona, and `ask` downgrade.

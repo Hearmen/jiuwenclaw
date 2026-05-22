@@ -2,7 +2,11 @@
 
 import pytest
 
-from jiuwenclaw.app_web_handlers import WebHandlersBindParams, _register_web_handlers
+from jiuwenswarm.gateway.channel_manager.web.app_web_handlers import (
+    WebHandlersBindParams,
+    _flatten_modes_team_for_config_panel,
+    _register_web_handlers,
+)
 
 
 class FakeWebChannel:
@@ -36,10 +40,12 @@ async def test_config_set_routes_team_payload_to_modes_team_helper(monkeypatch):
 
     _register_web_handlers(WebHandlersBindParams(channel=channel))
 
-    monkeypatch.setattr("jiuwenclaw.app_web_handlers.get_config_raw", lambda: {"preferred_language": "zh"})
-    monkeypatch.setattr("jiuwenclaw.app_web_handlers.get_config", lambda: {"modes": {"team": {}}})
+    monkeypatch.setattr("jiuwenswarm.gateway.channel_manager.web.app_web_handlers.get_config_raw",
+                        lambda: {"preferred_language": "zh"})
+    monkeypatch.setattr("jiuwenswarm.gateway.channel_manager.web.app_web_handlers.get_config",
+                        lambda: {"modes": {"team": {}}})
     monkeypatch.setattr(
-        "jiuwenclaw.app_web_handlers.replace_teams_in_config",
+        "jiuwenswarm.gateway.channel_manager.web.app_web_handlers.replace_teams_in_config",
         lambda payload: recorded.append(payload),
     )
 
@@ -69,9 +75,10 @@ async def test_config_set_returns_bad_request_when_team_payload_is_invalid(monke
 
     _register_web_handlers(WebHandlersBindParams(channel=channel))
 
-    monkeypatch.setattr("jiuwenclaw.app_web_handlers.get_config_raw", lambda: {"preferred_language": "zh"})
+    monkeypatch.setattr("jiuwenswarm.gateway.channel_manager.web.app_web_handlers.get_config_raw",
+                        lambda: {"preferred_language": "zh"})
     monkeypatch.setattr(
-        "jiuwenclaw.app_web_handlers.replace_teams_in_config",
+        "jiuwenswarm.gateway.channel_manager.web.app_web_handlers.replace_teams_in_config",
         lambda payload: (_ for _ in ()).throw(ValueError("duplicate team_name: alpha_team")),
     )
 
@@ -94,68 +101,31 @@ async def test_config_set_returns_bad_request_when_team_payload_is_invalid(monke
     }
 
 
-@pytest.mark.asyncio
-async def test_config_set_routes_security_review_sub_switches(monkeypatch):
-    channel = FakeWebChannel()
-    recorded: list[tuple[str, bool]] = []
-
-    _register_web_handlers(WebHandlersBindParams(channel=channel))
-
-    monkeypatch.setattr("jiuwenclaw.app_web_handlers.get_config_raw", lambda: {"preferred_language": "zh"})
-    monkeypatch.setattr(
-        "jiuwenclaw.app_web_handlers.update_security_review_config_flag",
-        lambda key, value: recorded.append((key, value)),
-    )
-
-    await channel.methods["config.set"](
-        object(),
-        "req-3",
-        {
-            "security_review_runtime_advice": "false",
-            "security_review_propose_policy_rules": "true",
-        },
-        "sess-3",
-    )
-
-    assert set(recorded) == {
-        ("runtime_advice", False),
-        ("propose_policy_rules", True),
-    }
-    assert channel.responses[-1]["ok"] is True
-    assert sorted(channel.responses[-1]["payload"]["updated"]) == [
-        "security_review_propose_policy_rules",
-        "security_review_runtime_advice",
-    ]
-
-
-@pytest.mark.asyncio
-async def test_config_get_returns_security_review_sub_switches(monkeypatch):
-    channel = FakeWebChannel()
-
-    _register_web_handlers(WebHandlersBindParams(channel=channel))
-
-    monkeypatch.setattr(
-        "jiuwenclaw.app_web_handlers.get_config_raw",
-        lambda: {
-            "react": {
-                "security_review": {
-                    "enabled": True,
-                    "runtime_advice": False,
-                    "async_review": True,
-                    "evolve_security_skills": False,
-                    "propose_policy_rules": False,
-                    "timely_tool_failure_review": True,
+def test_config_panel_flatten_reads_standalone_agent_registry():
+    raw = {
+        "web_config_panel": {
+            "agent_team_agents": {
+                "agent_1": {
+                    "model": {
+                        "model_request_config": {
+                            "model": "gpt-4.1",
+                            "api_base": "https://api.openai.com/v1",
+                            "api_key": "${OPENAI_API_KEY}",
+                        },
+                        "model_client_config": {"client_provider": "OpenAI"},
+                    },
+                    "skills": ["coding"],
+                    "max_iterations": 12,
+                    "completion_timeout": 34,
                 }
             }
-        },
-    )
+        }
+    }
 
-    await channel.methods["config.get"](object(), "req-4", {}, "sess-4")
+    flat = _flatten_modes_team_for_config_panel(raw)
 
-    payload = channel.responses[-1]["payload"]
-    assert payload["security_review_enabled"] == "true"
-    assert payload["security_review_runtime_advice"] == "false"
-    assert payload["security_review_async_review"] == "true"
-    assert payload["security_review_evolve_security_skills"] == "false"
-    assert payload["security_review_propose_policy_rules"] == "false"
-    assert payload["security_review_timely_tool_failure_review"] == "true"
+    assert flat["agent_name_0"] == "agent_1"
+    assert flat["agent_model_0"] == "gpt-4.1"
+    assert flat["agent_skills_0"] == "coding"
+    assert flat["agent_max_iterations_0"] == "12"
+    assert flat["agent_completion_timeout_0"] == "34"

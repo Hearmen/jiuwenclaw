@@ -3,13 +3,13 @@ from __future__ import annotations
 
 import pytest
 
-from jiuwenclaw.agentserver.deep_agent.security_review.rule_applicator import (
+from jiuwenswarm.agents.harness.common.security_review.rule_applicator import (
     SecurityRuleApplicationError,
     apply_security_rule_candidate,
     security_rule_candidate_to_permission_rule,
 )
-from jiuwenclaw.agentserver.permissions.models import PermissionLevel
-from jiuwenclaw.agentserver.permissions.tiered_policy import evaluate_tiered_policy
+from openjiuwen.harness.security.models import PermissionLevel
+from openjiuwen.harness.security.tiered_policy import evaluate_tiered_policy
 
 
 def _candidate(**overrides):
@@ -59,7 +59,7 @@ def test_apply_security_rule_candidate_uses_config_api(monkeypatch):
         return stored
 
     monkeypatch.setattr(
-        "jiuwenclaw.agentserver.deep_agent.security_review.rule_applicator.create_permissions_rule_in_config",
+        "jiuwenswarm.agents.harness.common.security_review.rule_applicator.create_permissions_rule_in_config",
         fake_create,
     )
 
@@ -76,7 +76,7 @@ def test_apply_security_rule_candidate_uses_config_api(monkeypatch):
 
 def test_security_rule_candidate_rule_is_enforced_by_tiered_policy(monkeypatch):
     monkeypatch.setattr(
-        "jiuwenclaw.agentserver.permissions.tiered_policy.get_builtin_security_rules",
+        "openjiuwen.harness.security.tiered_policy.get_builtin_security_rules",
         lambda: [],
     )
     rule = security_rule_candidate_to_permission_rule(_candidate(tools=["bash"]))

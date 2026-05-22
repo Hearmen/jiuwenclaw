@@ -1,7 +1,7 @@
 # coding: utf-8
 from __future__ import annotations
 
-from jiuwenclaw.agentserver.deep_agent.security_review.skill_state import collect_skill_state
+from jiuwenswarm.agents.harness.common.security_review.skill_state import collect_skill_state
 
 
 def test_collect_skill_state_reads_skill_metadata(tmp_path):
